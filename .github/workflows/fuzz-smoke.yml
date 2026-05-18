@@ -1,0 +1,161 @@
+name: fuzz-smoke
+
+# 4-backend × all-phase smoke run of the fuzz harness. RFC-0030 caught
+# 5 framec defects (Rust clone, C++ factory bypass, E606 assignment-
+# form gap, Erlang split_inline_arm × 2) that the matrix didn't catch
+# because they only surfaced under generator-produced edge cases.
+# RFC-0031 Layer 2 codifies this as a pre-merge gate so the months-of-
+# silent-fuzz-rot pattern can't recur.
+#
+# Backend selection mirrors matrix-smoke.yml — same 4-of-17 cut for
+# the same architectural reasons (Python = dynamic baseline, Rust =
+# typed-by-value / Track B exerciser, Java = JVM reference semantics,
+# Erlang = gen_statem actor model). Full 17-backend × full-tier runs
+# as a nightly via a separate workflow (roadmap #442).
+
+"on":
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzz-smoke:
+    name: fuzz-smoke (${{ matrix.backend }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [python_3, rust, java, erlang]
+    steps:
+      - name: Checkout framec
+        uses: actions/checkout@v4
+        with:
+          path: framec
+
+      - name: Checkout framec-test-env
+        uses: actions/checkout@v4
+        with:
+          repository: frame-lang/framec-test-env
+          path: framec-test-env
+          ref: main
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: framec
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      # Per-backend toolchain. ubuntu-latest already provides
+      # python3 / node / gcc / g++ / openjdk / dotnet / php / ruby /
+      # lua / perl. Erlang needs explicit install. Kotlin / Swift /
+      # Dart / GDScript backends are deferred to the nightly full-tier
+      # job (roadmap #442) because their cold-start cost would push
+      # this gate past the ~4 min Layer 2 budget.
+      - name: Set up Erlang
+        if: matrix.backend == 'erlang'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y erlang-base erlang-eunit erlang-tools
+
+      - name: Build framec (release)
+        working-directory: framec
+        run: cargo build --release -p framec
+
+      - name: Generate fuzz cases for backend
+        working-directory: framec-test-env/fuzz
+        env:
+          FRAMEC: ${{ github.workspace }}/framec/target/release/framec
+        # Cases are gitignored (regen'd from generators per
+        # 2026-05-18 cleanup). Regenerate the shell-phase corpus
+        # and the diff_harness corpus so the runners have cases
+        # to execute.
+        run: |
+          set -euo pipefail
+          # Shell-phase generators
+          for gen in gen_perm.py gen_ctrl_flow.py gen_shadow.py \
+                     gen_state_args.py gen_stmt_pair.py \
+                     gen_comments.py gen_multievent.py gen_stress.py \
+                     gen_pushpop.py gen_const_sys.py gen_arith.py \
+                     gen_hsm_cross.py gen_nested.py; do
+              python3 "$gen" > /dev/null 2>&1
+          done
+          # diff_harness generators
+          for gen in diff_harness/gen_*_pure.py; do
+              python3 "$gen" --max 5 > /dev/null 2>&1
+          done
+
+      - name: Run shell-phase fuzz smoke
+        working-directory: framec-test-env/fuzz
+        env:
+          FRAMEC: ${{ github.workspace }}/framec/target/release/framec
+        run: |
+          set -euo pipefail
+          : > /tmp/fuzz_fails.txt
+          # Shell-phase runners exit code is unreliable (sometimes 0
+          # on success, sometimes non-zero with no real failure).
+          # Trust the `^  not ok ` line pattern that the runners emit
+          # for actual fixture failures, not the exit code.
+          for runner in run_perm.sh run_ctrl_flow.sh run_shadow.sh \
+                        run_state_args.sh run_stmt_pair.sh \
+                        run_comments.sh run_multievent.sh run_stress.sh \
+                        run_pushpop.sh run_const_sys.sh run_arith.sh \
+                        run_hsm_cross.sh; do
+              echo "::group::$runner --lang=${{ matrix.backend }}"
+              ./"$runner" --tier=smoke --lang="${{ matrix.backend }}" \
+                  > /tmp/fuzz_runner.txt 2>&1 || true
+              # Print summary lines for the CI log
+              grep -E '^# ' /tmp/fuzz_runner.txt | tail -3 || true
+              # Collect failure lines
+              grep -E '^  not ok ' /tmp/fuzz_runner.txt \
+                  >> /tmp/fuzz_fails.txt || true
+              echo "::endgroup::"
+          done
+          if [ -s /tmp/fuzz_fails.txt ]; then
+              echo "::error::Shell-phase fuzz smoke surfaced failures:"
+              head -20 /tmp/fuzz_fails.txt
+              exit 1
+          fi
+
+      - name: Run diff-harness fuzz smoke
+        working-directory: framec-test-env/fuzz
+        env:
+          FRAMEC: ${{ github.workspace }}/framec/target/release/framec
+        # Phase 2-7 differential trace runners. Python is the oracle —
+        # for non-Python backends, run both and byte-diff per
+        # TRACE_FORMAT.md v1. Multisys deferred to nightly because
+        # Java/Swift don't have multisys renderers (pre-existing
+        # fuzz coverage gap noted in RFC-0030).
+        run: |
+          set -euo pipefail
+          BACKEND="${{ matrix.backend }}"
+          if [ "$BACKEND" = "python_3" ]; then
+              LANGS="python_3"
+          else
+              LANGS="python_3,$BACKEND"
+          fi
+          for phase in persist selfcall hsm operations async; do
+              if [ -d "cases/$phase" ]; then
+                  echo "::group::diff_harness $phase --langs=$LANGS"
+                  python3 diff_harness/run_fuzz.py \
+                      --cases "cases/$phase" \
+                      --langs "$LANGS" --max 5
+                  echo "::endgroup::"
+              fi
+          done
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "fuzz-smoke for backend '${{ matrix.backend }}' completed"
