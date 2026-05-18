@@ -17,6 +17,7 @@ Architecture and internals of the Frame transpiler. For the Frame language itsel
 - [Stage 6: Backend Emitter](#stage-6-backend-emitter)
 - [Stage 7: Assembler](#stage-7-assembler)
 - [Dispatch Architecture](#dispatch-architecture)
+- [Runtime overhead — what to expect](#runtime-overhead--what-to-expect)
 - [GraphViz Pipeline](#graphviz-pipeline)
 - [Scanner Infrastructure](#scanner-infrastructure)
 - [File Structure](#file-structure)
@@ -540,6 +541,134 @@ the common non-tuple branches of the handler emission. The
 use the older linear emission — a handler that mixes user-written
 case blocks with `@@:self` calls isn't currently tested. If a future
 test needs it, the wrap should move into those branches too.
+
+---
+
+## Runtime overhead — what to expect
+
+framec emits a kitchen-sink runtime: every system carries event
+queue infrastructure, a compartment stack (HSM ancestor chain),
+a context stack (per-call return slot + `@@:data` map), a
+state-context enum (typed state variables), a frame-event enum,
+and a frame-return enum. Plus per-state dispatch methods,
+factory constructor (RFC-0015), and (if `@@[persist]`) save /
+load methods.
+
+This is a fair price for the language model — state machines
+get arbitrary HSM depth, push/pop modal stack, factory + restore
+construction, `@@:self` recursive dispatch, all on every backend —
+but it's not free. **Pick framec for state-machine workloads
+where dispatch is infrequent (per-event, not per-instruction).
+Don't pick it for hot inner loops.**
+
+### Generated code size (12 RFC-0027 snapshot fixtures)
+
+Each cell is total LOC of the generated file. Numbers are from
+the `framec/tests/snapshots/<backend>_snapshots__<fixture>.snap`
+files committed to git, so they're stable and reproducible.
+
+| Fixture (intent ~10-30 LOC of Frame) | Python | Rust | Java | Erlang | C | C++ |
+|---|---:|---:|---:|---:|---:|---:|
+| 01_linear_fsm — flat 3-state | 166 | 290 | 225 | 155 | 571 | 220 |
+| 02_hsm — parent + 2 children, cascade | 195 | 316 | 264 | 176 | 610 | 264 |
+| 03_persist — 1 state + save/load | 171 | 322 | 246 | 149 | 698 | 262 |
+| 04_state_args — typed state args | 162 | 335 | 222 | 144 | 571 | 215 |
+| 05_pushpop — modal stack | 173 | 295 | 234 | 152 | 575 | 230 |
+| 06_selfcall — `@@:self` dispatch | 139 | 257 | 194 | 132 | 516 | 185 |
+| 07_forward — `-> => $State` | 165 | 286 | 225 | 155 | 564 | 220 |
+| 08_lifecycle — `$>`/`<$` with bodies | 163 | 283 | 222 | 148 | 567 | 216 |
+| 09_return_explicit — `@@:return(x)` | 128 | 246 | 181 | 124 | 500 | 169 |
+| 10_actions — `actions:` block | 140 | 261 | 197 | 130 | 523 | 189 |
+| 11_consts — system params | 143 | 264 | 199 | 134 | 523 | 190 |
+| 12_no_persist — mixed persist/skip | 197 | 360 | 281 | 162 | 742 | 301 |
+
+Rough rule of thumb: **~10× expansion** from Frame source to
+target source on dynamic-typed backends (Python, JS), **~15-20×
+on typed backends** (Rust, Java), **~40-50× on C** (manual
+serialization adds the most boilerplate). The expansion ratio
+flattens as the fixture gets larger — most of the LOC is fixed
+runtime infrastructure that doesn't scale with state count.
+
+### Allocation density per dispatch
+
+Sample: `03_persist.frm` in Rust, counted from the generated
+file:
+
+| Allocation | Count |
+|---|---:|
+| `Rc::new`              | 8 |
+| `Vec::new` / `vec![]`  | 4 |
+| `HashMap::new`         | 1 |
+| `Box::new`             | 2 |
+| `.clone()` calls       | 9 |
+
+That's per **system instance**, not per dispatch — most of the
+allocations are construction-time (compartment stack, context
+stack, the various Vec / HashMap fields). Per-dispatch
+allocations are smaller: one `Rc<FrameEvent>` wrap, one context
+frame push/pop, plus whatever the user-written handler body
+allocates.
+
+**Rust performance notes:**
+- Every event dispatch allocates one `Rc<FrameEvent>` (the
+  wrapper that lets the kernel pass `&Rc<FrameEvent>` through
+  the borrow checker without aliasing `self`). This is the
+  RFC-0020 design — alternative is a kernel rewrite to avoid
+  the indirection, which would constrain the per-state
+  dispatcher signature.
+- Non-`Copy` domain field reads in handler bodies (`@@:(self.s)`
+  where `s: str`) emit `self.s.clone()` — see commit `61fdb6a`
+  for the rationale. For high-frequency reads on heap-typed
+  fields, this is real overhead.
+- HSM ancestor walks (`__hsm_chain` lookup + cascade) iterate
+  the chain once per `$>` / `<$` synthesized event. No
+  allocations, but linear in chain depth.
+
+**Python performance notes:**
+- Each call constructs a `FrameEvent` and a `FrameContext` —
+  ordinary Python object allocations, dict-backed. CPython's
+  small-object allocator makes this cheap but nonzero.
+- Compartment state is dict-stored (`state_vars`, `state_args`,
+  `enter_args`, `exit_args`). Reads are dict lookups (O(1)
+  amortized) — same cost as any Python class field.
+
+**C performance notes:**
+- 571 LOC for a 3-state machine is mostly memory management
+  scaffolding: `Sys_new()`, `Sys_destroy()`, per-method
+  function-style dispatch (`Sys_method(s, args)`), serialization
+  helpers (if `@@[persist]`).
+- 10 `malloc` calls and 11 `free` calls in the 03_persist
+  generated code. The C backend leans on a hand-emitted RAII-ish
+  pattern (alloc + free pairs) — no GC, no Rc, just discipline.
+
+### When this matters
+
+- **Embedded / no_std targets** — framec's runtime needs heap.
+  Don't pick framec for bare-metal `no_std`.
+- **Hot inner loops** — state machines aren't your inner loop;
+  if dispatch is in your fastest path, the per-event allocation
+  cost is visible. Profile before assuming.
+- **Memory-constrained systems** — each system instance carries
+  compartment + context stack vectors. Default sizes are small
+  (Vec::new starts empty), but growth is unbounded as push/pop
+  depth + call depth scale.
+
+### When it doesn't
+
+- **Application-level state machines** (UI flows, protocol
+  state, session lifecycle, workflow orchestration) — these
+  dispatch at human or network speeds. The runtime overhead is
+  invisible.
+- **Test fixtures, demos, examples** — anything where the state
+  machine's correctness matters more than its raw throughput.
+- **Cross-backend portability** — framec's 17-backend story
+  trades runtime overhead for the ability to ship the same
+  state-machine logic across any of those toolchains.
+
+The honest summary: the runtime model is what enables Frame's
+language features. The cost is the tax for the abstraction. For
+~99% of state-machine use cases the cost is negligible; for the
+remaining 1%, profile first.
 
 ---
 
