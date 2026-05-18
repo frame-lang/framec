@@ -1,0 +1,240 @@
+name: nightly
+
+# RFC-0031 Layer 4: drift-detection comprehensive run.
+#
+# Runs the full 17-backend matrix (~3 min wall on 12-core, possibly
+# longer in CI) + the full fuzz corpus (~45 min per FUZZ_PLAN.md
+# § Wall clock budget targets). On failure, files an auto-tagged
+# `nightly-regression` issue so the next workday starts with "what
+# changed yesterday that broke this?"
+#
+# Layer 2 (matrix-smoke + fuzz-smoke per push) catches regressions
+# on the 4-backend representative cut. This nightly catches
+# regressions on the 17-backend × full-tier cut that Layer 2
+# deliberately skips for budget reasons.
+
+on:
+  schedule:
+    # Daily at 09:00 UTC — early morning US, mid-day Europe.
+    # Failure issue lands in the working day so it gets attention.
+    - cron: '0 9 * * *'
+  workflow_dispatch:  # Allow manual trigger from the Actions tab.
+
+permissions:
+  contents: read
+  issues: write       # Required for the file-an-issue-on-failure step
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  matrix-full:
+    name: matrix-full (17 backends)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout framec
+        uses: actions/checkout@v4
+        with:
+          path: framec
+
+      - name: Checkout framec-test-env
+        uses: actions/checkout@v4
+        with:
+          repository: frame-lang/framec-test-env
+          path: framec-test-env
+          ref: main
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: framec
+
+      - name: Build framec (Linux release)
+        working-directory: framec
+        run: |
+          cargo build --release -p framec
+          cp target/release/framec ../framec-test-env/docker/framec-linux
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Run full 17-backend matrix
+        working-directory: framec-test-env/docker
+        env:
+          FRAMEC_BIN: ./framec-linux
+        # All 17 backends. Single-shot run — no per-backend parallel
+        # job split, because the matrix orchestrator already
+        # parallelizes internally via docker-compose.
+        run: bash run.sh ./framec-linux 2>&1 | tee matrix-output.txt
+
+      - name: Assert zero failures
+        working-directory: framec-test-env/docker
+        run: |
+          if grep -E '^[a-z_]+-1\s*\|\s*not ok ' matrix-output.txt > /dev/null; then
+            echo "::error::Full matrix surfaced failures:"
+            grep -E '^[a-z_]+-1\s*\|\s*not ok ' matrix-output.txt | head -50
+            exit 1
+          fi
+          echo "Matrix full clean — per-backend summaries:"
+          grep -E '^[a-z_]+-1\s*\|\s*#\s+[a-z_]+:\s+[0-9]+ passed' matrix-output.txt
+
+      - name: Upload matrix output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: matrix-output
+          path: framec-test-env/docker/matrix-output.txt
+          retention-days: 30
+
+  fuzz-full:
+    name: fuzz-full (all 35k+ cases)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        # Split per-backend so each job's wall stays bounded and
+        # the per-backend failure surface is easy to attribute.
+        # Same 4-backend cut as fuzz-smoke (RFC-0031 Layer 2
+        # rationale); other 13 backends are optional future
+        # additions once their toolchains are wired in CI.
+        backend: [python_3, rust, java, erlang]
+    steps:
+      - name: Checkout framec
+        uses: actions/checkout@v4
+        with:
+          path: framec
+
+      - name: Checkout framec-test-env
+        uses: actions/checkout@v4
+        with:
+          repository: frame-lang/framec-test-env
+          path: framec-test-env
+          ref: main
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: framec
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Set up Erlang
+        if: matrix.backend == 'erlang'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y erlang-base erlang-eunit erlang-tools
+
+      - name: Build framec (release)
+        working-directory: framec
+        run: cargo build --release -p framec
+
+      - name: Generate full fuzz corpus
+        working-directory: framec-test-env/fuzz
+        env:
+          FRAMEC: ${{ github.workspace }}/framec/target/release/framec
+        run: |
+          set -euo pipefail
+          for gen in gen_perm.py gen_ctrl_flow.py gen_shadow.py \
+                     gen_state_args.py gen_stmt_pair.py \
+                     gen_comments.py gen_multievent.py gen_stress.py \
+                     gen_pushpop.py gen_const_sys.py gen_arith.py \
+                     gen_hsm_cross.py gen_nested.py; do
+              python3 "$gen" > /dev/null 2>&1
+          done
+          for gen in diff_harness/gen_*_pure.py; do
+              python3 "$gen" > /dev/null 2>&1
+          done
+
+      - name: Run full-tier fuzz for backend
+        working-directory: framec-test-env/fuzz
+        env:
+          FRAMEC: ${{ github.workspace }}/framec/target/release/framec
+        run: |
+          set -euo pipefail
+          : > /tmp/fuzz_fails.txt
+          for runner in run_perm.sh run_ctrl_flow.sh run_shadow.sh \
+                        run_state_args.sh run_stmt_pair.sh \
+                        run_comments.sh run_multievent.sh run_stress.sh \
+                        run_pushpop.sh run_const_sys.sh run_arith.sh \
+                        run_hsm_cross.sh; do
+              echo "::group::$runner --tier=full --lang=${{ matrix.backend }}"
+              ./"$runner" --tier=full --lang="${{ matrix.backend }}" \
+                  > /tmp/fuzz_runner.txt 2>&1 || true
+              grep -E '^# ' /tmp/fuzz_runner.txt | tail -1 || true
+              grep -E '^  not ok ' /tmp/fuzz_runner.txt \
+                  >> /tmp/fuzz_fails.txt || true
+              echo "::endgroup::"
+          done
+
+          BACKEND="${{ matrix.backend }}"
+          if [ "$BACKEND" = "python_3" ]; then
+              LANGS="python_3"
+          else
+              LANGS="python_3,$BACKEND"
+          fi
+          for phase in persist selfcall hsm operations async multisys; do
+              if [ -d "cases/$phase" ]; then
+                  echo "::group::diff_harness $phase --langs=$LANGS (full)"
+                  # No --max → full corpus
+                  python3 diff_harness/run_fuzz.py \
+                      --cases "cases/$phase" --langs "$LANGS"
+                  echo "::endgroup::"
+              fi
+          done
+
+          if [ -s /tmp/fuzz_fails.txt ]; then
+              echo "::error::Full-tier fuzz for ${{ matrix.backend }} surfaced failures:"
+              head -30 /tmp/fuzz_fails.txt
+              exit 1
+          fi
+
+  file-failure-issue:
+    name: file regression issue on failure
+    needs: [matrix-full, fuzz-full]
+    if: ${{ failure() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Open issue with failure summary
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const today = new Date().toISOString().slice(0, 10);
+            const title = `nightly-regression: comprehensive run failed (${today})`;
+            const body = [
+              `The nightly comprehensive run failed on ${today}.`,
+              ``,
+              `Run: ${runUrl}`,
+              ``,
+              `This issue was auto-opened per RFC-0031 Layer 4 (drift detection).`,
+              `Investigate what changed in main yesterday that broke matrix-full`,
+              `or fuzz-full. Reproduce locally with:`,
+              ``,
+              '```bash',
+              `# Matrix:`,
+              `cd framec-test-env/docker && make test`,
+              ``,
+              `# Fuzz (one of):`,
+              `cd framec-test-env/fuzz && \\`,
+              `  FRAMEC=/path/to/framec/target/release/framec \\`,
+              `  ./run_all.sh --tier=full`,
+              '```',
+              ``,
+              `If the regression is a known intermittent flake, document in`,
+              `\`docs/contributing/testing.md\` and close. Otherwise treat as`,
+              `a real regression — bisect, fix, ship.`,
+            ].join('\n');
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: title,
+              body: body,
+              labels: ['nightly-regression']
+            });
