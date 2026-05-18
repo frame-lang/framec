@@ -1,0 +1,102 @@
+name: quarterly-roadmap-audit
+
+# RFC-0031 Layer 4: quarterly stale-roadmap audit cadence.
+#
+# Opens an issue every quarter as a recurring prompt to verify
+# every `- [ ]` entry in `_scratch/roadmap.md` against current
+# code/git state. The 2026-05-17/18 session closed 11 stale
+# entries this way; similar drift accumulates whenever the
+# codebase advances faster than the doc, so this cadence catches
+# it before another multi-week stale period.
+#
+# The roadmap doc itself is gitignored (`_scratch/`), so the
+# audit happens on someone's local checkout — not in CI. CI's
+# job here is just to remind, not to perform.
+
+on:
+  schedule:
+    # 09:00 UTC on the 1st of every January / April / July /
+    # October. Quarterly cadence per RFC-0031 § Layer 4
+    # "stale-roadmap audit."
+    - cron: '0 9 1 1,4,7,10 *'
+  workflow_dispatch:  # Allow manual trigger.
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  open-audit-issue:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Open quarterly audit issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const quarter = (() => {
+              const m = new Date().getUTCMonth();
+              return Math.floor(m / 3) + 1;
+            })();
+            const year = new Date().getUTCFullYear();
+            const title = `roadmap audit Q${quarter} ${year}: verify every "- [ ]" entry`;
+            const body = [
+              `**Quarterly stale-roadmap audit per RFC-0031 Layer 4.**`,
+              ``,
+              `For every \`- [ ]\` task in \`_scratch/roadmap.md\`,`,
+              `verify against current state (git log, file contents,`,
+              `build output) that the work hasn't silently been done.`,
+              ``,
+              `## Why`,
+              ``,
+              `The 2026-05-17/18 session closed **11 stale entries**`,
+              `this way (#402, #406, #435, #403, #171, #172, #431.2,`,
+              `#407, #405, #401, +1). Each represented hours of`,
+              `potential rework prevented. Similar drift accumulates`,
+              `whenever the codebase advances faster than the doc —`,
+              `quarterly is the cadence at which the cost stays`,
+              `manageable.`,
+              ``,
+              `## Procedure`,
+              ``,
+              '```bash',
+              `cd /path/to/framec`,
+              `rg '^- \\[ \\]' _scratch/roadmap.md`,
+              '```',
+              ``,
+              `For each item:`,
+              ``,
+              `1. Identify what would prove the task is done`,
+              `   (specific file, commit, behavior).`,
+              `2. Check current state. If done: flip to \`- [x]\` with`,
+              `   a brief close note (commit SHA, date, rationale).`,
+              `3. If not done but the framing has shifted: rewrite the`,
+              `   entry. Don't leave a stale description standing.`,
+              `4. If genuinely still open: leave \`- [ ]\` as is.`,
+              ``,
+              `## Rules`,
+              ``,
+              `- Verify before claiming "open." Auto-memory snapshots`,
+              `  and roadmap entries drift faster than the code.`,
+              `- Treat memory as a hypothesis, not a fact (per the`,
+              `  discipline note in the roadmap header).`,
+              `- Don't cite "wait until RFC-X ships" without checking`,
+              `  RFC-X's actual status — at least four such mis-cites`,
+              `  surfaced in the 2026-05-17/18 RFC drafting pass.`,
+              ``,
+              `## Closing this issue`,
+              ``,
+              `Close with a comment summarizing:`,
+              `- How many \`- [ ]\` entries were verified`,
+              `- How many got flipped to \`- [x]\` as already-done`,
+              `- How many got rewritten`,
+              `- Approximate time spent`,
+              ``,
+              `Auto-opened by \`.github/workflows/quarterly-audit.yml\`.`,
+            ].join('\n');
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: title,
+              body: body,
+              labels: ['process', 'roadmap-audit']
+            });
