@@ -12,36 +12,37 @@ use crate::frame_c::compiler::frame_ast::*;
 use std::collections::{HashMap, HashSet};
 
 impl FrameValidator {
-    /// E413: Detect circular parent chains in HSM hierarchy
+    /// E413: Detect circular parent chains in HSM hierarchy.
+    ///
+    /// RFC-0035 round 5: Frame-implemented in
+    /// `compiler/hsm_cycle_validator/`. The FSM walks each
+    /// state's parent chain as a 4-state graph walker:
+    /// $Initial → $Walking → ($CycleFound | $ChainRoot).
     pub(super) fn validate_hsm_cycles(
         &mut self,
         _system: &SystemAst,
         state_map: &HashMap<String, &StateAst>,
     ) {
-        for (state_name, state) in state_map {
-            if state.parent.is_none() {
-                continue;
-            }
-            let mut visited = HashSet::new();
-            visited.insert(state_name.clone());
-            let mut current = state.parent.as_deref();
-            while let Some(parent_name) = current {
-                if !visited.insert(parent_name.to_string()) {
-                    // Cycle detected
-                    self.errors.push(
-                        ValidationError::new(
-                            "E413",
-                            format!(
-                            "HSM cycle detected: state '{}' has circular parent chain through '{}'",
-                            state_name, parent_name
-                        ),
-                        )
-                        .with_span(state.span.clone()),
-                    );
-                    break;
-                }
-                current = state_map.get(parent_name).and_then(|s| s.parent.as_deref());
-            }
+        let parents: Vec<(String, Option<String>)> = state_map
+            .iter()
+            .map(|(name, state)| (name.clone(), state.parent.clone()))
+            .collect();
+        let cycles = crate::frame_c::compiler::hsm_cycle_validator::validate_hsm_cycles(&parents);
+        for (state_name, cycle_at) in cycles {
+            // Every cycle reported by the FSM has state_name in
+            // state_map by construction (we built `parents` from
+            // state_map.iter()).
+            let span = state_map[&state_name].span.clone();
+            self.errors.push(
+                ValidationError::new(
+                    "E413",
+                    format!(
+                        "HSM cycle detected: state '{}' has circular parent chain through '{}'",
+                        state_name, cycle_at
+                    ),
+                )
+                .with_span(span),
+            );
         }
     }
 

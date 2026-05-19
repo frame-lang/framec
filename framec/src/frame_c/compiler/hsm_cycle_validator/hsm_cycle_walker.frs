@@ -1,0 +1,96 @@
+@@[target("rust")]
+
+// E413 HSM parent-chain cycle detector, expressed as a
+// genuinely multi-state Frame system.
+//
+// RFC-0035 round 5. The previous rounds documented where Frame
+// fits well (state-tracking validators — round 4) and where it
+// doesn't (rich return types, recursion, line classifiers —
+// round 3). Round 5 puts Frame on a *graph algorithm* — the
+// HSM parent-chain walk.
+//
+// Each call site creates a fresh FSM instance and walks a
+// single state's parent chain:
+//
+//   $Initial   — no walk started; first step seeds `start_name`
+//                and `visited`, then transitions to $Walking.
+//   $Walking   — chain walk in progress. Each step receives the
+//                next parent; either records it in `visited`
+//                and stays in $Walking, or detects a revisit
+//                and transitions to $CycleFound, or sees an
+//                empty parent and transitions to $ChainRoot.
+//   $CycleFound — terminal error state; further steps absorb.
+//   $ChainRoot  — terminal success state; further steps absorb.
+//
+// This is the canonical "graph walk as state machine" pattern:
+// each state in the FSM corresponds to a phase of the
+// algorithm, and the visited set is a domain field that evolves
+// over event calls (not a state-arg — Frame's state-args are
+// per-state, but visited threads through every state of the
+// walk).
+//
+// The caller orchestrates: pop the start state, feed its parent
+// to step(), check the result, look up the next parent, feed
+// that to step(), etc. The FSM tracks accumulated state. The
+// glue Rust function pushes a ValidationError when step()
+// returns "CYCLE|<at>".
+
+@@system HsmCycleWalker {
+    interface:
+        step(parent: String): String
+
+    machine:
+        $Initial {
+            step(parent: String): String {
+                // First call: caller MUST send the starting node
+                // as `parent` here (the node whose chain we are
+                // about to walk). Subsequent calls send parent
+                // chain links.
+                self.start_name = parent.clone();
+                self.visited = parent.clone();
+                -> $Walking
+                @@:("WALKING".to_string())
+            }
+        }
+
+        $Walking {
+            step(parent: String): String {
+                if parent.is_empty() {
+                    -> $ChainRoot
+                    @@:("ROOT".to_string())
+                }
+                // Check visited: split on `,`, look for parent.
+                let already_seen = self
+                    .visited
+                    .split(',')
+                    .any(|v| v == parent.as_str());
+                if already_seen {
+                    self.cycle_at = parent.clone();
+                    -> $CycleFound
+                    @@:(format!("CYCLE|{}", parent))
+                }
+                if !self.visited.is_empty() {
+                    self.visited.push(',');
+                }
+                self.visited.push_str(&parent);
+                @@:("WALKING".to_string())
+            }
+        }
+
+        $CycleFound {
+            step(parent: String): String {
+                @@:(format!("CYCLE|{}", self.cycle_at))
+            }
+        }
+
+        $ChainRoot {
+            step(parent: String): String {
+                @@:("ROOT".to_string())
+            }
+        }
+
+    domain:
+        start_name: String = String::new()
+        visited: String = String::new()
+        cycle_at: String = String::new()
+}
