@@ -28,37 +28,13 @@ pub(crate) fn pascal_case_variant(s: &str) -> String {
 }
 
 /// Map a Frame `Type` to a Rust-native type spelling for use inside
-/// generated structs (e.g. the per-state `XContext`). Mirrors the
-/// conversions in `RustBackend::convert_type`, but lives here so that
-/// raw-text codegen in `runtime.rs` doesn't have to round-trip through
-/// the AST/CodegenNode pipeline. Untyped (`Type::Unknown`) state params
-/// fall back to `String`, matching the dynamic backends' loosely-typed
-/// `state_args` HashMap.
+/// generated structs (e.g. the per-state `XContext`). Untyped
+/// (`Type::Unknown`) state params fall back to `String`, matching the
+/// dynamic backends' loosely-typed `state_args` HashMap.
+///
+/// RFC-0035 round 2: Frame-implemented in `compiler/type_map/`.
 fn frame_type_to_rust_type(t: &Type) -> String {
-    match t {
-        Type::Custom(name) => match name.as_str() {
-            "int" => "i64".to_string(),
-            "float" => "f64".to_string(),
-            "str" | "string" | "String" => "String".to_string(),
-            "bool" => "bool".to_string(),
-            "Any" => "String".to_string(),
-            // RFC-0033: borrowed → owned promotion at owned positions
-            // (event variant fields, state-context struct fields,
-            // return-enum variants). The borrowed signature is kept
-            // at the call-boundary by `type_to_string`; this helper
-            // only fires where the value must be stored owned.
-            "&str" => "String".to_string(),
-            other if other.starts_with("&[") && other.ends_with(']') => {
-                // `&[T]` → `Vec<T>`. The owned form holds the value;
-                // dispatch site does `.to_vec()`; handler re-borrows
-                // back to `&[T]` via `.as_slice()`.
-                let inner = &other[2..other.len() - 1];
-                format!("Vec<{}>", inner)
-            }
-            other => other.to_string(),
-        },
-        Type::Unknown => "String".to_string(),
-    }
+    crate::frame_c::compiler::type_map::frame_type_to_rust_type(t)
 }
 
 /// Default value (right-hand side of `Self { name: <init> }`) for a

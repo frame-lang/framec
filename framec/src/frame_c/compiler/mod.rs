@@ -26,6 +26,8 @@ pub mod name;
 pub mod pipeline;
 pub mod pipeline_parser;
 pub mod segmenter;
+pub mod target_query;
+pub mod type_map;
 
 pub use codegen::{generate_system, get_backend, CodegenNode, LanguageBackend};
 pub use pipeline::{compile_ast_based, CompileError, CompileMode, CompileResult, PipelineConfig};

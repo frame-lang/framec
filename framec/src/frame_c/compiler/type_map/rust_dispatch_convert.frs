@@ -1,0 +1,33 @@
+@@[target("rust")]
+
+// RFC-0033 helper: how to convert a system-method's
+// borrowed-or-owned param value into the owned form the event
+// variant holds. Returns one of the three suffix tokens:
+//
+//   ".to_string()"  — for &str  (variant holds String)
+//   ".to_vec()"     — for &[T]  (variant holds Vec<T>)
+//   ".clone()"      — for everything else (no-op on Copy types,
+//                     real clone on owned ones)
+//
+// Single result binding so the body's one `@@:(...)` call wins
+// (Frame's @@:(value) sets the return — it does not return
+// early).
+
+@@system RustDispatchConvert {
+    interface:
+        suffix(t: String): String
+
+    machine:
+        $Active {
+            suffix(t: String): String {
+                let result = if t == "&str" {
+                    ".to_string()".to_string()
+                } else if t.starts_with("&[") && t.ends_with(']') {
+                    ".to_vec()".to_string()
+                } else {
+                    ".clone()".to_string()
+                };
+                @@:(result)
+            }
+        }
+}

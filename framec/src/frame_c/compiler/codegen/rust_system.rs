@@ -37,17 +37,10 @@ use crate::frame_c::visitors::TargetLanguage;
 /// - `&[T]` → `.to_vec()`     (variant field is `Vec<T>`)
 /// - otherwise (`String`, `Vec<T>`, custom, primitives) → `.clone()`,
 ///   which is a no-op for Copy types and a real clone for owned ones.
+///
+/// RFC-0035 round 2: Frame-implemented in `compiler/type_map/`.
 fn rust_dispatch_convert(t: &crate::frame_c::compiler::frame_ast::Type) -> &'static str {
-    if let crate::frame_c::compiler::frame_ast::Type::Custom(name) = t {
-        let n = name.as_str();
-        if n == "&str" {
-            return ".to_string()";
-        }
-        if n.starts_with("&[") && n.ends_with(']') {
-            return ".to_vec()";
-        }
-    }
-    ".clone()"
+    crate::frame_c::compiler::type_map::rust_dispatch_convert(t)
 }
 
 /// RFC-0033 helper: how to re-borrow a destructured variant field
@@ -58,11 +51,7 @@ fn rust_dispatch_convert(t: &crate::frame_c::compiler::frame_ast::Type) -> &'sta
 /// - `&[T]` → `name.as_slice()` (variant holds `Vec<T>`, hand back `&[T]`)
 /// - non-Copy owned (`String`, `Vec<_>`, `HashMap<_, _>`) → `name.clone()`
 /// - other (Copy types) → `*name`
-fn rust_handler_arg_expr(
-    name: &str,
-    source_type: &str,
-    resolved_type: &str,
-) -> String {
+fn rust_handler_arg_expr(name: &str, source_type: &str, resolved_type: &str) -> String {
     if source_type == "&str" {
         return format!("{}.as_str()", name);
     }
@@ -1268,7 +1257,9 @@ fn rust_wrap_for_boxing(expr: &str, return_type: &Option<String>) -> String {
         // Bare identifier or dotted path (e.g. `self.s`, `slot`,
         // `arg.field`) — no operators, no parentheses, no quotes.
         !trimmed.is_empty()
-            && trimmed.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.')
+            && trimmed
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '_' || c == '.')
             && !is_string_literal
     };
     match return_type.as_deref() {

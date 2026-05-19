@@ -1,0 +1,32 @@
+@@[target("rust")]
+
+// Target-language predicate: is this a dynamic/loosely-typed
+// target? Used by interface_gen and friends to decide whether
+// to emit casts, type annotations, or untyped passthroughs.
+//
+// Frame's interface is stringly-typed for the moment — the
+// TargetLanguage enum doesn't round-trip cleanly through a
+// Frame event param. So the input here is the
+// `TargetLanguage::as_str()` form (the lowercased canonical
+// name), and the answer comes back as "true" / "false" which
+// the glue mod.rs converts back to bool.
+//
+// This is part of RFC-0035 round 2 — a deliberately awkward fit
+// (boolean returns expressed as string round-trip) is worth
+// recording as an ergonomics observation.
+
+@@system IsDynamicTarget {
+    interface:
+        check(lang: String): String
+
+    machine:
+        $Active {
+            check(lang: String): String {
+                let result = matches!(
+                    lang.as_str(),
+                    "python_3" | "javascript" | "ruby" | "lua" | "php" | "gdscript" | "erlang"
+                );
+                @@:(if result { "true".to_string() } else { "false".to_string() })
+            }
+        }
+}

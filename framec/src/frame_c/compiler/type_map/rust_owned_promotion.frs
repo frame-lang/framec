@@ -1,0 +1,37 @@
+@@[target("rust")]
+
+// RFC-0033 helper: returns the promoted owned-type spelling for
+// a Rust interface-parameter type string, OR the empty string if
+// the type is already owned (no promotion needed).
+//
+//   "&str"     → "String"
+//   "&[T]"     → "Vec<T>"
+//   otherwise  → ""
+//
+// Returning the empty string for "no promotion" keeps the
+// interface contract simple (all answers are String). Callers
+// branch on `.is_empty()` and the glue mod translates back to
+// `Option<String>`.
+//
+// Single result binding so the body's one `@@:(...)` call wins.
+
+@@system RustOwnedPromotion {
+    interface:
+        promote(t: String): String
+
+    machine:
+        $Active {
+            promote(t: String): String {
+                let trimmed = t.trim();
+                let result = if trimmed == "&str" {
+                    "String".to_string()
+                } else if trimmed.starts_with("&[") && trimmed.ends_with(']') {
+                    let inner = &trimmed[2..trimmed.len() - 1];
+                    format!("Vec<{}>", inner)
+                } else {
+                    String::new()
+                };
+                @@:(result)
+            }
+        }
+}

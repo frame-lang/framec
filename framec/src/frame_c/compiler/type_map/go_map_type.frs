@@ -1,0 +1,26 @@
+@@[target("rust")]
+
+// Frame type string → Go type spelling.
+// `void` / `None` map to the empty string (Go has no void return
+// type — the absence of a return spec IS the void form).
+
+@@system GoMapType {
+    interface:
+        map(t: String): String
+
+    machine:
+        $Active {
+            map(t: String): String {
+                let result = match t.as_str() {
+                    "Any" | "object" | "Object" => "any".to_string(),
+                    "str" | "string" | "String" => "string".to_string(),
+                    "int" | "i32" | "i64" | "number" => "int".to_string(),
+                    "float" | "f64" | "f32" => "float64".to_string(),
+                    "bool" | "boolean" => "bool".to_string(),
+                    "void" | "None" => String::new(),
+                    _ => t.clone(),
+                };
+                @@:(result)
+            }
+        }
+}

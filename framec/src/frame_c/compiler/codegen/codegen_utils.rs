@@ -423,95 +423,47 @@ pub(crate) fn convert_literal(lit: &Literal) -> CodegenNode {
     }
 }
 
-/// Map a Frame type string to C# type for (Type) cast
+/// Map a Frame type string to C# type for (Type) cast.
+///
+/// RFC-0035 round 2: Frame-implemented in `compiler/type_map/`.
 pub(crate) fn csharp_map_type(t: &str) -> String {
-    match t {
-        "Any" => "object".to_string(),
-        "str" | "string" | "String" => "string".to_string(),
-        "int" | "i32" | "i64" | "number" => "int".to_string(),
-        "float" | "f64" | "f32" => "double".to_string(),
-        "bool" | "boolean" => "bool".to_string(),
-        "void" => "void".to_string(),
-        other => other.to_string(),
-    }
+    crate::frame_c::compiler::type_map::csharp_map_type(t)
 }
 
-/// Map a Frame type string to Java type for (Type) cast
+/// Map a Frame type string to Java type for (Type) cast.
+///
+/// RFC-0035 round 2: Frame-implemented in `compiler/type_map/`.
 pub(crate) fn java_map_type(t: &str) -> String {
-    match t {
-        "Any" => "Object".to_string(),
-        "str" | "string" | "String" => "String".to_string(),
-        "int" | "i32" | "i64" | "number" => "int".to_string(),
-        "float" | "f64" | "f32" => "double".to_string(),
-        "bool" | "boolean" => "boolean".to_string(),
-        "void" => "void".to_string(),
-        other => other.to_string(),
-    }
+    crate::frame_c::compiler::type_map::java_map_type(t)
 }
 
-/// Map a Frame type string to Kotlin type for cast
+/// Map a Frame type string to Kotlin type for cast.
+///
+/// RFC-0035 round 2: Frame-implemented in `compiler/type_map/`.
 pub(crate) fn kotlin_map_type(t: &str) -> String {
-    match t {
-        "Any" | "Object" | "object" => "Any?".to_string(),
-        "str" | "string" | "String" => "String".to_string(),
-        "int" | "i32" | "i64" | "number" => "Int".to_string(),
-        "float" | "f64" | "f32" | "double" => "Double".to_string(),
-        "bool" | "boolean" => "Boolean".to_string(),
-        "void" => "Unit".to_string(),
-        other => other.to_string(),
-    }
+    crate::frame_c::compiler::type_map::kotlin_map_type(t)
 }
 
-/// Map a Frame type string to Swift type for cast
+/// Map a Frame type string to Swift type for cast. Handles
+/// `T | nil` → `T?` and `T[]` → `[T]` recursively.
+///
+/// RFC-0035 round 2: Frame-implemented in `compiler/type_map/`.
 pub(crate) fn swift_map_type(t: &str) -> String {
-    let t = t.trim();
-    // Handle nullable types: "Type | nil" -> "Type?"
-    if let Some(pipe_pos) = t.find('|') {
-        let base = t[..pipe_pos].trim();
-        let suffix = t[pipe_pos + 1..].trim();
-        if suffix == "nil" || suffix == "null" || suffix == "None" {
-            return format!("{}?", swift_map_type(base));
-        }
-    }
-    // Handle array types: "string[]" -> "[String]"
-    if let Some(base) = t.strip_suffix("[]") {
-        return format!("[{}]", swift_map_type(base));
-    }
-    match t {
-        "Any" | "Object" | "object" => "Any".to_string(),
-        "str" | "string" | "String" => "String".to_string(),
-        "int" | "i32" | "i64" | "number" => "Int".to_string(),
-        "float" | "f64" | "f32" | "double" => "Double".to_string(),
-        "bool" | "boolean" | "Boolean" => "Bool".to_string(),
-        "void" => "Void".to_string(),
-        other => other.to_string(),
-    }
+    crate::frame_c::compiler::type_map::swift_map_type(t)
 }
 
-/// Map a Frame type string to Go type for type assertion
+/// Map a Frame type string to Go type for type assertion.
+///
+/// RFC-0035 round 2: Frame-implemented in `compiler/type_map/`.
 pub(crate) fn go_map_type(t: &str) -> String {
-    match t {
-        "Any" | "object" | "Object" => "any".to_string(),
-        "str" | "string" | "String" => "string".to_string(),
-        "int" | "i32" | "i64" | "number" => "int".to_string(),
-        "float" | "f64" | "f32" => "float64".to_string(),
-        "bool" | "boolean" => "bool".to_string(),
-        "void" | "None" => String::new(),
-        other => other.to_string(),
-    }
+    crate::frame_c::compiler::type_map::go_map_type(t)
 }
 
-/// Map a Frame type string to C++ type for std::any_cast<T>
+/// Map a Frame type string to C++ type for std::any_cast<T>.
+///
+/// RFC-0035 round 2: Frame-implemented in `compiler/type_map/`.
 pub(crate) fn cpp_map_type(t: &str) -> String {
-    match t {
-        "Any" => "std::any".to_string(),
-        "str" | "string" | "String" => "std::string".to_string(),
-        "int" | "i32" | "i64" | "number" => "int".to_string(),
-        "float" | "f64" | "f32" => "double".to_string(),
-        "bool" | "boolean" => "bool".to_string(),
-        "void" => "void".to_string(),
-        other => other.to_string(), // Pass through C++ native types like std::string, std::vector<int>
-    }
+    crate::frame_c::compiler::type_map::cpp_map_type(t)
 }
 
 /// Wrap a C++ argument value for std::any storage.

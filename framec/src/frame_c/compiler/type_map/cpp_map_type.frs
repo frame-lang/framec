@@ -1,0 +1,26 @@
+@@[target("rust")]
+
+// Frame type string → C++ type spelling. Used for std::any_cast<T>
+// targets and similar contexts. User-defined types (e.g.,
+// std::vector<int>, custom classes) pass through verbatim.
+
+@@system CppMapType {
+    interface:
+        map(t: String): String
+
+    machine:
+        $Active {
+            map(t: String): String {
+                let result = match t.as_str() {
+                    "Any" => "std::any".to_string(),
+                    "str" | "string" | "String" => "std::string".to_string(),
+                    "int" | "i32" | "i64" | "number" => "int".to_string(),
+                    "float" | "f64" | "f32" => "double".to_string(),
+                    "bool" | "boolean" => "bool".to_string(),
+                    "void" => "void".to_string(),
+                    _ => t.clone(),
+                };
+                @@:(result)
+            }
+        }
+}

@@ -1,0 +1,27 @@
+@@[target("rust")]
+
+// Frame type string → Kotlin type spelling.
+// Note: `Any` maps to `Any?` because Kotlin's `Any?` is the
+// platform-nullable counterpart that round-trips through cast
+// sites without an NPE explosion.
+
+@@system KotlinMapType {
+    interface:
+        map(t: String): String
+
+    machine:
+        $Active {
+            map(t: String): String {
+                let result = match t.as_str() {
+                    "Any" | "Object" | "object" => "Any?".to_string(),
+                    "str" | "string" | "String" => "String".to_string(),
+                    "int" | "i32" | "i64" | "number" => "Int".to_string(),
+                    "float" | "f64" | "f32" | "double" => "Double".to_string(),
+                    "bool" | "boolean" => "Boolean".to_string(),
+                    "void" => "Unit".to_string(),
+                    _ => t.clone(),
+                };
+                @@:(result)
+            }
+        }
+}

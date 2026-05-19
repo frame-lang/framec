@@ -33,16 +33,7 @@
 use crate::frame_c::visitors::TargetLanguage;
 
 pub(super) fn is_dynamic_target(lang: TargetLanguage) -> bool {
-    matches!(
-        lang,
-        TargetLanguage::Python3
-            | TargetLanguage::JavaScript
-            | TargetLanguage::Ruby
-            | TargetLanguage::Lua
-            | TargetLanguage::Php
-            | TargetLanguage::GDScript
-            | TargetLanguage::Erlang
-    )
+    crate::frame_c::compiler::target_query::is_dynamic_target(lang)
 }
 
 pub(super) fn frame_return_default(lang: TargetLanguage, type_str: &str) -> String {

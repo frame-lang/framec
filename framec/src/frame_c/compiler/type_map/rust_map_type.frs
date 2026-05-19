@@ -1,0 +1,50 @@
+@@[target("rust")]
+
+// Frame type string → Rust owned-type spelling.
+// Used inside generated structs (XContext, event variants,
+// return-enum variants). RFC-0033 borrowed → owned promotion
+// fires here: `&str` widens to `String`, `&[T]` widens to
+// `Vec<T>`. The call-boundary keeps the borrowed signature
+// (see rust_owned_promotion + the dispatch site in
+// rust_system.rs); this helper only fires where the value
+// has to be stored owned.
+//
+// Note: input here is the *type-name string* (`&str` / `&[i32]`
+// / `MyType`). Frame_ast::Type carries the `Type::Unknown`
+// fallback, which the glue mod collapses to "" before invoking
+// this mapper — i.e. unknown types arrive as an empty input
+// string and we return "String" to match the prior behavior.
+//
+// Single match expression at the end so the body's one
+// `@@:(...)` call wins. (See swift_map_type.frs for the
+// observation that Frame's @@:(value) sets the return value
+// rather than returning early.)
+
+@@system RustMapType {
+    interface:
+        map(t: String): String
+
+    machine:
+        $Active {
+            map(t: String): String {
+                let result = if t.is_empty() {
+                    "String".to_string()
+                } else if t == "&str" {
+                    "String".to_string()
+                } else if t.starts_with("&[") && t.ends_with(']') {
+                    let inner = &t[2..t.len() - 1];
+                    format!("Vec<{}>", inner)
+                } else {
+                    match t.as_str() {
+                        "int" => "i64".to_string(),
+                        "float" => "f64".to_string(),
+                        "str" | "string" | "String" => "String".to_string(),
+                        "bool" => "bool".to_string(),
+                        "Any" => "String".to_string(),
+                        other => other.to_string(),
+                    }
+                };
+                @@:(result)
+            }
+        }
+}
