@@ -499,6 +499,72 @@ fn issue24_apostrophe_in_state_body_comment_graphviz() {
     );
 }
 
+/// Issue #25 sub-case A (FRAMEC_BUGS): the `'"'` char literal
+/// (double-quote inside single-quote) was a regression introduced
+/// by the #24 fix — the body_closer used to consume `'"'` as a
+/// char literal (handled by the per-language Rust closer), but
+/// the new FrameStructuralSkipper didn't recognize `'...'` and
+/// the `"` inside opened a phantom string. Fixed by adding
+/// `scan_char_literal` to the structural body_closer.
+#[test]
+fn issue25a_double_quote_inside_char_literal_graphviz() {
+    use framec::frame_c::compiler::compile_module;
+    use framec::frame_c::compiler::TargetLanguage;
+    use std::convert::TryFrom;
+
+    let src = r#"
+@@[target("rust")]
+
+@@system Foo {
+    interface:
+        go(c: char)
+    machine:
+        $A {
+            go(c: char) {
+                if c == '"' {
+                    -> $B
+                }
+            }
+        }
+        $B { }
+}
+"#;
+    let dot = compile_module(src, TargetLanguage::try_from("graphviz").unwrap())
+        .expect("graphviz compile after #25 sub-case A fix");
+    assert!(dot.contains("digraph Foo"), "missing digraph Foo:\n{}", dot);
+}
+
+/// Issue #25 sub-case B: multiple apostrophe-bearing `//` comments
+/// in the SAME state body. The #24 fix made the body_closer handle
+/// a single apostrophe correctly, but the enrichment scanner
+/// (called from the validator path) still used Python's scanner —
+/// which tripped on the same `'`. Two such comments compounded the
+/// failure into "unterminated string". Fixed by routing the
+/// graphviz enrichment scanner through FrameStructuralSkipper too.
+#[test]
+fn issue25b_multiple_apostrophe_comments_in_same_state_body() {
+    use framec::frame_c::compiler::compile_module;
+    use framec::frame_c::compiler::TargetLanguage;
+    use std::convert::TryFrom;
+
+    let src = r#"
+@@[target("rust")]
+
+@@system Foo {
+    machine:
+        $A {
+            // first comment with bar's apostrophe
+            $>() {
+                // second comment with baz's apostrophe
+            }
+        }
+}
+"#;
+    let dot = compile_module(src, TargetLanguage::try_from("graphviz").unwrap())
+        .expect("graphviz compile after #25 sub-case B fix");
+    assert!(dot.contains("digraph Foo"), "missing digraph Foo:\n{}", dot);
+}
+
 /// Helper: grab a 12-line window around the first match of `needle`,
 /// for clearer assertion failure messages than a 5,000-line dump.
 fn excerpt(haystack: &str, needle: &str) -> String {

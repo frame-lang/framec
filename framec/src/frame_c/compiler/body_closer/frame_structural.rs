@@ -25,6 +25,50 @@
 
 use super::{BodyCloser, CloseError, CloseErrorKind};
 
+/// Attempt to scan a single-quoted char literal starting at `i`
+/// (which must point at `'`). Returns `Some(end)` — position past
+/// the closing `'` — if the next bytes match a recognized char-
+/// literal shape; otherwise `None`, signaling that `'` should be
+/// treated as an ordinary byte (English apostrophe, Rust lifetime,
+/// or text-like content).
+///
+/// Recognized shapes (all of length ≤ 12 bytes total):
+/// - `'X'`           — single non-`'`/`\` byte then `'`
+/// - `'\X'`          — backslash escape (`\n`, `\t`, `\\`, `\'`, `\"`, etc.)
+/// - `'\u{HHHHHH}'`  — Rust-style unicode escape (`\u{` then 1–6 hex,
+///                    then `}` then `'`)
+pub(super) fn scan_char_literal(bytes: &[u8], i: usize, end: usize) -> Option<usize> {
+    if bytes[i] != b'\'' || i + 1 >= end {
+        return None;
+    }
+    // Single non-special byte form: `'X'`
+    if bytes[i + 1] != b'\\' && bytes[i + 1] != b'\'' && i + 2 < end && bytes[i + 2] == b'\'' {
+        return Some(i + 3);
+    }
+    // Escape forms.
+    if bytes[i + 1] == b'\\' && i + 2 < end {
+        // Unicode escape: `'\u{...}'`
+        if bytes[i + 2] == b'u' && i + 3 < end && bytes[i + 3] == b'{' {
+            let mut j = i + 4;
+            while j < end
+                && (bytes[j].is_ascii_hexdigit() || bytes[j] == b'_')
+                && j - (i + 4) < 6
+            {
+                j += 1;
+            }
+            if j < end && bytes[j] == b'}' && j + 1 < end && bytes[j + 1] == b'\'' {
+                return Some(j + 2);
+            }
+            return None;
+        }
+        // Simple escape: `'\X'`
+        if i + 3 < end && bytes[i + 3] == b'\'' {
+            return Some(i + 4);
+        }
+    }
+    None
+}
+
 pub struct BodyCloserFrameStructural;
 
 impl BodyCloser for BodyCloserFrameStructural {
@@ -103,6 +147,33 @@ impl BodyCloser for BodyCloserFrameStructural {
                 }
                 i = j;
                 continue;
+            }
+            // Single-quoted char literal: `'c'`, `'\''`, `'"'`, etc.
+            // FRAMEC_BUGS #25 sub-case A: without this branch, a `"`
+            // inside a char literal (`'"'`) was misread as the start
+            // of a string literal — the scanner then looked for a
+            // closing `"` across the rest of the file and trashed
+            // the brace-balance computation.
+            //
+            // Only treat `'` as a literal opener when the character
+            // sequence ahead actually looks like a char literal:
+            //   - `'X'`       (single non-`'`/`\` char)
+            //   - `'\X'`      (backslash escape; X is escaped char)
+            //   - `'\u{XX}'`  (Rust-style unicode escape — accept up
+            //                 to 8 hex digits between `{` and `}`)
+            //
+            // Otherwise — `'` followed by alphanumeric text without
+            // a closing `'` within a short window (e.g. English
+            // `bar's`, `'static` lifetime) — leave `'` as an ordinary
+            // byte. The bound (8) is generous enough for legitimate
+            // char literals and tight enough that English apostrophes
+            // don't accidentally consume a closing `'` somewhere
+            // later in the line.
+            if b == b'\'' && i + 1 < end {
+                if let Some(after) = scan_char_literal(bytes, i, end) {
+                    i = after;
+                    continue;
+                }
             }
             // Brace tracking.
             if b == b'{' {

@@ -18,8 +18,22 @@
 //! the more common case.
 
 use super::unified::SyntaxSkipper;
+use super::{NativeRegionScanner, ScanError, ScanResult};
 use crate::frame_c::compiler::body_closer::frame_structural::BodyCloserFrameStructural;
 use crate::frame_c::compiler::body_closer::BodyCloser;
+
+/// Frame-structural NativeRegionScanner used for the GraphViz
+/// pipeline (and any other "target-agnostic" callers). Routes the
+/// shared scanner over our permissive skipper so apostrophes in
+/// comments and `"` characters inside `'...'` char literals don't
+/// derail the body walk.
+pub struct NativeRegionScannerFrameStructural;
+
+impl NativeRegionScanner for NativeRegionScannerFrameStructural {
+    fn scan(&mut self, bytes: &[u8], open_brace_index: usize) -> Result<ScanResult, ScanError> {
+        super::unified::scan_native_regions(&FrameStructuralSkipper, bytes, open_brace_index)
+    }
+}
 
 pub struct FrameStructuralSkipper;
 

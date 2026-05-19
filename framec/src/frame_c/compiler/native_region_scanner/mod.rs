@@ -556,9 +556,12 @@ pub fn create_native_scanner(lang: TargetLanguage) -> Box<dyn NativeRegionScanne
         TargetLanguage::Lua => Box::new(lua::NativeRegionScannerLua),
         TargetLanguage::Dart => Box::new(dart::NativeRegionScannerDart),
         TargetLanguage::GDScript => Box::new(gdscript::NativeRegionScannerGDScript),
-        // GraphViz is output-only; default to Python's neutral skipper for
-        // any Frame-token scanning that still happens during analysis.
-        TargetLanguage::Graphviz => Box::new(python::NativeRegionScannerPy),
+        // FRAMEC_BUGS #25: graphviz used Python's scanner here, but
+        // the same `'`-as-string-opener mismatch that #24 fixed in
+        // the body_closer reappeared in handler-body enrichment.
+        // Use the structural scanner so the entire graphviz path is
+        // consistent.
+        TargetLanguage::Graphviz => Box::new(frame_structural::NativeRegionScannerFrameStructural),
     }
 }
 
