@@ -8,7 +8,11 @@ expression: "compile_fixture(\"02_hsm\", \"rust\")"
 #[allow(unused_variables)]
 #[allow(unused_mut)]
 #[allow(unused_imports)]
+#[allow(clippy::assign_op_pattern)]
+#[allow(clippy::clone_on_copy)]
 #[allow(clippy::derivable_impls)]
+#[allow(clippy::match_single_binding)]
+#[allow(clippy::needless_return)]
 #[allow(clippy::new_without_default)]
 #[allow(clippy::single_match)]
 mod _mini_hsm_framec {

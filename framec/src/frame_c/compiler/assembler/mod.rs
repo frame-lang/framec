@@ -261,7 +261,20 @@ pub fn assemble(
                         output.push_str("#[allow(unused_variables)]\n");
                         output.push_str("#[allow(unused_mut)]\n");
                         output.push_str("#[allow(unused_imports)]\n");
+                        // Specific clippy lints framec patterns
+                        // trigger on the canonical fixture corpus. The
+                        // set was audited by running
+                        // `cargo clippy -- -D warnings` against every
+                        // compiled fixture and collecting every
+                        // `-D clippy::<X>` reason fired. Future audits
+                        // may add new lints — keep them specific (no
+                        // blanket `clippy::all`/`pedantic`/`nursery`)
+                        // so genuinely new findings surface to users.
+                        output.push_str("#[allow(clippy::assign_op_pattern)]\n");
+                        output.push_str("#[allow(clippy::clone_on_copy)]\n");
                         output.push_str("#[allow(clippy::derivable_impls)]\n");
+                        output.push_str("#[allow(clippy::match_single_binding)]\n");
+                        output.push_str("#[allow(clippy::needless_return)]\n");
                         output.push_str("#[allow(clippy::new_without_default)]\n");
                         output.push_str("#[allow(clippy::single_match)]\n");
                         output.push_str(&format!("mod {} {{\n", mod_name));

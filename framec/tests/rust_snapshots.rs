@@ -117,9 +117,20 @@ fn rfc0033_lint_wrapper_outer_attrs_and_mod() {
         );
     }
 
-    // Required OUTER allows (specific clippy lints framec patterns trigger):
+    // Required OUTER allows (specific clippy lints framec patterns
+    // trigger). The set was audited via `cargo clippy -D warnings`
+    // against the canonical fixture corpus plus a transition-
+    // containing handler that exercises the `return;`-after-
+    // `__transition` codepath. If a future codegen change triggers
+    // a new clippy lint, the user will see it in their build and
+    // we'll add it here (deliberately not a blanket
+    // clippy::all/pedantic/nursery).
     for needed in [
+        "#[allow(clippy::assign_op_pattern)]",
+        "#[allow(clippy::clone_on_copy)]",
         "#[allow(clippy::derivable_impls)]",
+        "#[allow(clippy::match_single_binding)]",
+        "#[allow(clippy::needless_return)]",
         "#[allow(clippy::new_without_default)]",
         "#[allow(clippy::single_match)]",
     ] {
