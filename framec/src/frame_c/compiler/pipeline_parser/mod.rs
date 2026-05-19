@@ -1131,6 +1131,43 @@ impl<'a> Parser<'a> {
                             // We already consumed one colon. This shouldn't happen
                             // for initializer expressions, but handle gracefully.
                         }
+                        // RFC-0033: bare function-call initializer form —
+                        // `func(args)` (Python `list()`, JS `MyClass(x)`,
+                        // Lua/Ruby/Dart constructors). The `Type::method(args)`
+                        // Rust form is handled in the `::` branch above;
+                        // this branch covers all the dot-free call shapes
+                        // used by the other 16 backends. Without it, the
+                        // parser drops everything after the identifier
+                        // and the initializer is emitted as a bare name.
+                        if self.check(&Token::LParen)? {
+                            self.advance()?; // (
+                            let mut path = name.clone();
+                            path.push('(');
+                            let mut depth = 1;
+                            while depth > 0 {
+                                let next = self.advance()?;
+                                match &next.token {
+                                    Token::LParen => {
+                                        depth += 1;
+                                        path.push('(');
+                                    }
+                                    Token::RParen => {
+                                        depth -= 1;
+                                        path.push(')');
+                                    }
+                                    Token::Eof => break,
+                                    _ => {
+                                        let src = self.lexer.source();
+                                        let s = next.span.start.min(src.len());
+                                        let e = next.span.end.min(src.len());
+                                        path.push_str(
+                                            std::str::from_utf8(&src[s..e]).unwrap_or(""),
+                                        );
+                                    }
+                                }
+                            }
+                            return Ok(Expression::NativeExpr(path));
+                        }
                         Ok(Expression::Var(name))
                     }
                 }

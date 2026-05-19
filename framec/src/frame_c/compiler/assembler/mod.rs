@@ -11,6 +11,7 @@
 //! 2. Post-process: expand `@@SystemName()` system instantiations in native regions
 //! 3. Return final assembled output
 
+use crate::frame_c::compiler::codegen::codegen_utils::to_snake_case;
 use crate::frame_c::compiler::frame_ast::SystemParam;
 use crate::frame_c::compiler::native_region_scanner::create_skipper;
 use crate::frame_c::compiler::native_region_scanner::unified::SyntaxSkipper;
@@ -68,26 +69,6 @@ pub fn assemble(
 ) -> Result<String, AssemblyError> {
     let source = &source_map.source;
     let mut output = String::new();
-
-    // RFC-0033: Rust-only module-level lint-suppression preamble.
-    // Emitted ONCE at file top (inner attributes must precede all
-    // other items). Suppresses the rustc warnings inherent to Frame
-    // codegen shape and the three specific clippy lints framec's
-    // emission patterns trigger. NOT a blanket clippy::all /
-    // pedantic / nursery — new clippy findings should surface to
-    // users so the codegen can be improved.
-    if matches!(lang, TargetLanguage::Rust) {
-        output.push_str("#![allow(dead_code)]\n");
-        output.push_str("#![allow(non_camel_case_types)]\n");
-        output.push_str("#![allow(non_snake_case)]\n");
-        output.push_str("#![allow(unused_variables)]\n");
-        output.push_str("#![allow(unused_mut)]\n");
-        output.push_str("#![allow(unused_imports)]\n");
-        output.push_str("#![allow(clippy::derivable_impls)]\n");
-        output.push_str("#![allow(clippy::new_without_default)]\n");
-        output.push_str("#![allow(clippy::single_match)]\n");
-        output.push('\n');
-    }
 
     // Emit runtime imports first (before any native prolog code)
     // This ensures imports like "from typing import ..." come before user code
@@ -261,6 +242,45 @@ pub fn assemble(
                             is_main && main_extends_line.is_some(),
                         );
                         output.push_str(&rewritten);
+                    } else if matches!(lang, TargetLanguage::Rust) {
+                        // RFC-0033 #19: wrap the generated content in a
+                        // private module with OUTER lint-suppression
+                        // attributes. Inner attributes (`#![...]` at
+                        // file top) work for standalone-module usage
+                        // but rustc rejects them when the file is
+                        // pulled in via `include!()`, which is the
+                        // canonical Cargo build-script consumer
+                        // pattern. Outer attributes on a wrapping
+                        // `mod` work in every consumer position; the
+                        // `pub use ...::*;` re-export keeps the
+                        // public API identical to the unwrapped form.
+                        let mod_name = format!("_{}_framec", to_snake_case(name));
+                        output.push_str("#[allow(dead_code)]\n");
+                        output.push_str("#[allow(non_camel_case_types)]\n");
+                        output.push_str("#[allow(non_snake_case)]\n");
+                        output.push_str("#[allow(unused_variables)]\n");
+                        output.push_str("#[allow(unused_mut)]\n");
+                        output.push_str("#[allow(unused_imports)]\n");
+                        output.push_str("#[allow(clippy::derivable_impls)]\n");
+                        output.push_str("#[allow(clippy::new_without_default)]\n");
+                        output.push_str("#[allow(clippy::single_match)]\n");
+                        output.push_str(&format!("mod {} {{\n", mod_name));
+                        // `use super::*;` so multi-system files can
+                        // reference siblings (re-exported at parent
+                        // scope by their own `pub use`).
+                        output.push_str("    use super::*;\n");
+                        // Indent the generated content by 4 spaces.
+                        for line in expanded.lines() {
+                            if line.is_empty() {
+                                output.push('\n');
+                            } else {
+                                output.push_str("    ");
+                                output.push_str(line);
+                                output.push('\n');
+                            }
+                        }
+                        output.push_str("}\n");
+                        output.push_str(&format!("pub use {}::*;\n", mod_name));
                     } else {
                         output.push_str(&expanded);
                     }

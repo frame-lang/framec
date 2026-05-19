@@ -45,3 +45,21 @@ fn fixture_path(fixture_name: &str) -> PathBuf {
     p.push(format!("{}.frm", fixture_name));
     p
 }
+
+/// Compile an inline Frame source string for the given target.
+///
+/// Used by regression tests that exercise target-specific syntax
+/// (e.g. `&str` for Rust) that would fail on other backends if
+/// added as a shared fixture. The cross-backend snapshot corpus
+/// stays in `tests/fixtures/` and remains portable.
+pub fn compile_source(source: &str, target: &str) -> String {
+    let lang = TargetLanguage::try_from(target)
+        .unwrap_or_else(|e| panic!("unknown target language '{}': {}", target, e));
+    match compile_module(source, lang) {
+        Ok(code) => code,
+        Err(RunError { error, .. }) => panic!(
+            "framec failed to compile inline source for target {}:\n{}\n--- source ---\n{}",
+            target, error, source
+        ),
+    }
+}

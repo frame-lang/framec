@@ -16,7 +16,7 @@
 
 mod common;
 
-use common::compile_fixture;
+use common::{compile_fixture, compile_source};
 
 #[test]
 fn linear_fsm() {
@@ -76,4 +76,41 @@ fn consts() {
 #[test]
 fn no_persist() {
     insta::assert_snapshot!(compile_fixture("12_no_persist", "python_3"));
+}
+
+/// RFC-0033 #12 (cross-backend generalization): the parser fix for
+/// path-expression call forms (`String::from(args)`) also covers
+/// bare function-call initializers (`list()`, `dict()`, `MyClass(x)`).
+/// Before the fix, the parser dropped everything after the
+/// identifier and Python emitted `state_vars["x"] = list` (a
+/// reference to the type), not `state_vars["x"] = list()` (a fresh
+/// instance). Same parser bug — the user's code is silently wrong.
+#[test]
+fn rfc0033_state_var_call_initializers_python() {
+    let src = r#"
+@@system Repro {
+    interface:
+        get_x()
+    machine:
+        $A {
+            $.lst: list = list()
+            $.dct: dict = dict()
+            $.s: str = str("hello")
+            get_x() { @@:(self.lst) }
+        }
+}
+"#;
+    let out = compile_source(src, "python_3");
+
+    for expected in [
+        "compartment.state_vars[\"lst\"] = list()",
+        "compartment.state_vars[\"dct\"] = dict()",
+        "compartment.state_vars[\"s\"] = str(\"hello\")",
+    ] {
+        assert!(
+            out.contains(expected),
+            "state-var call initializer not preserved — expected `{}` in output",
+            expected
+        );
+    }
 }
