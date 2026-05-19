@@ -94,55 +94,66 @@ impl FrameValidator {
         }
         let start_state = &machine.states[0].name;
 
-        let mut reachable: HashSet<String> = HashSet::new();
-        let mut queue: Vec<String> = vec![start_state.clone()];
-        reachable.insert(start_state.clone());
-
-        let visit_body =
-            |body: &HandlerBody, reachable: &mut HashSet<String>, queue: &mut Vec<String>| {
-                for stmt in &body.statements {
-                    if let Statement::Transition(trans) = stmt {
-                        if trans.target != "pop$" && reachable.insert(trans.target.clone()) {
-                            queue.push(trans.target.clone());
-                        }
+        // Build the edge map: for each state, the union of its
+        // transition targets (from handlers + enter + exit) and
+        // its full ancestor chain. The reachable_validator FSM
+        // owns the BFS; we own the AST shape that produces edges.
+        // `pop$` targets are filtered here — they're dynamic
+        // (resolved at runtime by the stack), not statically
+        // reachable.
+        let mut edges: HashMap<String, Vec<String>> = HashMap::new();
+        let collect_body = |body: &HandlerBody, out: &mut Vec<String>| {
+            for stmt in &body.statements {
+                if let Statement::Transition(trans) = stmt {
+                    if trans.target != "pop$" {
+                        out.push(trans.target.clone());
                     }
-                }
-            };
-
-        while let Some(current) = queue.pop() {
-            if let Some(state) = state_map.get(&current) {
-                for handler in &state.handlers {
-                    visit_body(&handler.body, &mut reachable, &mut queue);
-                }
-                if let Some(enter) = &state.enter {
-                    visit_body(&enter.body, &mut reachable, &mut queue);
-                }
-                if let Some(exit) = &state.exit {
-                    visit_body(&exit.body, &mut reachable, &mut queue);
-                }
-                // HSM: walk the parent chain. Every ancestor of a
-                // reachable state is itself reachable through enter/
-                // exit cascades — no direct `-> $Parent` transition
-                // is required.
-                let mut ancestor = state.parent.clone();
-                while let Some(parent_name) = ancestor {
-                    if !reachable.insert(parent_name.clone()) {
-                        break;
-                    }
-                    queue.push(parent_name.clone());
-                    ancestor = state_map.get(&parent_name).and_then(|s| s.parent.clone());
                 }
             }
+        };
+        for state in &machine.states {
+            let mut neighbors: Vec<String> = Vec::new();
+            for handler in &state.handlers {
+                collect_body(&handler.body, &mut neighbors);
+            }
+            if let Some(enter) = &state.enter {
+                collect_body(&enter.body, &mut neighbors);
+            }
+            if let Some(exit) = &state.exit {
+                collect_body(&exit.body, &mut neighbors);
+            }
+            // HSM: every ancestor is reachable via enter/exit cascade.
+            // A cyclic parent chain (caught separately by E413) would loop
+            // forever here — terminate when we revisit a name we've
+            // already added for this state.
+            let mut local_visited: HashSet<String> = HashSet::new();
+            local_visited.insert(state.name.clone());
+            let mut ancestor = state.parent.clone();
+            while let Some(parent_name) = ancestor {
+                if !local_visited.insert(parent_name.clone()) {
+                    break;
+                }
+                neighbors.push(parent_name.clone());
+                ancestor = state_map.get(&parent_name).and_then(|s| s.parent.clone());
+            }
+            edges.insert(state.name.clone(), neighbors);
         }
 
-        for state in &machine.states {
-            if !reachable.contains(&state.name) {
+        let all_states: Vec<String> = machine.states.iter().map(|s| s.name.clone()).collect();
+        let unreachable = crate::frame_c::compiler::reachable_validator::validate_reachable_states(
+            start_state,
+            &edges,
+            &all_states,
+        );
+
+        for name in unreachable {
+            if let Some(state) = state_map.get(&name) {
                 self.warnings.push(
                     ValidationError::new(
                         "W414",
                         format!(
                             "State '{}' is not reachable from start state '{}' in system '{}'",
-                            state.name, start_state, system_name
+                            name, start_state, system_name
                         ),
                     )
                     .with_span(state.span.clone()),

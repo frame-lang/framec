@@ -1,0 +1,153 @@
+@@[target("rust")]
+
+// W414 reachable-states BFS walker, expressed as a 3-state
+// Frame system.
+//
+// RFC-0035 round 6. Round 5 applied Frame to a graph algorithm
+// where each chain walk was an independent FSM instance. Round
+// 6 takes the next step: ONE FSM instance for the entire BFS
+// walk, with the visited set and queue threaded through domain
+// fields that evolve across many events.
+//
+// States:
+//
+//   $Initial — no walk started; first call must be seed().
+//   $Walking — BFS in progress. enqueue() adds neighbors to
+//              the queue (de-duped against visited). next()
+//              pops the queue head, or transitions to $Done
+//              when the queue is empty.
+//   $Done    — terminal. next() returns "DONE" idempotently.
+//              unreachable() computes the diff against the
+//              caller-supplied "all states" list.
+//
+// The caller orchestrates the walk:
+//
+//   fsm.seed(start)
+//   loop {
+//       let head = fsm.next();
+//       if head == "DONE" { break; }
+//       for neighbor in state_map[head].transitions + parents {
+//           fsm.enqueue(neighbor);
+//       }
+//   }
+//   let unreachable = fsm.unreachable(all_states_csv);
+//
+// Domain fields carry the algorithmic state:
+//   queue   — comma-separated FIFO queue of pending node names
+//   visited — comma-separated set of all nodes ever enqueued
+//
+// Linear-scan lookup on `visited` is fine at HSM graph scale
+// (machines typically have ≤50 states). A first-class Frame
+// `Set` interface type would make this O(1), but the dogfood
+// observation is the same as Round 5.
+
+@@system ReachableWalker {
+    interface:
+        seed(start: String): String
+        enqueue(name: String): String
+        next(): String
+        unreachable(all_csv: String): String
+
+    machine:
+        $Initial {
+            seed(start: String): String {
+                self.queue = start.clone();
+                self.visited = start.clone();
+                -> $Walking
+                @@:("READY".to_string())
+            }
+        }
+
+        $Walking {
+            enqueue(name: String): String {
+                if name.is_empty() {
+                    @@:("SKIP".to_string())
+                    return
+                }
+                let already = self.visited.split(',').any(|v| v == name.as_str());
+                if already {
+                    @@:("SKIP".to_string())
+                    return
+                }
+                if !self.visited.is_empty() {
+                    self.visited.push(',');
+                }
+                self.visited.push_str(&name);
+                if !self.queue.is_empty() {
+                    self.queue.push(',');
+                }
+                self.queue.push_str(&name);
+                @@:("ENQUEUED".to_string())
+            }
+
+            next(): String {
+                if self.queue.is_empty() {
+                    -> $Done
+                    @@:("DONE".to_string())
+                }
+                let head;
+                let rest;
+                if let Some(comma_pos) = self.queue.find(',') {
+                    head = self.queue[..comma_pos].to_string();
+                    rest = self.queue[comma_pos + 1..].to_string();
+                } else {
+                    head = self.queue.clone();
+                    rest = String::new();
+                }
+                self.queue = rest;
+                @@:(head)
+            }
+
+            unreachable(all_csv: String): String {
+                // Available before walk completes — read-only diff.
+                let mut result = String::new();
+                for name in all_csv.split(',') {
+                    if name.is_empty() {
+                        continue;
+                    }
+                    let was_visited = self.visited.split(',').any(|v| v == name);
+                    if !was_visited {
+                        if !result.is_empty() {
+                            result.push(',');
+                        }
+                        result.push_str(name);
+                    }
+                }
+                @@:(result)
+            }
+        }
+
+        $Done {
+            next(): String {
+                @@:("DONE".to_string())
+            }
+
+            unreachable(all_csv: String): String {
+                let mut result = String::new();
+                for name in all_csv.split(',') {
+                    if name.is_empty() {
+                        continue;
+                    }
+                    let was_visited = self.visited.split(',').any(|v| v == name);
+                    if !was_visited {
+                        if !result.is_empty() {
+                            result.push(',');
+                        }
+                        result.push_str(name);
+                    }
+                }
+                @@:(result)
+            }
+
+            enqueue(name: String): String {
+                // Defensive: a caller that loops past DONE shouldn't
+                // crash. Absorb the enqueue; the walk has already
+                // ended.
+                @@:("SKIP".to_string())
+            }
+        }
+
+    domain:
+        queue: String = String::new()
+        visited: String = String::new()
+}
