@@ -446,6 +446,59 @@ fn issue23_untyped_domain_field_rejected_for_rust() {
     );
 }
 
+/// Issue #24 (FRAMEC_BUGS): apostrophe inside a `//` line comment
+/// in a state body used to trip the GraphViz pipeline's brace-
+/// matching because the graphviz target shared Python's syntax
+/// skipper — Python treats `'` as a string opener and doesn't
+/// recognize `//` comments. The fix routes graphviz through a
+/// permissive `FrameStructuralSkipper` that handles both `//` and
+/// `#` line comments and leaves `'` as an ordinary byte.
+///
+/// Source compiles to BOTH targets; the bug was per-target
+/// divergence (Rust accepted, graphviz rejected with E002 or E402).
+#[test]
+fn issue24_apostrophe_in_state_body_comment_graphviz() {
+    use framec::frame_c::compiler::compile_module;
+    use framec::frame_c::compiler::TargetLanguage;
+    use std::convert::TryFrom;
+
+    // Source with `@@[target("rust")]` matches the real bug shape:
+    // segmenter detects rust as the source language and uses
+    // RustSkipper; lexer/parser receive `TargetLanguage::Graphviz`
+    // (from `-l graphviz` CLI) and used to fall back to the Python
+    // skipper, which tripped on `'` inside `//` comments.
+    let src = r#"
+@@[target("rust")]
+
+@@system Foo {
+    machine:
+        $A {
+            // bar's note
+            $>() { }
+        }
+}
+"#;
+    // Rust target was already correct — assert that still works.
+    let rust_lang = TargetLanguage::try_from("rust").unwrap();
+    let rust_out = compile_module(src, rust_lang).expect("rust compile");
+    assert!(
+        rust_out.contains("struct Foo"),
+        "rust output missing struct Foo:\n{}",
+        &rust_out[..rust_out.len().min(200)]
+    );
+
+    // GraphViz target used to fail with E002 "Unmatched '{' for
+    // state A". After the fix it produces valid DOT.
+    let dot_lang = TargetLanguage::try_from("graphviz").unwrap();
+    let dot_out = compile_module(src, dot_lang)
+        .expect("graphviz compile after #24 fix");
+    assert!(
+        dot_out.contains("digraph Foo"),
+        "graphviz output missing `digraph Foo`:\n{}",
+        &dot_out[..dot_out.len().min(200)]
+    );
+}
+
 /// Helper: grab a 12-line window around the first match of `needle`,
 /// for clearer assertion failure messages than a 5,000-line dump.
 fn excerpt(haystack: &str, needle: &str) -> String {

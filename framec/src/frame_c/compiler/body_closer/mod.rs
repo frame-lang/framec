@@ -31,6 +31,7 @@ pub mod cpp;
 pub mod csharp;
 pub mod dart;
 pub mod erlang;
+pub mod frame_structural;
 pub mod gdscript;
 pub mod go;
 pub mod java;

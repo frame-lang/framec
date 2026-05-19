@@ -137,6 +137,7 @@ pub mod cpp;
 pub mod csharp;
 pub mod dart;
 pub mod erlang;
+pub mod frame_structural;
 pub mod gdscript;
 pub mod go;
 pub mod java;
@@ -582,6 +583,14 @@ pub fn create_skipper(lang: TargetLanguage) -> Box<dyn SyntaxSkipper> {
         TargetLanguage::Lua => Box::new(lua::LuaSkipper),
         TargetLanguage::Dart => Box::new(dart::DartSkipper),
         TargetLanguage::GDScript => Box::new(gdscript::GDScriptSkipper),
-        TargetLanguage::Graphviz => Box::new(python::PythonSkipper),
+        // FRAMEC_BUGS #24: graphviz used to share the Python skipper,
+        // which treats `'` as a string opener but doesn't recognize
+        // `//` comments. A `// bar's note` line in a Rust-target
+        // `.frs` rendered to graphviz tripped on the apostrophe and
+        // mis-counted braces. The new structural skipper recognizes
+        // both `//` and `#` line comments and leaves `'` as an
+        // ordinary byte — Frame's outer structural syntax never
+        // depends on char-literal parsing here.
+        TargetLanguage::Graphviz => Box::new(frame_structural::FrameStructuralSkipper),
     }
 }
