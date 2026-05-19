@@ -44,6 +44,13 @@ tempfile = "3"
 # corpus; changes show up as reviewable diffs in PRs. Re-bless
 # via `cargo insta review` after intentional codegen changes.
 insta = "1"
+# Roadmap #440 (Gates second-pass): property-based tests in framec
+# itself. Complements RFC-0027 snapshot tests (regression nets) and
+# the external fuzz harness (cross-backend differential). Property
+# tests assert spec-level invariants — "for any valid X, the output
+# satisfies Y" — which neither snapshots ("did it change?") nor
+# differential fuzz ("do all backends agree?") cover.
+proptest = "1"
 
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = false
