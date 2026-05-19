@@ -207,8 +207,8 @@ class Lifecycle
 
     def _s_Running_hdl_frame_enter(__e, compartment)
         label = compartment.enter_args[0]
-        self.entered = self.entered + 1
-        self.tag = label
+        self.entered = self.entered + 1;
+        self.tag = label;
     end
 
     def _s_Running_hdl_user_stop(__e, compartment)

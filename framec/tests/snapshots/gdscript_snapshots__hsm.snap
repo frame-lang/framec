@@ -59,7 +59,7 @@ class MiniHsm:
     var _context_stack
     var awakes = 0
     var sleeps = 0
-    var last = ""
+    var last = 0
 
     func _init():
         self._state_stack = []
@@ -202,14 +202,14 @@ class MiniHsm:
         self.awakes = self.awakes + 1
 
     func _s_Awake_hdl_user_signal(__e, compartment):
-        self.last = "awake"
+        self.last = 1
         self._state_Live(__e, compartment.parent_compartment)
 
     func _s_Asleep_hdl_frame_enter(__e, compartment):
         self.sleeps = self.sleeps + 1
 
     func _s_Asleep_hdl_user_signal(__e, compartment):
-        self.last = "asleep"
+        self.last = 2
         self._state_Live(__e, compartment.parent_compartment)
 
     func _s_Asleep_hdl_user_wake(__e, compartment):

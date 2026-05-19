@@ -186,7 +186,7 @@ end
 
 function Actions:_s_Counting_hdl_user_increment(__e, compartment)
     local n = __e._parameters[1]
-    _scale(n)
+    self._scale(n)
 end
 
 function Actions:_scale(n)

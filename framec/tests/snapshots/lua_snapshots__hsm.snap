@@ -65,7 +65,7 @@ function MiniHsm.new()
     self._context_stack = {}
     self.awakes = 0
     self.sleeps = 0
-    self.last = ""
+    self.last = 0
     self.__compartment = self:__prepareEnter("Live", nil, nil)
     self.__next_compartment = nil
     return self
@@ -239,7 +239,7 @@ function MiniHsm:_s_Awake_hdl_frame_enter(__e, compartment)
 end
 
 function MiniHsm:_s_Awake_hdl_user_signal(__e, compartment)
-    self.last = "awake"
+    self.last = 1
     self:_state_Live(__e, compartment.parent_compartment)
 end
 
@@ -248,7 +248,7 @@ function MiniHsm:_s_Asleep_hdl_frame_enter(__e, compartment)
 end
 
 function MiniHsm:_s_Asleep_hdl_user_signal(__e, compartment)
-    self.last = "asleep"
+    self.last = 2
     self:_state_Live(__e, compartment.parent_compartment)
 end
 

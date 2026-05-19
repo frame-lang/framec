@@ -69,7 +69,7 @@ public class MiniHsm {
     private java.util.ArrayList<MiniHsmFrameContext> _context_stack;
     public int awakes = 0;
     public int sleeps = 0;
-    public String last = "";
+    public int last = 0;
 
     public MiniHsm() {
         _state_stack = new java.util.ArrayList<>();
@@ -247,7 +247,7 @@ public class MiniHsm {
     }
 
     private void _s_Awake_hdl_user_signal(MiniHsmFrameEvent __e, MiniHsmCompartment compartment) {
-        this.last = "awake"
+        this.last = 1;
         _state_Live(__e, compartment.parent_compartment);
     }
 
@@ -256,7 +256,7 @@ public class MiniHsm {
     }
 
     private void _s_Asleep_hdl_user_signal(MiniHsmFrameEvent __e, MiniHsmCompartment compartment) {
-        this.last = "asleep"
+        this.last = 2;
         _state_Live(__e, compartment.parent_compartment);
     }
 

@@ -362,6 +362,70 @@ fn rfc0033_state_var_expression_initializers() {
     }
 }
 
+/// RFC-0033 #21: every Rust snapshot fixture must produce code
+/// that rustc accepts. Snapshot tests historically only diff TEXT;
+/// the output could be syntactically invalid Rust and the test would
+/// still pass as long as the text matched. This test closes the
+/// gap by piping each fixture through `rustc --crate-type lib
+/// --emit=metadata` — fast (no codegen / link) but it parses,
+/// macro-expands, and type-checks.
+///
+/// If you add a new fixture in `tests/fixtures/` that exercises a
+/// Rust-specific feature, append it to FIXTURES below.
+#[test]
+fn rfc0033_all_fixtures_compile_under_rustc() {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    // 03_persist and 12_no_persist excluded — both emit
+    // `serde_json::Value` references the in-process `rustc`
+    // invocation can't resolve without dependency metadata. The
+    // matrix test-env exercises persist via cargo and covers them
+    // there; this in-process test catches the structural
+    // (parser/type-checker) failures of the other 10 fixtures.
+    const FIXTURES: &[&str] = &[
+        "01_linear_fsm",
+        "02_hsm",
+        "04_state_args",
+        "05_pushpop",
+        "06_selfcall",
+        "07_forward",
+        "08_lifecycle",
+        "09_return_explicit",
+        "10_actions",
+        "11_consts",
+    ];
+
+    for name in FIXTURES {
+        let code = compile_fixture(name, "rust");
+        // Write to a tempfile so rustc can read by path (rustc -
+        // doesn't accept stdin for the libstd metadata path).
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join(format!("{}.rs", name));
+        let mut f = std::fs::File::create(&path).expect("create tmp .rs");
+        f.write_all(code.as_bytes()).expect("write tmp .rs");
+        drop(f);
+
+        let metadata_out = dir.path().join(format!("lib{}.rmeta", name));
+        let out = Command::new("rustc")
+            .args(["--edition=2021", "--crate-type=lib", "--emit=metadata"])
+            .arg("-o")
+            .arg(&metadata_out)
+            .arg(&path)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .expect("rustc must be on PATH");
+        assert!(
+            out.status.success(),
+            "fixture `{}` emits Rust that rustc rejects:\n{}\n--- first 60 lines of output ---\n{}",
+            name,
+            String::from_utf8_lossy(&out.stderr),
+            code.lines().take(60).collect::<Vec<_>>().join("\n")
+        );
+    }
+}
+
 /// Helper: grab a 12-line window around the first match of `needle`,
 /// for clearer assertion failure messages than a 5,000-line dump.
 fn excerpt(haystack: &str, needle: &str) -> String {

@@ -210,7 +210,7 @@ public class Lifecycle {
 
     private void _s_Idle_hdl_user_start(LifecycleFrameEvent __e, LifecycleCompartment compartment) {
         string label = (string) __e._parameters[0];
-        (label)
+        (label);
         { LifecycleCompartment __next = __prepareEnter("Running", new List<object>(), new List<object>());
         __transition(__next); }
         return;
@@ -222,8 +222,8 @@ public class Lifecycle {
 
     private void _s_Running_hdl_frame_enter(LifecycleFrameEvent __e, LifecycleCompartment compartment) {
         string label = (string) compartment.enter_args[0];
-        self.entered = self.entered + 1
-        self.tag = label
+        self.entered = self.entered + 1;
+        self.tag = label;
     }
 
     private void _s_Running_hdl_user_stop(LifecycleFrameEvent __e, LifecycleCompartment compartment) {

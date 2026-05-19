@@ -157,7 +157,7 @@ class Actions:
 
     func _s_Counting_hdl_user_increment(__e, compartment):
         var n = __e._parameters[0]
-        _scale(n)
+        self._scale(n)
 
     func _scale(n: i32):
         self.total = self.total + n * 2

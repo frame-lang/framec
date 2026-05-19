@@ -14,7 +14,7 @@
         $Awake => $Live {
             $>() { self.awakes = self.awakes + 1 }
             signal() {
-                self.last = "awake"
+                self.last = 1
                 => $^
             }
         }
@@ -22,7 +22,7 @@
         $Asleep => $Live {
             $>() { self.sleeps = self.sleeps + 1 }
             signal() {
-                self.last = "asleep"
+                self.last = 2
                 => $^
             }
             wake() { -> $Awake }
@@ -31,5 +31,5 @@
     domain:
         awakes: i32 = 0
         sleeps: i32 = 0
-        last: String = ""
+        last: i32 = 0
 }

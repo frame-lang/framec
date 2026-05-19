@@ -193,7 +193,7 @@ class Actions {
 
     void _s_Counting_hdl_user_increment(ActionsFrameEvent __e, ActionsCompartment compartment) {
         final n = __e._parameters[0];
-        _scale(n)
+        self._scale(n)
     }
 
     void _scale(i32 n) {

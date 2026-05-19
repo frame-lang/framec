@@ -337,7 +337,7 @@ struct MiniHsm {
     MiniHsm_FrameVec* _context_stack;
     i32 awakes;
     i32 sleeps;
-    char* last;
+    i32 last;
 };
 
 MiniHsm* MiniHsm_new(void) {
@@ -346,7 +346,7 @@ MiniHsm* MiniHsm_new(void) {
     self->_context_stack = MiniHsm_FrameVec_new();
     self->awakes = 0;
     self->sleeps = 0;
-    self->last = "";
+    self->last = 0;
     MiniHsm_FrameVec* __sa = NULL;
     MiniHsm_FrameVec* __ea = NULL;
     self->__compartment = MiniHsm_prepareEnter(self, "Live", __sa, __ea);
@@ -366,7 +366,7 @@ MiniHsm* MiniHsm_create(void) {
     self->_context_stack = MiniHsm_FrameVec_new();
     self->awakes = 0;
     self->sleeps = 0;
-    self->last = "";
+    self->last = 0;
     MiniHsm_FrameVec* __sa = NULL;
     MiniHsm_FrameVec* __ea = NULL;
     self->__compartment = MiniHsm_prepareEnter(self, "Live", __sa, __ea);
@@ -590,7 +590,7 @@ static void MiniHsm_s_Awake_hdl_frame_enter(MiniHsm* self, MiniHsm_FrameEvent* _
 }
 
 static void MiniHsm_s_Awake_hdl_user_signal(MiniHsm* self, MiniHsm_FrameEvent* __e, MiniHsm_Compartment* compartment) {
-    self.last = "awake"
+    self.last = 1;
     MiniHsm_state_Live(self, __e, compartment->parent_compartment);
 }
 
@@ -599,7 +599,7 @@ static void MiniHsm_s_Asleep_hdl_frame_enter(MiniHsm* self, MiniHsm_FrameEvent* 
 }
 
 static void MiniHsm_s_Asleep_hdl_user_signal(MiniHsm* self, MiniHsm_FrameEvent* __e, MiniHsm_Compartment* compartment) {
-    self.last = "asleep"
+    self.last = 2;
     MiniHsm_state_Live(self, __e, compartment->parent_compartment);
 }
 

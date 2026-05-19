@@ -189,8 +189,8 @@ function Consts:_s_Running_hdl_user_get_count(__e, compartment)
 end
 
 function Consts:_s_Running_hdl_user_tick(__e, compartment)
-    self.count = self.count + self.step
+    self.count = self.count + self.step;
     if self.count >= self.limit then
-        self.count = 0
+        self.count = 0;
     end
 end

@@ -153,7 +153,7 @@ private:
     }
 
     void _s_Start_hdl_user_run(ForwardFrameEvent& __e, std::shared_ptr<ForwardCompartment> compartment) {
-        self.starts = self.starts + 1
+        self.starts = self.starts + 1;
         auto __compartment = __prepareEnter("Middle", std::vector<std::any>{}, std::vector<std::any>{});
         __compartment->forward_event = std::make_unique<ForwardFrameEvent>(__e);
         __transition(std::move(__compartment));

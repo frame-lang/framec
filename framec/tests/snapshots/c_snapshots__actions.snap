@@ -519,7 +519,7 @@ static void Actions_s_Counting_hdl_user_get_total(Actions* self, Actions_FrameEv
 static void Actions_s_Counting_hdl_user_increment(Actions* self, Actions_FrameEvent* __e, Actions_Compartment* compartment) {
     int n = (int)(intptr_t)Actions_FrameVec_get(__e->_parameters, 0);
     (void)n;
-    _scale(n)
+    self._scale(n)
 }
 
 static void Actions__scale(Actions* self, i32 n) {

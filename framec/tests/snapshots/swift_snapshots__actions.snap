@@ -184,7 +184,7 @@ public class Actions {
 
     private func _s_Counting_hdl_user_increment(_ __e: ActionsFrameEvent, _ compartment: ActionsCompartment) {
         let n = __e._parameters[0] as! Int
-        _scale(n)
+        self._scale(n)
     }
 
     private func _scale(_ n: Int) {

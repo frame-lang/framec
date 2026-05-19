@@ -762,10 +762,18 @@ impl RustBackend {
             | CodegenNode::Match { .. }
             | CodegenNode::Comment { .. }
             | CodegenNode::Empty => false,
-            // NativeBlocks that end with } or ; don't need another semicolon
+            // NativeBlocks that end with } or ; don't need another
+            // semicolon. Empty NativeBlocks (a handler whose body
+            // is `{ }`) also don't need one — adding `;` to an
+            // otherwise empty block produces a `redundant_semicolons`
+            // lint warning.
             CodegenNode::NativeBlock { code, .. } => {
                 let trimmed = code.trim();
-                !trimmed.ends_with('}') && !trimmed.ends_with(';')
+                if trimmed.is_empty() {
+                    false
+                } else {
+                    !trimmed.ends_with('}') && !trimmed.ends_with(';')
+                }
             }
             _ => true,
         }

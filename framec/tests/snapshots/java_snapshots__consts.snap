@@ -195,9 +195,9 @@ public class Consts {
     }
 
     private void _s_Running_hdl_user_tick(ConstsFrameEvent __e, ConstsCompartment compartment) {
-        this.count = this.count + this.step
+        this.count = this.count + this.step;
         if this.count >= this.limit {
-            this.count = 0
+            this.count = 0;
         }
     }
 }

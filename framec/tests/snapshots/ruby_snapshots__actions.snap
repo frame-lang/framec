@@ -183,7 +183,7 @@ class Actions
 
     def _s_Counting_hdl_user_increment(__e, compartment)
         n = __e._parameters[0]
-        _scale(n)
+        self._scale(n)
     end
 
     def _scale(n)

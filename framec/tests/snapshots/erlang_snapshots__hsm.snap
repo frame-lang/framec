@@ -10,7 +10,7 @@ expression: "compile_fixture(\"02_hsm\", \"erlang\")"
 -record(data, {
     awakes = 0,
     sleeps = 0,
-    last = "",
+    last = 0,
     frame_stack = [],
     frame_current_state = live,
     frame_enter_args = [],
@@ -75,7 +75,7 @@ awake(enter, _OldState, Data) ->
     Data1 = Data#data{awakes = Data#data.awakes + 1},
     {keep_state, Data1};
 awake({call, From}, __Event = signal, Data) ->
-    Data1 = Data#data{last = "awake"},
+    Data1 = Data#data{last = 1},
     {Data2, __FwdNext2, __FwdReply2} = frame_unwrap_forward__(live({call, From}, signal, Data1)),
     __ReturnVal_1 = __FwdReply2,
     case __FwdNext2 of
@@ -96,7 +96,7 @@ asleep(enter, _OldState, Data) ->
     Data1 = Data#data{sleeps = Data#data.sleeps + 1},
     {keep_state, Data1};
 asleep({call, From}, __Event = signal, Data) ->
-    Data1 = Data#data{last = "asleep"},
+    Data1 = Data#data{last = 2},
     {Data2, __FwdNext2, __FwdReply2} = frame_unwrap_forward__(live({call, From}, signal, Data1)),
     __ReturnVal_1 = __FwdReply2,
     case __FwdNext2 of

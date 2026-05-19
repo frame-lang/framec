@@ -186,7 +186,7 @@ export class SelfCall {
     }
 
     _s_Active_hdl_user_kick(__e, compartment) {
-        self.count = self.count + 1
+        self.count = self.count + 1;
         this.report();
         if (this._context_stack.length > 0 && this._context_stack[this._context_stack.length - 1]._transitioned) return;
     }

@@ -510,7 +510,7 @@ static void SelfCall_state_Active(SelfCall* self, SelfCall_FrameEvent* __e, Self
 }
 
 static void SelfCall_s_Active_hdl_user_kick(SelfCall* self, SelfCall_FrameEvent* __e, SelfCall_Compartment* compartment) {
-    self.count = self.count + 1
+    self.count = self.count + 1;
     SelfCall_report(self);
     if (SelfCall_FrameVec_size(self->_context_stack) > 0 && SelfCall_CTX(self)->_transitioned) return;
 }

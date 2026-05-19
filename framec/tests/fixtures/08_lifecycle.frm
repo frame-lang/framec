@@ -13,8 +13,8 @@
 
         $Running {
             $>(label: String) {
-                self.entered = self.entered + 1
-                self.tag = label
+                self.entered = self.entered + 1;
+                self.tag = label;
             }
             <$() {
                 self.exited = self.exited + 1

@@ -211,7 +211,7 @@ class Forward {
     }
 
     void _s_Start_hdl_user_run(ForwardFrameEvent __e, ForwardCompartment compartment) {
-        self.starts = self.starts + 1
+        self.starts = self.starts + 1;
         final __compartment = this.__prepareEnter("Middle", [], []);
         __compartment.forward_event = __e;
         this.__transition(__compartment);

@@ -271,7 +271,7 @@ mod _actions_framec {
         }
 
         fn _s_Counting_hdl_user_increment(&mut self, __e: &ActionsFrameEvent, n: i32) {
-            _scale(n);
+            self._scale(n);
         }
 
         fn _scale(&mut self, n: i32) {

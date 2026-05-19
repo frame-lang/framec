@@ -139,7 +139,7 @@ private:
 
     void _s_Counting_hdl_user_increment(ActionsFrameEvent& __e, std::shared_ptr<ActionsCompartment> compartment) {
         auto n = std::any_cast<int>(__e._parameters[0]);
-        _scale(n)
+        self._scale(n)
 
     }
 

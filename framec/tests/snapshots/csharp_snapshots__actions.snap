@@ -200,7 +200,7 @@ public class Actions {
 
     private void _s_Counting_hdl_user_increment(ActionsFrameEvent __e, ActionsCompartment compartment) {
         int n = System.Convert.ToInt32(__e._parameters[0]);
-        _scale(n)
+        self._scale(n)
     }
 
     private void _scale(int n) {

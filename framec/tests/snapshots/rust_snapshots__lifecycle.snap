@@ -279,7 +279,7 @@ mod _lifecycle_framec {
         }
 
         fn _s_Idle_hdl_user_start(&mut self, __e: &LifecycleFrameEvent, label: String) {
-            (label)
+            (label);
             let mut __compartment = self.__prepareEnter("Running", vec![]);
             self.__transition(__compartment);
             return;
@@ -290,7 +290,7 @@ mod _lifecycle_framec {
         }
 
         fn _s_Running_hdl_frame_enter(&mut self, __e: &LifecycleFrameEvent, label: String) {
-            self.entered = self.entered + 1
+            self.entered = self.entered + 1;
             self.tag = label;
         }
 

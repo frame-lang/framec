@@ -201,7 +201,7 @@ export class Lifecycle {
 
     _s_Idle_hdl_user_start(__e, compartment) {
         const label = __e._parameters[0];
-        (label)
+        (label);
         const __compartment = this.__prepareEnter("Running", [], []);
         this.__transition(__compartment);
         return;
@@ -213,8 +213,8 @@ export class Lifecycle {
 
     _s_Running_hdl_frame_enter(__e, compartment) {
         const label = compartment.enter_args[0];
-        self.entered = self.entered + 1
-        self.tag = label
+        self.entered = self.entered + 1;
+        self.tag = label;
     }
 
     _s_Running_hdl_user_stop(__e, compartment) {

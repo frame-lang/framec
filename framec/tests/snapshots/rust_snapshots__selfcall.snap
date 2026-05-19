@@ -264,7 +264,7 @@ mod _self_call_framec {
         }
 
         fn _s_Active_hdl_user_kick(&mut self, __e: &SelfCallFrameEvent) {
-            self.count = self.count + 1
+            self.count = self.count + 1;
             self.report();
             if self._context_stack.last().map_or(false, |ctx| ctx._transitioned) { return; }
         }

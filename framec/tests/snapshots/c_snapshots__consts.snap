@@ -520,8 +520,8 @@ static void Consts_s_Running_hdl_user_get_count(Consts* self, Consts_FrameEvent*
 }
 
 static void Consts_s_Running_hdl_user_tick(Consts* self, Consts_FrameEvent* __e, Consts_Compartment* compartment) {
-    self.count = self.count + self.step
+    self.count = self.count + self.step;
     if self.count >= self.limit {
-        self.count = 0
+        self.count = 0;
     }
 }

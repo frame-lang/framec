@@ -196,7 +196,7 @@ class Lifecycle {
 
     private function _s_Idle_hdl_user_start($__e, $compartment) {
         $label = $__e->_parameters[0];
-        (label)
+        (label);
         $__compartment = $this->__prepareEnter("Running", [], []);
         $this->__transition($__compartment);
         return;
@@ -208,8 +208,8 @@ class Lifecycle {
 
     private function _s_Running_hdl_frame_enter($__e, $compartment) {
         $label = $compartment->enter_args[0];
-        self.entered = self.entered + 1
-        self.tag = label
+        self.entered = self.entered + 1;
+        self.tag = label;
     }
 
     private function _s_Running_hdl_user_stop($__e, $compartment) {

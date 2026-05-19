@@ -52,8 +52,8 @@ counting({call, From}, {frame_init, []}, Data) ->
 counting(enter, _OldState, Data) ->
     {keep_state, Data};
 counting({call, From}, __Event = {increment, N}, Data) ->
-    '_scale'(N),
-    {keep_state, Data, [{reply, From, ok}]};
+    {Data1, __ActionResult1} = '_scale'(Data, N),
+    {keep_state, Data1, [{reply, From, ok}]};
 counting({call, From}, __Event = get_total, Data) ->
     __ReturnVal_1 = Data#data.total,
     {keep_state, Data, [{reply, From, __ReturnVal_1}]};

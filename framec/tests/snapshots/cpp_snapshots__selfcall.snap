@@ -133,7 +133,7 @@ private:
     }
 
     void _s_Active_hdl_user_kick(SelfCallFrameEvent& __e, std::shared_ptr<SelfCallCompartment> compartment) {
-        self.count = self.count + 1
+        self.count = self.count + 1;
         this->report();
         if (!_context_stack.empty() && _context_stack.back()._transitioned) return;
 

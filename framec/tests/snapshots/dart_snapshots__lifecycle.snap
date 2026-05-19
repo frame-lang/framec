@@ -206,7 +206,7 @@ class Lifecycle {
 
     void _s_Idle_hdl_user_start(LifecycleFrameEvent __e, LifecycleCompartment compartment) {
         final label = __e._parameters[0] as String;
-        (label)
+        (label);
         final __compartment = this.__prepareEnter("Running", [], []);
         this.__transition(__compartment);
         return;
@@ -218,8 +218,8 @@ class Lifecycle {
 
     void _s_Running_hdl_frame_enter(LifecycleFrameEvent __e, LifecycleCompartment compartment) {
         final label = compartment.enter_args[0] as String;
-        self.entered = self.entered + 1
-        self.tag = label
+        self.entered = self.entered + 1;
+        self.tag = label;
     }
 
     void _s_Running_hdl_user_stop(LifecycleFrameEvent __e, LifecycleCompartment compartment) {

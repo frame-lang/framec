@@ -202,7 +202,7 @@ public class Lifecycle {
 
     private void _s_Idle_hdl_user_start(LifecycleFrameEvent __e, LifecycleCompartment compartment) {
         String label = (String) __e._parameters.get(0);
-        (label)
+        (label);
         LifecycleCompartment __compartment = __prepareEnter("Running", new java.util.ArrayList<>(), new java.util.ArrayList<>());
         __transition(__compartment);
         return;
@@ -214,8 +214,8 @@ public class Lifecycle {
 
     private void _s_Running_hdl_frame_enter(LifecycleFrameEvent __e, LifecycleCompartment compartment) {
         String label = (String) compartment.enter_args.get(0);
-        this.entered = this.entered + 1
-        this.tag = label
+        this.entered = this.entered + 1;
+        this.tag = label;
     }
 
     private void _s_Running_hdl_user_stop(LifecycleFrameEvent __e, LifecycleCompartment compartment) {

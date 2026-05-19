@@ -282,7 +282,7 @@ mod _forward_framec {
         }
 
         fn _s_Start_hdl_user_run(&mut self, __e: &ForwardFrameEvent) {
-            self.starts = self.starts + 1
+            self.starts = self.starts + 1;
             let mut __compartment = self.__prepareEnter("Middle", Vec::new());
             __compartment.forward_event = Some(__e.clone());
             self.__transition(__compartment);
@@ -300,7 +300,7 @@ mod _forward_framec {
         }
 
         fn _s_End_hdl_user_finish(&mut self, __e: &ForwardFrameEvent) {
-    ;
+
         }
     }
 }

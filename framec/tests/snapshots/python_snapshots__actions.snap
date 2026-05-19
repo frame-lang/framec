@@ -138,7 +138,7 @@ class Actions:
 
     def _s_Counting_hdl_user_increment(self, __e, compartment):
         n = __e._parameters[0]
-        _scale(n)
+        self._scale(n)
 
     def _scale(self, n: i32):
         self.total = self.total + n * 2

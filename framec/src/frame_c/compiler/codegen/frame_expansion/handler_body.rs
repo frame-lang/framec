@@ -151,6 +151,80 @@ pub(super) fn context_return_read_typed(
     }
 }
 
+/// True when `out` ends with NativeCode whose last non-whitespace
+/// character is not a statement terminator for `lang`, and `lang`
+/// is a semicolon-bearing target language. Used to insert a `;`
+/// before a Frame expansion (transition, etc.) so the preceding
+/// user-written statement is terminated.
+///
+/// Python / Ruby / Lua / GDScript / Erlang use newlines or
+/// language-native separators — no `;` insertion needed there.
+///
+/// "Already-terminated" forms include the obvious statement
+/// terminators (`;` / `{` / `}`) AND every operator/punctuation
+/// that signals "user is in the middle of an expression":
+/// assignment `=`, binary operators, open delimiters. Inserting
+/// `;` after any of these would split the expression and break
+/// parsing.
+fn needs_statement_terminator(out: &str, lang: TargetLanguage) -> bool {
+    let uses_semicolons = matches!(
+        lang,
+        TargetLanguage::Rust
+            | TargetLanguage::Java
+            | TargetLanguage::Kotlin
+            | TargetLanguage::Swift
+            | TargetLanguage::CSharp
+            | TargetLanguage::C
+            | TargetLanguage::Cpp
+            | TargetLanguage::JavaScript
+            | TargetLanguage::TypeScript
+            | TargetLanguage::Php
+            | TargetLanguage::Dart
+            | TargetLanguage::Go
+    );
+    if !uses_semicolons {
+        return false;
+    }
+    let trimmed = out.trim_end();
+    if trimmed.is_empty() {
+        return false;
+    }
+    // Pre-terminated by an explicit statement separator or a
+    // block boundary — no extra `;` needed.
+    if trimmed.ends_with(|c: char| matches!(c, ';' | '{' | '}')) {
+        return false;
+    }
+    // User is mid-expression — adding `;` would split the
+    // expression and break parsing.
+    if trimmed.ends_with(|c: char| {
+        matches!(
+            c,
+            '=' | '+'
+                | '-'
+                | '*'
+                | '/'
+                | '%'
+                | '<'
+                | '>'
+                | '&'
+                | '|'
+                | '^'
+                | '!'
+                | '?'
+                | ','
+                | '('
+                | '['
+                | ':'
+                | '.'
+        )
+    }) {
+        return false;
+    }
+    // Closing parens / brackets / identifiers / literals: the
+    // expression is complete; statement needs a `;` to terminate.
+    true
+}
+
 /// Emit handler body by scanning for Frame segments and walking them as AST statements.
 ///
 /// Pipeline: source bytes → scanner → regions → statements → expansion walk → output string.
@@ -270,8 +344,38 @@ pub(crate) fn emit_handler_body_via_statements(
                         // from handler control flow (the orchestrator).
                         let is_transition = matches!(
                             kind,
-                            FrameSegmentKind::Transition | FrameSegmentKind::StackPop
+                            FrameSegmentKind::Transition
+                                | FrameSegmentKind::Forward
+                                | FrameSegmentKind::StackPush
+                                | FrameSegmentKind::StackPop
                         );
+                        // RFC-0033 #21: Frame-segment kinds that
+                        // expand to block-level statements. When one
+                        // of these follows user NativeCode that lacks
+                        // a trailing terminator, the prior statement
+                        // needs `;` inserted (in semicolon-bearing
+                        // targets). The `needs_statement_terminator`
+                        // helper excludes mid-expression positions
+                        // (after `=`, binary operators, open
+                        // delimiters) where a `;` would break parsing.
+                        if (is_transition
+                            || matches!(
+                                kind,
+                                FrameSegmentKind::ContextSelfCall
+                                    | FrameSegmentKind::ReturnStatement
+                                    | FrameSegmentKind::ReturnCall
+                            ))
+                            && needs_statement_terminator(&out, lang)
+                        {
+                            let last_non_ws =
+                                out.rfind(|c: char| !c.is_whitespace());
+                            if let Some(pos) = last_non_ws {
+                                let tail: String = out[pos + 1..].to_string();
+                                out.truncate(pos + 1);
+                                out.push(';');
+                                out.push_str(&tail);
+                            }
+                        }
                         if is_transition {
                             let (body, return_kw) = split_transition_return(&expansion);
                             // Multi-line expansion on same line as native code
