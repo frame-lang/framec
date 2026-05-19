@@ -1,39 +1,38 @@
-//! Frame-structural skipper used for the GraphViz pipeline.
+//! Frame-structural skipper used for the GraphViz pipeline —
+//! Frame-generated state machine.
 //!
-//! FRAMEC_BUGS #24: a `.frs` written for a production target (often
-//! Rust) can still be invoked with `framec -l graphviz` to produce
-//! a state-diagram. The GraphViz pipeline used the Python skipper as
-//! a "neutral default," but Python's skipper treats `'` as a string
-//! opener — which is wrong for `// bar's note` style comments
-//! (English apostrophe inside a Rust-flavor line comment). The
-//! Python skipper missed the `//` (Python uses `#`), saw `'`, started
-//! looking for the close, and trashed the brace-balance computation.
+//! Source: frame_structural_skipper.frs (Frame specification)
+//! Generated: frame_structural_skipper.gen.rs (via `framec compile -l rust`)
+//! This file: glue module wiring generated FSM to the
+//! `SyntaxSkipper` and `NativeRegionScanner` traits.
 //!
-//! This module supplies a permissive skipper appropriate for outer
-//! Frame structure: it recognizes both `//` (Rust / C-family) and
-//! `#` (Python / Ruby) line comments, `/* ... */` block comments, and
-//! `"..."` strings. `'` is intentionally NOT treated as a string
-//! opener — Frame's structural syntax never relies on char-literal
-//! parsing at this level, and English apostrophes in comments are
-//! the more common case.
+//! See `frame_structural_skipper.frs` for the state-machine spec;
+//! see FRAMEC_BUGS.md #24, #25, #26 for the bug history that
+//! motivated the dogfooded approach (hand-coded scanners kept
+//! producing whack-a-mole bugs against subtle syntactic edges).
+//!
+//! To regenerate:
+//!   ./target/release/framec compile -l rust \
+//!     -o framec/src/frame_c/compiler/native_region_scanner/ \
+//!     framec/src/frame_c/compiler/native_region_scanner/frame_structural_skipper.frs
+//!   mv framec/src/frame_c/compiler/native_region_scanner/frame_structural_skipper.rs \
+//!     framec/src/frame_c/compiler/native_region_scanner/frame_structural_skipper.gen.rs
 
-use super::unified::SyntaxSkipper;
+#![allow(unreachable_patterns)]
+#![allow(unused_mut)]
+#![allow(dead_code)]
+#![allow(non_snake_case)]
+#![allow(unused_variables)]
+
+include!("frame_structural_skipper.gen.rs");
+
+use super::unified::{
+    balanced_paren_end_c_like, skip_hash_line_comment, skip_line_comment, skip_rust_string,
+    SyntaxSkipper,
+};
 use super::{NativeRegionScanner, ScanError, ScanResult};
 use crate::frame_c::compiler::body_closer::frame_structural::BodyCloserFrameStructural;
 use crate::frame_c::compiler::body_closer::BodyCloser;
-
-/// Frame-structural NativeRegionScanner used for the GraphViz
-/// pipeline (and any other "target-agnostic" callers). Routes the
-/// shared scanner over our permissive skipper so apostrophes in
-/// comments and `"` characters inside `'...'` char literals don't
-/// derail the body walk.
-pub struct NativeRegionScannerFrameStructural;
-
-impl NativeRegionScanner for NativeRegionScannerFrameStructural {
-    fn scan(&mut self, bytes: &[u8], open_brace_index: usize) -> Result<ScanResult, ScanError> {
-        super::unified::scan_native_regions(&FrameStructuralSkipper, bytes, open_brace_index)
-    }
-}
 
 pub struct FrameStructuralSkipper;
 
@@ -42,130 +41,63 @@ impl SyntaxSkipper for FrameStructuralSkipper {
         Box::new(BodyCloserFrameStructural)
     }
 
-    /// Skip `//` line comment, `/* … */` block comment, or `#`
-    /// line comment if one starts at `i`. Returns the position just
-    /// past the comment, or `None` if no comment starts here.
     fn skip_comment(&self, bytes: &[u8], i: usize, end: usize) -> Option<usize> {
-        if i >= end {
-            return None;
+        let mut fsm = FrameStructuralSyntaxSkipperFsm::new();
+        fsm.bytes = bytes[..end].to_vec();
+        fsm.pos = i;
+        fsm.end = end;
+        fsm.do_skip_comment();
+        if fsm.success != 0 {
+            Some(fsm.result_pos)
+        } else {
+            None
         }
-        // `//` line comment
-        if i + 1 < end && bytes[i] == b'/' && bytes[i + 1] == b'/' {
-            let mut j = i + 2;
-            while j < end && bytes[j] != b'\n' {
-                j += 1;
-            }
-            return Some(j);
-        }
-        // `#` line comment
-        if bytes[i] == b'#' {
-            let mut j = i + 1;
-            while j < end && bytes[j] != b'\n' {
-                j += 1;
-            }
-            return Some(j);
-        }
-        // `/* … */` block comment (with nesting)
-        if i + 1 < end && bytes[i] == b'/' && bytes[i + 1] == b'*' {
-            let mut j = i + 2;
-            let mut nested: i32 = 1;
-            while j < end && nested > 0 {
-                if j + 1 < end && bytes[j] == b'/' && bytes[j + 1] == b'*' {
-                    nested += 1;
-                    j += 2;
-                } else if j + 1 < end && bytes[j] == b'*' && bytes[j + 1] == b'/' {
-                    nested -= 1;
-                    j += 2;
-                } else {
-                    j += 1;
-                }
-            }
-            return Some(j);
-        }
-        None
     }
 
-    /// Skip a `"..."` double-quoted string with `\`-escape handling.
-    /// `'` is intentionally NOT treated as a string opener — see the
-    /// module-level note.
     fn skip_string(&self, bytes: &[u8], i: usize, end: usize) -> Option<usize> {
-        if i >= end || bytes[i] != b'"' {
-            return None;
+        let mut fsm = FrameStructuralSyntaxSkipperFsm::new();
+        fsm.bytes = bytes[..end].to_vec();
+        fsm.pos = i;
+        fsm.end = end;
+        fsm.do_skip_string();
+        if fsm.success != 0 {
+            Some(fsm.result_pos)
+        } else {
+            None
         }
-        let mut j = i + 1;
-        while j < end {
-            if bytes[j] == b'\\' && j + 1 < end {
-                j += 2;
-                continue;
-            }
-            if bytes[j] == b'"' {
-                return Some(j + 1);
-            }
-            j += 1;
-        }
-        // Unterminated — caller can decide how to handle it; we
-        // return the end so the rest of the buffer isn't re-scanned.
-        Some(end)
     }
 
     fn find_line_end(&self, bytes: &[u8], start: usize, end: usize) -> usize {
-        let mut j = start;
-        while j < end {
-            // Stop at unescaped newline.
-            if bytes[j] == b'\n' {
-                return j;
-            }
-            // Or at start of a comment.
-            if self.skip_comment(bytes, j, end).is_some() {
-                return j;
-            }
-            // Skip strings as opaque (so a `;` inside `"x;y"` doesn't
-            // terminate). We accept the caller's `;`/`\n` as the
-            // boundary marker.
-            if let Some(after_str) = self.skip_string(bytes, j, end) {
-                j = after_str;
-                continue;
-            }
-            // Statement-end markers used by the various target
-            // languages — Frame's outer scanner stops at any of them.
-            if bytes[j] == b';' {
-                return j;
-            }
-            j += 1;
-        }
-        end
+        let mut fsm = FrameStructuralSyntaxSkipperFsm::new();
+        fsm.bytes = bytes[..end].to_vec();
+        fsm.pos = start;
+        fsm.end = end;
+        fsm.do_find_line_end();
+        fsm.result_pos
     }
 
     fn balanced_paren_end(&self, bytes: &[u8], i: usize, end: usize) -> Option<usize> {
-        if i >= end || bytes[i] != b'(' {
-            return None;
+        let mut fsm = FrameStructuralSyntaxSkipperFsm::new();
+        fsm.bytes = bytes[..end].to_vec();
+        fsm.pos = i;
+        fsm.end = end;
+        fsm.do_balanced_paren_end();
+        if fsm.success != 0 {
+            Some(fsm.result_pos)
+        } else {
+            None
         }
-        let mut j = i + 1;
-        let mut depth: i32 = 1;
-        while j < end {
-            if let Some(after) = self.skip_string(bytes, j, end) {
-                j = after;
-                continue;
-            }
-            if let Some(after) = self.skip_comment(bytes, j, end) {
-                j = after;
-                continue;
-            }
-            match bytes[j] {
-                b'(' => {
-                    depth += 1;
-                    j += 1;
-                }
-                b')' => {
-                    depth -= 1;
-                    j += 1;
-                    if depth == 0 {
-                        return Some(j);
-                    }
-                }
-                _ => j += 1,
-            }
-        }
-        None
+    }
+}
+
+/// Frame-structural `NativeRegionScanner` — uses the shared scanner
+/// over `FrameStructuralSkipper` so Frame-segment detection in the
+/// GraphViz path matches the same lexical rules the body_closer
+/// uses.
+pub struct NativeRegionScannerFrameStructural;
+
+impl NativeRegionScanner for NativeRegionScannerFrameStructural {
+    fn scan(&mut self, bytes: &[u8], open_brace_index: usize) -> Result<ScanResult, ScanError> {
+        super::unified::scan_native_regions(&FrameStructuralSkipper, bytes, open_brace_index)
     }
 }

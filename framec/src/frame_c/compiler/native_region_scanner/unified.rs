@@ -976,6 +976,21 @@ pub fn skip_line_comment(bytes: &[u8], i: usize, end: usize) -> Option<usize> {
     }
 }
 
+/// Skip Python/Ruby/Erlang-style line comment: `# ...` to end of line.
+/// Used by the Frame-structural skipper for the GraphViz pipeline,
+/// which accepts source written for any target.
+pub fn skip_hash_line_comment(bytes: &[u8], i: usize, end: usize) -> Option<usize> {
+    if i < end && bytes[i] == b'#' {
+        let mut j = i + 1;
+        while j < end && bytes[j] != b'\n' {
+            j += 1;
+        }
+        Some(j)
+    } else {
+        None
+    }
+}
+
 /// Skip C-style block comment: /* ... */
 pub fn skip_block_comment(bytes: &[u8], i: usize, end: usize) -> Option<usize> {
     if i + 1 < end && bytes[i] == b'/' && bytes[i + 1] == b'*' {

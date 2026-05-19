@@ -1,0 +1,137 @@
+@@[target("rust")]
+
+// Frame-structural syntax skipper — dogfooded state machine for
+// the GraphViz pipeline.
+//
+// Mirrors `rust_skipper.frs` but additionally recognizes `#` line
+// comments (Python / Ruby / Erlang style). Treats `'X'` as a Rust
+// char literal and `'static` / `'a` style lifetimes as ordinary
+// bytes — the same heuristic the Rust skipper uses, kept in sync
+// so `.frs` source that compiles to either target renders to
+// graphviz without divergence.
+
+@@system FrameStructuralSyntaxSkipperFsm {
+    interface:
+        do_skip_comment()
+        do_skip_string()
+        do_find_line_end()
+        do_balanced_paren_end()
+
+    machine:
+        $Init {
+            do_skip_comment() { -> $SkipComment }
+            do_skip_string() { -> $SkipString }
+            do_find_line_end() { -> $FindLineEnd }
+            do_balanced_paren_end() { -> $BalancedParenEnd }
+        }
+
+        $SkipComment {
+            $>() {
+                // `//` line comment.
+                if let Some(j) = skip_line_comment(&self.bytes, self.pos, self.end) {
+                    self.result_pos = j;
+                    self.success = 1;
+                    return
+                }
+                // `#` line comment (Python / Ruby / Erlang).
+                if let Some(j) = skip_hash_line_comment(&self.bytes, self.pos, self.end) {
+                    self.result_pos = j;
+                    self.success = 1;
+                    return
+                }
+                // Nested `/* … */` block comment.
+                let i = self.pos;
+                let end = self.end;
+                let bytes = &self.bytes;
+                if i + 1 < end && bytes[i] == b'/' && bytes[i + 1] == b'*' {
+                    let mut j = i + 2;
+                    let mut depth: i32 = 1;
+                    while j + 1 < end && depth > 0 {
+                        if bytes[j] == b'/' && bytes[j + 1] == b'*' {
+                            depth += 1;
+                            j += 2;
+                            continue;
+                        }
+                        if bytes[j] == b'*' && bytes[j + 1] == b'/' {
+                            depth -= 1;
+                            j += 2;
+                            continue;
+                        }
+                        j += 1;
+                    }
+                    self.result_pos = j;
+                    self.success = 1;
+                    return
+                }
+                self.success = 0;
+            }
+        }
+
+        $SkipString {
+            $>() {
+                // Delegate to the shared Rust string/char skipper —
+                // identical to what `rust_skipper.frs` uses. Handles
+                // `"..."` strings, `'X'` / `'\X'` char literals, and
+                // treats lifetimes (`'static`, `'a`) as ordinary
+                // bytes (returns None).
+                if let Some(j) = skip_rust_string(&self.bytes, self.pos, self.end) {
+                    self.result_pos = j;
+                    self.success = 1;
+                    return
+                }
+                self.success = 0;
+            }
+        }
+
+        $FindLineEnd {
+            $>() {
+                let end = self.end;
+                let bytes = &self.bytes;
+                let mut j = self.pos;
+                let mut in_string: u8 = 0;
+
+                while j < end {
+                    let b = bytes[j];
+                    if b == b'\n' { break; }
+
+                    if in_string != 0 {
+                        if b == b'\\' { j += 2; continue; }
+                        if b == in_string { in_string = 0; }
+                        j += 1;
+                        continue;
+                    }
+
+                    if b == b';' || b == b'}' { break; }
+                    if b == b'/' && j + 1 < end && (bytes[j + 1] == b'/' || bytes[j + 1] == b'*') { break; }
+                    if b == b'#' { break; }
+
+                    if b == b'\'' || b == b'"' {
+                        in_string = b;
+                        j += 1;
+                        continue;
+                    }
+
+                    j += 1;
+                }
+                self.result_pos = j;
+            }
+        }
+
+        $BalancedParenEnd {
+            $>() {
+                if let Some(j) = balanced_paren_end_c_like(&self.bytes, self.pos, self.end) {
+                    self.result_pos = j;
+                    self.success = 1;
+                    return
+                }
+                self.success = 0;
+            }
+        }
+
+    domain:
+        bytes: Vec<u8> = Vec::new()
+        pos: usize = 0
+        end: usize = 0
+        result_pos: usize = 0
+        success: usize = 1
+}

@@ -1,0 +1,171 @@
+@@[target("rust")]
+
+// Dogfooded body closer — Frame-structural brace matcher.
+//
+// Used by the GraphViz pipeline, which can be invoked on a `.frs`
+// written for any production target (Rust, Python, Ruby, Java,
+// etc.). Combines the Rust body-closer's lexical rules (`//`,
+// `/* */`, `'X'` char literals, `"..."` strings) with `#` line-
+// comment recognition (Python / Ruby / Erlang flavor), so source
+// written for any of those targets renders through `framec -l
+// graphviz` without false-positive parse failures.
+//
+// Differences from `rust_lang.frs`:
+//   - Adds `#` line-comment handling.
+//   - Drops raw-string (`r#"..."#`) — uncommon at the structural
+//     level, and adding it back requires no special parsing
+//     (`r` becomes an ordinary identifier byte; the next `"` opens
+//     a regular string).
+//
+// State machine flow:
+//   $Init.scan() → $Scanning.$>() ↔
+//       $InString / $InCharLiteral / $InLineComment / $InBlockComment
+
+@@system FrameStructuralBodyCloserFsm {
+    interface:
+        scan()
+
+    machine:
+        $Init {
+            scan() {
+                -> $Scanning
+            }
+        }
+
+        $Scanning {
+            $>() {
+                let n = self.bytes.len();
+                while self.pos < n {
+                    let b = self.bytes[self.pos];
+                    if b == b'\n' {
+                        self.pos += 1;
+                    } else if b == b'/' && self.pos + 1 < n && self.bytes[self.pos + 1] == b'/' {
+                        self.pos += 2;
+                        -> $InLineComment
+                    } else if b == b'/' && self.pos + 1 < n && self.bytes[self.pos + 1] == b'*' {
+                        self.block_comment_nest = 1;
+                        self.pos += 2;
+                        -> $InBlockComment
+                    } else if b == b'#' {
+                        // Python / Ruby / Erlang line comment.
+                        self.pos += 1;
+                        -> $InLineComment
+                    } else if b == b'\'' {
+                        // Distinguish char literal from lifetime
+                        // (`'static`, `'a`). The pattern check is
+                        // the same as the Rust string skipper:
+                        // `'X'`, `'\X...'`, `'\u{...}'` are literals;
+                        // `'` followed by alphanumeric without a
+                        // closing `'` within 12 bytes is treated as
+                        // an ordinary byte (lifetime / English
+                        // apostrophe in non-comment context).
+                        let j = self.pos + 1;
+                        if j < n && self.bytes[j] == b'\\' {
+                            // Escape form — scan up to next `'`
+                            // bounded at 12 bytes.
+                            let mut k = j + 1;
+                            while k < n && k < j + 12 && self.bytes[k] != b'\'' {
+                                k += 1;
+                            }
+                            if k < n && self.bytes[k] == b'\'' {
+                                self.pos = k + 1;
+                                continue;
+                            }
+                            // Unterminated — treat `'` as ordinary.
+                            self.pos += 1;
+                            continue;
+                        } else if j + 1 < n && self.bytes[j + 1] == b'\'' {
+                            // `'X'` simple char literal.
+                            self.pos = j + 2;
+                            continue;
+                        } else {
+                            // Lifetime / apostrophe — pass through.
+                            self.pos += 1;
+                            continue;
+                        }
+                    } else if b == b'"' {
+                        self.pos += 1;
+                        -> $InString
+                    } else if b == b'{' {
+                        self.depth += 1;
+                        self.pos += 1;
+                    } else if b == b'}' {
+                        self.depth -= 1;
+                        self.pos += 1;
+                        if self.depth == 0 {
+                            self.result_pos = self.pos - 1;
+                            self.error_kind = 0;
+                            return
+                        }
+                    } else {
+                        self.pos += 1;
+                    }
+                }
+                self.error_kind = 3;
+                self.error_msg = "body not closed".to_string();
+            }
+        }
+
+        $InString {
+            $>() {
+                let n = self.bytes.len();
+                while self.pos < n {
+                    if self.bytes[self.pos] == b'\\' {
+                        self.pos += 2;
+                        continue;
+                    }
+                    if self.bytes[self.pos] == b'"' {
+                        self.pos += 1;
+                        -> $Scanning
+                    }
+                    self.pos += 1;
+                }
+                self.error_kind = 1;
+                self.error_msg = "unterminated string".to_string();
+            }
+        }
+
+        $InLineComment {
+            $>() {
+                let n = self.bytes.len();
+                while self.pos < n && self.bytes[self.pos] != b'\n' {
+                    self.pos += 1;
+                }
+                -> $Scanning
+            }
+        }
+
+        $InBlockComment {
+            $>() {
+                // Nested block comments — same as Rust.
+                let n = self.bytes.len();
+                while self.pos + 1 < n {
+                    if self.bytes[self.pos] == b'/' && self.bytes[self.pos + 1] == b'*' {
+                        self.block_comment_nest += 1;
+                        self.pos += 2;
+                        continue;
+                    }
+                    if self.bytes[self.pos] == b'*' && self.bytes[self.pos + 1] == b'/' {
+                        self.block_comment_nest -= 1;
+                        self.pos += 2;
+                        if self.block_comment_nest == 0 {
+                            -> $Scanning
+                        }
+                        continue;
+                    }
+                    self.pos += 1;
+                }
+                self.error_kind = 2;
+                self.error_msg = "unterminated comment".to_string();
+            }
+        }
+
+    domain:
+        bytes: Vec<u8> = Vec::new()
+        pos: usize = 0
+        depth: i32 = 1
+        result_pos: usize = 0
+        error_kind: usize = 0
+        error_msg: String = String::new()
+        block_comment_nest: i32 = 0
+}

@@ -565,6 +565,54 @@ fn issue25b_multiple_apostrophe_comments_in_same_state_body() {
     assert!(dot.contains("digraph Foo"), "missing digraph Foo:\n{}", dot);
 }
 
+/// Issue #26 (FRAMEC_BUGS): GraphViz silently dropped transitions
+/// inside `if c == '"' { ... }` branches because the hand-coded
+/// structural scanner from #25 over-consumed the branch body
+/// when scanning past the `'"'` char literal. Replaced the
+/// hand-coded scanner with a Frame-generated FSM
+/// (`frame_structural_skipper.frs` →
+/// `frame_structural_skipper.gen.rs`) modeled after
+/// `rust_skipper.frs`. The FSM correctly handles the char
+/// literal AND keeps scanning the surrounding tokens, so
+/// transitions inside the branch are collected and emitted as
+/// edges.
+///
+/// This test asserts the canonical reproducer — `A -> B [label]`
+/// must appear in the DOT output despite the `if c == '"'` guard.
+#[test]
+fn issue26_transition_in_char_quote_branch_appears_in_graphviz() {
+    use framec::frame_c::compiler::compile_module;
+    use framec::frame_c::compiler::TargetLanguage;
+    use std::convert::TryFrom;
+
+    let src = r#"
+@@[target("rust")]
+
+@@system Foo {
+    interface:
+        go(c: char)
+
+    machine:
+        $A {
+            go(c: char) {
+                if c == '"' {
+                    -> $B
+                }
+            }
+        }
+
+        $B { }
+}
+"#;
+    let dot = compile_module(src, TargetLanguage::try_from("graphviz").unwrap())
+        .expect("graphviz compile after #26 fix");
+    assert!(
+        dot.contains("A -> B"),
+        "missing `A -> B` transition edge in graphviz output:\n{}",
+        dot
+    );
+}
+
 /// Helper: grab a 12-line window around the first match of `needle`,
 /// for clearer assertion failure messages than a 5,000-line dump.
 fn excerpt(haystack: &str, needle: &str) -> String {
