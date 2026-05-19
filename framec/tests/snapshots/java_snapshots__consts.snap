@@ -191,13 +191,13 @@ public class Consts {
     }
 
     private void _s_Running_hdl_user_get_count(ConstsFrameEvent __e, ConstsCompartment compartment) {
-        _context_stack.get(_context_stack.size() - 1)._return = self.count;
+        _context_stack.get(_context_stack.size() - 1)._return = this.count;
     }
 
     private void _s_Running_hdl_user_tick(ConstsFrameEvent __e, ConstsCompartment compartment) {
-        self.count = self.count + self.step
-        if self.count >= self.limit {
-            self.count = 0
+        this.count = this.count + this.step
+        if this.count >= this.limit {
+            this.count = 0
         }
     }
 }

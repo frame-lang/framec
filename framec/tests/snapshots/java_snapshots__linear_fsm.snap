@@ -224,6 +224,6 @@ public class LinearFsm {
     private void _s_Active_hdl_user_progress(LinearFsmFrameEvent __e, LinearFsmCompartment compartment) {
         int amount = ((Number) __e._parameters.get(0)).intValue();
         // self mutation exercised below via domain field
-        self.total = self.total + amount
+        this.total = this.total + amount
     }
 }

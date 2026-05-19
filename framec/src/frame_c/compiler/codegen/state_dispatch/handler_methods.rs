@@ -15,6 +15,7 @@ pub(super) mod dart;
 pub(super) mod gdscript;
 pub(super) mod go;
 pub(super) mod java;
+mod java_native_rewrite;
 pub(super) mod kotlin;
 pub(super) mod lua;
 pub(super) mod php;

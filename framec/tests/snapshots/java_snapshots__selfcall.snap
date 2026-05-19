@@ -187,12 +187,12 @@ public class SelfCall {
     }
 
     private void _s_Active_hdl_user_kick(SelfCallFrameEvent __e, SelfCallCompartment compartment) {
-        self.count = self.count + 1
+        this.count = this.count + 1
         this.report();
         if (!_context_stack.isEmpty() && _context_stack.get(_context_stack.size() - 1)._transitioned) return;
     }
 
     private void _s_Active_hdl_user_report(SelfCallFrameEvent __e, SelfCallCompartment compartment) {
-        _context_stack.get(_context_stack.size() - 1)._return = self.count;
+        _context_stack.get(_context_stack.size() - 1)._return = this.count;
     }
 }

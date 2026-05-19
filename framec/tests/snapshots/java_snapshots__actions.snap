@@ -187,7 +187,7 @@ public class Actions {
     }
 
     private void _s_Counting_hdl_user_get_total(ActionsFrameEvent __e, ActionsCompartment compartment) {
-        _context_stack.get(_context_stack.size() - 1)._return = self.total;
+        _context_stack.get(_context_stack.size() - 1)._return = this.total;
     }
 
     private void _s_Counting_hdl_user_increment(ActionsFrameEvent __e, ActionsCompartment compartment) {

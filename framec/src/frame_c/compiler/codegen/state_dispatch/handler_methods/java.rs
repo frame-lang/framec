@@ -145,6 +145,13 @@ pub(crate) fn generate_java_handler_method(
     }
 
     let body_src = emit_handler_body_via_statements(&handler.body_span, source, lang, &ctx);
+    // Lower Frame canonical tokens (`self.`, `await EXPR`) to Java idioms
+    // (`this.`, `EXPR.join()`). Frame's Oceans Model leaves NativeCode
+    // segments verbatim, so cross-target source like
+    // `self.tmp_a = await op("init")` would compile on Python but break
+    // here. See `java_native_rewrite.rs` for boundary-safe rewriter +
+    // unit tests.
+    let body_src = super::java_native_rewrite::rewrite_java_handler_body(&body_src);
     body.push_str(&body_src);
 
     let event_type = format!("{}FrameEvent", system_name);
