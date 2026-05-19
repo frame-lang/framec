@@ -537,6 +537,63 @@ mod tests {
         }
     }
 
+    /// RFC-0024 / bug #30: cross-system `@@SystemName()` in a named-event
+    /// handler body must NOT raise E821 — framec MUST NOT verify that
+    /// `SystemName` resolves to a declared system. Host language reports
+    /// any miss at host-compile time.
+    ///
+    /// Before the fix, the GraphViz target rejected this fixture with
+    /// `E821: undefined system 'Inner'` because the validator's per-
+    /// named-handler walk ran for all targets but bug #29's assembler
+    /// fix only covered the codegen text-rewrite path.
+    #[test]
+    fn test_e821_removed_named_event_handler() {
+        let source = r#"
+@@system Outer {
+    interface:
+        go(arg: String)
+    machine:
+        $S {
+            go(arg: String) {
+                let _ = @@Inner(self.next_id);
+            }
+        }
+    domain:
+        next_id: u32 = 1
+}"#;
+        // Both targets must accept the cross-system reference.
+        for target in [VTarget::Rust, VTarget::Graphviz] {
+            let result = validate_for_target(source, target);
+            assert!(
+                result.is_ok(),
+                "{:?} should accept cross-file @@Inner(): {:?}",
+                target,
+                result
+            );
+        }
+    }
+
+    /// RFC-0024 / bug #30 also covers the no-init form `@@!Inner()` —
+    /// it must lower verbatim without a cross-system existence check.
+    /// E820 (no-init zero-arg) still fires for `@@!Inner(args)` because
+    /// that's a same-file rule, not a cross-file lookup.
+    #[test]
+    fn test_e821_removed_no_init_form() {
+        let source = r#"
+@@system Outer {
+    interface:
+        go()
+    machine:
+        $S {
+            go() {
+                let _ = @@!Inner();
+            }
+        }
+}"#;
+        let result = validate_for_target(source, VTarget::Rust);
+        assert!(result.is_ok(), "should accept @@!Inner(): {:?}", result);
+    }
+
     #[test]
     fn test_e501_gdscript_get_collision() {
         // The validator only inspects interface declarations and method

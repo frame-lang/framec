@@ -83,12 +83,16 @@ impl FrameValidator {
     }
 
     /// RFC-0015 D7: validate `@@SystemName(args)` and `@@!SystemName()` call
-    /// sites against the set of declared systems and the kind-specific rules.
+    /// sites against the kind-specific rules.
     ///
     /// - **E820**: `@@!Foo(args)` with non-empty args is rejected. The
-    ///   no-initialization form is zero-arg by definition.
-    /// - **E821**: `@@SystemName(...)` (or `@@!SystemName()`) referencing a
-    ///   system not declared in the module is rejected.
+    ///   no-initialization form is zero-arg by definition. (Same-file rule;
+    ///   the validator owns this.)
+    /// - **E821 (REMOVED per RFC-0024 / bug #30)**: framec MUST NOT verify
+    ///   that `@@SystemName(...)` references a system declared in the
+    ///   module. The host language's name resolution reports any miss at
+    ///   host-compile time. Bug #29 fixed the assembler path; bug #30
+    ///   removed the matching check in this validator.
     pub fn validate_system_instantiations(
         &mut self,
         ast: &FrameAst,
@@ -204,23 +208,12 @@ impl FrameValidator {
                     }
                 }
 
-                // E821: referenced system must be declared in the module.
-                if !defined_systems.contains(system_name) {
-                    let prefix = if *inst_kind == InstantiationKind::NoInitialization {
-                        "@@!"
-                    } else {
-                        "@@"
-                    };
-                    let mut known: Vec<&String> = defined_systems.iter().collect();
-                    known.sort();
-                    self.errors.push(ValidationError::new(
-                        "E821",
-                        format!(
-                            "undefined system '{}' in `{}{}{}` — known systems: {:?}",
-                            system_name, prefix, system_name, args, known
-                        ),
-                    ));
-                }
+                // E821 removed per RFC-0024 — bug #30. framec MUST NOT
+                // verify that `@@SystemName(...)` resolves to a declared
+                // system. Host language reports any miss at host-compile
+                // time. `defined_systems` retained as a parameter so the
+                // E820 branch keeps its existing call shape.
+                let _ = (system_name, defined_systems);
             }
         }
     }

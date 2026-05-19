@@ -769,7 +769,10 @@ pub fn compile_ast_based(
                 });
             }
             // RFC-0015 D7: validate `@@SystemName(args)` and `@@!SystemName()`
-            // call sites (E820 zero-arg no-initialization, E821 undefined system).
+            // call sites — only E820 (no-init zero-arg). E821 (undefined
+            // system) was removed per RFC-0024 / bug #30: framec MUST NOT
+            // verify cross-system name resolution; host language reports
+            // any miss at host-compile time.
             if let Err(errs) =
                 validator.validate_system_instantiations(&frame_ast, source, config.target)
             {
