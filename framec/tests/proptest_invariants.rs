@@ -80,8 +80,8 @@ fn capitalize_first(s: &str) -> String {
 // Generator: a system with one state, N interface methods, and M
 // domain state-vars with int initializers. Returns (source,
 // system_name, methods, state_vars_with_init).
-fn system_with_state_vars_strategy(
-) -> impl Strategy<Value = (String, String, Vec<(String, i32)>)> {
+fn system_with_state_vars_strategy() -> impl Strategy<Value = (String, String, Vec<(String, i32)>)>
+{
     (
         ident_strategy(),
         state_name_strategy(),
@@ -130,8 +130,7 @@ fn persist_system_strategy() -> impl Strategy<Value = (String, String)> {
 
 // Generator: a minimal valid @@system with one state and N interface
 // methods. Returns (frame_source, system_name, method_names).
-fn system_with_methods_strategy(
-) -> impl Strategy<Value = (String, String, Vec<String>)> {
+fn system_with_methods_strategy() -> impl Strategy<Value = (String, String, Vec<String>)> {
     (
         ident_strategy(),
         state_name_strategy(),

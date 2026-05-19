@@ -54,7 +54,10 @@ mod tests {
 
     fn close(src: &str) -> Result<usize, CloseError> {
         let bytes = src.as_bytes();
-        let open = bytes.iter().position(|&b| b == b'{').expect("test source must contain {");
+        let open = bytes
+            .iter()
+            .position(|&b| b == b'{')
+            .expect("test source must contain {");
         BodyCloserRust.close_byte(bytes, open)
     }
 

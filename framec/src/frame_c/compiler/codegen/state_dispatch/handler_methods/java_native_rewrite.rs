@@ -43,11 +43,8 @@ use crate::frame_c::visitors::TargetLanguage;
 pub(super) fn rewrite_java_handler_body(body: &str) -> String {
     // Pass 1: `self.` → `this.`. Boundary-safe via the shared
     // helper (per-target skipper handles `"..."` and `// /* */`).
-    let after_self = replace_outside_strings_and_comments(
-        body,
-        TargetLanguage::Java,
-        &[("self.", "this.")],
-    );
+    let after_self =
+        replace_outside_strings_and_comments(body, TargetLanguage::Java, &[("self.", "this.")]);
 
     // Pass 2: `await EXPR;` → `EXPR.join();` via the dogfooded FSM.
     rewrite_await(&after_self)

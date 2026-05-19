@@ -87,9 +87,7 @@ pub(crate) fn expand_system_state(lang: TargetLanguage) -> String {
         // the other 16 backends). `frame_state_name__/1` is emitted by
         // `emit_runtime_helpers` and maps the atom back to the
         // original spelling.
-        TargetLanguage::Erlang => {
-            "frame_state_name__(Data#data.frame_current_state)".to_string()
-        }
+        TargetLanguage::Erlang => "frame_state_name__(Data#data.frame_current_state)".to_string(),
         TargetLanguage::Graphviz => unreachable!(),
     }
 }

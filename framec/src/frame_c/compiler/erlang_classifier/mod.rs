@@ -45,7 +45,10 @@ mod erlang_line_classifier_fsm {
 /// defined inside `erlang_system/native_rewrite.rs`).
 pub(crate) enum ErlangRewrite {
     ActionCall(String),
-    ActionCallWithBind { field: String, call: String },
+    ActionCallWithBind {
+        field: String,
+        call: String,
+    },
     InterfaceCallWithBind {
         field: String,
         method: String,
@@ -112,7 +115,8 @@ fn parse_encoded(encoded: &str) -> ErlangRewrite {
         }
         "InterfaceCall" => {
             let (method, after_method) = take_field(rest, "method=");
-            let (args, after_args) = take_field_value_may_contain_pipe(after_method, "args=", "|result_var=");
+            let (args, after_args) =
+                take_field_value_may_contain_pipe(after_method, "args=", "|result_var=");
             let result_var = strip_prefix_or_all(after_args, "result_var=");
             ErlangRewrite::InterfaceCall {
                 method,
@@ -200,11 +204,7 @@ mod tests {
 
     #[test]
     fn action_call_threads_data() {
-        let r = erlang_rewrite_native_classified(
-            "self.tick(5)",
-            &["tick".to_string()],
-            "Data",
-        );
+        let r = erlang_rewrite_native_classified("self.tick(5)", &["tick".to_string()], "Data");
         match_action_call(r, "tick(Data, 5)");
     }
 

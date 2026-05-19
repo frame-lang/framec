@@ -375,8 +375,7 @@ pub(crate) fn emit_handler_body_via_statements(
                             ))
                             && needs_statement_terminator(&out, lang)
                         {
-                            let last_non_ws =
-                                out.rfind(|c: char| !c.is_whitespace());
+                            let last_non_ws = out.rfind(|c: char| !c.is_whitespace());
                             if let Some(pos) = last_non_ws {
                                 let tail: String = out[pos + 1..].to_string();
                                 out.truncate(pos + 1);

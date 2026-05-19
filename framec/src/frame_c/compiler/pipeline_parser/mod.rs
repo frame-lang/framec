@@ -1118,8 +1118,7 @@ impl<'a> Parser<'a> {
                                                 let s = next.span.start.min(src.len());
                                                 let e = next.span.end.min(src.len());
                                                 path.push_str(
-                                                    std::str::from_utf8(&src[s..e])
-                                                        .unwrap_or(""),
+                                                    std::str::from_utf8(&src[s..e]).unwrap_or(""),
                                                 );
                                             }
                                         }

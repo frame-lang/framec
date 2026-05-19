@@ -101,9 +101,7 @@ pub const FIXTURES_ALL: &[&str] = &[
 pub fn excluded_for(target: &str) -> &'static [&'static str] {
     match target {
         // Serde-style JSON serialization in persist codegen.
-        "rust" | "java" | "csharp" | "kotlin" | "swift" | "cpp" => {
-            &["03_persist", "12_no_persist"]
-        }
+        "rust" | "java" | "csharp" | "kotlin" | "swift" | "cpp" => &["03_persist", "12_no_persist"],
         // Python/JS/Ruby: fixtures using Rust-flavored
         // `if x { ... }` braces in user code (Python expects
         // `if x:`; JS needs `if (x)`; Ruby needs `if x then` or
@@ -166,8 +164,7 @@ pub fn compile_check_all<F>(target: &str, file_ext: &str, tool_runner: F)
 where
     F: Fn(&std::path::Path) -> std::process::Output,
 {
-    let excluded: std::collections::HashSet<&str> =
-        excluded_for(target).iter().copied().collect();
+    let excluded: std::collections::HashSet<&str> = excluded_for(target).iter().copied().collect();
     for fixture in FIXTURES_ALL {
         if excluded.contains(*fixture) {
             continue;

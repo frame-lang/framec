@@ -262,7 +262,8 @@ impl FrameValidator {
         // codegen emits a structurally-typed shape that doesn't
         // exercise the inference — surface the gap to the user
         // rather than emit ambiguous output.
-        let requires_explicit_type = matches!(target, C | Cpp | Java | Go | Rust | CSharp | TypeScript);
+        let requires_explicit_type =
+            matches!(target, C | Cpp | Java | Go | Rust | CSharp | TypeScript);
         if !requires_explicit_type {
             return;
         }

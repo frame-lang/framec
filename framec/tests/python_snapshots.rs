@@ -90,9 +90,7 @@ fn rfc0034_all_fixtures_compile() {
     let py3 = match find_tool("python3") {
         Some(p) => p,
         None => {
-            eprintln!(
-                "python_3 RFC-0034 compile check skipped: `python3` not on PATH"
-            );
+            eprintln!("python_3 RFC-0034 compile check skipped: `python3` not on PATH");
             return;
         }
     };

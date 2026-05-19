@@ -154,12 +154,7 @@ impl NativeRegionScanner for NativeRegionScannerRust {
 /// closing `}` of the fn body, or `None` if the shape doesn't match.
 ///
 /// Form: `fn <ident>[<generics>](args) [-> ret_type] [where …] { body }`.
-fn skip_rust_nested_fn(
-    skipper: &RustSkipper,
-    bytes: &[u8],
-    i: usize,
-    end: usize,
-) -> Option<usize> {
+fn skip_rust_nested_fn(skipper: &RustSkipper, bytes: &[u8], i: usize, end: usize) -> Option<usize> {
     let mut j = i + 2; // past `fn`
     let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
     while j < end && matches!(bytes[j], b' ' | b'\t') {

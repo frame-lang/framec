@@ -238,9 +238,7 @@ fn rfc0033_str_ref_auto_promotion() {
         // Must be in lifetime position: preceded by `&`, `<`, `,`,
         // ` `, or start-of-file — never preceded by an alphabetic
         // character (which would mean it's an English apostrophe).
-        if i == 0
-            || matches!(bytes[i - 1], b'&' | b'<' | b',' | b' ' | b'\t' | b'(')
-        {
+        if i == 0 || matches!(bytes[i - 1], b'&' | b'<' | b',' | b' ' | b'\t' | b'(') {
             // Capture up to 16 chars for the message
             let end = (i + 16).min(stripped.len());
             hits.push(stripped[i..end].to_string());
@@ -429,11 +427,7 @@ fn issue23_untyped_domain_field_rejected_for_rust() {
     let result = compile_module(src, lang);
     let err = result.expect_err("E605 must reject untyped domain field");
     let msg = err.error;
-    assert!(
-        msg.contains("E605"),
-        "expected E605 in error, got: {}",
-        msg
-    );
+    assert!(msg.contains("E605"), "expected E605 in error, got: {}", msg);
     assert!(
         msg.contains("'b'"),
         "error should name the offending field 'b', got: {}",
@@ -490,8 +484,7 @@ fn issue24_apostrophe_in_state_body_comment_graphviz() {
     // GraphViz target used to fail with E002 "Unmatched '{' for
     // state A". After the fix it produces valid DOT.
     let dot_lang = TargetLanguage::try_from("graphviz").unwrap();
-    let dot_out = compile_module(src, dot_lang)
-        .expect("graphviz compile after #24 fix");
+    let dot_out = compile_module(src, dot_lang).expect("graphviz compile after #24 fix");
     assert!(
         dot_out.contains("digraph Foo"),
         "graphviz output missing `digraph Foo`:\n{}",
@@ -622,6 +615,10 @@ fn excerpt(haystack: &str, needle: &str) -> String {
         let hi = (pos + 10).min(lines.len());
         lines[lo..hi].join("\n")
     } else {
-        format!("(no line contained `{}` — first 12 lines:\n{}", needle, lines[..lines.len().min(12)].join("\n"))
+        format!(
+            "(no line contained `{}` — first 12 lines:\n{}",
+            needle,
+            lines[..lines.len().min(12)].join("\n")
+        )
     }
 }
