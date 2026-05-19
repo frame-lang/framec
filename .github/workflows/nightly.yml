@@ -135,6 +135,27 @@ jobs:
         working-directory: framec
         run: cargo build --release -p framec
 
+      # diff_harness/run_fuzz.py invokes `docker run docker-java`
+      # / `docker run docker-erlang` for the differential trace
+      # runners. The compose project in framec-test-env/docker
+      # builds these images with the exact `docker-<lang>` names
+      # the harness expects. Skip the cold-start cost for
+      # python_3 + rust (their diff_harness paths run natively).
+      - name: Set up Docker Buildx
+        if: matrix.backend == 'java' || matrix.backend == 'erlang'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build matrix Docker image for diff_harness
+        if: matrix.backend == 'java' || matrix.backend == 'erlang'
+        working-directory: framec-test-env/docker
+        env:
+          # `docker compose config` requires FRAMEC_BIN to be set
+          # even though `build` doesn't actually use the volume.
+          FRAMEC_BIN: ${{ github.workspace }}/framec/target/release/framec
+        run: |
+          cp "$FRAMEC_BIN" ./framec-linux
+          docker compose build ${{ matrix.backend == 'java' && 'java' || 'erlang' }}
+
       - name: Generate full fuzz corpus
         working-directory: framec-test-env/fuzz
         env:
