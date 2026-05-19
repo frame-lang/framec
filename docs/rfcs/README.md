@@ -1,0 +1,82 @@
+# Frame RFCs
+
+Index of Frame RFCs. The RFC process is documented in
+[`STYLE.md`](STYLE.md). New RFCs should follow that style guide.
+
+**RFC numbering** is monotonically increasing. Skipped numbers
+correspond to drafts that were never written, RFC slots reserved
+for an idea that was then absorbed into another RFC, or pre-public
+exploratory work that wasn't promoted to a numbered RFC. Skipped
+numbers are not re-used.
+
+| # | Title | Status | Cross-refs |
+|---|---|---|---|
+| 0001–0005 | — | (unassigned) | numbering reserved; no documents |
+| [0006](rfc-0006.md) | Self Interface Call — `@@:self.iface()` | Implemented (with revisions) | foundational |
+| 0007 | — | (unassigned) | numbering reserved; no document |
+| [0008](rfc-0008.md) | Extended `pop$` Transition Syntax | Implemented | foundational |
+| [0009](rfc-0009.md) | Static States — Compile-Time-Known Identity | Draft (parking lot) | |
+| [0010](rfc-0010.md) | Interpolation-Aware String Scanning via Frame Automata | Draft | |
+| [0011](rfc-0011.md) | System Base Classes | Implemented | |
+| [0012](rfc-0012.md) | Persist Stress Testing | Amendment shipped (Phases A–B + D); Phase C deferred | superseded in part by [0016.1](rfc-0016-1.md) for the `@@[save]`/`@@[load]` form |
+| [0013](rfc-0013.md) | Annotation Syntax — `@@[...]` | Wave 1 + Wave 2 shipped; Wave 3 open | foundational for [0014](rfc-0014.md), [0015](rfc-0015.md), [0016](rfc-0016.md) |
+| [0014](rfc-0014.md) | `@@[main]` — Module-Level Primary System | Wave 1 shipped | |
+| [0015](rfc-0015.md) | Factory-Only System Construction | Shipped in 4.1.0 | partially superseded by [0017](rfc-0017.md) (init mechanism); see [0016.1](rfc-0016-1.md) for save/load form |
+| [0016](rfc-0016.md) | Selective Domain Persist | Draft — deferred; not shipped | partially superseded by [0016.1](rfc-0016-1.md) (the `@@[no_persist]` form shipped; `@@[persist_fields]` still deferred) |
+| [0016.1](rfc-0016-1.md) | Amendment — `@@[no_persist]` codegen | Shipped (2026-05-15) | amends [0012](rfc-0012.md); companion to deferred [0016](rfc-0016.md) |
+| [0017](rfc-0017.md) | Init Decouple — bare ctor + factory split | Accepted; shipped | companion to [0015](rfc-0015.md), [0018](rfc-0018.md) |
+| [0018](rfc-0018.md) | Re-entrant interface dispatch from lifecycle handlers | Resolved (crash); superseded in part by [0019](rfc-0019.md) | construction-context push fix survives; lifecycle-semantics passages quote pre-0019 |
+| [0019](rfc-0019.md) | Uniform `$>` / `<$` dispatch (cascade removed) | Accepted (2026-05-12); shipped | supersedes in part [0018](rfc-0018.md); breaking change in 4.2.0 |
+| [0020](rfc-0020.md) | Runtime Reference Architecture | Authoritative (normative); aligned with [0019](rfc-0019.md) | companion to [0015](rfc-0015.md), [0017](rfc-0017.md), [0018](rfc-0018.md), [0019](rfc-0019.md), [0021](rfc-0021.md) |
+| [0021](rfc-0021.md) | Runtime Performance Optimizations | Draft (parking lot) | companion to [0020](rfc-0020.md) |
+| [0022](rfc-0022.md) | Cross-file `@@import` directive | **Superseded by [0024](rfc-0024.md)** | historical |
+| [0022.1](rfc-0022-1.md) | `@@import` semantics on Java/C#/Go | **Superseded by [0024](rfc-0024.md)** | historical |
+| 0023 | — | (unassigned) | numbering reserved; no document |
+| [0024](rfc-0024.md) | Remove `@@import` — host-language imports via Oceans Model | Accepted; shipped in 4.2.0 | supersedes [0022](rfc-0022.md), [0022.1](rfc-0022-1.md); breaking change |
+| [0025](rfc-0025.md) | Quality remediation — structured errors + typed compartment payload | Accepted; shipped (Rust target) in 4.2.0 | companion to [0026](rfc-0026.md), [0027](rfc-0027.md) |
+| [0026](rfc-0026.md) | Oceans Model as calculus — pre-backend normalization, preservation theorem, formal grammar | Draft (Exploration) | companion to [0025](rfc-0025.md), [0027](rfc-0027.md); no execution commitment |
+| [0027](rfc-0027.md) | In-tree snapshot tests per backend (insta) | Accepted; shipped in 4.2.0 | companion to [0025](rfc-0025.md), [0026](rfc-0026.md) |
+| [0028](rfc-0028.md) | In-process framec API | Draft (Forward-looking) | replaces roadmap #171 |
+| [0029](rfc-0029.md) | Fuzz infrastructure status + deferred-work catalog | Draft (Status report + forward-looking) | replaces roadmap #172; resolved by [0031](rfc-0031.md) for CI integration |
+| [0030](rfc-0030.md) | Fuzz infra catch-up plan — multi-RFC corpus migration | Accepted (execution committed 2026-05-18) | execution companion to [0029](rfc-0029.md) |
+| [0031](rfc-0031.md) | Post-release process — RC validation, CI gates, drift detection | Accepted (Process) | resolves CI questions in [0029](rfc-0029.md); supersedes ad-hoc release process |
+
+## Other documents in this directory
+
+- [`STYLE.md`](STYLE.md) — RFC style guide. New RFCs should
+  follow this format.
+- [`frc-future.md`](frc-future.md) — informal scratch of
+  ideas that haven't been numbered yet.
+
+## Status taxonomy
+
+- **Draft** — proposed; not implemented; design open for revision.
+- **Accepted** — design approved; implementation may or may not
+  be in progress.
+- **Shipped** — implementation landed in a released framec version.
+  CHANGELOG entry exists.
+- **Implemented** — older RFCs that predate the
+  Accepted/Shipped distinction; treat as shipped.
+- **Authoritative** — the RFC is the normative reference for some
+  aspect of the system (e.g., RFC-0020 for the runtime kernel).
+- **Resolved** — bug-class RFC where the immediate fix shipped.
+- **Superseded by N** — the RFC is preserved for history; N
+  contains the current contract.
+- **Draft (Exploration)** — research-grade; no execution
+  commitment.
+- **Draft (Forward-looking)** — design captured; pending a
+  prioritization decision.
+- **Status report** — captures current state of a subsystem
+  without committing to changes.
+
+## Cross-reference invariants
+
+When one RFC supersedes another, the relationship is recorded
+**bidirectionally**:
+
+- The superseded RFC's status line names the superseding RFC.
+- The superseding RFC's header lists what it supersedes.
+
+When checking the index, both directions should agree. The
+[0022] / [0022.1] / [0024] cluster and the [0018] / [0019]
+cluster are the current cases of this pattern.

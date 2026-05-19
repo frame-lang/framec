@@ -6,6 +6,139 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+> **Migrating from 4.1.x?** Two hard-cut breaking changes and one
+> wire-format break in this release. See
+> [`docs/migration/4.1_to_4.2.md`](docs/migration/4.1_to_4.2.md) for
+> the upgrade walk-through.
+
+### Removed — RFC-0024 `@@import` directive (breaking)
+
+- **`@@import` is gone.** Cross-file dependencies are now expressed
+  entirely in the host language's native import syntax — `from .x
+  import Y` for Python, `use crate::...` for Rust, `import` for
+  Java/JS/TS/Dart/Kotlin/Swift, `require_relative` for Ruby,
+  `#include` for C/C++, `const X = preload(...)` for GDScript, and
+  so on — written by the user as Oceans Model pass-through. framec
+  emits no `@@import` lowering. Cross-file `@@SystemName()` lowers
+  using only the literal name; the host language's import system
+  resolves it. See [RFC-0024](docs/rfcs/rfc-0024.md), which
+  supersedes RFC-0022 and RFC-0022.1.
+- **E823 hard-cut.** A Frame source file containing `@@import` at
+  module scope is now a parse error: `E823: @@import has been
+  removed. Replace with the target language's native import syntax
+  outside any @@system block. See RFC-0024.`
+- **`--import-mode strict` CLI flag removed.** E821 (unreadable
+  import) and E822 (no system in imported file) are gone with it.
+- **Migration.** Convert each `@@import "./other.f<ext>"` to the
+  target's native import line. See the per-target table in
+  [RFC-0024 § Migration](docs/rfcs/rfc-0024.md#migration) and the
+  worked walk-through in
+  [`docs/migration/4.1_to_4.2.md`](docs/migration/4.1_to_4.2.md).
+  Java/C#/Go users already on native imports (per RFC-0022.1) just
+  delete the no-op `@@import` line.
+
+### Added — Cross-file composition via Oceans Model (RFC-0022 → RFC-0024 trajectory)
+
+- **RFC-0022 shipped briefly and was superseded by RFC-0024.** The
+  intermediate work (per-symbol module imports across 7 backends,
+  `--import-mode strict` validators, GDScript `@@import` header
+  ordering, cross-file persist contract detection via importer
+  peek) all landed and was then retired. The net user-visible
+  change is: cross-file composition now requires no Frame-level
+  directive at all — just native imports through Oceans Model
+  pass-through. The fact that this happened in one release window
+  is by design — Frame is pre-1.0; hard cuts replace soft
+  deprecation. RFCs preserved as historical record.
+
+### Added — RFC-0025 quality remediation (Rust target)
+
+- **Track A — typed errors for kernel-level invariants.** A sweep
+  through the framec compiler crate converted recoverable `unwrap`s
+  and `panic`s in compiler paths to either typed `CompileError`
+  returns (E-coded; new E900–E999 block reserved for "internal
+  invariant surfaced as recoverable error") or `.expect("invariant:
+  …")` calls whose message documents the invariant. Crashes that
+  used to bottom out at "called `Option::unwrap()` on a `None`
+  value" now surface as actionable error messages with E-codes the
+  user can grep against in
+  [`docs/error_codes.md`](docs/error_codes.md).
+- **Track B — typed compartment payload.** The generated Rust
+  target's dispatch infrastructure (`Compartment`, `FrameContext`,
+  `StateContext`, `FrameValue`) was retyped: `Box<dyn Any>` storage
+  for state/enter args + return values is wrapped in a typed
+  `FrameValue { Int(i64), Float(f64), Bool(bool), Str(String),
+  List(Vec<FrameValue>), Dict(HashMap<String, FrameValue>) }`
+  enum. Generated bodies downcast through `FrameValue` accessors
+  (`as_int()`, `as_str()`, etc.) instead of raw `Box<dyn Any>`
+  `downcast_ref::<T>()`. The `downcast-rs` dependency was dropped
+  from `Cargo.toml` for the Rust target's generated code. User
+  code reading from generated Rust state machines now sees typed
+  enum variants, not untyped `Any`. See
+  [RFC-0025](docs/rfcs/rfc-0025.md).
+
+### Added — RFC-0027 in-tree snapshot tests (insta)
+
+- **204 in-tree snapshots across all 17 backends.** Cargo's
+  `cargo test` now runs `insta`-based snapshot tests against
+  12 representative fixtures × 17 backends, locking the generated
+  code byte-for-byte against approved baselines. A codegen change
+  that wasn't intended to alter output is now a `cargo test`
+  failure pre-merge, not a 5-minute-later matrix surprise. Phase
+  rollout: P1 (Python only) → P2 (16 other backends) → P3 (12
+  fixtures including HSM, persist, push/pop, multi-system). See
+  [RFC-0027](docs/rfcs/rfc-0027.md).
+- **Workflow.** `cargo test` reports diff if the generated code
+  drifts from the approved baseline. `cargo insta accept` accepts
+  the new output as the new baseline after intentional changes.
+  The `.snap` files are checked into git; `.snap.new` files are
+  gitignored and represent unaccepted drift.
+
+### Added — Property-based tests for the codegen invariants
+
+- **proptest scaffolding wired in.** A new `proptest`-driven test
+  module exercises 8 codegen invariants against randomly-generated
+  Frame source: round-trip Frame-source → generated-code →
+  framec-parse-of-generated-code (where applicable per backend),
+  factory-call shape, persist field-order stability, and
+  transition-emission well-formedness. Initial corpus is
+  Python+Rust; Erlang excluded for now pending diff-harness work.
+  See `framec/tests/proptest/` and the
+  `_scratch/proptest_invariants.md` design doc.
+
+### Added — Post-release process (RFC-0031, ci/)
+
+- **Three CI workflows landed** to prevent the "RFC ships, fuzz
+  rots silently for months" pattern that surfaced at RC time.
+  - **`.github/workflows/fuzz-smoke.yml`** — pre-merge fuzz gate.
+    4-backend × all-phase smoke (Python + Rust + Erlang restricted
+    + one typed lang per family). Runs on every PR; blocks
+    merge if fuzz fails.
+  - **`.github/workflows/nightly.yml`** — Layer 4 drift detection.
+    Full 17-backend matrix + full fuzz suite. Runs once nightly;
+    issues filed on regression.
+  - **`.github/workflows/quarterly-audit.yml`** — recurring
+    roadmap-staleness reminder. Files an issue if a roadmap task
+    has been Open for more than 90 days with no commit activity.
+- See [RFC-0031](docs/rfcs/rfc-0031.md) for the full release
+  process model (RC validation → CI gates → drift detection).
+
+### Added — Forward-looking design RFCs
+
+- **[RFC-0028](docs/rfcs/rfc-0028.md)** — in-process framec API.
+  Forward-looking scoping document for an eventual library
+  interface to framec (today: CLI-subprocess only). Captures the
+  three caller classes (test harness, IDE LSP-style integration,
+  hosted compile services), the threading model, and the
+  Cargo-feature-gating proposal. No execution commitment.
+- **[RFC-0029](docs/rfcs/rfc-0029.md)** — fuzz infrastructure
+  status report + deferred-work catalog. Documents the current
+  state of the fuzz harness, what works, what's missing, and the
+  RFC-0012/RFC-0015/RFC-0024 contract-drift backlog the corpus
+  needs to catch up to.
+- **[RFC-0030](docs/rfcs/rfc-0030.md)** — fuzz infrastructure
+  catch-up plan. The execution-committed companion to RFC-0029;
+  multi-RFC corpus migration.
+
 ### Changed — RFC-0019 uniform `$>` / `<$` dispatch (breaking)
 
 - **The HSM enter/exit cascade is gone.** Before RFC-0019 the kernel walked the

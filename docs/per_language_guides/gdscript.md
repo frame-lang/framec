@@ -410,9 +410,12 @@ the matrix-side mechanism.
 
 ### Cross-file fixtures — pre-import is required
 
-Frame's RFC-0022 `@@import "other.fgd"` lowers to GDScript's
-`const X = preload("res://other.gd")` form. The generated
-factory bodies (`static func _create(): var c = SystemName.new()`)
+Cross-file composition uses GDScript's native
+`const X = preload("res://other.gd")` syntax, written by the user
+as Oceans Model pass-through in the prolog of the importing file —
+framec emits no import-related lowering of its own (per RFC-0024,
+which removed the `@@import` directive). The generated factory
+bodies (`static func _create(): var c = SystemName.new()`)
 reference each system by its `class_name`, which Godot only
 registers as a global identifier *after* it has imported the
 project. For a CLI-only workflow without an editor pass, run a
