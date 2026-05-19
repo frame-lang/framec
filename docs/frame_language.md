@@ -33,7 +33,6 @@ Complete reference for the Frame language. For a tutorial introduction, see [Get
 ```
 <preamble>          // native code (optional)
 @@[target("<lang>")]     // required, exactly once
-@@codegen { ... }        // optional, at most once
 <annotations>*           // zero or more (@@[persist], etc.)
 @@system <Name> (<params>)? {
     <sections>
@@ -41,7 +40,7 @@ Complete reference for the Frame language. For a tutorial introduction, see [Get
 <postamble>         // native code (optional)
 ```
 
-Everything outside `@@[target(...)]`, `@@codegen { ... }`, annotations, and `@@system` is native code and passes through unchanged.
+Everything outside `@@[target(...)]`, annotations, and `@@system` is native code and passes through unchanged.
 
 ### Types and Expressions
 
@@ -68,23 +67,6 @@ Required. Must appear before `@@system`. Specifies the target language.
 | `graphviz` | GraphViz DOT | | `gdscript` | GDScript |
 
 The `@@[target(...)]` attribute is the authoritative declaration of the file's target language. It can be overridden by a CLI flag (`-l <language>`). The bare `@@target` form is hard-cut (E804) per RFC-0013.
-
-### `@@codegen`
-
-```
-@@codegen {
-    <key> : <value> ,
-    ...
-}
-```
-
-Optional. Must appear after `@@[target(...)]` and before `@@system`.
-
-| Key | Values | Default | Meaning |
-|-----|--------|---------|---------|
-| `frame_event` | `on` \| `off` | `off` | Generate FrameEvent/FrameContext classes |
-
-The framepiler auto-enables `frame_event` when features that require it are used (enter/exit parameters, event forwarding, `@@:return`, interface return values).
 
 ### `@@[persist]`
 
@@ -1061,7 +1043,6 @@ The framepiler validates at the assembler stage:
 | Token | Meaning |
 |-------|---------|
 | `@@[target("<lang>")]` | Declare target language (attribute form; required, exactly once) |
-| `@@codegen { ... }` | Configure code generation (block form; optional, at most once) |
 | `@@[persist]` | Enable serialization (attribute form) |
 | `@@system` | Declare state machine |
 
@@ -1178,9 +1159,6 @@ Both `@@:self` and `@@:system` are syntactic prefixes. Bare forms are errors (E6
 import logging
 
 @@[target("python_3")]
-@@codegen {
-    frame_event: on,
-}
 
 @@[persist(str)]
 @@[save(save_state)]

@@ -21,7 +21,6 @@
 ```frame
 <prolog native code>                  # optional
 @@[target("python_3")]                # required, exactly once
-@@codegen { frame_event: on }         # optional
 @@[persist]                             # optional — see Persistence
 @@system Name (params)? : Base?, Base? {
     operations: ...                   # all sections optional, but in this order:

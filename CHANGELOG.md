@@ -11,6 +11,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 > [`docs/migration/4.1_to_4.2.md`](docs/migration/4.1_to_4.2.md) for
 > the upgrade walk-through.
 
+### Removed — RFC-0032 `@@codegen { ... }` directive (breaking)
+
+- **`@@codegen { ... }` is gone.** The directive's single config knob
+  (`frame_event: on | off`) was redundant with the framepiler's
+  auto-inference, declared at module scope while the underlying
+  codegen decision is per-system, and a no-op in practice
+  (`generate_frame_event_class` returned `Some(class)`
+  unconditionally on every backend except Rust). Removing it shrinks
+  the language surface to no behavioral cost. See
+  [RFC-0032](docs/rfcs/rfc-0032.md).
+- **E824 hard-cut.** A Frame source file containing `@@codegen` at
+  module scope is now a parse error: `E824: @@codegen { ... } is no
+  longer accepted (RFC-0032). Delete the directive — the framepiler
+  auto-enables frame_event whenever a feature that requires it
+  appears...`.
+- **Migration.** Delete the `@@codegen { ... }` block from each
+  source file. The generated code is byte-identical without it
+  (the directive was a no-op). Zero fixtures in the test corpus
+  used the directive (verified 2026-05-18); the only mentions
+  were in framec documentation, all swept clean in the same
+  release. User sources with the block: a `sed`/`perl` one-liner
+  suffices — see [RFC-0032 § Migration](docs/rfcs/rfc-0032.md#migration).
+
 ### Removed — RFC-0024 `@@import` directive (breaking)
 
 - **`@@import` is gone.** Cross-file dependencies are now expressed

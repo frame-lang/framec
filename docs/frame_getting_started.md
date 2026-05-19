@@ -1829,23 +1829,6 @@ What gets persisted: current state, state variables, state stack,
 state arguments, and domain variables. Bare `@@[persist]` without
 `@@[save]` / `@@[load]` ops is rejected with **E814**.
 
-### Codegen Options
-
-The `@@codegen` directive controls code generation:
-
-```frame
-@@codegen {
-    frame_event: on
-}
-```
-
-Currently the only option is `frame_event`:
-
-- **`off`** (default) — lean generated code, events are internal
-- **`on`** — generates `FrameEvent` and `FrameContext` classes, needed for enter/exit parameters, event forwarding, and `@@:return`
-
-The framepiler auto-enables `frame_event` when features that require it are used, with a warning if you explicitly set it to `off`.
-
 ### Multi-System Files
 
 A single file can contain multiple `@@system` blocks:

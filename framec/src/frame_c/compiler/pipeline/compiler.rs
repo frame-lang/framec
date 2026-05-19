@@ -204,6 +204,39 @@ pub fn compile_ast_based(
                     });
                 }
             }
+            // RFC-0032: @@codegen removed entirely. The only knob it
+            // ever carried was `frame_event: on`, and the framepiler
+            // auto-enables FrameEvent emission whenever a feature
+            // that requires it appears (enter/exit args, event
+            // forwarding, @@:return, interface return values). The
+            // directive was at the wrong granularity for multi-system
+            // files (per-system codegen, module-scoped flag) and the
+            // only key it controlled was redundant with inference.
+            if trimmed.starts_with("@@codegen") {
+                let after = &trimmed[9..];
+                let next = after.chars().next();
+                let is_codegen_directive = match next {
+                    None => true,
+                    Some(c) => c.is_whitespace() || c == '{',
+                };
+                if is_codegen_directive {
+                    return Ok(CompileResult {
+                        code: String::new(),
+                        errors: vec![CompileError::new(
+                            "E824",
+                            "`@@codegen { ... }` is no longer accepted (RFC-0032). \
+                             Delete the directive — the framepiler auto-enables \
+                             `frame_event` whenever a feature that requires it appears \
+                             (enter/exit args, event forwarding, `@@:return`, \
+                             interface return values), and the FrameEvent classes are \
+                             always emitted on every backend except Rust regardless of \
+                             the flag. See RFC-0032 for the migration walk-through.",
+                        )],
+                        warnings: vec![],
+                        source_map: None,
+                    });
+                }
+            }
             // RFC-0024: @@import removed entirely. Cross-file
             // dependencies are expressed in the target language's
             // native syntax (`from .x import Y` for Python, `use

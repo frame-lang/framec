@@ -354,11 +354,6 @@ and [RFC-0013](rfcs/rfc-0013.md).
 File-level attribute selecting the code-generation backend. See
 [language reference § `@@[target(...)]`](frame_language.md#target).
 
-### `@@codegen`
-
-File-level block toggling code-generation options (e.g. `frame_event`). See
-[language reference § `@@codegen`](frame_language.md#codegen).
-
 ### `@@[main]`
 
 System-level attribute marking the module's primary [system](#system) (the one a
