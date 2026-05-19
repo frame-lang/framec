@@ -69,7 +69,6 @@ active(enter, _OldState, #data{frame_skip_enter__ = true} = Data) ->
 active(enter, _OldState, Data) ->
     {keep_state, Data};
 active({call, From}, __Event = {progress, Amount}, Data) ->
-    // self mutation exercised below via domain field,
     Data1 = Data#data{total = Data#data.total + Amount},
     {keep_state, Data1, [{reply, From, ok}]};
 active({call, From}, __Event = finish, Data) ->

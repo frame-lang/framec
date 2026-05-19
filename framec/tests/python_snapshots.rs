@@ -16,7 +16,8 @@
 
 mod common;
 
-use common::{compile_fixture, compile_source};
+use common::{compile_check_all, compile_fixture, compile_source, find_tool};
+use std::process::Command;
 
 #[test]
 fn linear_fsm() {
@@ -76,6 +77,32 @@ fn consts() {
 #[test]
 fn no_persist() {
     insta::assert_snapshot!(compile_fixture("12_no_persist", "python_3"));
+}
+
+/// RFC-0034: every canonical fixture's framec-emitted Python
+/// output must parse cleanly under `python3 -m py_compile`. Closes
+/// the snapshot-doesn't-compile gap for Python — snapshots only
+/// diff text, so without this check a fixture could freeze
+/// syntactically invalid Python and the test suite would still
+/// pass.
+#[test]
+fn rfc0034_all_fixtures_compile() {
+    let py3 = match find_tool("python3") {
+        Some(p) => p,
+        None => {
+            eprintln!(
+                "python_3 RFC-0034 compile check skipped: `python3` not on PATH"
+            );
+            return;
+        }
+    };
+    compile_check_all("python_3", "py", |path| {
+        Command::new(&py3)
+            .args(["-m", "py_compile"])
+            .arg(path)
+            .output()
+            .expect("python3 process")
+    });
 }
 
 /// RFC-0033 #12 (cross-backend generalization): the parser fix for

@@ -11,7 +11,6 @@
 
         $Active {
             progress(amount: i32) {
-                // self mutation exercised below via domain field
                 self.total = self.total + amount
             }
             finish() { -> $Done }

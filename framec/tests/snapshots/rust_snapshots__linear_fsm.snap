@@ -303,7 +303,6 @@ mod _linear_fsm_framec {
         }
 
         fn _s_Active_hdl_user_progress(&mut self, __e: &LinearFsmFrameEvent, amount: i32) {
-            // self mutation exercised below via domain field
             self.total = self.total + amount;
         }
     }

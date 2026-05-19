@@ -6,7 +6,31 @@
 
 mod common;
 
-use common::compile_fixture;
+use common::{compile_check_all, compile_fixture, find_tool};
+use std::process::Command;
+
+/// RFC-0034: every canonical fixture's framec-emitted JavaScript
+/// output must parse cleanly under `node --check`. Closes the
+/// snapshot-doesn't-compile gap for JavaScript.
+#[test]
+fn rfc0034_all_fixtures_compile() {
+    let node = match find_tool("node") {
+        Some(p) => p,
+        None => {
+            eprintln!("javascript RFC-0034 compile check skipped: `node` not on PATH");
+            return;
+        }
+    };
+    // `.mjs` so node parses as an ES module — framec emits `export`
+    // statements which `node --check` rejects under CommonJS mode.
+    compile_check_all("javascript", "mjs", |path| {
+        Command::new(&node)
+            .arg("--check")
+            .arg(path)
+            .output()
+            .expect("node process")
+    });
+}
 
 #[test]
 fn linear_fsm() {

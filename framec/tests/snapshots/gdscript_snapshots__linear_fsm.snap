@@ -185,5 +185,4 @@ class LinearFsm:
 
     func _s_Active_hdl_user_progress(__e, compartment):
         var amount = __e._parameters[0]
-        // self mutation exercised below via domain field
         self.total = self.total + amount

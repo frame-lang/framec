@@ -6,7 +6,28 @@
 
 mod common;
 
-use common::compile_fixture;
+use common::{compile_check_all, compile_fixture, find_tool};
+use std::process::Command;
+
+/// RFC-0034: every canonical fixture's framec-emitted Ruby output
+/// must parse cleanly under `ruby -c` (compile-check, no run).
+#[test]
+fn rfc0034_all_fixtures_compile() {
+    let ruby = match find_tool("ruby") {
+        Some(p) => p,
+        None => {
+            eprintln!("ruby RFC-0034 compile check skipped: `ruby` not on PATH");
+            return;
+        }
+    };
+    compile_check_all("ruby", "rb", |path| {
+        Command::new(&ruby)
+            .arg("-c")
+            .arg(path)
+            .output()
+            .expect("ruby process")
+    });
+}
 
 #[test]
 fn linear_fsm() {

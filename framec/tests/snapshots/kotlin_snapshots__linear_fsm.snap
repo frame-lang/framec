@@ -189,7 +189,6 @@ class LinearFsm {
 
     private fun _s_Active_hdl_user_progress(__e: LinearFsmFrameEvent, compartment: LinearFsmCompartment) {
         val amount = __e._parameters[0] as Int
-        // self mutation exercised below via domain field
         self.total = self.total + amount
     }
 

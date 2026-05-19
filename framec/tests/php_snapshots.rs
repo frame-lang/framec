@@ -6,7 +6,28 @@
 
 mod common;
 
-use common::compile_fixture;
+use common::{compile_check_all, compile_fixture, find_tool};
+use std::process::Command;
+
+/// RFC-0034: every canonical fixture's framec-emitted PHP output
+/// must parse cleanly under `php -l` (lint / parse-only mode).
+#[test]
+fn rfc0034_all_fixtures_compile() {
+    let php = match find_tool("php") {
+        Some(p) => p,
+        None => {
+            eprintln!("php RFC-0034 compile check skipped: `php` not on PATH");
+            return;
+        }
+    };
+    compile_check_all("php", "php", |path| {
+        Command::new(&php)
+            .arg("-l")
+            .arg(path)
+            .output()
+            .expect("php process")
+    });
+}
 
 #[test]
 fn linear_fsm() {

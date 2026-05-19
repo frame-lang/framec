@@ -215,7 +215,6 @@ public class LinearFsm {
 
     private func _s_Active_hdl_user_progress(_ __e: LinearFsmFrameEvent, _ compartment: LinearFsmCompartment) {
         let amount = __e._parameters[0] as! Int
-        // self mutation exercised below via domain field
         self.total = self.total + amount
     }
 }

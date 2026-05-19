@@ -215,6 +215,5 @@ end
 
 function LinearFsm:_s_Active_hdl_user_progress(__e, compartment)
     local amount = __e._parameters[1]
-    // self mutation exercised below via domain field
     self.total = self.total + amount
 end

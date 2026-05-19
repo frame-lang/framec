@@ -231,7 +231,6 @@ public class LinearFsm {
 
     private void _s_Active_hdl_user_progress(LinearFsmFrameEvent __e, LinearFsmCompartment compartment) {
         int amount = System.Convert.ToInt32(__e._parameters[0]);
-        // self mutation exercised below via domain field
         self.total = self.total + amount
     }
 }

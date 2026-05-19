@@ -165,7 +165,6 @@ private:
 
     void _s_Active_hdl_user_progress(LinearFsmFrameEvent& __e, std::shared_ptr<LinearFsmCompartment> compartment) {
         auto amount = std::any_cast<int>(__e._parameters[0]);
-        // self mutation exercised below via domain field
         self.total = self.total + amount
 
     }

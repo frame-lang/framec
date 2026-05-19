@@ -6,7 +6,29 @@
 
 mod common;
 
-use common::compile_fixture;
+use common::{compile_check_all, compile_fixture, find_tool};
+use std::process::Command;
+
+/// RFC-0034: every canonical fixture's framec-emitted Lua output
+/// must parse cleanly under `luac -p` (parse-only, no bytecode
+/// emission).
+#[test]
+fn rfc0034_all_fixtures_compile() {
+    let luac = match find_tool("luac") {
+        Some(p) => p,
+        None => {
+            eprintln!("lua RFC-0034 compile check skipped: `luac` not on PATH");
+            return;
+        }
+    };
+    compile_check_all("lua", "lua", |path| {
+        Command::new(&luac)
+            .arg("-p")
+            .arg(path)
+            .output()
+            .expect("luac process")
+    });
+}
 
 #[test]
 fn linear_fsm() {

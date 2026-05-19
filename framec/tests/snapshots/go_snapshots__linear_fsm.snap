@@ -220,7 +220,6 @@ func (s *LinearFsm) _s_Active_hdl_user_progress(__e *LinearFsmFrameEvent, compar
     amount := __e._parameters[0].(int)
     _ = amount
     {
-    // self mutation exercised below via domain field
     self.total = self.total + amount
     }
 }
