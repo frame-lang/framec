@@ -13,10 +13,12 @@
 //                `@@[migrate(from=1, to=2)]`
 //
 //   2. Bare form (legacy + still-supported keywords): `@@<name> <value?>`
-//      Examples: `@@codegen { ... }`, `@@run-expect 42`, `@@skip-if windows`
+//      Examples: `@@run-expect 42`, `@@skip-if windows`
 //      RFC-0013 hard-cut: bare `@@persist` and `@@target` now error
-//      (E803 / E804) — they pass through this scanner as Other and the
-//      pipeline reports the migration error downstream.
+//      (E803 / E804). RFC-0024 hard-cut: `@@import` now errors (E823).
+//      RFC-0032 hard-cut: `@@codegen { ... }` now errors (E824).
+//      All four pass through this scanner as Other and the pipeline
+//      reports the migration error downstream.
 //
 // The scanner returns: name span (`name_start`/`name_end`), optional
 // args span (bracket form only — `args_start`/`args_end`), optional
