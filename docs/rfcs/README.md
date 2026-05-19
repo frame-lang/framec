@@ -41,6 +41,7 @@ numbers are not re-used.
 | [0030](rfc-0030.md) | Fuzz infra catch-up plan — multi-RFC corpus migration | Accepted (execution committed 2026-05-18) | execution companion to [0029](rfc-0029.md) |
 | [0031](rfc-0031.md) | Post-release process — RC validation, CI gates, drift detection | Accepted (Process) | resolves CI questions in [0029](rfc-0029.md); supersedes ad-hoc release process |
 | [0032](rfc-0032.md) | Remove `@@codegen { ... }` — auto-inference is the path | Accepted; shipped in 4.2.0 | extends [0013](rfc-0013.md); same trajectory as [0024](rfc-0024.md); breaking change |
+| [0033](rfc-0033.md) | Idiomatic Rust output — borrowed parameters, lint-clean preamble, expression-form state-var initializers | Draft | builds on [0019](rfc-0019.md), [0025](rfc-0025.md) |
 
 ## Other documents in this directory
 
