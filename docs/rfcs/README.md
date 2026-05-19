@@ -43,6 +43,7 @@ numbers are not re-used.
 | [0032](rfc-0032.md) | Remove `@@codegen { ... }` — auto-inference is the path | Accepted; shipped in 4.2.0 | extends [0013](rfc-0013.md); same trajectory as [0024](rfc-0024.md); breaking change |
 | [0033](rfc-0033.md) | Idiomatic Rust output — borrowed parameters, lint-clean preamble, expression-form state-var initializers | Draft | builds on [0019](rfc-0019.md), [0025](rfc-0025.md) |
 | [0034](rfc-0034.md) | In-process compile checks for every backend's snapshot fixtures | Draft | builds on [0027](rfc-0027.md), [0033](rfc-0033.md) |
+| [0035](rfc-0035.md) | Dogfooding inventory — existing FSMs, migration candidates, and single-state test corpus | Draft | builds on [0027](rfc-0027.md), [0033](rfc-0033.md), [0034](rfc-0034.md) |
 
 ## Other documents in this directory
 
