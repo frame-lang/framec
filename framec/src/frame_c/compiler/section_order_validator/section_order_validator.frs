@@ -1,0 +1,74 @@
+@@[target("rust")]
+
+// E113 validator — `@@system` section blocks must appear in the
+// canonical order operations: → interface: → machine: → actions:
+// → domain:. Out-of-order blocks raise E113.
+//
+// RFC-0035 round 4. This is the round where Frame's multi-state
+// shape actually fits the problem. The validator is naturally
+// expressed as:
+//
+//   $Walking     — accept sections, update last_idx
+//   $OutOfOrder  — terminal; any subsequent section is ignored
+//                  (E113 is reported once per system, per the
+//                  existing validator contract)
+//
+// The transition $Walking → $OutOfOrder is fired on the first
+// out-of-order section seen. Subsequent check() calls land in
+// $OutOfOrder's handler, which simply absorbs the call. This is
+// the canonical "error-absorbing terminal state" pattern that
+// Frame state machines were designed for, and it maps cleanly
+// onto E113's "report once per system" semantics.
+//
+// The Frame system carries `last_idx` as a domain field; it
+// evolves across calls. Each check(kind) decodes the kind to its
+// canonical index (Operations=0..Domain=4) and compares to
+// last_idx. If the new idx is strictly greater than last_idx,
+// it's an in-order section and we keep walking. Otherwise we
+// transition to $OutOfOrder and report E113.
+//
+// The interface returns "" (no error) or "E113|<message>". The
+// glue Rust function parses the response and either pushes a
+// ValidationError or moves on.
+
+@@system SectionOrderValidator {
+    interface:
+        check(kind: String): String
+
+    machine:
+        $Walking {
+            check(kind: String): String {
+                let idx: i32 = match kind.as_str() {
+                    "Operations" => 0,
+                    "Interface" => 1,
+                    "Machine" => 2,
+                    "Actions" => 3,
+                    "Domain" => 4,
+                    _ => -1,
+                };
+                if idx < 0 {
+                    @@:(String::new())
+                }
+                if idx < self.last_idx {
+                    let msg = format!(
+                        "blocks out of order. Expected: operations:, interface:, machine:, actions:, domain:"
+                    );
+                    -> $OutOfOrder
+                    @@:(format!("E113|{}", msg))
+                }
+                self.last_idx = idx;
+                @@:(String::new())
+            }
+        }
+
+        $OutOfOrder {
+            // Terminal error state: E113 has already been
+            // reported. Subsequent check() calls are absorbed.
+            check(kind: String): String {
+                @@:(String::new())
+            }
+        }
+
+    domain:
+        last_idx: i32 = -1
+}

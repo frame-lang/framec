@@ -26,6 +26,7 @@ pub mod erlang_classifier;
 pub mod name;
 pub mod pipeline;
 pub mod pipeline_parser;
+pub mod section_order_validator;
 pub mod segmenter;
 pub mod target_query;
 pub mod type_map;

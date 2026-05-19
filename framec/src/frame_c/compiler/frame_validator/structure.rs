@@ -13,31 +13,19 @@ use std::collections::{HashMap, HashSet};
 impl FrameValidator {
     /// E113: Validate system section order (operations:, interface:, machine:, actions:, domain:)
     pub(super) fn validate_section_order(&mut self, system: &SystemAst) {
-        if system.section_order.is_empty() {
-            return;
-        }
-
-        // Canonical order: Operations=0, Interface=1, Machine=2, Actions=3, Domain=4
-        let mut last_idx: i32 = -1;
-        for kind in &system.section_order {
-            let idx = match kind {
-                SystemSectionKind::Operations => 0,
-                SystemSectionKind::Interface => 1,
-                SystemSectionKind::Machine => 2,
-                SystemSectionKind::Actions => 3,
-                SystemSectionKind::Domain => 4,
-            };
-            if (idx as i32) < last_idx {
-                self.errors.push(ValidationError::new(
-                    "E113",
-                    format!(
-                        "System '{}' blocks out of order. Expected: operations:, interface:, machine:, actions:, domain:",
-                        system.name
-                    )
-                ).with_span(system.span.clone()));
-                break; // Only report once per system
-            }
-            last_idx = idx as i32;
+        // RFC-0035 round 4: Frame-implemented in
+        // `compiler/section_order_validator/`. The FSM walks the
+        // section kinds and transitions $Walking → $OutOfOrder
+        // on the first violation, then absorbs further calls —
+        // matching this validator's "report once per system"
+        // contract.
+        if let Some(msg) = crate::frame_c::compiler::section_order_validator::validate_section_order(
+            &system.section_order,
+        ) {
+            self.errors.push(
+                ValidationError::new("E113", format!("System '{}' {}", system.name, msg))
+                    .with_span(system.span.clone()),
+            );
         }
     }
 
