@@ -32,8 +32,48 @@
                         self.pos += 2;
                         -> $InBlockComment
                     } else if b == b'\'' {
-                        self.pos += 1;
-                        -> $InCharLiteral
+                        // Rust uses `'` for BOTH char literals
+                        // (`'a'`, `'\n'`) AND labels / lifetimes
+                        // (`'block:`, `'static`, `&'a T`). The
+                        // disambiguator: after the apostrophe,
+                        // walk any identifier characters; if we
+                        // land on a closing `'`, it's a char
+                        // literal — enter $InCharLiteral. Otherwise
+                        // it's a label/lifetime — just advance the
+                        // apostrophe and keep scanning. An escape
+                        // start (`\`) is always a char literal.
+                        let next = if self.pos + 1 < n { self.bytes[self.pos + 1] } else { 0 };
+                        let is_escape = next == b'\\';
+                        let is_ident_start = (next >= b'a' && next <= b'z')
+                            || (next >= b'A' && next <= b'Z')
+                            || next == b'_';
+                        if is_escape {
+                            self.pos += 1;
+                            -> $InCharLiteral
+                        } else if is_ident_start {
+                            let mut k = self.pos + 2;
+                            while k < n {
+                                let c = self.bytes[k];
+                                let is_word = (c >= b'a' && c <= b'z')
+                                    || (c >= b'A' && c <= b'Z')
+                                    || (c >= b'0' && c <= b'9')
+                                    || c == b'_';
+                                if !is_word {
+                                    break;
+                                }
+                                k += 1;
+                            }
+                            if k < n && self.bytes[k] == b'\'' {
+                                self.pos += 1;
+                                -> $InCharLiteral
+                            } else {
+                                self.pos += 1;
+                                continue;
+                            }
+                        } else {
+                            self.pos += 1;
+                            -> $InCharLiteral
+                        }
                     } else if b == b'"' {
                         self.pos += 1;
                         -> $InString

@@ -47,3 +47,43 @@ impl BodyCloser for BodyCloserRust {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn close(src: &str) -> Result<usize, CloseError> {
+        let bytes = src.as_bytes();
+        let open = bytes.iter().position(|&b| b == b'{').expect("test source must contain {");
+        BodyCloserRust.close_byte(bytes, open)
+    }
+
+    #[test]
+    fn char_literal_still_recognised() {
+        let src = "{ let c = 'a'; let d = '\\n'; }";
+        let close_idx = close(src).expect("char literal body should close");
+        assert_eq!(src.as_bytes()[close_idx], b'}');
+    }
+
+    #[test]
+    fn label_does_not_enter_char_literal_mode() {
+        // Regression for framec bug #27: a Rust labeled-block
+        // (`'label: { ... break 'label X; ... }`) was being
+        // miscounted because the apostrophe was treated as a
+        // char-literal opener, consuming braces until a stray
+        // `'` closed the (phantom) literal.
+        let src = "{ let r = 'block: { if true { break 'block 1; } 2 }; }";
+        let close_idx = close(src).expect("labeled block should close");
+        assert_eq!(src.as_bytes()[close_idx], b'}');
+        // The closing brace must be the last `}` in the source.
+        assert_eq!(close_idx, src.len() - 1);
+    }
+
+    #[test]
+    fn lifetime_does_not_enter_char_literal_mode() {
+        let src = "{ let s: &'static str = \"hi\"; let _ = s; }";
+        let close_idx = close(src).expect("'static lifetime should close");
+        assert_eq!(src.as_bytes()[close_idx], b'}');
+        assert_eq!(close_idx, src.len() - 1);
+    }
+}

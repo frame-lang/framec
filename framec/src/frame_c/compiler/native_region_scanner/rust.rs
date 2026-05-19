@@ -80,6 +80,23 @@ impl SyntaxSkipper for RustSkipper {
     }
 
     fn skip_nested_scope(&self, bytes: &[u8], i: usize, end: usize) -> Option<usize> {
+        // Nested Rust `fn name[<generics>](args) [-> ret] [where …] { body }`.
+        // The W415 lint walks the handler body looking for the `return`
+        // keyword as a Frame statement; without nested-fn detection the
+        // `return EXPR;` inside an inner fn fires a false-positive warning
+        // (and the FrameSegment splice could rewrite the inner return).
+        // Bug #28 in _scratch/FRAMEC_BUGS.md — surfaced by RFC-0035 round 3.
+        if i + 2 < end && bytes[i] == b'f' && bytes[i + 1] == b'n' {
+            let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+            let leading_ok = i == 0 || !is_word(bytes[i - 1]);
+            let trailing_ok = !is_word(bytes[i + 2]);
+            if leading_ok && trailing_ok {
+                if let Some(after) = skip_rust_nested_fn(self, bytes, i, end) {
+                    return Some(after);
+                }
+            }
+        }
+
         // Rust closure with block body: `|args| { body }` (also
         // `move |args| { body }`). Trigger on `|`. We must be careful
         // not to swallow a boolean OR (`a || b`) — the closure shape
@@ -130,4 +147,88 @@ impl NativeRegionScanner for NativeRegionScannerRust {
     fn scan(&mut self, bytes: &[u8], open_brace_index: usize) -> Result<ScanResult, ScanError> {
         super::unified::scan_native_regions(&RustSkipper, bytes, open_brace_index)
     }
+}
+
+/// Skip a nested Rust `fn` declaration starting at byte `i` (which points
+/// to the `f` of `fn`). Returns the byte position immediately after the
+/// closing `}` of the fn body, or `None` if the shape doesn't match.
+///
+/// Form: `fn <ident>[<generics>](args) [-> ret_type] [where …] { body }`.
+fn skip_rust_nested_fn(
+    skipper: &RustSkipper,
+    bytes: &[u8],
+    i: usize,
+    end: usize,
+) -> Option<usize> {
+    let mut j = i + 2; // past `fn`
+    let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    while j < end && matches!(bytes[j], b' ' | b'\t') {
+        j += 1;
+    }
+    // Function name (identifier).
+    while j < end && is_word(bytes[j]) {
+        j += 1;
+    }
+    while j < end && matches!(bytes[j], b' ' | b'\t') {
+        j += 1;
+    }
+    // Optional generics `<…>` — depth-counted to handle nested generics
+    // like `<T: Trait<U>>`.
+    if j < end && bytes[j] == b'<' {
+        let mut depth = 1;
+        j += 1;
+        while j < end && depth > 0 {
+            match bytes[j] {
+                b'<' => depth += 1,
+                b'>' => depth -= 1,
+                _ => {}
+            }
+            j += 1;
+        }
+        if depth != 0 {
+            return None;
+        }
+    }
+    while j < end && matches!(bytes[j], b' ' | b'\t') {
+        j += 1;
+    }
+    // Param list — must start with `(`.
+    if j >= end || bytes[j] != b'(' {
+        return None;
+    }
+    let paren_end = skipper.balanced_paren_end(bytes, j, end)?;
+    // Scan forward through return type / where clause / whitespace, skipping
+    // strings and comments, until the body's opening `{`.
+    let mut k = paren_end;
+    while k < end {
+        let bk = bytes[k];
+        match bk {
+            b' ' | b'\t' | b'\n' | b'\r' => {
+                k += 1;
+            }
+            b'/' => {
+                if let Some(after) = skipper.skip_comment(bytes, k, end) {
+                    k = after;
+                } else {
+                    k += 1;
+                }
+            }
+            b'"' => {
+                if let Some(after) = skipper.skip_string(bytes, k, end) {
+                    k = after;
+                } else {
+                    k += 1;
+                }
+            }
+            b'{' => break,
+            _ => {
+                k += 1;
+            }
+        }
+    }
+    if k >= end || bytes[k] != b'{' {
+        return None;
+    }
+    let mut closer = BodyCloserRust;
+    closer.close_byte(bytes, k).ok().map(|c| c + 1)
 }

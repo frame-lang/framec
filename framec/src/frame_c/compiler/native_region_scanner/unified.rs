@@ -1533,6 +1533,84 @@ mod tests {
     }
 
     #[test]
+    fn nested_fn_returns_are_not_classified_as_frame_returns() {
+        // Regression for bug #28 (RFC-0035 round 3 dogfood). A
+        // nested Rust `fn name(args) -> Ret { ... return EXPR; ... }`
+        // inside a handler body must be skipped as a nested scope.
+        // Before the fix, `return EXPR;` inside the inner fn was
+        // misclassified as a Frame ReturnStatement, emitting W415
+        // and risking a splice rewrite of the wrong return.
+        let body = r#"{
+            fn inner(x: i32) -> i32 {
+                if x < 0 { return -1; }
+                return x + 1;
+            }
+            let r = inner(5);
+        }"#;
+        let kinds = scan_for_kinds(body);
+        assert!(
+            !kinds.contains(&FrameSegmentKind::ReturnStatement),
+            "Returns inside a nested fn must be skipped, got: {:?}",
+            kinds
+        );
+    }
+
+    #[test]
+    fn nested_fn_with_generics_and_where_skipped() {
+        // Generic + where clause + complex return type — the scanner
+        // must still skip the body and not classify its inner
+        // `return`.
+        let body = r#"{
+            fn outer<T: Clone>(x: T) -> Option<T> where T: Default {
+                return Some(x);
+            }
+            let _ = outer(0);
+        }"#;
+        let kinds = scan_for_kinds(body);
+        assert!(
+            !kinds.contains(&FrameSegmentKind::ReturnStatement),
+            "Returns inside a nested generic fn must be skipped, got: {:?}",
+            kinds
+        );
+    }
+
+    #[test]
+    fn top_level_return_still_matches_alongside_nested_fn() {
+        // The fix must not over-skip — a `return` at handler scope,
+        // alongside a nested fn, must still be classified as a Frame
+        // ReturnStatement.
+        let body = r#"{
+            fn helper() -> i32 { return 1; }
+            return helper();
+        }"#;
+        let kinds = scan_for_kinds(body);
+        assert!(
+            kinds.contains(&FrameSegmentKind::ReturnStatement),
+            "Top-level return must still match, got: {:?}",
+            kinds
+        );
+    }
+
+    #[test]
+    fn fn_identifier_suffix_not_misclassified() {
+        // `function`, `fn_helper`, etc. must NOT be matched as the
+        // start of a Rust `fn` declaration — the leading word-
+        // boundary check on `fn` keyword should prevent this.
+        let body = r#"{
+            let function = 5;
+            let fn_helper = 10;
+            return function + fn_helper;
+        }"#;
+        let kinds = scan_for_kinds(body);
+        // The top-level return must still match (no false-skip).
+        assert!(
+            kinds.contains(&FrameSegmentKind::ReturnStatement),
+            "Top-level return after `fn`-prefixed identifiers must match, got: {:?}",
+            kinds
+        );
+    }
+
+    #[test]
     fn test_return_keyword_still_matches_at_word_boundary() {
         // The fix must not break legitimate `return` matches. A bare
         // `return` after whitespace (the common case) and `return`
