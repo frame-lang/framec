@@ -30,6 +30,56 @@ use crate::frame_c::visitors::TargetLanguage;
 /// Owns the Rust pipeline: calls shared sub-functions where they still
 /// contain Rust match arms, and Rust-specific functions (machinery,
 /// dispatch, persistence) where they've been extracted.
+/// RFC-0033 helper: how to convert a system-method's borrowed-or-owned
+/// param value into the owned form the event variant holds.
+///
+/// - `&str` → `.to_string()` (variant field is `String`)
+/// - `&[T]` → `.to_vec()`     (variant field is `Vec<T>`)
+/// - otherwise (`String`, `Vec<T>`, custom, primitives) → `.clone()`,
+///   which is a no-op for Copy types and a real clone for owned ones.
+fn rust_dispatch_convert(t: &crate::frame_c::compiler::frame_ast::Type) -> &'static str {
+    if let crate::frame_c::compiler::frame_ast::Type::Custom(name) = t {
+        let n = name.as_str();
+        if n == "&str" {
+            return ".to_string()";
+        }
+        if n.starts_with("&[") && n.ends_with(']') {
+            return ".to_vec()";
+        }
+    }
+    ".clone()"
+}
+
+/// RFC-0033 helper: how to re-borrow a destructured variant field
+/// when passing it to the handler method, given the source type the
+/// user wrote.
+///
+/// - `&str` → `name.as_str()`  (variant holds `String`, hand back `&str`)
+/// - `&[T]` → `name.as_slice()` (variant holds `Vec<T>`, hand back `&[T]`)
+/// - non-Copy owned (`String`, `Vec<_>`, `HashMap<_, _>`) → `name.clone()`
+/// - other (Copy types) → `*name`
+fn rust_handler_arg_expr(
+    name: &str,
+    source_type: &str,
+    resolved_type: &str,
+) -> String {
+    if source_type == "&str" {
+        return format!("{}.as_str()", name);
+    }
+    if source_type.starts_with("&[") && source_type.ends_with(']') {
+        return format!("{}.as_slice()", name);
+    }
+    let is_non_copy = resolved_type == "String"
+        || resolved_type.starts_with("Vec<")
+        || resolved_type.starts_with("HashMap<")
+        || resolved_type.starts_with("std::collections::HashMap");
+    if is_non_copy {
+        format!("{}.clone()", name)
+    } else {
+        format!("*{}", name)
+    }
+}
+
 pub fn generate_rust_system(system: &SystemAst, arcanum: &Arcanum, source: &[u8]) -> CodegenNode {
     let lang = TargetLanguage::Rust;
     let backend = super::backend::get_backend(lang);
@@ -538,30 +588,23 @@ pub(crate) fn generate_rust_state_dispatch(
             variant,
             field_binds.join(", ")
         ));
+        // RFC-0033: borrowed source types (`&str`, `&[T]`) re-borrow
+        // back from the owned variant field via `.as_str()` /
+        // `.as_slice()`. Other types preserve the prior Copy-vs-clone
+        // heuristic. Delegated to `rust_handler_arg_expr` so the same
+        // contract drives every dispatch site.
         let arg_exprs: Vec<String> = handler
             .params
             .iter()
             .map(|p| {
                 let raw_type = p.symbol_type.as_deref().unwrap_or("String");
-                let param_type = match raw_type {
+                let resolved = match raw_type {
                     "int" => "i64",
                     "float" => "f64",
                     "str" | "string" => "String",
                     other => other,
                 };
-                // Heuristic: Copy types deref via `*`, non-Copy (String,
-                // Vec, custom) clone via `.clone()`. We treat
-                // String/Vec/HashMap as non-Copy explicitly; everything
-                // else (i32, i64, f64, bool, usize, u32, ...) is Copy.
-                let is_non_copy = matches!(param_type, "String")
-                    || param_type.starts_with("Vec<")
-                    || param_type.starts_with("HashMap<")
-                    || param_type.starts_with("std::collections::HashMap");
-                if is_non_copy {
-                    format!("{}.clone()", p.name)
-                } else {
-                    format!("*{}", p.name)
-                }
+                rust_handler_arg_expr(&p.name, raw_type, resolved)
             })
             .collect();
         code.push_str(&format!(
@@ -737,10 +780,18 @@ pub(crate) fn generate_rust_interface_body(
             event_class, variant
         )
     } else {
+        // RFC-0033: per-param dispatch-site conversion. Borrowed
+        // source types (`&str`, `&[T]`) need `.to_string()` /
+        // `.to_vec()` to produce the owned form the event variant
+        // holds. Other types use `.clone()` (no-op for Copy, real
+        // clone for String/Vec/custom).
         let field_inits: Vec<String> = method
             .params
             .iter()
-            .map(|p| format!("{}: {}.clone()", p.name, p.name))
+            .map(|p| {
+                let convert = rust_dispatch_convert(&p.param_type);
+                format!("{}: {}{}", p.name, p.name, convert)
+            })
             .collect();
         format!(
             "let __e = std::rc::Rc::new({}::{} {{ {} }});\n",

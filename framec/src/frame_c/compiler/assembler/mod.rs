@@ -69,6 +69,26 @@ pub fn assemble(
     let source = &source_map.source;
     let mut output = String::new();
 
+    // RFC-0033: Rust-only module-level lint-suppression preamble.
+    // Emitted ONCE at file top (inner attributes must precede all
+    // other items). Suppresses the rustc warnings inherent to Frame
+    // codegen shape and the three specific clippy lints framec's
+    // emission patterns trigger. NOT a blanket clippy::all /
+    // pedantic / nursery — new clippy findings should surface to
+    // users so the codegen can be improved.
+    if matches!(lang, TargetLanguage::Rust) {
+        output.push_str("#![allow(dead_code)]\n");
+        output.push_str("#![allow(non_camel_case_types)]\n");
+        output.push_str("#![allow(non_snake_case)]\n");
+        output.push_str("#![allow(unused_variables)]\n");
+        output.push_str("#![allow(unused_mut)]\n");
+        output.push_str("#![allow(unused_imports)]\n");
+        output.push_str("#![allow(clippy::derivable_impls)]\n");
+        output.push_str("#![allow(clippy::new_without_default)]\n");
+        output.push_str("#![allow(clippy::single_match)]\n");
+        output.push('\n');
+    }
+
     // Emit runtime imports first (before any native prolog code)
     // This ensures imports like "from typing import ..." come before user code
     for import in runtime_imports {

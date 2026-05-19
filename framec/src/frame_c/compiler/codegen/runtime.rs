@@ -49,6 +49,19 @@ fn frame_type_to_rust_type(t: &Type) -> String {
             "str" | "string" | "String" => "String".to_string(),
             "bool" => "bool".to_string(),
             "Any" => "String".to_string(),
+            // RFC-0033: borrowed → owned promotion at owned positions
+            // (event variant fields, state-context struct fields,
+            // return-enum variants). The borrowed signature is kept
+            // at the call-boundary by `type_to_string`; this helper
+            // only fires where the value must be stored owned.
+            "&str" => "String".to_string(),
+            other if other.starts_with("&[") && other.ends_with(']') => {
+                // `&[T]` → `Vec<T>`. The owned form holds the value;
+                // dispatch site does `.to_vec()`; handler re-borrows
+                // back to `&[T]` via `.as_slice()`.
+                let inner = &other[2..other.len() - 1];
+                format!("Vec<{}>", inner)
+            }
             other => other.to_string(),
         },
         Type::Unknown => "String".to_string(),

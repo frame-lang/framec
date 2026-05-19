@@ -1088,13 +1088,41 @@ impl<'a> Parser<'a> {
                                         path.push_str(&method);
                                     }
                                 }
-                                // Consume () if present
+                                // Consume balanced (...) call args if present.
+                                // RFC-0033: handles the full Type::method(args)
+                                // form including string literals and nested
+                                // calls. Same shape as the LBracket branch.
                                 if self.check(&Token::LParen)? {
                                     self.advance()?; // (
                                     path.push('(');
-                                    if self.check(&Token::RParen)? {
-                                        self.advance()?; // )
-                                        path.push(')');
+                                    let mut depth = 1;
+                                    while depth > 0 {
+                                        let next = self.advance()?;
+                                        match &next.token {
+                                            Token::LParen => {
+                                                depth += 1;
+                                                path.push('(');
+                                            }
+                                            Token::RParen => {
+                                                depth -= 1;
+                                                if depth > 0 {
+                                                    path.push(')');
+                                                } else {
+                                                    // final closing paren
+                                                    path.push(')');
+                                                }
+                                            }
+                                            Token::Eof => break,
+                                            _ => {
+                                                let src = self.lexer.source();
+                                                let s = next.span.start.min(src.len());
+                                                let e = next.span.end.min(src.len());
+                                                path.push_str(
+                                                    std::str::from_utf8(&src[s..e])
+                                                        .unwrap_or(""),
+                                                );
+                                            }
+                                        }
                                     }
                                 }
                                 return Ok(Expression::NativeExpr(path));
