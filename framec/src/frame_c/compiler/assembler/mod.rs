@@ -662,13 +662,28 @@ fn expand_system_instantiations(
                             i = close;
                             continue;
                         } else {
-                            let prefix = if is_no_init { "@@!" } else { "@@" };
-                            return Err(AssemblyError {
-                                message: format!(
-                                    "Undefined system '{}' in `{}{}` instantiation. Available: {:?}",
-                                    name, prefix, name, defined_systems
-                                ),
-                            });
+                            // RFC-0024: `@@SystemName(args)` referring to a system
+                            // NOT declared in this compile unit lowers using only
+                            // the literal name. framec MUST NOT verify that the
+                            // name resolves anywhere in the project — host name
+                            // resolution (rustc / javac / etc.) reports any miss
+                            // at host-compile time. See issue #29 in
+                            // _scratch/FRAMEC_BUGS.md.
+                            if is_no_init {
+                                let no_init = crate::frame_c::compiler::codegen::frame_expansion::generate_no_initialization(name, lang);
+                                result.push_str(&no_init);
+                                i = close;
+                                continue;
+                            }
+                            // No params metadata available for cross-file systems;
+                            // pass the user's args text through verbatim. Matching
+                            // the cross-file system's signature is the user's
+                            // responsibility — same contract Rust uses for any
+                            // cross-crate / cross-module call.
+                            let constructor = generate_constructor(name, args_text, lang);
+                            result.push_str(&constructor);
+                            i = close;
+                            continue;
                         }
                     }
                 }
@@ -1016,6 +1031,47 @@ mod tests {
     }
 
     #[test]
+    fn test_cross_file_system_lowers_without_validation() {
+        // RFC-0024 / issue #29: `@@SystemName(args)` referencing a
+        // system NOT declared in this compile unit must lower to the
+        // target's factory call using just the literal name. Host
+        // language resolves the name at host-compile time.
+        let src = "let x = @@Bar(7);\n";
+        let systems: HashSet<String> = vec!["Foo".to_string()].into_iter().collect();
+        let params = empty_params();
+        let result =
+            expand_system_instantiations(src, &systems, &params, TargetLanguage::Rust).unwrap();
+        assert_eq!(result, "let x = Bar::__create(7);\n");
+    }
+
+    #[test]
+    fn test_cross_file_system_no_init_form() {
+        // RFC-0024 / issue #29: `@@!SystemName()` no-init form for a
+        // cross-file system must also lower without validation.
+        let src = "let x = @@!Bar();\n";
+        let systems: HashSet<String> = vec!["Foo".to_string()].into_iter().collect();
+        let params = empty_params();
+        let result =
+            expand_system_instantiations(src, &systems, &params, TargetLanguage::Rust).unwrap();
+        assert_eq!(result, "let x = Bar::new();\n");
+    }
+
+    #[test]
+    fn test_cross_file_system_args_passthrough() {
+        // For unknown (cross-file) systems framec has no param
+        // metadata for default-arg expansion. The user's args text
+        // passes through verbatim — matching the cross-file system's
+        // signature is the user's responsibility, the same contract
+        // host language compilers use for any cross-module call.
+        let src = "s = @@Bar(a, b, c)\n";
+        let systems: HashSet<String> = vec!["Foo".to_string()].into_iter().collect();
+        let params = empty_params();
+        let result =
+            expand_system_instantiations(src, &systems, &params, TargetLanguage::Python3).unwrap();
+        assert_eq!(result, "s = Bar._create(a, b, c)\n");
+    }
+
+    #[test]
     fn test_system_instantiation_in_comment_not_expanded() {
         let src = "# s = @@Foo()\n";
         let systems: HashSet<String> = vec!["Foo".to_string()].into_iter().collect();
@@ -1144,12 +1200,20 @@ mod tests {
     }
 
     #[test]
-    fn test_undefined_system_instantiation_errors() {
+    fn test_undefined_system_instantiation_passes_through() {
+        // RFC-0024 / issue #29: `@@SystemName(args)` for a name NOT
+        // declared in this compile unit must lower verbatim to the
+        // target's factory call. framec MUST NOT verify that the
+        // name corresponds to a declaration anywhere — host language
+        // resolves it at host-compile time. This test originally
+        // asserted the pre-RFC-0024 reject behavior; inverted here
+        // to match the spec.
         let src = "s = @@Unknown()\n";
         let systems: HashSet<String> = HashSet::new();
         let params: HashMap<&str, &[SystemParam]> = HashMap::new();
-        let result = expand_system_instantiations(src, &systems, &params, TargetLanguage::Python3);
-        assert!(result.is_err());
+        let result =
+            expand_system_instantiations(src, &systems, &params, TargetLanguage::Python3).unwrap();
+        assert_eq!(result, "s = Unknown._create()\n");
     }
 
     #[test]
