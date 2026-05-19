@@ -9,7 +9,7 @@ mod actions_ops;
 mod blocks;
 mod body_processor;
 mod case_arms;
-mod lexical;
+pub(crate) mod lexical;
 mod native_rewrite;
 mod persist;
 mod runtime_helpers;

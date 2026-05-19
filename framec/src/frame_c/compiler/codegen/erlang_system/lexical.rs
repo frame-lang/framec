@@ -67,7 +67,7 @@ pub(super) fn replace_word(haystack: &str, needle: &str, replacement: &str) -> S
 /// have their leading capital lowercased to satisfy Erlang's atom
 /// rules without snake-casing the interior (which would be more
 /// disruptive than necessary).
-pub(super) fn erlang_op_name(name: &str) -> String {
+pub(crate) fn erlang_op_name(name: &str) -> String {
     let mut chars = name.chars();
     match chars.next() {
         None => String::new(),
