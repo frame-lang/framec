@@ -397,6 +397,55 @@ fn rfc0034_all_fixtures_compile() {
     });
 }
 
+/// Issue #23 (FRAMEC_BUGS): an untyped domain field used to flow
+/// through framec silently and emit `pub <field>: ()` (unit type)
+/// for Rust, cascading into rustc errors that didn't trace to the
+/// missing annotation. The validator (E605) now rejects with a
+/// clear source-level diagnostic that points at the actual problem.
+///
+/// Regression test for the validator-error path. Uses
+/// `compile_module` directly so the test can assert on the error
+/// instead of panicking — `compile_source` panics on failure.
+#[test]
+fn issue23_untyped_domain_field_rejected_for_rust() {
+    use framec::frame_c::compiler::compile_module;
+    use framec::frame_c::compiler::TargetLanguage;
+    use std::convert::TryFrom;
+
+    let src = r#"
+@@system Foo {
+    interface:
+        get(): bool
+    machine:
+        $S {
+            get(): bool { @@:(self.a) }
+        }
+    domain:
+        a: bool = true
+        b = false
+}
+"#;
+    let lang = TargetLanguage::try_from("rust").unwrap();
+    let result = compile_module(src, lang);
+    let err = result.expect_err("E605 must reject untyped domain field");
+    let msg = err.error;
+    assert!(
+        msg.contains("E605"),
+        "expected E605 in error, got: {}",
+        msg
+    );
+    assert!(
+        msg.contains("'b'"),
+        "error should name the offending field 'b', got: {}",
+        msg
+    );
+    assert!(
+        msg.contains("missing type annotation"),
+        "error should explain the missing annotation, got: {}",
+        msg
+    );
+}
+
 /// Helper: grab a 12-line window around the first match of `needle`,
 /// for clearer assertion failure messages than a 5,000-line dump.
 fn excerpt(haystack: &str, needle: &str) -> String {

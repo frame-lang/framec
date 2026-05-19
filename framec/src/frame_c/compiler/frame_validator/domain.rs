@@ -237,17 +237,33 @@ impl FrameValidator {
         }
     }
 
-    /// E605: Static targets require explicit type on domain fields
+    /// E605: targets without struct-field type inference require an
+    /// explicit `: type` annotation on every domain field. Without
+    /// it, framec used to emit nonsense (Rust: `pub field: ()`
+    /// (unit), Java/C#/etc.: cascading errors that don't trace to the
+    /// missing annotation). Rejecting here gives the user a clear,
+    /// source-level diagnostic instead.
+    ///
+    /// Languages where struct-field initializers DO infer the type
+    /// (Kotlin `val x = 0`, Swift `var x = 0`, Dart `var x = 0`)
+    /// and dynamic languages without static types (Python, Lua,
+    /// JS, Ruby, PHP, GDScript) skip the check — the bare-init form
+    /// is valid Frame syntax there.
     pub(super) fn validate_domain_types(
         &mut self,
         system: &SystemAst,
         target: crate::frame_c::visitors::TargetLanguage,
     ) {
         use crate::frame_c::visitors::TargetLanguage::*;
-        // Only languages where the compiler cannot infer field types from init values.
-        // Kotlin, Swift, Dart, TypeScript, C#, Rust all have type inference.
-        let is_static = matches!(target, C | Cpp | Java | Go);
-        if !is_static {
+        // Targets where struct-field declarations REQUIRE an explicit
+        // type (no inference from initializer at the field-decl site).
+        // Rust: `struct { x = 0 }` is a parse error. C#: same.
+        // TypeScript: class-field `x = 0` IS inferred, BUT framec's
+        // codegen emits a structurally-typed shape that doesn't
+        // exercise the inference — surface the gap to the user
+        // rather than emit ambiguous output.
+        let requires_explicit_type = matches!(target, C | Cpp | Java | Go | Rust | CSharp | TypeScript);
+        if !requires_explicit_type {
             return;
         }
         for var in &system.domain {
@@ -256,7 +272,12 @@ impl FrameValidator {
                     ValidationError::new(
                         "E605",
                         format!(
-                            "Domain field '{}' in system '{}' requires an explicit type for target '{:?}'",
+                            "domain field '{}' in system '{}' missing type annotation. \
+                             Frame's canonical domain form is `name: type = init`. \
+                             For target '{:?}', framec cannot infer struct-field types \
+                             from initializers — the explicit annotation is required. \
+                             Add `: <type>` between the field name and `=`. \
+                             See docs/frame_language.md § Domain Section.",
                             var.name, system.name, target
                         ),
                     )
