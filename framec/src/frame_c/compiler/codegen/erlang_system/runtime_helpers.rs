@@ -136,4 +136,22 @@ pub(super) fn emit_runtime_helpers(code: &mut String, system: &SystemAst) {
     }
     code.push_str("        _ -> Data\n");
     code.push_str("    end.\n\n");
+
+    // State-name string accessor — maps the internal snake_case atom
+    // back to the user-facing state name. Used by `@@:system.state`,
+    // which returns a string in every other backend (Python's
+    // `self.__compartment.state` is the string "S0", not the atom
+    // `s0`). Without the explicit mapping, an atom_to_list fallback
+    // would return "s0" — wrong case, and divergent from the
+    // matrix's other 16 backends.
+    code.push_str("frame_state_name__(A) when is_atom(A) ->\n");
+    code.push_str("    case A of\n");
+    if let Some(ref machine) = system.machine {
+        for state in &machine.states {
+            let atom = to_snake_case(&state.name);
+            code.push_str(&format!("        {} -> \"{}\";\n", atom, state.name));
+        }
+    }
+    code.push_str("        _ -> atom_to_list(A)\n");
+    code.push_str("    end.\n\n");
 }

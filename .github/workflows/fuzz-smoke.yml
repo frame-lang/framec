@@ -33,27 +33,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # v1 gate covers python_3 + rust. Java and Erlang dropped
-        # for separate reasons surfaced by the gate's first live
-        # run (and proving its value — both are pre-existing
-        # infra/runner issues, not framec defects):
+        # v1 gate covers python_3 + rust + erlang. Erlang re-added
+        # 2026-05-18 once roadmap #444 closed — the const_sys runner
+        # template now reads FUZZ_VERIFY_METHOD instead of hardcoding
+        # `drive(Pid)`, and framec emits a `frame_state_name__/1`
+        # helper so `@@:system.state` returns the user-facing string
+        # name instead of the lowercase atom.
         #
-        # - **Java**: diff_harness/run_fuzz.py invokes
-        #   `docker run docker-java:latest` for Java, but this
-        #   workflow doesn't build the matrix Docker images.
-        #   Adding the Docker-build step would push CI past the
-        #   ~4 min Layer 2 budget. Java fuzz coverage lands via
-        #   the nightly full-tier (roadmap #442).
-        #
-        # - **Erlang**: const_sys-phase shell-runner hardcodes
-        #   `drive(Pid)` but the const_sys system's interface
-        #   method is `get_const` (or per FUZZ_VERIFY_METHOD
-        #   metadata, not the hardcoded `drive`). 3 cases fail
-        #   with "undefined function drive/1". Pre-existing
-        #   fuzz-runner bug, not framec. Audit + fix tracked as
-        #   roadmap #444. Re-add Erlang to fuzz-smoke once #444
-        #   lands.
-        backend: [python_3, rust]
+        # Java still deferred — diff_harness/run_fuzz.py invokes
+        # `docker run docker-java:latest`, but this workflow doesn't
+        # build the matrix Docker images. Adding the Docker-build
+        # step would push past the ~4 min Layer 2 budget. Java fuzz
+        # coverage lands via the nightly full-tier (roadmap #442).
+        backend: [python_3, rust, erlang]
     steps:
       - name: Checkout framec
         uses: actions/checkout@v4

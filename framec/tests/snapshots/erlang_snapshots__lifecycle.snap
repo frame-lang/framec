@@ -114,6 +114,13 @@ frame_exit_dispatch__(Data) ->
         _ -> Data
     end.
 
+frame_state_name__(A) when is_atom(A) ->
+    case A of
+        idle -> "Idle";
+        running -> "Running";
+        _ -> atom_to_list(A)
+    end.
+
 frame_exit__running(Data) ->
     Data1 = Data#data{exited = Data#data.exited + 1},
     Data1.

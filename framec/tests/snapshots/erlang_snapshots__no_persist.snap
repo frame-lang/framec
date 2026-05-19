@@ -110,6 +110,12 @@ frame_exit_dispatch__(Data) ->
         _ -> Data
     end.
 
+frame_state_name__(A) when is_atom(A) ->
+    case A of
+        active -> "Active";
+        _ -> atom_to_list(A)
+    end.
+
 frame_dispatch__(EventName, Args, Data) ->
     Ctx = #{return_val => undefined, data => #{}},
     Data1 = Data#data{frame_context_stack = [Ctx | Data#data.frame_context_stack]},

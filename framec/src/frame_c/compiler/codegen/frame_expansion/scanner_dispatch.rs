@@ -81,7 +81,15 @@ pub(crate) fn expand_system_state(lang: TargetLanguage) -> String {
         TargetLanguage::Php => "$this->__compartment->state".to_string(),
         TargetLanguage::Ruby => "@__compartment.state".to_string(),
         TargetLanguage::Lua => "self.__compartment.state".to_string(),
-        TargetLanguage::Erlang => "\"\"".to_string(),
+        // Erlang: gen_statem keeps the current state as the
+        // snake_case atom `frame_current_state`, but `@@:system.state`
+        // is contractually a STRING with the user-facing name (matches
+        // the other 16 backends). `frame_state_name__/1` is emitted by
+        // `emit_runtime_helpers` and maps the atom back to the
+        // original spelling.
+        TargetLanguage::Erlang => {
+            "frame_state_name__(Data#data.frame_current_state)".to_string()
+        }
         TargetLanguage::Graphviz => unreachable!(),
     }
 }
