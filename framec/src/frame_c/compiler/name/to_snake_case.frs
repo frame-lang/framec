@@ -1,0 +1,41 @@
+@@[target("rust")]
+
+// CamelCase / PascalCase → snake_case converter, expressed in
+// Frame. Single-state system; the work happens in one handler
+// body. Part of RFC-0035 round 1 — uses framec to dogfood the
+// language across as many real-world shapes as possible.
+//
+// Used throughout framec for Erlang naming (atom case),
+// generated method/state identifier conversion, and the
+// graphviz pipeline's state-name normalization.
+//
+// Behaviour: for each character at position i in `s`:
+//   - if uppercase AND i > 0, prepend `_` to the result
+//   - append the lowercase form of the character
+//
+// Examples:
+//   "HelloWorld"   → "hello_world"
+//   "getStatus"    → "get_status"
+//   "ABCFlag"      → "a_b_c_flag"
+//   "already_snk"  → "already_snk"
+
+@@system ToSnakeCase {
+    interface:
+        convert(s: String): String
+
+    machine:
+        $Active {
+            convert(s: String): String {
+                let mut result = String::new();
+                for (i, c) in s.chars().enumerate() {
+                    if c.is_uppercase() && i > 0 {
+                        result.push('_');
+                    }
+                    if let Some(lc) = c.to_lowercase().next() {
+                        result.push(lc);
+                    }
+                }
+                @@:(result)
+            }
+        }
+}

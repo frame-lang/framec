@@ -1,0 +1,43 @@
+@@[target("rust")]
+
+// snake_case → PascalCase converter, expressed in Frame.
+// Single-state system; part of RFC-0035 round 1 dogfooding.
+//
+// Used by the Rust target to emit enum variant names from Frame
+// event names: a Frame event `get_status` becomes the variant
+// `GetStatus` of the system's FrameEvent enum.
+//
+// Behaviour: walk the input, capitalizing the first character
+// and every character following an `_`. The `_` itself is
+// dropped (not emitted). Non-underscore non-position-zero
+// characters pass through verbatim.
+//
+// Examples:
+//   "get_status"    → "GetStatus"
+//   "tick"          → "Tick"
+//   "_leading"      → "Leading"
+//   "snake_to_pascal" → "SnakeToPascal"
+
+@@system PascalCaseVariant {
+    interface:
+        convert(s: String): String
+
+    machine:
+        $Active {
+            convert(s: String): String {
+                let mut result = String::new();
+                let mut capitalize_next = true;
+                for c in s.chars() {
+                    if c == '_' {
+                        capitalize_next = true;
+                    } else if capitalize_next {
+                        result.push(c.to_ascii_uppercase());
+                        capitalize_next = false;
+                    } else {
+                        result.push(c);
+                    }
+                }
+                @@:(result)
+            }
+        }
+}

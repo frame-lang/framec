@@ -541,20 +541,14 @@ pub(crate) fn type_to_cpp_string(t: &crate::frame_c::compiler::frame_ast::Type) 
     }
 }
 
-/// Convert CamelCase to snake_case for Erlang naming
-
-/// Convert CamelCase to snake_case for Erlang naming
+/// Convert CamelCase / PascalCase to snake_case.
+///
+/// Delegates to the Frame-implemented FSM in
+/// `framec::frame_c::compiler::name::to_snake_case` (RFC-0035
+/// round 1). The implementation lives in
+/// `framec/src/frame_c/compiler/name/to_snake_case.frs`.
 pub(crate) fn to_snake_case(s: &str) -> String {
-    let mut result = String::new();
-    for (i, c) in s.chars().enumerate() {
-        if c.is_uppercase() && i > 0 {
-            result.push('_');
-        }
-        if let Some(lc) = c.to_lowercase().next() {
-            result.push(lc);
-        }
-    }
-    result
+    crate::frame_c::compiler::name::to_snake_case(s)
 }
 
 // ─── String-aware literal replace ────────────────────────────────────

@@ -18,20 +18,13 @@ pub use c::generate_c_compartment_types;
 /// `get_status` → `GetStatus`. Exported pub(crate) so siblings
 /// (rust_system.rs, system_codegen/*.rs, machinery/rust.rs) emit
 /// matching variant names at construction and dispatch sites.
+/// Convert snake_case / lowercase identifier to PascalCase
+/// variant. Delegates to the Frame-implemented FSM in
+/// `framec::frame_c::compiler::name::pascal_case_variant`
+/// (RFC-0035 round 1). The implementation lives in
+/// `framec/src/frame_c/compiler/name/pascal_case_variant.frs`.
 pub(crate) fn pascal_case_variant(s: &str) -> String {
-    let mut result = String::new();
-    let mut capitalize_next = true;
-    for c in s.chars() {
-        if c == '_' {
-            capitalize_next = true;
-        } else if capitalize_next {
-            result.push(c.to_ascii_uppercase());
-            capitalize_next = false;
-        } else {
-            result.push(c);
-        }
-    }
-    result
+    crate::frame_c::compiler::name::pascal_case_variant(s)
 }
 
 /// Map a Frame `Type` to a Rust-native type spelling for use inside

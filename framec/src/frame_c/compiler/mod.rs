@@ -22,6 +22,7 @@ pub mod gdscript_multisys;
 pub mod graphviz;
 pub mod lexer;
 pub mod model;
+pub mod name;
 pub mod pipeline;
 pub mod pipeline_parser;
 pub mod segmenter;
