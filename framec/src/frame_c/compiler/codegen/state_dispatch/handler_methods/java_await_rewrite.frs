@@ -1,0 +1,250 @@
+@@[target("rust")]
+
+// Java handler-body `await` rewriter — dogfooded state machine.
+//
+// Frame source uses `await EXPR` to await a future. Java has no
+// `await` keyword — the `CompletableFuture<T>` API uses `.join()`
+// (unchecked-exception variant of `.get()`). When framec emits a
+// Java handler body that contains user source like
+//   `self.tmp_a = await op("init");`
+// this FSM rewrites it to
+//   `self.tmp_a = op("init").join();`
+//
+// Skips `"..."` string literals and `//` / `/* */` comments so
+// the literal `await` token inside those is preserved verbatim.
+// Recognizes EXPR as an identifier chain (`a.b.c`) optionally
+// followed by a balanced `(...)` argument list, including string
+// literals nested in args.
+//
+// The companion `self.` → `this.` rewrite is done by the caller
+// via `replace_outside_strings_and_comments` (already FSM-driven
+// through the per-target skipper trait). This module's only job
+// is the `await EXPR` → `EXPR.join()` transformation.
+//
+// Output: `result: String` — the rewritten body. `error_kind == 0`
+// on success. The current implementation never errors (an
+// unterminated string copies through to end-of-input rather than
+// failing the rewrite); the field is kept for symmetry with the
+// body_closer FSMs.
+
+@@system JavaAwaitRewriteFsm {
+    interface:
+        rewrite()
+
+    machine:
+        $Init {
+            rewrite() {
+                -> $Scanning
+            }
+        }
+
+        $Scanning {
+            $>() {
+                let n = self.bytes.len();
+                while self.pos < n {
+                    let b = self.bytes[self.pos];
+
+                    // `//` line comment — emit through verbatim.
+                    if b == b'/' && self.pos + 1 < n && self.bytes[self.pos + 1] == b'/' {
+                        self.result.push('/');
+                        self.result.push('/');
+                        self.pos += 2;
+                        -> $InLineComment
+                    }
+                    // `/* … */` block comment — emit through verbatim.
+                    if b == b'/' && self.pos + 1 < n && self.bytes[self.pos + 1] == b'*' {
+                        self.result.push('/');
+                        self.result.push('*');
+                        self.pos += 2;
+                        self.block_comment_nest = 1;
+                        -> $InBlockComment
+                    }
+                    // `"…"` string literal — emit through verbatim.
+                    if b == b'"' {
+                        self.result.push('"');
+                        self.pos += 1;
+                        -> $InString
+                    }
+
+                    // `await EXPR` — match at a token boundary so
+                    // identifiers like `awaiting_x` don't trigger.
+                    let at_boundary = self.pos == 0
+                        || matches!(
+                            self.bytes[self.pos - 1],
+                            b' ' | b'\t' | b'\n' | b'\r' | b'(' | b',' | b';' | b'='
+                        );
+                    let is_await = self.pos + 6 <= n
+                        && self.bytes[self.pos] == b'a'
+                        && self.bytes[self.pos + 1] == b'w'
+                        && self.bytes[self.pos + 2] == b'a'
+                        && self.bytes[self.pos + 3] == b'i'
+                        && self.bytes[self.pos + 4] == b't'
+                        && self.bytes[self.pos + 5] == b' ';
+                    if at_boundary && is_await {
+                        // Skip the `await ` literal + any extra
+                        // whitespace.
+                        self.pos += 6;
+                        while self.pos < n
+                            && (self.bytes[self.pos] == b' '
+                                || self.bytes[self.pos] == b'\t')
+                        {
+                            self.pos += 1;
+                        }
+                        // Capture identifier chain
+                        // `[A-Za-z_][A-Za-z0-9_]*` with optional
+                        // dotted suffixes.
+                        let expr_start = self.pos;
+                        if self.pos < n
+                            && (self.bytes[self.pos].is_ascii_alphabetic()
+                                || self.bytes[self.pos] == b'_')
+                        {
+                            self.pos += 1;
+                            while self.pos < n
+                                && (self.bytes[self.pos].is_ascii_alphanumeric()
+                                    || self.bytes[self.pos] == b'_'
+                                    || self.bytes[self.pos] == b'.')
+                            {
+                                self.pos += 1;
+                            }
+                        }
+                        // Optional balanced `(...)` arg list with
+                        // string-literal awareness so `(foo, "x)")`
+                        // closes correctly.
+                        if self.pos < n && self.bytes[self.pos] == b'(' {
+                            let mut depth: i32 = 0;
+                            while self.pos < n {
+                                let c = self.bytes[self.pos];
+                                // String literal inside args.
+                                if c == b'"' {
+                                    self.pos += 1;
+                                    while self.pos < n {
+                                        let d = self.bytes[self.pos];
+                                        if d == b'\\' && self.pos + 1 < n {
+                                            self.pos += 2;
+                                            continue;
+                                        }
+                                        self.pos += 1;
+                                        if d == b'"' {
+                                            break;
+                                        }
+                                    }
+                                    continue;
+                                }
+                                if c == b'(' {
+                                    depth += 1;
+                                    self.pos += 1;
+                                    continue;
+                                }
+                                if c == b')' {
+                                    depth -= 1;
+                                    self.pos += 1;
+                                    if depth == 0 {
+                                        break;
+                                    }
+                                    continue;
+                                }
+                                self.pos += 1;
+                            }
+                        }
+                        // Emit the captured expression then `.join()`.
+                        // If no identifier was found (degenerate
+                        // `await ;`), fall back to copying `await `
+                        // verbatim so we don't corrupt the source —
+                        // in practice the user's intent was a real
+                        // call, but the FSM should be robust.
+                        if self.pos > expr_start {
+                            let captured = std::str::from_utf8(
+                                &self.bytes[expr_start..self.pos],
+                            )
+                            .unwrap_or("");
+                            self.result.push_str(captured);
+                            self.result.push_str(".join()");
+                        } else {
+                            self.result.push_str("await ");
+                        }
+                        continue;
+                    }
+
+                    // Default: copy byte through.
+                    self.result.push(b as char);
+                    self.pos += 1;
+                }
+                self.error_kind = 0;
+            }
+        }
+
+        $InLineComment {
+            $>() {
+                let n = self.bytes.len();
+                while self.pos < n && self.bytes[self.pos] != b'\n' {
+                    self.result.push(self.bytes[self.pos] as char);
+                    self.pos += 1;
+                }
+                -> $Scanning
+            }
+        }
+
+        $InBlockComment {
+            $>() {
+                let n = self.bytes.len();
+                while self.pos + 1 < n {
+                    let a = self.bytes[self.pos];
+                    let b = self.bytes[self.pos + 1];
+                    if a == b'/' && b == b'*' {
+                        self.block_comment_nest += 1;
+                        self.result.push('/');
+                        self.result.push('*');
+                        self.pos += 2;
+                        continue;
+                    }
+                    if a == b'*' && b == b'/' {
+                        self.block_comment_nest -= 1;
+                        self.result.push('*');
+                        self.result.push('/');
+                        self.pos += 2;
+                        if self.block_comment_nest == 0 {
+                            -> $Scanning
+                        }
+                        continue;
+                    }
+                    self.result.push(a as char);
+                    self.pos += 1;
+                }
+                // Tail without close — copy remainder.
+                while self.pos < n {
+                    self.result.push(self.bytes[self.pos] as char);
+                    self.pos += 1;
+                }
+                self.error_kind = 0;
+            }
+        }
+
+        $InString {
+            $>() {
+                let n = self.bytes.len();
+                while self.pos < n {
+                    let b = self.bytes[self.pos];
+                    self.result.push(b as char);
+                    self.pos += 1;
+                    if b == b'\\' && self.pos < n {
+                        // Pass the escaped character through.
+                        self.result.push(self.bytes[self.pos] as char);
+                        self.pos += 1;
+                        continue;
+                    }
+                    if b == b'"' {
+                        -> $Scanning
+                    }
+                }
+                // Unterminated — accept and continue.
+                self.error_kind = 0;
+            }
+        }
+
+    domain:
+        bytes: Vec<u8> = Vec::new()
+        pos: usize = 0
+        result: String = String::new()
+        error_kind: usize = 0
+        block_comment_nest: i32 = 0
+}

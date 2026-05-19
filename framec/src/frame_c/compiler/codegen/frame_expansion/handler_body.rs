@@ -196,6 +196,14 @@ fn needs_statement_terminator(out: &str, lang: TargetLanguage) -> bool {
     }
     // User is mid-expression — adding `;` would split the
     // expression and break parsing.
+    //
+    // `)` deliberately NOT excluded: while Java type casts like
+    // `(double) X` would want it excluded (the cast continues into
+    // X), Frame source uses `(args)` as state-args bundles
+    // (`(label)` before `-> $State`) where the parenthesized form
+    // IS a complete statement needing `;`. The cast case is left
+    // as a known limitation; users who need it can write an
+    // explicit `;` in their Frame source.
     if trimmed.ends_with(|c: char| {
         matches!(
             c,
