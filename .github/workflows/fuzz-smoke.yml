@@ -142,6 +142,13 @@ jobs:
           fi
 
       - name: Run diff-harness fuzz smoke
+        # Erlang skipped: diff_harness uses `docker run docker-erlang`
+        # for non-Python backends, but this workflow doesn't build
+        # matrix Docker images (same reason Java is deferred to
+        # nightly). Erlang diff-harness coverage runs in the nightly
+        # full-tier (roadmap #442). Erlang IS covered by the shell-
+        # phase step above which has full per-backend reach.
+        if: matrix.backend != 'erlang'
         working-directory: framec-test-env/fuzz
         env:
           FRAMEC: ${{ github.workspace }}/framec/target/release/framec

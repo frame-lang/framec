@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc c2fef511eb029a9ab8ee10f0bdca7569d264b636c082e0a653087756ad385277 # shrinks to (source, _sys) = ("@@[persist(json)]\n@@system A {\n    machine:\n        $A {\n        }\n\n    domain:\n        var n: int = 0\n}\n", "A")
+cc bb645c4b0fbc03b2d65f2cc9340eddf3741889568a29c1b33b308f02edc0788c # shrinks to (source, _sys, vars) = ("@@system A {\n    machine:\n        $A {\n        }\n\n    domain:\n        var a: int = 0\n}\n", "A", [("a", 0)])
+cc ecbd388a265849a065b030831cf9263613fb1c1c53bbaf2492a6abc4908df8ee # shrinks to (source, _sys, _methods) = ("@@system A {\n    interface:\n        a()\n\n    machine:\n        $A {\n            a() { }\n        }\n}\n", "A", ["a"])
