@@ -10,7 +10,7 @@ Frame's grammar is anchored by one token: **`@@`**, the **system context token**
 
 | Scope | What `@@` reaches | Examples |
 |-------|-------------------|----------|
-| **Module scope** | Frame directives, system declarations, system instantiation | `@@target python_3`, `@@codegen { ... }`, `@@[persist]`, `@@system Name { ... }`, `@@SystemName(args)` |
+| **Module scope** | Frame directives, system declarations, system instantiation | `@@[target("python_3")]`, `@@codegen { ... }`, `@@[persist]`, `@@system Name { ... }`, `@@SystemName(args)` |
 | **Inside a handler, action, or operation** | The **dispatch context** of the current interface call | `@@:return`, `@@:params.x`, `@@:event`, `@@:data.k`, `@@:self.method()`, `@@:system.state` |
 
 At module scope, `@@` is followed by a Frame keyword (`target`, `codegen`, `persist`, `system`) or a system name being instantiated. Inside a handler, the most-used target is the dispatch context — so common that Frame gives it dedicated syntax: a colon after `@@`.

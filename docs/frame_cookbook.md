@@ -5669,7 +5669,7 @@ Two small Frame systems, composed, produce a scanner + parser pipeline in plain 
 
 ## OS Internals (Kernel & Subsystems)
 
-Nine recipes modeling real kernel subsystems as Frame state machines. Each recipe maps a subsystem whose logic is scattered across the Linux source tree onto a single Frame spec that surfaces the state graph directly. Every recipe is runnable with `@@target python_3`.
+Nine recipes modeling real kernel subsystems as Frame state machines. Each recipe maps a subsystem whose logic is scattered across the Linux source tree onto a single Frame spec that surfaces the state graph directly. Every recipe is runnable with `@@[target("python_3")]`.
 
 -----
 
@@ -7056,7 +7056,7 @@ This is what the kernel does in `do_signal()` / `setup_frame()` / `sys_sigreturn
 
 ## Internet Protocols
 
-Eight recipes modeling network protocols from their RFCs as Frame state machines. Protocol FSMs are where hand-written dispatch tables go to die; Frame lets you transcribe the table from the RFC and get a runnable implementation. Every recipe is runnable with `@@target python_3`.
+Eight recipes modeling network protocols from their RFCs as Frame state machines. Protocol FSMs are where hand-written dispatch tables go to die; Frame lets you transcribe the table from the RFC and get a runnable implementation. Every recipe is runnable with `@@[target("python_3")]`.
 
 -----
 

@@ -142,7 +142,7 @@ if __name__ == '__main__':
     light.next()  # Red -> Green
 ```
 
-The `@@target python_3` pragma tells the framepiler which language to generate. The `@@system` block is expanded into a Python class. The `@@TrafficLight()` construct instantiates the system — the framepiler expands it to the appropriate native constructor.
+The `@@[target("python_3")]` pragma tells the framepiler which language to generate. The `@@system` block is expanded into a Python class. The `@@TrafficLight()` construct instantiates the system — the framepiler expands it to the appropriate native constructor.
 
 The `import`, the `logger`, the `if __name__` block — all native Python — pass through exactly as written. This is Frame's core design: **native code is the ocean, Frame systems are islands.** The framepiler only touches the islands.
 
@@ -174,9 +174,9 @@ The generated code is readable, debuggable, and uses no runtime library. It's ju
 
 ### Target Language
 
-The `@@target` directive inside the file is the authoritative declaration of which native language the file targets. The framepiler uses it to determine how to parse native code regions (string/comment syntax), which code generator to use, and what output to produce.
+The `@@[target(...)]` attribute inside the file is the authoritative declaration of which native language the file targets. The framepiler uses it to determine how to parse native code regions (string/comment syntax), which code generator to use, and what output to produce. (The bare `@@target` form is hard-cut to E804 per RFC-0013.)
 
-The `@@target` can be overridden by a CLI flag (`-l <language>`) or other configuration, but if neither is provided, the in-file `@@target` is what controls compilation.
+The `@@[target(...)]` can be overridden by a CLI flag (`-l <language>`) or other configuration, but if neither is provided, the in-file declaration is what controls compilation.
 
 ### File Extensions
 
@@ -191,7 +191,7 @@ Frame source files conventionally use a target-specific extension:
 | Go | `.fgo` | `traffic_light.fgo` |
 | Java | `.fjava` | `traffic_light.fjava` |
 
-The file extension is a hint — nothing more. It helps editors and build tools recognize Frame files, but the framepiler does not use it to determine the target language. The `@@target` directive (or a CLI override) is what matters.
+The file extension is a hint — nothing more. It helps editors and build tools recognize Frame files, but the framepiler does not use it to determine the target language. The `@@[target(...)]` attribute (or a CLI override) is what matters.
 
 ---
 
@@ -231,7 +231,7 @@ Create a file called `hello.fpy`:
 
 Let's break this down:
 
-- **`@@target python_3`** — tells the framepiler to generate Python
+- **`@@[target("python_3")]`** — tells the framepiler to generate Python
 - **`@@system Hello`** — declares a state machine called `Hello`
 - **`interface:`** — the public API. `greet()` is a method callers can invoke
 - **`machine:`** — the states. There's one state, `$Start`

@@ -41,7 +41,7 @@ Complete reference for the Frame language. For a tutorial introduction, see [Get
 <postamble>         // native code (optional)
 ```
 
-Everything outside `@@target`, `@@codegen`, annotations, and `@@system` is native code and passes through unchanged.
+Everything outside `@@[target(...)]`, `@@codegen { ... }`, annotations, and `@@system` is native code and passes through unchanged.
 
 ### Types and Expressions
 
@@ -67,7 +67,7 @@ Required. Must appear before `@@system`. Specifies the target language.
 | `csharp` | C# | | `dart` | Dart |
 | `graphviz` | GraphViz DOT | | `gdscript` | GDScript |
 
-The `@@target` is the authoritative declaration of the file's target language. It can be overridden by a CLI flag (`-l <language>`).
+The `@@[target(...)]` attribute is the authoritative declaration of the file's target language. It can be overridden by a CLI flag (`-l <language>`). The bare `@@target` form is hard-cut (E804) per RFC-0013.
 
 ### `@@codegen`
 
@@ -78,7 +78,7 @@ The `@@target` is the authoritative declaration of the file's target language. I
 }
 ```
 
-Optional. Must appear after `@@target` and before `@@system`.
+Optional. Must appear after `@@[target(...)]` and before `@@system`.
 
 | Key | Values | Default | Meaning |
 |-----|--------|---------|---------|
@@ -1060,9 +1060,9 @@ The framepiler validates at the assembler stage:
 
 | Token | Meaning |
 |-------|---------|
-| `@@target` | Declare target language |
-| `@@codegen` | Configure code generation |
-| `@@[persist]` | Enable serialization |
+| `@@[target("<lang>")]` | Declare target language (attribute form; required, exactly once) |
+| `@@codegen { ... }` | Configure code generation (block form; optional, at most once) |
+| `@@[persist]` | Enable serialization (attribute form) |
 | `@@system` | Declare state machine |
 
 ### State Machine
@@ -1122,7 +1122,7 @@ Both `@@:self` and `@@:system` are syntactic prefixes. Bare forms are errors (E6
 
 | Code | Name | Description |
 |------|------|-------------|
-| E105 | `missing-target` | `@@target` directive missing or invalid |
+| E105 | `missing-target` | `@@[target(...)]` directive missing or invalid |
 | E111 | `duplicate-system-param` | Duplicate parameter in system declaration |
 | E113 | `section-order` | System sections out of order |
 | E114 | `duplicate-section` | Section declared more than once |

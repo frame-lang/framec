@@ -292,7 +292,7 @@ ruby       erlang       lua          dart
 gdscript   graphviz
 ```
 
-Set via `@@target <id>` (required) or CLI `-l <lang>`. `graphviz` emits DOT source for state-diagram rendering; pipe through `dot -Tsvg`.
+Set via `@@[target("<id>")]` (required, exactly once) or CLI `-l <lang>`. `graphviz` emits DOT source for state-diagram rendering; pipe through `dot -Tsvg`.
 
 ---
 
@@ -367,7 +367,7 @@ Assignment to a `const` field in a handler body is E615. Per-target rendering: `
 ## CLI quick reference
 
 ```bash
-framec source.fpy                     # compile to target declared via @@target
+framec source.fpy                     # compile to target declared via @@[target(...)]
 framec source.fpy -l rust             # override target
 framec source.fpy -l graphviz | dot -Tsvg -o diagram.svg
 framec source.fpy -o out.py           # write output to file

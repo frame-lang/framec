@@ -138,7 +138,7 @@ Fenced ` ```frame ` blocks in `docs/` (including RFCs) are checked by the
 pre-commit hook, which runs `scripts/validate_doc_samples.py`. The validator
 **executes** a block only if it contains *both*:
 
-1. a target directive — `@@[target("python_3")]` (or `@@target python_3`), and
+1. a target directive — `@@[target("python_3")]`, and
 2. a Python entry guard — `if __name__ == "__main__":`.
 
 A block that omits either of those is treated as **illustrative** — it is
