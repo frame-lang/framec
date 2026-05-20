@@ -6,7 +6,7 @@
 
 mod common;
 
-use common::compile_fixture;
+use common::{compile_fixture, compile_source};
 
 #[test]
 fn linear_fsm() {
@@ -66,4 +66,48 @@ fn consts() {
 #[test]
 fn no_persist() {
     insta::assert_snapshot!(compile_fixture("12_no_persist", "csharp"));
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// FRAMEC_BUGS #32 regression — a type-cast directly before an inline
+// `@@:self.method()` self-call must not get a spurious statement
+// terminator spliced into it.
+//
+// `double x = (double) @@:self.b()` used to emit
+// `double x = (double); this.b();` on semicolon backends — the trailing
+// `)` of the cast was mistaken for a complete statement and a `;` was
+// injected mid-expression, breaking C#/Java compilation. The fix only
+// injects the prior-statement terminator for STANDALONE self-calls.
+// ─────────────────────────────────────────────────────────────────────
+#[test]
+fn bug32_cast_before_inline_self_call() {
+    let src = r#"
+@@system M {
+    interface:
+        a(): double
+        b(): double
+    machine:
+        $S {
+            a(): double {
+                double x = (double) @@:self.b();
+                @@:(x)
+            }
+            b(): double { @@:(1.0) }
+        }
+}
+"#;
+    let out = compile_source(src, "csharp");
+
+    // The inline self-call must inline as an expression, cast intact.
+    assert!(
+        out.contains("(double) this.b()"),
+        "expected inline cast self-call `(double) this.b()` (#32)\n--- output ---\n{}",
+        out
+    );
+    // The mangled mid-expression terminator must NOT appear.
+    assert!(
+        !out.contains("(double);"),
+        "spurious `;` spliced after cast — regresses #32\n--- output ---\n{}",
+        out
+    );
 }

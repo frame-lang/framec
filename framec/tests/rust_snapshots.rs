@@ -622,3 +622,56 @@ fn excerpt(haystack: &str, needle: &str) -> String {
         )
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// FRAMEC_BUGS #31 regression — no_std-portable paths.
+//
+// The runtime must never emit `std::`-prefixed paths (they don't exist
+// under `#![no_std]`, blocking bare-metal consumers like Frame OS). It
+// emits `core::any::Any`, `alloc::rc::Rc`, `alloc::collections::BTreeMap`
+// instead, plus an `extern crate alloc;` + `use alloc::{vec, format};`
+// module preamble so the file is self-contained in hosted *and* no_std
+// builds. Reintroducing any `std::` path here regresses #31.
+// ─────────────────────────────────────────────────────────────────────
+#[test]
+fn bug31_no_std_portable_paths() {
+    // An interface return value exercises FrameReturn
+    // (`_Lifecycle(Rc<dyn Any>)`), FrameContext (`Rc<Event>` + the
+    // `_data` map), and FrameValue (`Dict(...)`) — every site that
+    // previously hardcoded `std::`.
+    let src = r#"
+@@system Foo {
+    interface:
+        bar(): int
+    machine:
+        $A {
+            bar(): int { @@:(1) }
+        }
+}
+"#;
+    let out = compile_source(src, "rust");
+
+    for forbidden in ["std::rc::Rc", "std::collections::HashMap", "std::any::Any"] {
+        assert!(
+            !out.contains(forbidden),
+            "generated Rust still emits `{}` — regresses no_std (#31)\n--- excerpt ---\n{}",
+            forbidden,
+            excerpt(&out, forbidden)
+        );
+    }
+
+    for needed in [
+        "extern crate alloc;",
+        "use alloc::{vec, format};",
+        "alloc::rc::Rc",
+        "alloc::collections::BTreeMap",
+        "core::any::Any",
+    ] {
+        assert!(
+            out.contains(needed),
+            "generated Rust missing no_std-portable token `{}` (#31)\n--- first 30 lines ---\n{}",
+            needed,
+            out.lines().take(30).collect::<Vec<_>>().join("\n")
+        );
+    }
+}
