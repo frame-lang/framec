@@ -54,7 +54,14 @@ pub(super) fn expand_context_return(
                 .expect("is_assignment closure verified contains('=') above");
             trimmed[eq_pos + 1..].trim().trim_end_matches(';').trim()
         };
-        let expanded_expr = paren_wrap_if_multiline(&expand_expression(expr, lang, ctx));
+        let raw_expr = expand_expression(expr, lang, ctx);
+        // Most backends emit `_return = <expr>` as a bare assignment, so a
+        // multiline value must be paren-wrapped to parse. Rust wraps the
+        // value in a `FrameReturn::Variant(...)` constructor call instead,
+        // whose own parens already group it — passing the paren-wrapped
+        // form there produces `Variant((expr))` (clippy::double_parens).
+        // So the Rust arm uses `raw_expr` (unwrapped).
+        let expanded_expr = paren_wrap_if_multiline(&raw_expr);
         match lang {
             TargetLanguage::Python3 | TargetLanguage::GDScript => format!(
                 "{}self._context_stack[-1]._return = {}",
@@ -73,7 +80,7 @@ pub(super) fn expand_context_return(
             ),
             TargetLanguage::Rust => super::super::rust_system::rust_expand_box_return(
                 &indent_str,
-                &expanded_expr,
+                &raw_expr,
                 &ctx.current_return_type,
                 &ctx.system_name,
                 &ctx.event_name,
@@ -229,7 +236,12 @@ pub(super) fn expand_context_return_expr(
             (trimmed.to_string(), false)
         }
     };
-    let expanded_expr = paren_wrap_if_multiline(&expand_expression(expr.trim(), lang, ctx));
+    let raw_expr = expand_expression(expr.trim(), lang, ctx);
+    // See `expand_context_return`: Rust wraps the value in a
+    // `FrameReturn::Variant(...)` constructor whose parens already group
+    // it, so it takes the unwrapped `raw_expr` to avoid `Variant((expr))`
+    // (clippy::double_parens). Other backends need the multiline paren wrap.
+    let expanded_expr = paren_wrap_if_multiline(&raw_expr);
     // Standalone @@ constructs include indent_str on all lines.
     // The scanner trims trailing whitespace from preceding native
     // text for standalone constructs (computed_indent > 0), so
@@ -252,7 +264,7 @@ pub(super) fn expand_context_return_expr(
         }
         TargetLanguage::Rust => super::super::rust_system::rust_expand_box_return_bare(
             &indent_str,
-            &expanded_expr,
+            &raw_expr,
             &ctx.current_return_type,
             &ctx.system_name,
             &ctx.event_name,

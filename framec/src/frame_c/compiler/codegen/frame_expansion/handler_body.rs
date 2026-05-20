@@ -377,10 +377,8 @@ pub(crate) fn emit_handler_body_via_statements(
                         // (`x = (double); this.m()`), which fails to compile on
                         // C#/Java/etc. A self-call is standalone (a real new
                         // statement) only when it starts its own line.
-                        let inline_self_call = matches!(
-                            kind,
-                            FrameSegmentKind::ContextSelfCall
-                        ) && !(out.is_empty() || out.ends_with('\n'));
+                        let inline_self_call = matches!(kind, FrameSegmentKind::ContextSelfCall)
+                            && !(out.is_empty() || out.ends_with('\n'));
                         if (is_transition
                             || matches!(
                                 kind,

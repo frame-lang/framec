@@ -44,9 +44,7 @@
                         // start (`\`) is always a char literal.
                         let next = if self.pos + 1 < n { self.bytes[self.pos + 1] } else { 0 };
                         let is_escape = next == b'\\';
-                        let is_ident_start = (next >= b'a' && next <= b'z')
-                            || (next >= b'A' && next <= b'Z')
-                            || next == b'_';
+                        let is_ident_start = next.is_ascii_alphabetic() || next == b'_';
                         if is_escape {
                             self.pos += 1;
                             -> $InCharLiteral
@@ -54,10 +52,7 @@
                             let mut k = self.pos + 2;
                             while k < n {
                                 let c = self.bytes[k];
-                                let is_word = (c >= b'a' && c <= b'z')
-                                    || (c >= b'A' && c <= b'Z')
-                                    || (c >= b'0' && c <= b'9')
-                                    || c == b'_';
+                                let is_word = c.is_ascii_alphanumeric() || c == b'_';
                                 if !is_word {
                                     break;
                                 }
