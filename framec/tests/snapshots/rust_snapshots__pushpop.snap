@@ -18,6 +18,7 @@ expression: "compile_fixture(\"05_pushpop\", \"rust\")"
 mod _push_pop_framec {
     use super::*;
     extern crate alloc;
+    use alloc::{vec, format};
     #[derive(Clone, Debug)]
     #[allow(dead_code, non_camel_case_types)]
     enum PushPopFrameEvent {

@@ -19,6 +19,7 @@
 mod _erlang_body_closer_fsm_framec {
     use super::*;
     extern crate alloc;
+    use alloc::{vec, format};
     #[derive(Clone, Debug)]
     #[allow(dead_code, non_camel_case_types)]
     enum ErlangBodyCloserFsmFrameEvent {

@@ -282,28 +282,30 @@ pub fn assemble(
                         // reference siblings (re-exported at parent
                         // scope by their own `pub use`).
                         output.push_str("    use super::*;\n");
-                        // RFC issue #31 (no_std): the runtime references
+                        // RFC issue #31/#33 (no_std): the runtime references
                         // `alloc::rc::Rc` / `alloc::collections::BTreeMap`
                         // (and `core::any::Any`) by portable path rather than
-                        // `std::*`, so a Frame system compiles unchanged in
-                        // both hosted and `#![no_std]` + alloc crates.
-                        // `extern crate alloc;` links the alloc crate so those
-                        // paths resolve; it is a no-op in hosted builds (std
-                        // re-exports alloc) and required on bare-metal targets.
-                        // Scoped to the wrapping `mod` so it is legal whether
-                        // the file is built standalone or pulled in via
-                        // `include!()`.
+                        // `std::*`, and uses the `vec!` / `format!` macros.
+                        // `extern crate alloc;` links the alloc crate so the
+                        // type paths resolve; `use alloc::{vec, format};`
+                        // brings the macros into scope so the module is fully
+                        // self-contained under `#![no_std]` — the consumer
+                        // provides only the heap *types* (`String`/`Vec`/`Box`)
+                        // via its include site, no `#[macro_use]` needed (#33).
+                        // Both are no-ops in hosted builds (std re-exports
+                        // alloc + prelude macros) and scoped to the wrapping
+                        // `mod` so they are legal under `include!()`.
                         //
-                        // Deliberately NOT `use alloc::{vec, format};`: a
-                        // crate-relative `use alloc::...` fails to resolve
-                        // under edition 2015 (bare `rustc foo.rs`), which
-                        // regressed compilation that worked pre-#31 (see
-                        // FRAMEC_BUGS #31). Instead the `vec!`/`format!`
-                        // macros come from the std prelude in hosted builds
-                        // (every edition); a no_std consumer brings them in
-                        // with `#[macro_use] extern crate alloc;` at its crate
-                        // root — standard no_std practice.
+                        // framec's Rust output targets **edition 2018+**: the
+                        // `use alloc::...` import is crate-relative and does
+                        // not resolve under edition 2015 (bare `rustc foo.rs`
+                        // with no `--edition`). Every real consumer compiles in
+                        // a Cargo crate (2018/2021/2024) or via `include!` into
+                        // one, so edition 2015 is not supported — that path was
+                        // only ever hit by tooling invoking `rustc` without an
+                        // edition flag (see FRAMEC_BUGS #31/#33).
                         output.push_str("    extern crate alloc;\n");
+                        output.push_str("    use alloc::{vec, format};\n");
                         // Indent the generated content by 4 spaces.
                         for line in expanded.lines() {
                             if line.is_empty() {

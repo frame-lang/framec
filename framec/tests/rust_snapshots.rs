@@ -660,12 +660,15 @@ fn bug31_no_std_portable_paths() {
         );
     }
 
-    // NB: no `use alloc::{vec, format};` — that breaks edition-2015
-    // compilation (see FRAMEC_BUGS #31). `vec!`/`format!` come from the
-    // std prelude (hosted) or a consumer's `#[macro_use] extern crate
-    // alloc;` (no_std). The preamble carries only `extern crate alloc;`.
+    // The preamble carries `extern crate alloc;` (for the type paths)
+    // AND `use alloc::{vec, format};` (so `vec!`/`format!` resolve under
+    // no_std with no consumer help — #33). framec's Rust output targets
+    // edition 2018+; the crate-relative `use alloc::...` does not resolve
+    // under edition 2015 (bare `rustc`, no `--edition`), which is not a
+    // supported configuration (see FRAMEC_BUGS #31/#33).
     for needed in [
         "extern crate alloc;",
+        "use alloc::{vec, format};",
         "alloc::rc::Rc",
         "alloc::collections::BTreeMap",
         "core::any::Any",

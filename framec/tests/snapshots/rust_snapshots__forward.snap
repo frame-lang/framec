@@ -18,6 +18,7 @@ expression: "compile_fixture(\"07_forward\", \"rust\")"
 mod _forward_framec {
     use super::*;
     extern crate alloc;
+    use alloc::{vec, format};
     #[derive(Clone, Debug)]
     #[allow(dead_code, non_camel_case_types)]
     enum ForwardFrameEvent {
