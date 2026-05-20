@@ -120,10 +120,23 @@ pub fn compile_ast_based(
         eprintln!("[compile_ast_based] Starting pipeline-based compilation");
     }
 
+    // RFC-0035 round 7: the pipeline supervisor is a Frame FSM that
+    // observes phase transitions and tracks error severity. It does
+    // not drive control flow — the orchestrator stays in native Rust
+    // — so wrong supervisor state cannot change compilation
+    // correctness, only the `--debug` summary. See
+    // `compiler/pipeline_supervisor/` for the .frs source.
+    let mut supervisor = crate::frame_c::compiler::pipeline_supervisor::PipelineSupervisor::new();
+
     // Stage 0: Segment source
+    supervisor.begin_phase("segment");
     let source_map = match segmenter::segment_source(source, config.target) {
         Ok(sm) => sm,
         Err(e) => {
+            supervisor.abort("E001", &format!("Segmentation error: {}", e));
+            if config.debug {
+                eprintln!("[supervisor] {:?}", supervisor.summary());
+            }
             return Ok(CompileResult {
                 code: String::new(),
                 errors: vec![CompileError::new(
@@ -272,6 +285,7 @@ pub fn compile_ast_based(
     }
 
     // Pass 1: Parse all systems into ASTs.
+    supervisor.begin_phase("parse");
     //
     // Walk segments in source order so module-level lifecycle pragmas
     // (RFC-0014 `@@[main]` and RFC-0015 `@@[create]` / `@@[save]` /
@@ -830,6 +844,7 @@ pub fn compile_ast_based(
     }
 
     // Pass 2: Validate + codegen each system with the shared arcanum
+    supervisor.begin_phase("validate+codegen");
     let backend = get_backend(config.target);
     let mut ctx = EmitContext::new();
     // Make the names of every defined system available to the
@@ -1048,6 +1063,7 @@ pub fn compile_ast_based(
     }
 
     // Stage 7: Assemble final output (native pass-through + system substitution + system instantiations)
+    supervisor.begin_phase("assemble");
     // Runtime imports are emitted first (before any native prolog) to fix import ordering.
     // Pass each system's declared params so the assembler can resolve sigil-tagged
     // call sites (`@@Robot($(10), $>(80), "R2D2")`) and substitute Frame defaults.
@@ -1109,6 +1125,13 @@ pub fn compile_ast_based(
     // surface here. They don't abort earlier passes (the rest of the
     // module still compiles), so the user sees both the missing-import
     // error AND any downstream issues in one shot.
+    for err in &strict_import_errors {
+        supervisor.record_nonfatal(&err.code, &err.message);
+    }
+    supervisor.finish();
+    if config.debug {
+        eprintln!("[supervisor] {:?}", supervisor.summary());
+    }
     Ok(CompileResult {
         code: if strict_import_errors.is_empty() {
             code

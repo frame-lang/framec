@@ -1,0 +1,232 @@
+@@[target("rust")]
+
+// Pipeline supervisor — the framec compile pipeline expressed as
+// a Frame state machine.
+//
+// RFC-0035 round 7. Earlier rounds dogfooded Frame on framec's
+// utilities, classifiers, validators, and graph algorithms.
+// Round 7 puts Frame at the META level: it describes the
+// compiler's own pipeline as a state machine.
+//
+// This FSM is OBSERVATIONAL — it does not drive the
+// orchestrator's control flow. The orchestrator in
+// `pipeline/compiler.rs` stays in native Rust and calls into
+// this FSM at each phase boundary. Wrong supervisor logic
+// produces wrong `--debug` output but cannot change compilation
+// correctness. That bounded-risk profile is what makes Round 7
+// tractable: the pipeline orchestrator is 1500 lines of
+// intertwined linear logic with many bookkeeping side effects;
+// rewriting it as an FSM-driven controller would be a multi-day
+// arc with high regression risk. The supervisor-as-observer
+// shape gives us the dogfood demo (Frame describing the meta-
+// compiler) without rewriting the pipeline.
+//
+// Bonus deliverable: `framec compile -l graphviz
+// pipeline_supervisor.frs > docs/pipeline.svg` renders the
+// compiler's own pipeline diagram. The .frs source IS the
+// pipeline spec; the SVG is the documentation. Self-describing
+// meta-compiler.
+//
+// States:
+//
+//   $Idle    — initial; no phase has begun
+//   $Running — actively executing a phase; non-fatal errors
+//              may be collected and the pipeline continues
+//   $Aborted — fatal error (e.g. segmentation failure); the
+//              pipeline cannot continue. Terminal.
+//   $Failed  — pipeline ran to completion but non-fatal errors
+//              were collected (per-system parse failures,
+//              validator E-codes that don't prevent codegen).
+//              Terminal.
+//   $Done    — clean exit, zero errors. Terminal.
+//
+// Error severity distinction:
+//
+//   abort(code, msg)        — fatal; transitions $Running → $Aborted
+//   record_nonfatal(code, msg) — collected; stays in $Running
+//   finish()                — completes; → $Done if no errors,
+//                             → $Failed if record_nonfatal was called
+//
+// Phase tracking: each begin_phase(name) records the phase name
+// in the `phase_log` domain field (CSV-encoded). The summary()
+// event returns the log + error/warning counts as a tagged
+// string the caller can parse for debug output.
+
+@@system PipelineSupervisor {
+    interface:
+        begin_phase(name: String): String
+        complete_phase(): String
+        record_nonfatal(code: String, msg: String): String
+        abort(code: String, msg: String): String
+        finish(): String
+        summary(): String
+
+    machine:
+        $Idle {
+            begin_phase(name: String): String {
+                self.current_phase = name.clone();
+                -> $Running
+                @@:(format!("BEGIN|{}", name))
+            }
+
+            summary(): String {
+                @@:("IDLE|phases=|errors=0|warnings=0".to_string())
+            }
+        }
+
+        $Running {
+            begin_phase(name: String): String {
+                // Closing the prior phase implicitly when caller
+                // begins a new one without calling complete_phase()
+                // first — defensive shape, matches how the existing
+                // orchestrator flows from segment → parse → ...
+                // without explicit "done" markers. If complete_phase()
+                // already ran, current_phase is empty and we skip the
+                // implicit close.
+                if !self.current_phase.is_empty() {
+                    if !self.phase_log.is_empty() {
+                        self.phase_log.push(',');
+                    }
+                    self.phase_log.push_str(&self.current_phase);
+                }
+                self.current_phase = name.clone();
+                @@:(format!("BEGIN|{}", name))
+            }
+
+            complete_phase(): String {
+                if !self.phase_log.is_empty() {
+                    self.phase_log.push(',');
+                }
+                self.phase_log.push_str(&self.current_phase);
+                let done_phase = self.current_phase.clone();
+                self.current_phase = String::new();
+                @@:(format!("COMPLETE|{}", done_phase))
+            }
+
+            record_nonfatal(code: String, msg: String): String {
+                self.error_count += 1;
+                @@:(format!("NONFATAL|{}|{}", code, msg))
+            }
+
+            abort(code: String, msg: String): String {
+                self.abort_code = code.clone();
+                self.abort_msg = msg.clone();
+                -> $Aborted
+                @@:(format!("ABORT|{}|{}", code, msg))
+            }
+
+            finish(): String {
+                if !self.current_phase.is_empty() {
+                    if !self.phase_log.is_empty() {
+                        self.phase_log.push(',');
+                    }
+                    self.phase_log.push_str(&self.current_phase);
+                    self.current_phase = String::new();
+                }
+                if self.error_count > 0 {
+                    -> $Failed
+                    @@:(format!("FAILED|errors={}", self.error_count))
+                }
+                -> $Done
+                @@:("DONE".to_string())
+            }
+
+            summary(): String {
+                @@:(format!(
+                    "RUNNING|phases={}|current={}|errors={}|warnings=0",
+                    self.phase_log, self.current_phase, self.error_count
+                ))
+            }
+        }
+
+        $Aborted {
+            begin_phase(name: String): String {
+                @@:("ABSORBED".to_string())
+            }
+
+            complete_phase(): String {
+                @@:("ABSORBED".to_string())
+            }
+
+            record_nonfatal(code: String, msg: String): String {
+                @@:("ABSORBED".to_string())
+            }
+
+            abort(code: String, msg: String): String {
+                @@:("ABSORBED".to_string())
+            }
+
+            finish(): String {
+                @@:(format!("ABORTED|{}|{}", self.abort_code, self.abort_msg))
+            }
+
+            summary(): String {
+                @@:(format!(
+                    "ABORTED|phases={}|code={}|msg={}|errors={}",
+                    self.phase_log, self.abort_code, self.abort_msg, self.error_count
+                ))
+            }
+        }
+
+        $Failed {
+            begin_phase(name: String): String {
+                @@:("ABSORBED".to_string())
+            }
+
+            complete_phase(): String {
+                @@:("ABSORBED".to_string())
+            }
+
+            record_nonfatal(code: String, msg: String): String {
+                @@:("ABSORBED".to_string())
+            }
+
+            abort(code: String, msg: String): String {
+                @@:("ABSORBED".to_string())
+            }
+
+            finish(): String {
+                @@:(format!("FAILED|errors={}", self.error_count))
+            }
+
+            summary(): String {
+                @@:(format!(
+                    "FAILED|phases={}|errors={}|warnings=0",
+                    self.phase_log, self.error_count
+                ))
+            }
+        }
+
+        $Done {
+            begin_phase(name: String): String {
+                @@:("ABSORBED".to_string())
+            }
+
+            complete_phase(): String {
+                @@:("ABSORBED".to_string())
+            }
+
+            record_nonfatal(code: String, msg: String): String {
+                @@:("ABSORBED".to_string())
+            }
+
+            abort(code: String, msg: String): String {
+                @@:("ABSORBED".to_string())
+            }
+
+            finish(): String {
+                @@:("DONE".to_string())
+            }
+
+            summary(): String {
+                @@:(format!("DONE|phases={}|errors=0|warnings=0", self.phase_log))
+            }
+        }
+
+    domain:
+        current_phase: String = String::new()
+        phase_log: String = String::new()
+        error_count: i32 = 0
+        abort_code: String = String::new()
+        abort_msg: String = String::new()
+}

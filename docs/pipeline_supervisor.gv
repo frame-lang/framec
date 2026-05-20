@@ -1,0 +1,60 @@
+digraph PipelineSupervisor {
+    compound=true
+    node [color="deepskyblue4" style="rounded, filled" fillcolor="azure"]
+    edge[color="red"]
+
+    Entry[width=0.2 shape="circle" style="filled" fillcolor="black" label=""]
+    Entry -> Idle
+
+    Idle [label = <
+        <table CELLBORDER="0" CELLPADDING="5" style="rounded">
+            <tr><td><b>Idle</b></td></tr>
+            <hr/>
+            <tr><td align="left"><font point-size="10">
+begin_phase(name: String)<br ALIGN="LEFT"/>summary()<br ALIGN="LEFT"/>
+            </font></td></tr>
+        </table>
+    > margin=0 shape=none]
+    Running [label = <
+        <table CELLBORDER="0" CELLPADDING="5" style="rounded">
+            <tr><td><b>Running</b></td></tr>
+            <hr/>
+            <tr><td align="left"><font point-size="10">
+begin_phase(name: String)<br ALIGN="LEFT"/>complete_phase()<br ALIGN="LEFT"/>record_nonfatal(code: String, msg: String)<br ALIGN="LEFT"/>abort(code: String, msg: String)<br ALIGN="LEFT"/>finish()<br ALIGN="LEFT"/>summary()<br ALIGN="LEFT"/>
+            </font></td></tr>
+        </table>
+    > margin=0 shape=none]
+    Aborted [label = <
+        <table CELLBORDER="0" CELLPADDING="5" style="rounded">
+            <tr><td><b>Aborted</b></td></tr>
+            <hr/>
+            <tr><td align="left"><font point-size="10">
+begin_phase(name: String)<br ALIGN="LEFT"/>complete_phase()<br ALIGN="LEFT"/>record_nonfatal(code: String, msg: String)<br ALIGN="LEFT"/>abort(code: String, msg: String)<br ALIGN="LEFT"/>finish()<br ALIGN="LEFT"/>summary()<br ALIGN="LEFT"/>
+            </font></td></tr>
+        </table>
+    > margin=0 shape=none]
+    Failed [label = <
+        <table CELLBORDER="0" CELLPADDING="5" style="rounded">
+            <tr><td><b>Failed</b></td></tr>
+            <hr/>
+            <tr><td align="left"><font point-size="10">
+begin_phase(name: String)<br ALIGN="LEFT"/>complete_phase()<br ALIGN="LEFT"/>record_nonfatal(code: String, msg: String)<br ALIGN="LEFT"/>abort(code: String, msg: String)<br ALIGN="LEFT"/>finish()<br ALIGN="LEFT"/>summary()<br ALIGN="LEFT"/>
+            </font></td></tr>
+        </table>
+    > margin=0 shape=none]
+    Done [label = <
+        <table CELLBORDER="0" CELLPADDING="5" style="rounded">
+            <tr><td><b>Done</b></td></tr>
+            <hr/>
+            <tr><td align="left"><font point-size="10">
+begin_phase(name: String)<br ALIGN="LEFT"/>complete_phase()<br ALIGN="LEFT"/>record_nonfatal(code: String, msg: String)<br ALIGN="LEFT"/>abort(code: String, msg: String)<br ALIGN="LEFT"/>finish()<br ALIGN="LEFT"/>summary()<br ALIGN="LEFT"/>
+            </font></td></tr>
+        </table>
+    > margin=0 shape=none]
+
+    Idle -> Running [label=" begin_phase "]
+    Running -> Aborted [label=" abort "]
+    Running -> Failed [label=" finish "]
+    Running -> Done [label=" finish "]
+}
+

@@ -27,6 +27,7 @@ pub mod model;
 pub mod name;
 pub mod pipeline;
 pub mod pipeline_parser;
+pub mod pipeline_supervisor;
 pub mod reachable_validator;
 pub mod section_order_validator;
 pub mod segmenter;
