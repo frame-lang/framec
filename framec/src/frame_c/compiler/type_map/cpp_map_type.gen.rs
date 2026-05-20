@@ -18,6 +18,8 @@
 #[allow(clippy::single_match)]
 mod _cpp_map_type_framec {
     use super::*;
+    extern crate alloc;
+    use alloc::{vec, format};
     #[derive(Clone, Debug)]
     #[allow(dead_code, non_camel_case_types)]
     enum CppMapTypeFrameEvent {
@@ -30,7 +32,7 @@ mod _cpp_map_type_framec {
     #[allow(dead_code, non_camel_case_types)]
     enum CppMapTypeFrameReturn {
         Map(String),
-        _Lifecycle(std::rc::Rc<dyn std::any::Any>),
+        _Lifecycle(alloc::rc::Rc<dyn core::any::Any>),
     }
 
     #[allow(dead_code)]
@@ -52,23 +54,23 @@ mod _cpp_map_type_framec {
         Bool(bool),
         Str(String),
         List(Vec<Self>),
-        Dict(std::collections::HashMap<String, Self>),
+        Dict(alloc::collections::BTreeMap<String, Self>),
     }
 
     #[allow(dead_code, non_camel_case_types)]
     struct CppMapTypeFrameContext {
-        event: std::rc::Rc<CppMapTypeFrameEvent>,
+        event: alloc::rc::Rc<CppMapTypeFrameEvent>,
         _return: Option<CppMapTypeFrameReturn>,
-        _data: std::collections::HashMap<String, CppMapTypeFrameValue>,
+        _data: alloc::collections::BTreeMap<String, CppMapTypeFrameValue>,
         _transitioned: bool,
     }
 
     impl CppMapTypeFrameContext {
-        fn new(event: std::rc::Rc<CppMapTypeFrameEvent>, default_return: Option<CppMapTypeFrameReturn>) -> Self {
+        fn new(event: alloc::rc::Rc<CppMapTypeFrameEvent>, default_return: Option<CppMapTypeFrameReturn>) -> Self {
             Self {
                 event,
                 _return: default_return,
-                _data: std::collections::HashMap::new(),
+                _data: alloc::collections::BTreeMap::new(),
                 _transitioned: false,
             }
         }
@@ -137,8 +139,8 @@ mod _cpp_map_type_framec {
         pub fn __create() -> Self {
             let mut c = Self::new();
             c.__compartment = c.__prepareEnter("Active", vec![]);
-            let __e = std::rc::Rc::new(CppMapTypeFrameEvent::FrameEnter { args: c.__compartment.enter_args.clone() });
-            let __ctx = CppMapTypeFrameContext::new(std::rc::Rc::clone(&__e), None);
+            let __e = alloc::rc::Rc::new(CppMapTypeFrameEvent::FrameEnter { args: c.__compartment.enter_args.clone() });
+            let __ctx = CppMapTypeFrameContext::new(alloc::rc::Rc::clone(&__e), None);
             c._context_stack.push(__ctx);
             c.__kernel(&__e);
             c._context_stack.pop();
@@ -175,7 +177,7 @@ mod _cpp_map_type_framec {
             }
         }
 
-        fn __kernel(&mut self, __e: &std::rc::Rc<CppMapTypeFrameEvent>) {
+        fn __kernel(&mut self, __e: &alloc::rc::Rc<CppMapTypeFrameEvent>) {
             // Route event to current state.
             self.__router(__e);
             // Drain any transitions queued by the handler.
@@ -183,7 +185,7 @@ mod _cpp_map_type_framec {
                 let next_compartment = self.__next_compartment.take().expect("invariant: while-loop guard checked is_some()");
                 // Exit the current (leaf) state.
                 let exit_args = self.__compartment.exit_args.clone();
-                let exit_event = std::rc::Rc::new(CppMapTypeFrameEvent::FrameExit { args: exit_args });
+                let exit_event = alloc::rc::Rc::new(CppMapTypeFrameEvent::FrameExit { args: exit_args });
                 self.__router(&exit_event);
                 // Switch to the new compartment.
                 self.__compartment = next_compartment;
@@ -194,22 +196,22 @@ mod _cpp_map_type_framec {
                     None => {
                         // No forwarded event — synthesize a fresh $>.
                         let enter_args = self.__compartment.enter_args.clone();
-                        let enter_event = std::rc::Rc::new(CppMapTypeFrameEvent::FrameEnter { args: enter_args });
+                        let enter_event = alloc::rc::Rc::new(CppMapTypeFrameEvent::FrameEnter { args: enter_args });
                         self.__router(&enter_event);
                     }
                     Some(fwd) if matches!(fwd, CppMapTypeFrameEvent::FrameEnter { .. }) => {
                         // Forwarded event IS $> — dispatch directly so the
                         // destination's $> handler receives the caller's payload.
-                        let fwd_rc = std::rc::Rc::new(fwd);
+                        let fwd_rc = alloc::rc::Rc::new(fwd);
                         self.__router(&fwd_rc);
                     }
                     Some(fwd) => {
                         // Forwarded event is not $> — initialize the destination
                         // with a fresh $>, then dispatch the forward.
                         let enter_args = self.__compartment.enter_args.clone();
-                        let enter_event = std::rc::Rc::new(CppMapTypeFrameEvent::FrameEnter { args: enter_args });
+                        let enter_event = alloc::rc::Rc::new(CppMapTypeFrameEvent::FrameEnter { args: enter_args });
                         self.__router(&enter_event);
-                        let fwd_rc = std::rc::Rc::new(fwd);
+                        let fwd_rc = alloc::rc::Rc::new(fwd);
                         self.__router(&fwd_rc);
                     }
                 }
@@ -219,7 +221,7 @@ mod _cpp_map_type_framec {
             }
         }
 
-        fn __router(&mut self, __e: &std::rc::Rc<CppMapTypeFrameEvent>) {
+        fn __router(&mut self, __e: &alloc::rc::Rc<CppMapTypeFrameEvent>) {
             let __ev: &CppMapTypeFrameEvent = __e;
             match self.__compartment.state.as_str() {
                 "Active" => self._state_Active(__ev),
@@ -232,8 +234,8 @@ mod _cpp_map_type_framec {
         }
 
         pub fn map(&mut self, t: String) -> String {
-            let __e = std::rc::Rc::new(CppMapTypeFrameEvent::Map { t: t.clone() });
-            let mut __ctx = CppMapTypeFrameContext::new(std::rc::Rc::clone(&__e), None);
+            let __e = alloc::rc::Rc::new(CppMapTypeFrameEvent::Map { t: t.clone() });
+            let mut __ctx = CppMapTypeFrameContext::new(alloc::rc::Rc::clone(&__e), None);
             self._context_stack.push(__ctx);
             self.__kernel(&__e);
             let __ctx = self._context_stack.pop().expect("invariant: handler must have pushed a context before reading return");

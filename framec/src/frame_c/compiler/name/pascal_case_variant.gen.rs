@@ -32,6 +32,8 @@
 #[allow(clippy::single_match)]
 mod _pascal_case_variant_framec {
     use super::*;
+    extern crate alloc;
+    use alloc::{vec, format};
     #[derive(Clone, Debug)]
     #[allow(dead_code, non_camel_case_types)]
     enum PascalCaseVariantFrameEvent {
@@ -44,7 +46,7 @@ mod _pascal_case_variant_framec {
     #[allow(dead_code, non_camel_case_types)]
     enum PascalCaseVariantFrameReturn {
         Convert(String),
-        _Lifecycle(std::rc::Rc<dyn std::any::Any>),
+        _Lifecycle(alloc::rc::Rc<dyn core::any::Any>),
     }
 
     #[allow(dead_code)]
@@ -66,23 +68,23 @@ mod _pascal_case_variant_framec {
         Bool(bool),
         Str(String),
         List(Vec<Self>),
-        Dict(std::collections::HashMap<String, Self>),
+        Dict(alloc::collections::BTreeMap<String, Self>),
     }
 
     #[allow(dead_code, non_camel_case_types)]
     struct PascalCaseVariantFrameContext {
-        event: std::rc::Rc<PascalCaseVariantFrameEvent>,
+        event: alloc::rc::Rc<PascalCaseVariantFrameEvent>,
         _return: Option<PascalCaseVariantFrameReturn>,
-        _data: std::collections::HashMap<String, PascalCaseVariantFrameValue>,
+        _data: alloc::collections::BTreeMap<String, PascalCaseVariantFrameValue>,
         _transitioned: bool,
     }
 
     impl PascalCaseVariantFrameContext {
-        fn new(event: std::rc::Rc<PascalCaseVariantFrameEvent>, default_return: Option<PascalCaseVariantFrameReturn>) -> Self {
+        fn new(event: alloc::rc::Rc<PascalCaseVariantFrameEvent>, default_return: Option<PascalCaseVariantFrameReturn>) -> Self {
             Self {
                 event,
                 _return: default_return,
-                _data: std::collections::HashMap::new(),
+                _data: alloc::collections::BTreeMap::new(),
                 _transitioned: false,
             }
         }
@@ -151,8 +153,8 @@ mod _pascal_case_variant_framec {
         pub fn __create() -> Self {
             let mut c = Self::new();
             c.__compartment = c.__prepareEnter("Active", vec![]);
-            let __e = std::rc::Rc::new(PascalCaseVariantFrameEvent::FrameEnter { args: c.__compartment.enter_args.clone() });
-            let __ctx = PascalCaseVariantFrameContext::new(std::rc::Rc::clone(&__e), None);
+            let __e = alloc::rc::Rc::new(PascalCaseVariantFrameEvent::FrameEnter { args: c.__compartment.enter_args.clone() });
+            let __ctx = PascalCaseVariantFrameContext::new(alloc::rc::Rc::clone(&__e), None);
             c._context_stack.push(__ctx);
             c.__kernel(&__e);
             c._context_stack.pop();
@@ -189,7 +191,7 @@ mod _pascal_case_variant_framec {
             }
         }
 
-        fn __kernel(&mut self, __e: &std::rc::Rc<PascalCaseVariantFrameEvent>) {
+        fn __kernel(&mut self, __e: &alloc::rc::Rc<PascalCaseVariantFrameEvent>) {
             // Route event to current state.
             self.__router(__e);
             // Drain any transitions queued by the handler.
@@ -197,7 +199,7 @@ mod _pascal_case_variant_framec {
                 let next_compartment = self.__next_compartment.take().expect("invariant: while-loop guard checked is_some()");
                 // Exit the current (leaf) state.
                 let exit_args = self.__compartment.exit_args.clone();
-                let exit_event = std::rc::Rc::new(PascalCaseVariantFrameEvent::FrameExit { args: exit_args });
+                let exit_event = alloc::rc::Rc::new(PascalCaseVariantFrameEvent::FrameExit { args: exit_args });
                 self.__router(&exit_event);
                 // Switch to the new compartment.
                 self.__compartment = next_compartment;
@@ -208,22 +210,22 @@ mod _pascal_case_variant_framec {
                     None => {
                         // No forwarded event — synthesize a fresh $>.
                         let enter_args = self.__compartment.enter_args.clone();
-                        let enter_event = std::rc::Rc::new(PascalCaseVariantFrameEvent::FrameEnter { args: enter_args });
+                        let enter_event = alloc::rc::Rc::new(PascalCaseVariantFrameEvent::FrameEnter { args: enter_args });
                         self.__router(&enter_event);
                     }
                     Some(fwd) if matches!(fwd, PascalCaseVariantFrameEvent::FrameEnter { .. }) => {
                         // Forwarded event IS $> — dispatch directly so the
                         // destination's $> handler receives the caller's payload.
-                        let fwd_rc = std::rc::Rc::new(fwd);
+                        let fwd_rc = alloc::rc::Rc::new(fwd);
                         self.__router(&fwd_rc);
                     }
                     Some(fwd) => {
                         // Forwarded event is not $> — initialize the destination
                         // with a fresh $>, then dispatch the forward.
                         let enter_args = self.__compartment.enter_args.clone();
-                        let enter_event = std::rc::Rc::new(PascalCaseVariantFrameEvent::FrameEnter { args: enter_args });
+                        let enter_event = alloc::rc::Rc::new(PascalCaseVariantFrameEvent::FrameEnter { args: enter_args });
                         self.__router(&enter_event);
-                        let fwd_rc = std::rc::Rc::new(fwd);
+                        let fwd_rc = alloc::rc::Rc::new(fwd);
                         self.__router(&fwd_rc);
                     }
                 }
@@ -233,7 +235,7 @@ mod _pascal_case_variant_framec {
             }
         }
 
-        fn __router(&mut self, __e: &std::rc::Rc<PascalCaseVariantFrameEvent>) {
+        fn __router(&mut self, __e: &alloc::rc::Rc<PascalCaseVariantFrameEvent>) {
             let __ev: &PascalCaseVariantFrameEvent = __e;
             match self.__compartment.state.as_str() {
                 "Active" => self._state_Active(__ev),
@@ -246,8 +248,8 @@ mod _pascal_case_variant_framec {
         }
 
         pub fn convert(&mut self, s: String) -> String {
-            let __e = std::rc::Rc::new(PascalCaseVariantFrameEvent::Convert { s: s.clone() });
-            let mut __ctx = PascalCaseVariantFrameContext::new(std::rc::Rc::clone(&__e), None);
+            let __e = alloc::rc::Rc::new(PascalCaseVariantFrameEvent::Convert { s: s.clone() });
+            let mut __ctx = PascalCaseVariantFrameContext::new(alloc::rc::Rc::clone(&__e), None);
             self._context_stack.push(__ctx);
             self.__kernel(&__e);
             let __ctx = self._context_stack.pop().expect("invariant: handler must have pushed a context before reading return");
@@ -286,3 +288,4 @@ mod _pascal_case_variant_framec {
     }
 }
 pub use _pascal_case_variant_framec::*;
+

@@ -20,6 +20,8 @@
 #[allow(clippy::single_match)]
 mod _rust_body_closer_fsm_framec {
     use super::*;
+    extern crate alloc;
+    use alloc::{vec, format};
     #[derive(Clone, Debug)]
     #[allow(dead_code, non_camel_case_types)]
     enum RustBodyCloserFsmFrameEvent {
@@ -31,7 +33,7 @@ mod _rust_body_closer_fsm_framec {
     #[derive(Clone)]
     #[allow(dead_code, non_camel_case_types)]
     enum RustBodyCloserFsmFrameReturn {
-        _Lifecycle(std::rc::Rc<dyn std::any::Any>),
+        _Lifecycle(alloc::rc::Rc<dyn core::any::Any>),
     }
 
     #[allow(dead_code)]
@@ -53,23 +55,23 @@ mod _rust_body_closer_fsm_framec {
         Bool(bool),
         Str(String),
         List(Vec<Self>),
-        Dict(std::collections::HashMap<String, Self>),
+        Dict(alloc::collections::BTreeMap<String, Self>),
     }
 
     #[allow(dead_code, non_camel_case_types)]
     struct RustBodyCloserFsmFrameContext {
-        event: std::rc::Rc<RustBodyCloserFsmFrameEvent>,
+        event: alloc::rc::Rc<RustBodyCloserFsmFrameEvent>,
         _return: Option<RustBodyCloserFsmFrameReturn>,
-        _data: std::collections::HashMap<String, RustBodyCloserFsmFrameValue>,
+        _data: alloc::collections::BTreeMap<String, RustBodyCloserFsmFrameValue>,
         _transitioned: bool,
     }
 
     impl RustBodyCloserFsmFrameContext {
-        fn new(event: std::rc::Rc<RustBodyCloserFsmFrameEvent>, default_return: Option<RustBodyCloserFsmFrameReturn>) -> Self {
+        fn new(event: alloc::rc::Rc<RustBodyCloserFsmFrameEvent>, default_return: Option<RustBodyCloserFsmFrameReturn>) -> Self {
             Self {
                 event,
                 _return: default_return,
-                _data: std::collections::HashMap::new(),
+                _data: alloc::collections::BTreeMap::new(),
                 _transitioned: false,
             }
         }
@@ -166,8 +168,8 @@ mod _rust_body_closer_fsm_framec {
         pub fn __create() -> Self {
             let mut c = Self::new();
             c.__compartment = c.__prepareEnter("Init", vec![]);
-            let __e = std::rc::Rc::new(RustBodyCloserFsmFrameEvent::FrameEnter { args: c.__compartment.enter_args.clone() });
-            let __ctx = RustBodyCloserFsmFrameContext::new(std::rc::Rc::clone(&__e), None);
+            let __e = alloc::rc::Rc::new(RustBodyCloserFsmFrameEvent::FrameEnter { args: c.__compartment.enter_args.clone() });
+            let __ctx = RustBodyCloserFsmFrameContext::new(alloc::rc::Rc::clone(&__e), None);
             c._context_stack.push(__ctx);
             c.__kernel(&__e);
             c._context_stack.pop();
@@ -210,7 +212,7 @@ mod _rust_body_closer_fsm_framec {
             }
         }
 
-        fn __kernel(&mut self, __e: &std::rc::Rc<RustBodyCloserFsmFrameEvent>) {
+        fn __kernel(&mut self, __e: &alloc::rc::Rc<RustBodyCloserFsmFrameEvent>) {
             // Route event to current state.
             self.__router(__e);
             // Drain any transitions queued by the handler.
@@ -218,7 +220,7 @@ mod _rust_body_closer_fsm_framec {
                 let next_compartment = self.__next_compartment.take().expect("invariant: while-loop guard checked is_some()");
                 // Exit the current (leaf) state.
                 let exit_args = self.__compartment.exit_args.clone();
-                let exit_event = std::rc::Rc::new(RustBodyCloserFsmFrameEvent::FrameExit { args: exit_args });
+                let exit_event = alloc::rc::Rc::new(RustBodyCloserFsmFrameEvent::FrameExit { args: exit_args });
                 self.__router(&exit_event);
                 // Switch to the new compartment.
                 self.__compartment = next_compartment;
@@ -229,22 +231,22 @@ mod _rust_body_closer_fsm_framec {
                     None => {
                         // No forwarded event — synthesize a fresh $>.
                         let enter_args = self.__compartment.enter_args.clone();
-                        let enter_event = std::rc::Rc::new(RustBodyCloserFsmFrameEvent::FrameEnter { args: enter_args });
+                        let enter_event = alloc::rc::Rc::new(RustBodyCloserFsmFrameEvent::FrameEnter { args: enter_args });
                         self.__router(&enter_event);
                     }
                     Some(fwd) if matches!(fwd, RustBodyCloserFsmFrameEvent::FrameEnter { .. }) => {
                         // Forwarded event IS $> — dispatch directly so the
                         // destination's $> handler receives the caller's payload.
-                        let fwd_rc = std::rc::Rc::new(fwd);
+                        let fwd_rc = alloc::rc::Rc::new(fwd);
                         self.__router(&fwd_rc);
                     }
                     Some(fwd) => {
                         // Forwarded event is not $> — initialize the destination
                         // with a fresh $>, then dispatch the forward.
                         let enter_args = self.__compartment.enter_args.clone();
-                        let enter_event = std::rc::Rc::new(RustBodyCloserFsmFrameEvent::FrameEnter { args: enter_args });
+                        let enter_event = alloc::rc::Rc::new(RustBodyCloserFsmFrameEvent::FrameEnter { args: enter_args });
                         self.__router(&enter_event);
-                        let fwd_rc = std::rc::Rc::new(fwd);
+                        let fwd_rc = alloc::rc::Rc::new(fwd);
                         self.__router(&fwd_rc);
                     }
                 }
@@ -254,7 +256,7 @@ mod _rust_body_closer_fsm_framec {
             }
         }
 
-        fn __router(&mut self, __e: &std::rc::Rc<RustBodyCloserFsmFrameEvent>) {
+        fn __router(&mut self, __e: &alloc::rc::Rc<RustBodyCloserFsmFrameEvent>) {
             let __ev: &RustBodyCloserFsmFrameEvent = __e;
             match self.__compartment.state.as_str() {
                 "Init" => self._state_Init(__ev),
@@ -273,8 +275,8 @@ mod _rust_body_closer_fsm_framec {
         }
 
         pub fn scan(&mut self) {
-            let __e = std::rc::Rc::new(RustBodyCloserFsmFrameEvent::Scan {});
-            let mut __ctx = RustBodyCloserFsmFrameContext::new(std::rc::Rc::clone(&__e), None);
+            let __e = alloc::rc::Rc::new(RustBodyCloserFsmFrameEvent::Scan {});
+            let mut __ctx = RustBodyCloserFsmFrameContext::new(alloc::rc::Rc::clone(&__e), None);
             self._context_stack.push(__ctx);
             self.__kernel(&__e);
             self._context_stack.pop();
@@ -365,9 +367,7 @@ mod _rust_body_closer_fsm_framec {
                     // start (`\`) is always a char literal.
                     let next = if self.pos + 1 < n { self.bytes[self.pos + 1] } else { 0 };
                     let is_escape = next == b'\\';
-                    let is_ident_start = (next >= b'a' && next <= b'z')
-                        || (next >= b'A' && next <= b'Z')
-                        || next == b'_';
+                    let is_ident_start = next.is_ascii_alphabetic() || next == b'_';
                     if is_escape {
                         self.pos += 1;
                         let mut __compartment = self.__prepareEnter("InCharLiteral", vec![]);
@@ -377,10 +377,7 @@ mod _rust_body_closer_fsm_framec {
                         let mut k = self.pos + 2;
                         while k < n {
                             let c = self.bytes[k];
-                            let is_word = (c >= b'a' && c <= b'z')
-                                || (c >= b'A' && c <= b'Z')
-                                || (c >= b'0' && c <= b'9')
-                                || c == b'_';
+                            let is_word = c.is_ascii_alphanumeric() || c == b'_';
                             if !is_word {
                                 break;
                             }

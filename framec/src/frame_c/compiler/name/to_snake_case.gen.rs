@@ -33,6 +33,8 @@
 #[allow(clippy::single_match)]
 mod _to_snake_case_framec {
     use super::*;
+    extern crate alloc;
+    use alloc::{vec, format};
     #[derive(Clone, Debug)]
     #[allow(dead_code, non_camel_case_types)]
     enum ToSnakeCaseFrameEvent {
@@ -45,7 +47,7 @@ mod _to_snake_case_framec {
     #[allow(dead_code, non_camel_case_types)]
     enum ToSnakeCaseFrameReturn {
         Convert(String),
-        _Lifecycle(std::rc::Rc<dyn std::any::Any>),
+        _Lifecycle(alloc::rc::Rc<dyn core::any::Any>),
     }
 
     #[allow(dead_code)]
@@ -67,23 +69,23 @@ mod _to_snake_case_framec {
         Bool(bool),
         Str(String),
         List(Vec<Self>),
-        Dict(std::collections::HashMap<String, Self>),
+        Dict(alloc::collections::BTreeMap<String, Self>),
     }
 
     #[allow(dead_code, non_camel_case_types)]
     struct ToSnakeCaseFrameContext {
-        event: std::rc::Rc<ToSnakeCaseFrameEvent>,
+        event: alloc::rc::Rc<ToSnakeCaseFrameEvent>,
         _return: Option<ToSnakeCaseFrameReturn>,
-        _data: std::collections::HashMap<String, ToSnakeCaseFrameValue>,
+        _data: alloc::collections::BTreeMap<String, ToSnakeCaseFrameValue>,
         _transitioned: bool,
     }
 
     impl ToSnakeCaseFrameContext {
-        fn new(event: std::rc::Rc<ToSnakeCaseFrameEvent>, default_return: Option<ToSnakeCaseFrameReturn>) -> Self {
+        fn new(event: alloc::rc::Rc<ToSnakeCaseFrameEvent>, default_return: Option<ToSnakeCaseFrameReturn>) -> Self {
             Self {
                 event,
                 _return: default_return,
-                _data: std::collections::HashMap::new(),
+                _data: alloc::collections::BTreeMap::new(),
                 _transitioned: false,
             }
         }
@@ -152,8 +154,8 @@ mod _to_snake_case_framec {
         pub fn __create() -> Self {
             let mut c = Self::new();
             c.__compartment = c.__prepareEnter("Active", vec![]);
-            let __e = std::rc::Rc::new(ToSnakeCaseFrameEvent::FrameEnter { args: c.__compartment.enter_args.clone() });
-            let __ctx = ToSnakeCaseFrameContext::new(std::rc::Rc::clone(&__e), None);
+            let __e = alloc::rc::Rc::new(ToSnakeCaseFrameEvent::FrameEnter { args: c.__compartment.enter_args.clone() });
+            let __ctx = ToSnakeCaseFrameContext::new(alloc::rc::Rc::clone(&__e), None);
             c._context_stack.push(__ctx);
             c.__kernel(&__e);
             c._context_stack.pop();
@@ -190,7 +192,7 @@ mod _to_snake_case_framec {
             }
         }
 
-        fn __kernel(&mut self, __e: &std::rc::Rc<ToSnakeCaseFrameEvent>) {
+        fn __kernel(&mut self, __e: &alloc::rc::Rc<ToSnakeCaseFrameEvent>) {
             // Route event to current state.
             self.__router(__e);
             // Drain any transitions queued by the handler.
@@ -198,7 +200,7 @@ mod _to_snake_case_framec {
                 let next_compartment = self.__next_compartment.take().expect("invariant: while-loop guard checked is_some()");
                 // Exit the current (leaf) state.
                 let exit_args = self.__compartment.exit_args.clone();
-                let exit_event = std::rc::Rc::new(ToSnakeCaseFrameEvent::FrameExit { args: exit_args });
+                let exit_event = alloc::rc::Rc::new(ToSnakeCaseFrameEvent::FrameExit { args: exit_args });
                 self.__router(&exit_event);
                 // Switch to the new compartment.
                 self.__compartment = next_compartment;
@@ -209,22 +211,22 @@ mod _to_snake_case_framec {
                     None => {
                         // No forwarded event — synthesize a fresh $>.
                         let enter_args = self.__compartment.enter_args.clone();
-                        let enter_event = std::rc::Rc::new(ToSnakeCaseFrameEvent::FrameEnter { args: enter_args });
+                        let enter_event = alloc::rc::Rc::new(ToSnakeCaseFrameEvent::FrameEnter { args: enter_args });
                         self.__router(&enter_event);
                     }
                     Some(fwd) if matches!(fwd, ToSnakeCaseFrameEvent::FrameEnter { .. }) => {
                         // Forwarded event IS $> — dispatch directly so the
                         // destination's $> handler receives the caller's payload.
-                        let fwd_rc = std::rc::Rc::new(fwd);
+                        let fwd_rc = alloc::rc::Rc::new(fwd);
                         self.__router(&fwd_rc);
                     }
                     Some(fwd) => {
                         // Forwarded event is not $> — initialize the destination
                         // with a fresh $>, then dispatch the forward.
                         let enter_args = self.__compartment.enter_args.clone();
-                        let enter_event = std::rc::Rc::new(ToSnakeCaseFrameEvent::FrameEnter { args: enter_args });
+                        let enter_event = alloc::rc::Rc::new(ToSnakeCaseFrameEvent::FrameEnter { args: enter_args });
                         self.__router(&enter_event);
-                        let fwd_rc = std::rc::Rc::new(fwd);
+                        let fwd_rc = alloc::rc::Rc::new(fwd);
                         self.__router(&fwd_rc);
                     }
                 }
@@ -234,7 +236,7 @@ mod _to_snake_case_framec {
             }
         }
 
-        fn __router(&mut self, __e: &std::rc::Rc<ToSnakeCaseFrameEvent>) {
+        fn __router(&mut self, __e: &alloc::rc::Rc<ToSnakeCaseFrameEvent>) {
             let __ev: &ToSnakeCaseFrameEvent = __e;
             match self.__compartment.state.as_str() {
                 "Active" => self._state_Active(__ev),
@@ -247,8 +249,8 @@ mod _to_snake_case_framec {
         }
 
         pub fn convert(&mut self, s: String) -> String {
-            let __e = std::rc::Rc::new(ToSnakeCaseFrameEvent::Convert { s: s.clone() });
-            let mut __ctx = ToSnakeCaseFrameContext::new(std::rc::Rc::clone(&__e), None);
+            let __e = alloc::rc::Rc::new(ToSnakeCaseFrameEvent::Convert { s: s.clone() });
+            let mut __ctx = ToSnakeCaseFrameContext::new(alloc::rc::Rc::clone(&__e), None);
             self._context_stack.push(__ctx);
             self.__kernel(&__e);
             let __ctx = self._context_stack.pop().expect("invariant: handler must have pushed a context before reading return");
@@ -284,3 +286,4 @@ mod _to_snake_case_framec {
     }
 }
 pub use _to_snake_case_framec::*;
+

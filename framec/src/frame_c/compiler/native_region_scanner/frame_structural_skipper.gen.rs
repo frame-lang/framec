@@ -24,6 +24,8 @@
 #[allow(clippy::single_match)]
 mod _frame_structural_syntax_skipper_fsm_framec {
     use super::*;
+    extern crate alloc;
+    use alloc::{vec, format};
     #[derive(Clone, Debug)]
     #[allow(dead_code, non_camel_case_types)]
     enum FrameStructuralSyntaxSkipperFsmFrameEvent {
@@ -38,7 +40,7 @@ mod _frame_structural_syntax_skipper_fsm_framec {
     #[derive(Clone)]
     #[allow(dead_code, non_camel_case_types)]
     enum FrameStructuralSyntaxSkipperFsmFrameReturn {
-        _Lifecycle(std::rc::Rc<dyn std::any::Any>),
+        _Lifecycle(alloc::rc::Rc<dyn core::any::Any>),
     }
 
     #[allow(dead_code)]
@@ -63,23 +65,23 @@ mod _frame_structural_syntax_skipper_fsm_framec {
         Bool(bool),
         Str(String),
         List(Vec<Self>),
-        Dict(std::collections::HashMap<String, Self>),
+        Dict(alloc::collections::BTreeMap<String, Self>),
     }
 
     #[allow(dead_code, non_camel_case_types)]
     struct FrameStructuralSyntaxSkipperFsmFrameContext {
-        event: std::rc::Rc<FrameStructuralSyntaxSkipperFsmFrameEvent>,
+        event: alloc::rc::Rc<FrameStructuralSyntaxSkipperFsmFrameEvent>,
         _return: Option<FrameStructuralSyntaxSkipperFsmFrameReturn>,
-        _data: std::collections::HashMap<String, FrameStructuralSyntaxSkipperFsmFrameValue>,
+        _data: alloc::collections::BTreeMap<String, FrameStructuralSyntaxSkipperFsmFrameValue>,
         _transitioned: bool,
     }
 
     impl FrameStructuralSyntaxSkipperFsmFrameContext {
-        fn new(event: std::rc::Rc<FrameStructuralSyntaxSkipperFsmFrameEvent>, default_return: Option<FrameStructuralSyntaxSkipperFsmFrameReturn>) -> Self {
+        fn new(event: alloc::rc::Rc<FrameStructuralSyntaxSkipperFsmFrameEvent>, default_return: Option<FrameStructuralSyntaxSkipperFsmFrameReturn>) -> Self {
             Self {
                 event,
                 _return: default_return,
-                _data: std::collections::HashMap::new(),
+                _data: alloc::collections::BTreeMap::new(),
                 _transitioned: false,
             }
         }
@@ -166,8 +168,8 @@ mod _frame_structural_syntax_skipper_fsm_framec {
         pub fn __create() -> Self {
             let mut c = Self::new();
             c.__compartment = c.__prepareEnter("Init", vec![]);
-            let __e = std::rc::Rc::new(FrameStructuralSyntaxSkipperFsmFrameEvent::FrameEnter { args: c.__compartment.enter_args.clone() });
-            let __ctx = FrameStructuralSyntaxSkipperFsmFrameContext::new(std::rc::Rc::clone(&__e), None);
+            let __e = alloc::rc::Rc::new(FrameStructuralSyntaxSkipperFsmFrameEvent::FrameEnter { args: c.__compartment.enter_args.clone() });
+            let __ctx = FrameStructuralSyntaxSkipperFsmFrameContext::new(alloc::rc::Rc::clone(&__e), None);
             c._context_stack.push(__ctx);
             c.__kernel(&__e);
             c._context_stack.pop();
@@ -208,7 +210,7 @@ mod _frame_structural_syntax_skipper_fsm_framec {
             }
         }
 
-        fn __kernel(&mut self, __e: &std::rc::Rc<FrameStructuralSyntaxSkipperFsmFrameEvent>) {
+        fn __kernel(&mut self, __e: &alloc::rc::Rc<FrameStructuralSyntaxSkipperFsmFrameEvent>) {
             // Route event to current state.
             self.__router(__e);
             // Drain any transitions queued by the handler.
@@ -216,7 +218,7 @@ mod _frame_structural_syntax_skipper_fsm_framec {
                 let next_compartment = self.__next_compartment.take().expect("invariant: while-loop guard checked is_some()");
                 // Exit the current (leaf) state.
                 let exit_args = self.__compartment.exit_args.clone();
-                let exit_event = std::rc::Rc::new(FrameStructuralSyntaxSkipperFsmFrameEvent::FrameExit { args: exit_args });
+                let exit_event = alloc::rc::Rc::new(FrameStructuralSyntaxSkipperFsmFrameEvent::FrameExit { args: exit_args });
                 self.__router(&exit_event);
                 // Switch to the new compartment.
                 self.__compartment = next_compartment;
@@ -227,22 +229,22 @@ mod _frame_structural_syntax_skipper_fsm_framec {
                     None => {
                         // No forwarded event — synthesize a fresh $>.
                         let enter_args = self.__compartment.enter_args.clone();
-                        let enter_event = std::rc::Rc::new(FrameStructuralSyntaxSkipperFsmFrameEvent::FrameEnter { args: enter_args });
+                        let enter_event = alloc::rc::Rc::new(FrameStructuralSyntaxSkipperFsmFrameEvent::FrameEnter { args: enter_args });
                         self.__router(&enter_event);
                     }
                     Some(fwd) if matches!(fwd, FrameStructuralSyntaxSkipperFsmFrameEvent::FrameEnter { .. }) => {
                         // Forwarded event IS $> — dispatch directly so the
                         // destination's $> handler receives the caller's payload.
-                        let fwd_rc = std::rc::Rc::new(fwd);
+                        let fwd_rc = alloc::rc::Rc::new(fwd);
                         self.__router(&fwd_rc);
                     }
                     Some(fwd) => {
                         // Forwarded event is not $> — initialize the destination
                         // with a fresh $>, then dispatch the forward.
                         let enter_args = self.__compartment.enter_args.clone();
-                        let enter_event = std::rc::Rc::new(FrameStructuralSyntaxSkipperFsmFrameEvent::FrameEnter { args: enter_args });
+                        let enter_event = alloc::rc::Rc::new(FrameStructuralSyntaxSkipperFsmFrameEvent::FrameEnter { args: enter_args });
                         self.__router(&enter_event);
-                        let fwd_rc = std::rc::Rc::new(fwd);
+                        let fwd_rc = alloc::rc::Rc::new(fwd);
                         self.__router(&fwd_rc);
                     }
                 }
@@ -252,7 +254,7 @@ mod _frame_structural_syntax_skipper_fsm_framec {
             }
         }
 
-        fn __router(&mut self, __e: &std::rc::Rc<FrameStructuralSyntaxSkipperFsmFrameEvent>) {
+        fn __router(&mut self, __e: &alloc::rc::Rc<FrameStructuralSyntaxSkipperFsmFrameEvent>) {
             let __ev: &FrameStructuralSyntaxSkipperFsmFrameEvent = __e;
             match self.__compartment.state.as_str() {
                 "Init" => self._state_Init(__ev),
@@ -269,32 +271,32 @@ mod _frame_structural_syntax_skipper_fsm_framec {
         }
 
         pub fn do_skip_comment(&mut self) {
-            let __e = std::rc::Rc::new(FrameStructuralSyntaxSkipperFsmFrameEvent::DoSkipComment {});
-            let mut __ctx = FrameStructuralSyntaxSkipperFsmFrameContext::new(std::rc::Rc::clone(&__e), None);
+            let __e = alloc::rc::Rc::new(FrameStructuralSyntaxSkipperFsmFrameEvent::DoSkipComment {});
+            let mut __ctx = FrameStructuralSyntaxSkipperFsmFrameContext::new(alloc::rc::Rc::clone(&__e), None);
             self._context_stack.push(__ctx);
             self.__kernel(&__e);
             self._context_stack.pop();
         }
 
         pub fn do_skip_string(&mut self) {
-            let __e = std::rc::Rc::new(FrameStructuralSyntaxSkipperFsmFrameEvent::DoSkipString {});
-            let mut __ctx = FrameStructuralSyntaxSkipperFsmFrameContext::new(std::rc::Rc::clone(&__e), None);
+            let __e = alloc::rc::Rc::new(FrameStructuralSyntaxSkipperFsmFrameEvent::DoSkipString {});
+            let mut __ctx = FrameStructuralSyntaxSkipperFsmFrameContext::new(alloc::rc::Rc::clone(&__e), None);
             self._context_stack.push(__ctx);
             self.__kernel(&__e);
             self._context_stack.pop();
         }
 
         pub fn do_find_line_end(&mut self) {
-            let __e = std::rc::Rc::new(FrameStructuralSyntaxSkipperFsmFrameEvent::DoFindLineEnd {});
-            let mut __ctx = FrameStructuralSyntaxSkipperFsmFrameContext::new(std::rc::Rc::clone(&__e), None);
+            let __e = alloc::rc::Rc::new(FrameStructuralSyntaxSkipperFsmFrameEvent::DoFindLineEnd {});
+            let mut __ctx = FrameStructuralSyntaxSkipperFsmFrameContext::new(alloc::rc::Rc::clone(&__e), None);
             self._context_stack.push(__ctx);
             self.__kernel(&__e);
             self._context_stack.pop();
         }
 
         pub fn do_balanced_paren_end(&mut self) {
-            let __e = std::rc::Rc::new(FrameStructuralSyntaxSkipperFsmFrameEvent::DoBalancedParenEnd {});
-            let mut __ctx = FrameStructuralSyntaxSkipperFsmFrameContext::new(std::rc::Rc::clone(&__e), None);
+            let __e = alloc::rc::Rc::new(FrameStructuralSyntaxSkipperFsmFrameEvent::DoBalancedParenEnd {});
+            let mut __ctx = FrameStructuralSyntaxSkipperFsmFrameContext::new(alloc::rc::Rc::clone(&__e), None);
             self._context_stack.push(__ctx);
             self.__kernel(&__e);
             self._context_stack.pop();
@@ -459,3 +461,4 @@ mod _frame_structural_syntax_skipper_fsm_framec {
     }
 }
 pub use _frame_structural_syntax_skipper_fsm_framec::*;
+

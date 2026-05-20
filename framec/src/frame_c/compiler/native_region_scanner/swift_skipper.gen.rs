@@ -9,412 +9,433 @@
 // Inline: """...""" multi-line strings (checked before skip_simple_string)
 // Inline: nestable /* */ block comments
 
-#[derive(Clone, Debug)]
-#[allow(dead_code, non_camel_case_types)]
-enum SwiftSyntaxSkipperFsmFrameEvent {
-    DoSkipComment {  },
-    DoSkipString {  },
-    DoFindLineEnd {  },
-    DoBalancedParenEnd {  },
-    FrameEnter { args: Vec<String> },
-    FrameExit { args: Vec<String> },
-}
-
-#[derive(Clone)]
-#[allow(dead_code, non_camel_case_types)]
-enum SwiftSyntaxSkipperFsmFrameReturn {
-    _Lifecycle(std::rc::Rc<dyn std::any::Any>),
-}
-
 #[allow(dead_code)]
-impl SwiftSyntaxSkipperFsmFrameEvent {
-    fn name(&self) -> &'static str {
-        match self {
-            SwiftSyntaxSkipperFsmFrameEvent::DoSkipComment { .. } => "do_skip_comment",
-            SwiftSyntaxSkipperFsmFrameEvent::DoSkipString { .. } => "do_skip_string",
-            SwiftSyntaxSkipperFsmFrameEvent::DoFindLineEnd { .. } => "do_find_line_end",
-            SwiftSyntaxSkipperFsmFrameEvent::DoBalancedParenEnd { .. } => "do_balanced_paren_end",
-            SwiftSyntaxSkipperFsmFrameEvent::FrameEnter { .. } => "$>",
-            SwiftSyntaxSkipperFsmFrameEvent::FrameExit { .. } => "<$",
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-#[allow(dead_code)]
-enum SwiftSyntaxSkipperFsmFrameValue {
-    Int(i64),
-    Float(f64),
-    Bool(bool),
-    Str(String),
-    List(Vec<Self>),
-    Dict(std::collections::HashMap<String, Self>),
-}
-
-#[allow(dead_code)]
-struct SwiftSyntaxSkipperFsmFrameContext {
-    event: std::rc::Rc<SwiftSyntaxSkipperFsmFrameEvent>,
-    _return: Option<SwiftSyntaxSkipperFsmFrameReturn>,
-    _data: std::collections::HashMap<String, SwiftSyntaxSkipperFsmFrameValue>,
-    _transitioned: bool,
-}
-
-impl SwiftSyntaxSkipperFsmFrameContext {
-    fn new(event: std::rc::Rc<SwiftSyntaxSkipperFsmFrameEvent>, default_return: Option<SwiftSyntaxSkipperFsmFrameReturn>) -> Self {
-        Self {
-            event,
-            _return: default_return,
-            _data: std::collections::HashMap::new(),
-            _transitioned: false,
-        }
-    }
-}
-
-#[derive(Clone)]
-enum SwiftSyntaxSkipperFsmStateContext {
-    Init,
-    SkipComment,
-    SkipString,
-    FindLineEnd,
-    BalancedParenEnd,
-    Empty,
-}
-
-impl Default for SwiftSyntaxSkipperFsmStateContext {
-    fn default() -> Self {
-        SwiftSyntaxSkipperFsmStateContext::Init
-    }
-}
-
-#[allow(dead_code)]
-#[derive(Clone)]
-struct SwiftSyntaxSkipperFsmCompartment {
-    state: String,
-    state_context: SwiftSyntaxSkipperFsmStateContext,
-    enter_args: Vec<String>,
-    exit_args: Vec<String>,
-    forward_event: Option<SwiftSyntaxSkipperFsmFrameEvent>,
-    parent_compartment: Option<Box<SwiftSyntaxSkipperFsmCompartment>>,
-}
-
-impl SwiftSyntaxSkipperFsmCompartment {
-    fn new(state: &str) -> Self {
-        let state_context = match state {
-            "Init" => SwiftSyntaxSkipperFsmStateContext::Init,
-            "SkipComment" => SwiftSyntaxSkipperFsmStateContext::SkipComment,
-            "SkipString" => SwiftSyntaxSkipperFsmStateContext::SkipString,
-            "FindLineEnd" => SwiftSyntaxSkipperFsmStateContext::FindLineEnd,
-            "BalancedParenEnd" => SwiftSyntaxSkipperFsmStateContext::BalancedParenEnd,
-            _ => SwiftSyntaxSkipperFsmStateContext::Empty,
-        };
-        Self {
-            state: state.to_string(),
-            state_context,
-            enter_args: Vec::new(),
-            exit_args: Vec::new(),
-            forward_event: None,
-            parent_compartment: None,
-        }
-    }
-}
-
-#[allow(dead_code)]
-pub struct SwiftSyntaxSkipperFsm {
-    _state_stack: Vec<SwiftSyntaxSkipperFsmCompartment>,
-    __compartment: SwiftSyntaxSkipperFsmCompartment,
-    __next_compartment: Option<SwiftSyntaxSkipperFsmCompartment>,
-    _context_stack: Vec<SwiftSyntaxSkipperFsmFrameContext>,
-    pub bytes: Vec<u8>,
-    pub pos: usize,
-    pub end: usize,
-    pub result_pos: usize,
-    pub success: usize,
-}
-
+#[allow(non_camel_case_types)]
 #[allow(non_snake_case)]
-impl SwiftSyntaxSkipperFsm {
-    pub fn new() -> Self {
-        Self {
-            _state_stack: Vec::new(),
-            _context_stack: Vec::new(),
-            bytes: Vec::new(),
-            pos: 0,
-            end: 0,
-            result_pos: 0,
-            success: 1,
-            __compartment: SwiftSyntaxSkipperFsmCompartment::new("Init"),
-            __next_compartment: None,
-        }
+#[allow(unused_variables)]
+#[allow(unused_mut)]
+#[allow(unused_imports)]
+#[allow(clippy::assign_op_pattern)]
+#[allow(clippy::clone_on_copy)]
+#[allow(clippy::derivable_impls)]
+#[allow(clippy::match_single_binding)]
+#[allow(clippy::needless_return)]
+#[allow(clippy::new_without_default)]
+#[allow(clippy::single_match)]
+mod _swift_syntax_skipper_fsm_framec {
+    use super::*;
+    extern crate alloc;
+    use alloc::{vec, format};
+    #[derive(Clone, Debug)]
+    #[allow(dead_code, non_camel_case_types)]
+    enum SwiftSyntaxSkipperFsmFrameEvent {
+        DoSkipComment {  },
+        DoSkipString {  },
+        DoFindLineEnd {  },
+        DoBalancedParenEnd {  },
+        FrameEnter { args: Vec<String> },
+        FrameExit { args: Vec<String> },
     }
 
-    pub fn __create() -> Self {
-        let mut c = Self::new();
-        c.__compartment = c.__prepareEnter("Init", vec![]);
-        let __e = std::rc::Rc::new(SwiftSyntaxSkipperFsmFrameEvent::FrameEnter { args: c.__compartment.enter_args.clone() });
-        let __ctx = SwiftSyntaxSkipperFsmFrameContext::new(std::rc::Rc::clone(&__e), None);
-        c._context_stack.push(__ctx);
-        c.__kernel(&__e);
-        c._context_stack.pop();
-        c
+    #[derive(Clone)]
+    #[allow(dead_code, non_camel_case_types)]
+    enum SwiftSyntaxSkipperFsmFrameReturn {
+        _Lifecycle(alloc::rc::Rc<dyn core::any::Any>),
     }
 
-    fn __hsm_chain(&mut self, leaf: &str) -> &'static [&'static str] {
-        match leaf {
-            "Init" => &["Init"],
-            "SkipComment" => &["SkipComment"],
-            "SkipString" => &["SkipString"],
-            "FindLineEnd" => &["FindLineEnd"],
-            "BalancedParenEnd" => &["BalancedParenEnd"],
-            _ => &[],
-        }
-    }
-
-    fn __prepareEnter(&mut self, leaf: &str, enter_args: Vec<String>) -> SwiftSyntaxSkipperFsmCompartment {
-        let chain = self.__hsm_chain(leaf);
-        let mut comp: Option<SwiftSyntaxSkipperFsmCompartment> = None;
-        for name in chain.iter() {
-            let mut new_comp = SwiftSyntaxSkipperFsmCompartment::new(name);
-            new_comp.enter_args = enter_args.clone();
-            if let Some(parent) = comp.take() {
-                new_comp.parent_compartment = Some(Box::new(parent));
-            }
-            comp = Some(new_comp);
-        }
-        comp.expect("chain must contain at least the leaf state")
-    }
-
-    fn __prepareExit(&mut self, exit_args: Vec<String>) {
-        self.__compartment.exit_args = exit_args.clone();
-        let mut cursor = self.__compartment.parent_compartment.as_deref_mut();
-        while let Some(c) = cursor {
-            c.exit_args = exit_args.clone();
-            cursor = c.parent_compartment.as_deref_mut();
-        }
-    }
-
-    fn __kernel(&mut self, __e: &std::rc::Rc<SwiftSyntaxSkipperFsmFrameEvent>) {
-        // Route event to current state.
-        self.__router(__e);
-        // Drain any transitions queued by the handler.
-        while self.__next_compartment.is_some() {
-            let next_compartment = self.__next_compartment.take().expect("invariant: while-loop guard checked is_some()");
-            // Exit the current (leaf) state.
-            let exit_args = self.__compartment.exit_args.clone();
-            let exit_event = std::rc::Rc::new(SwiftSyntaxSkipperFsmFrameEvent::FrameExit { args: exit_args });
-            self.__router(&exit_event);
-            // Switch to the new compartment.
-            self.__compartment = next_compartment;
-            // Three-branch forward-event handling (RFC-0025 Track B.1: forward
-            // event is matched on enum variant; $> recognition is now a
-            // structural match, not a string compare).
-            match self.__compartment.forward_event.take() {
-                None => {
-                    // No forwarded event — synthesize a fresh $>.
-                    let enter_args = self.__compartment.enter_args.clone();
-                    let enter_event = std::rc::Rc::new(SwiftSyntaxSkipperFsmFrameEvent::FrameEnter { args: enter_args });
-                    self.__router(&enter_event);
-                }
-                Some(fwd) if matches!(fwd, SwiftSyntaxSkipperFsmFrameEvent::FrameEnter { .. }) => {
-                    // Forwarded event IS $> — dispatch directly so the
-                    // destination's $> handler receives the caller's payload.
-                    let fwd_rc = std::rc::Rc::new(fwd);
-                    self.__router(&fwd_rc);
-                }
-                Some(fwd) => {
-                    // Forwarded event is not $> — initialize the destination
-                    // with a fresh $>, then dispatch the forward.
-                    let enter_args = self.__compartment.enter_args.clone();
-                    let enter_event = std::rc::Rc::new(SwiftSyntaxSkipperFsmFrameEvent::FrameEnter { args: enter_args });
-                    self.__router(&enter_event);
-                    let fwd_rc = std::rc::Rc::new(fwd);
-                    self.__router(&fwd_rc);
-                }
-            }
-            for ctx in self._context_stack.iter_mut() {
-                ctx._transitioned = true;
+    #[allow(dead_code)]
+    impl SwiftSyntaxSkipperFsmFrameEvent {
+        fn name(&self) -> &'static str {
+            match self {
+                SwiftSyntaxSkipperFsmFrameEvent::DoSkipComment { .. } => "do_skip_comment",
+                SwiftSyntaxSkipperFsmFrameEvent::DoSkipString { .. } => "do_skip_string",
+                SwiftSyntaxSkipperFsmFrameEvent::DoFindLineEnd { .. } => "do_find_line_end",
+                SwiftSyntaxSkipperFsmFrameEvent::DoBalancedParenEnd { .. } => "do_balanced_paren_end",
+                SwiftSyntaxSkipperFsmFrameEvent::FrameEnter { .. } => "$>",
+                SwiftSyntaxSkipperFsmFrameEvent::FrameExit { .. } => "<$",
             }
         }
     }
 
-    fn __router(&mut self, __e: &std::rc::Rc<SwiftSyntaxSkipperFsmFrameEvent>) {
-        let __ev: &SwiftSyntaxSkipperFsmFrameEvent = __e;
-        match self.__compartment.state.as_str() {
-            "Init" => self._state_Init(__ev),
-            "SkipComment" => self._state_SkipComment(__ev),
-            "SkipString" => self._state_SkipString(__ev),
-            "FindLineEnd" => self._state_FindLineEnd(__ev),
-            "BalancedParenEnd" => self._state_BalancedParenEnd(__ev),
-            _ => {}
+    #[derive(Clone, Debug)]
+    #[allow(dead_code, non_camel_case_types)]
+    enum SwiftSyntaxSkipperFsmFrameValue {
+        Int(i64),
+        Float(f64),
+        Bool(bool),
+        Str(String),
+        List(Vec<Self>),
+        Dict(alloc::collections::BTreeMap<String, Self>),
+    }
+
+    #[allow(dead_code, non_camel_case_types)]
+    struct SwiftSyntaxSkipperFsmFrameContext {
+        event: alloc::rc::Rc<SwiftSyntaxSkipperFsmFrameEvent>,
+        _return: Option<SwiftSyntaxSkipperFsmFrameReturn>,
+        _data: alloc::collections::BTreeMap<String, SwiftSyntaxSkipperFsmFrameValue>,
+        _transitioned: bool,
+    }
+
+    impl SwiftSyntaxSkipperFsmFrameContext {
+        fn new(event: alloc::rc::Rc<SwiftSyntaxSkipperFsmFrameEvent>, default_return: Option<SwiftSyntaxSkipperFsmFrameReturn>) -> Self {
+            Self {
+                event,
+                _return: default_return,
+                _data: alloc::collections::BTreeMap::new(),
+                _transitioned: false,
+            }
         }
     }
 
-    fn __transition(&mut self, next_compartment: SwiftSyntaxSkipperFsmCompartment) {
-        self.__next_compartment = Some(next_compartment);
+    #[allow(dead_code, non_camel_case_types)]
+    #[derive(Clone)]
+    enum SwiftSyntaxSkipperFsmStateContext {
+        Init,
+        SkipComment,
+        SkipString,
+        FindLineEnd,
+        BalancedParenEnd,
+        Empty,
     }
 
-    pub fn do_skip_comment(&mut self) {
-        let __e = std::rc::Rc::new(SwiftSyntaxSkipperFsmFrameEvent::DoSkipComment {});
-        let mut __ctx = SwiftSyntaxSkipperFsmFrameContext::new(std::rc::Rc::clone(&__e), None);
-        self._context_stack.push(__ctx);
-        self.__kernel(&__e);
-        self._context_stack.pop();
-    }
-
-    pub fn do_skip_string(&mut self) {
-        let __e = std::rc::Rc::new(SwiftSyntaxSkipperFsmFrameEvent::DoSkipString {});
-        let mut __ctx = SwiftSyntaxSkipperFsmFrameContext::new(std::rc::Rc::clone(&__e), None);
-        self._context_stack.push(__ctx);
-        self.__kernel(&__e);
-        self._context_stack.pop();
-    }
-
-    pub fn do_find_line_end(&mut self) {
-        let __e = std::rc::Rc::new(SwiftSyntaxSkipperFsmFrameEvent::DoFindLineEnd {});
-        let mut __ctx = SwiftSyntaxSkipperFsmFrameContext::new(std::rc::Rc::clone(&__e), None);
-        self._context_stack.push(__ctx);
-        self.__kernel(&__e);
-        self._context_stack.pop();
-    }
-
-    pub fn do_balanced_paren_end(&mut self) {
-        let __e = std::rc::Rc::new(SwiftSyntaxSkipperFsmFrameEvent::DoBalancedParenEnd {});
-        let mut __ctx = SwiftSyntaxSkipperFsmFrameContext::new(std::rc::Rc::clone(&__e), None);
-        self._context_stack.push(__ctx);
-        self.__kernel(&__e);
-        self._context_stack.pop();
-    }
-
-    fn _state_Init(&mut self, __e: &SwiftSyntaxSkipperFsmFrameEvent) {
-        match __e {
-            SwiftSyntaxSkipperFsmFrameEvent::DoBalancedParenEnd { .. } => { self._s_Init_hdl_user_do_balanced_paren_end(__e); }
-            SwiftSyntaxSkipperFsmFrameEvent::DoFindLineEnd { .. } => { self._s_Init_hdl_user_do_find_line_end(__e); }
-            SwiftSyntaxSkipperFsmFrameEvent::DoSkipComment { .. } => { self._s_Init_hdl_user_do_skip_comment(__e); }
-            SwiftSyntaxSkipperFsmFrameEvent::DoSkipString { .. } => { self._s_Init_hdl_user_do_skip_string(__e); }
-            _ => {}
+    impl Default for SwiftSyntaxSkipperFsmStateContext {
+        fn default() -> Self {
+            SwiftSyntaxSkipperFsmStateContext::Init
         }
     }
 
-    fn _state_SkipComment(&mut self, __e: &SwiftSyntaxSkipperFsmFrameEvent) {
-        match __e {
-            SwiftSyntaxSkipperFsmFrameEvent::FrameEnter { .. } => { self._s_SkipComment_hdl_frame_enter(__e); }
-            _ => {}
+    #[allow(dead_code, non_camel_case_types)]
+    #[derive(Clone)]
+    struct SwiftSyntaxSkipperFsmCompartment {
+        state: String,
+        state_context: SwiftSyntaxSkipperFsmStateContext,
+        enter_args: Vec<String>,
+        exit_args: Vec<String>,
+        forward_event: Option<SwiftSyntaxSkipperFsmFrameEvent>,
+        parent_compartment: Option<Box<SwiftSyntaxSkipperFsmCompartment>>,
+    }
+
+    impl SwiftSyntaxSkipperFsmCompartment {
+        fn new(state: &str) -> Self {
+            let state_context = match state {
+                "Init" => SwiftSyntaxSkipperFsmStateContext::Init,
+                "SkipComment" => SwiftSyntaxSkipperFsmStateContext::SkipComment,
+                "SkipString" => SwiftSyntaxSkipperFsmStateContext::SkipString,
+                "FindLineEnd" => SwiftSyntaxSkipperFsmStateContext::FindLineEnd,
+                "BalancedParenEnd" => SwiftSyntaxSkipperFsmStateContext::BalancedParenEnd,
+                _ => SwiftSyntaxSkipperFsmStateContext::Empty,
+            };
+            Self {
+                state: state.to_string(),
+                state_context,
+                enter_args: Vec::new(),
+                exit_args: Vec::new(),
+                forward_event: None,
+                parent_compartment: None,
+            }
         }
     }
 
-    fn _state_SkipString(&mut self, __e: &SwiftSyntaxSkipperFsmFrameEvent) {
-        match __e {
-            SwiftSyntaxSkipperFsmFrameEvent::FrameEnter { .. } => { self._s_SkipString_hdl_frame_enter(__e); }
-            _ => {}
+    #[allow(dead_code)]
+    pub struct SwiftSyntaxSkipperFsm {
+        _state_stack: Vec<SwiftSyntaxSkipperFsmCompartment>,
+        __compartment: SwiftSyntaxSkipperFsmCompartment,
+        __next_compartment: Option<SwiftSyntaxSkipperFsmCompartment>,
+        _context_stack: Vec<SwiftSyntaxSkipperFsmFrameContext>,
+        pub bytes: Vec<u8>,
+        pub pos: usize,
+        pub end: usize,
+        pub result_pos: usize,
+        pub success: usize,
+    }
+
+    #[allow(non_snake_case)]
+    impl SwiftSyntaxSkipperFsm {
+        pub fn new() -> Self {
+            Self {
+                _state_stack: Vec::new(),
+                _context_stack: Vec::new(),
+                bytes: Vec::new(),
+                pos: 0,
+                end: 0,
+                result_pos: 0,
+                success: 1,
+                __compartment: SwiftSyntaxSkipperFsmCompartment::new("Init"),
+                __next_compartment: None,
+            }
         }
-    }
 
-    fn _state_FindLineEnd(&mut self, __e: &SwiftSyntaxSkipperFsmFrameEvent) {
-        match __e {
-            SwiftSyntaxSkipperFsmFrameEvent::FrameEnter { .. } => { self._s_FindLineEnd_hdl_frame_enter(__e); }
-            _ => {}
+        pub fn __create() -> Self {
+            let mut c = Self::new();
+            c.__compartment = c.__prepareEnter("Init", vec![]);
+            let __e = alloc::rc::Rc::new(SwiftSyntaxSkipperFsmFrameEvent::FrameEnter { args: c.__compartment.enter_args.clone() });
+            let __ctx = SwiftSyntaxSkipperFsmFrameContext::new(alloc::rc::Rc::clone(&__e), None);
+            c._context_stack.push(__ctx);
+            c.__kernel(&__e);
+            c._context_stack.pop();
+            c
         }
-    }
 
-    fn _state_BalancedParenEnd(&mut self, __e: &SwiftSyntaxSkipperFsmFrameEvent) {
-        match __e {
-            SwiftSyntaxSkipperFsmFrameEvent::FrameEnter { .. } => { self._s_BalancedParenEnd_hdl_frame_enter(__e); }
-            _ => {}
+        fn __hsm_chain(&mut self, leaf: &str) -> &'static [&'static str] {
+            match leaf {
+                "Init" => &["Init"],
+                "SkipComment" => &["SkipComment"],
+                "SkipString" => &["SkipString"],
+                "FindLineEnd" => &["FindLineEnd"],
+                "BalancedParenEnd" => &["BalancedParenEnd"],
+                _ => &[],
+            }
         }
-    }
 
-    fn _s_Init_hdl_user_do_balanced_paren_end(&mut self, __e: &SwiftSyntaxSkipperFsmFrameEvent) {
-        let mut __compartment = self.__prepareEnter("BalancedParenEnd", vec![]);
-        self.__transition(__compartment);
-        return;
-    }
-
-    fn _s_Init_hdl_user_do_find_line_end(&mut self, __e: &SwiftSyntaxSkipperFsmFrameEvent) {
-        let mut __compartment = self.__prepareEnter("FindLineEnd", vec![]);
-        self.__transition(__compartment);
-        return;
-    }
-
-    fn _s_Init_hdl_user_do_skip_comment(&mut self, __e: &SwiftSyntaxSkipperFsmFrameEvent) {
-        let mut __compartment = self.__prepareEnter("SkipComment", vec![]);
-        self.__transition(__compartment);
-        return;
-    }
-
-    fn _s_Init_hdl_user_do_skip_string(&mut self, __e: &SwiftSyntaxSkipperFsmFrameEvent) {
-        let mut __compartment = self.__prepareEnter("SkipString", vec![]);
-        self.__transition(__compartment);
-        return;
-    }
-
-    fn _s_SkipComment_hdl_frame_enter(&mut self, __e: &SwiftSyntaxSkipperFsmFrameEvent) {
-        if let Some(j) = skip_line_comment(&self.bytes, self.pos, self.end) {
-            self.result_pos = j;
-            self.success = 1;
-            return
+        fn __prepareEnter(&mut self, leaf: &str, enter_args: Vec<String>) -> SwiftSyntaxSkipperFsmCompartment {
+            let chain = self.__hsm_chain(leaf);
+            let mut comp: Option<SwiftSyntaxSkipperFsmCompartment> = None;
+            for name in chain.iter() {
+                let mut new_comp = SwiftSyntaxSkipperFsmCompartment::new(name);
+                new_comp.enter_args = enter_args.clone();
+                if let Some(parent) = comp.take() {
+                    new_comp.parent_compartment = Some(Box::new(parent));
+                }
+                comp = Some(new_comp);
+            }
+            comp.expect("chain must contain at least the leaf state")
         }
-        // Nestable block comments for Swift
-        let i = self.pos;
-        let end = self.end;
-        let bytes = &self.bytes;
-        if i + 1 < end && bytes[i] == b'/' && bytes[i + 1] == b'*' {
-            let mut j = i + 2;
-            let mut depth: i32 = 1;
-            while j + 1 < end && depth > 0 {
-                if bytes[j] == b'/' && bytes[j + 1] == b'*' {
-                    depth += 1;
-                    j += 2;
-                } else if bytes[j] == b'*' && bytes[j + 1] == b'/' {
-                    depth -= 1;
-                    j += 2;
-                } else {
+
+        fn __prepareExit(&mut self, exit_args: Vec<String>) {
+            self.__compartment.exit_args = exit_args.clone();
+            let mut cursor = self.__compartment.parent_compartment.as_deref_mut();
+            while let Some(c) = cursor {
+                c.exit_args = exit_args.clone();
+                cursor = c.parent_compartment.as_deref_mut();
+            }
+        }
+
+        fn __kernel(&mut self, __e: &alloc::rc::Rc<SwiftSyntaxSkipperFsmFrameEvent>) {
+            // Route event to current state.
+            self.__router(__e);
+            // Drain any transitions queued by the handler.
+            while self.__next_compartment.is_some() {
+                let next_compartment = self.__next_compartment.take().expect("invariant: while-loop guard checked is_some()");
+                // Exit the current (leaf) state.
+                let exit_args = self.__compartment.exit_args.clone();
+                let exit_event = alloc::rc::Rc::new(SwiftSyntaxSkipperFsmFrameEvent::FrameExit { args: exit_args });
+                self.__router(&exit_event);
+                // Switch to the new compartment.
+                self.__compartment = next_compartment;
+                // Three-branch forward-event handling (RFC-0025 Track B.1: forward
+                // event is matched on enum variant; $> recognition is now a
+                // structural match, not a string compare).
+                match self.__compartment.forward_event.take() {
+                    None => {
+                        // No forwarded event — synthesize a fresh $>.
+                        let enter_args = self.__compartment.enter_args.clone();
+                        let enter_event = alloc::rc::Rc::new(SwiftSyntaxSkipperFsmFrameEvent::FrameEnter { args: enter_args });
+                        self.__router(&enter_event);
+                    }
+                    Some(fwd) if matches!(fwd, SwiftSyntaxSkipperFsmFrameEvent::FrameEnter { .. }) => {
+                        // Forwarded event IS $> — dispatch directly so the
+                        // destination's $> handler receives the caller's payload.
+                        let fwd_rc = alloc::rc::Rc::new(fwd);
+                        self.__router(&fwd_rc);
+                    }
+                    Some(fwd) => {
+                        // Forwarded event is not $> — initialize the destination
+                        // with a fresh $>, then dispatch the forward.
+                        let enter_args = self.__compartment.enter_args.clone();
+                        let enter_event = alloc::rc::Rc::new(SwiftSyntaxSkipperFsmFrameEvent::FrameEnter { args: enter_args });
+                        self.__router(&enter_event);
+                        let fwd_rc = alloc::rc::Rc::new(fwd);
+                        self.__router(&fwd_rc);
+                    }
+                }
+                for ctx in self._context_stack.iter_mut() {
+                    ctx._transitioned = true;
+                }
+            }
+        }
+
+        fn __router(&mut self, __e: &alloc::rc::Rc<SwiftSyntaxSkipperFsmFrameEvent>) {
+            let __ev: &SwiftSyntaxSkipperFsmFrameEvent = __e;
+            match self.__compartment.state.as_str() {
+                "Init" => self._state_Init(__ev),
+                "SkipComment" => self._state_SkipComment(__ev),
+                "SkipString" => self._state_SkipString(__ev),
+                "FindLineEnd" => self._state_FindLineEnd(__ev),
+                "BalancedParenEnd" => self._state_BalancedParenEnd(__ev),
+                _ => {}
+            }
+        }
+
+        fn __transition(&mut self, next_compartment: SwiftSyntaxSkipperFsmCompartment) {
+            self.__next_compartment = Some(next_compartment);
+        }
+
+        pub fn do_skip_comment(&mut self) {
+            let __e = alloc::rc::Rc::new(SwiftSyntaxSkipperFsmFrameEvent::DoSkipComment {});
+            let mut __ctx = SwiftSyntaxSkipperFsmFrameContext::new(alloc::rc::Rc::clone(&__e), None);
+            self._context_stack.push(__ctx);
+            self.__kernel(&__e);
+            self._context_stack.pop();
+        }
+
+        pub fn do_skip_string(&mut self) {
+            let __e = alloc::rc::Rc::new(SwiftSyntaxSkipperFsmFrameEvent::DoSkipString {});
+            let mut __ctx = SwiftSyntaxSkipperFsmFrameContext::new(alloc::rc::Rc::clone(&__e), None);
+            self._context_stack.push(__ctx);
+            self.__kernel(&__e);
+            self._context_stack.pop();
+        }
+
+        pub fn do_find_line_end(&mut self) {
+            let __e = alloc::rc::Rc::new(SwiftSyntaxSkipperFsmFrameEvent::DoFindLineEnd {});
+            let mut __ctx = SwiftSyntaxSkipperFsmFrameContext::new(alloc::rc::Rc::clone(&__e), None);
+            self._context_stack.push(__ctx);
+            self.__kernel(&__e);
+            self._context_stack.pop();
+        }
+
+        pub fn do_balanced_paren_end(&mut self) {
+            let __e = alloc::rc::Rc::new(SwiftSyntaxSkipperFsmFrameEvent::DoBalancedParenEnd {});
+            let mut __ctx = SwiftSyntaxSkipperFsmFrameContext::new(alloc::rc::Rc::clone(&__e), None);
+            self._context_stack.push(__ctx);
+            self.__kernel(&__e);
+            self._context_stack.pop();
+        }
+
+        fn _state_Init(&mut self, __e: &SwiftSyntaxSkipperFsmFrameEvent) {
+            match __e {
+                SwiftSyntaxSkipperFsmFrameEvent::DoBalancedParenEnd { .. } => { self._s_Init_hdl_user_do_balanced_paren_end(__e); }
+                SwiftSyntaxSkipperFsmFrameEvent::DoFindLineEnd { .. } => { self._s_Init_hdl_user_do_find_line_end(__e); }
+                SwiftSyntaxSkipperFsmFrameEvent::DoSkipComment { .. } => { self._s_Init_hdl_user_do_skip_comment(__e); }
+                SwiftSyntaxSkipperFsmFrameEvent::DoSkipString { .. } => { self._s_Init_hdl_user_do_skip_string(__e); }
+                _ => {}
+            }
+        }
+
+        fn _state_SkipComment(&mut self, __e: &SwiftSyntaxSkipperFsmFrameEvent) {
+            match __e {
+                SwiftSyntaxSkipperFsmFrameEvent::FrameEnter { .. } => { self._s_SkipComment_hdl_frame_enter(__e); }
+                _ => {}
+            }
+        }
+
+        fn _state_SkipString(&mut self, __e: &SwiftSyntaxSkipperFsmFrameEvent) {
+            match __e {
+                SwiftSyntaxSkipperFsmFrameEvent::FrameEnter { .. } => { self._s_SkipString_hdl_frame_enter(__e); }
+                _ => {}
+            }
+        }
+
+        fn _state_FindLineEnd(&mut self, __e: &SwiftSyntaxSkipperFsmFrameEvent) {
+            match __e {
+                SwiftSyntaxSkipperFsmFrameEvent::FrameEnter { .. } => { self._s_FindLineEnd_hdl_frame_enter(__e); }
+                _ => {}
+            }
+        }
+
+        fn _state_BalancedParenEnd(&mut self, __e: &SwiftSyntaxSkipperFsmFrameEvent) {
+            match __e {
+                SwiftSyntaxSkipperFsmFrameEvent::FrameEnter { .. } => { self._s_BalancedParenEnd_hdl_frame_enter(__e); }
+                _ => {}
+            }
+        }
+
+        fn _s_Init_hdl_user_do_balanced_paren_end(&mut self, __e: &SwiftSyntaxSkipperFsmFrameEvent) {
+            let mut __compartment = self.__prepareEnter("BalancedParenEnd", vec![]);
+            self.__transition(__compartment);
+            return;
+        }
+
+        fn _s_Init_hdl_user_do_find_line_end(&mut self, __e: &SwiftSyntaxSkipperFsmFrameEvent) {
+            let mut __compartment = self.__prepareEnter("FindLineEnd", vec![]);
+            self.__transition(__compartment);
+            return;
+        }
+
+        fn _s_Init_hdl_user_do_skip_comment(&mut self, __e: &SwiftSyntaxSkipperFsmFrameEvent) {
+            let mut __compartment = self.__prepareEnter("SkipComment", vec![]);
+            self.__transition(__compartment);
+            return;
+        }
+
+        fn _s_Init_hdl_user_do_skip_string(&mut self, __e: &SwiftSyntaxSkipperFsmFrameEvent) {
+            let mut __compartment = self.__prepareEnter("SkipString", vec![]);
+            self.__transition(__compartment);
+            return;
+        }
+
+        fn _s_SkipComment_hdl_frame_enter(&mut self, __e: &SwiftSyntaxSkipperFsmFrameEvent) {
+            if let Some(j) = skip_line_comment(&self.bytes, self.pos, self.end) {
+                self.result_pos = j;
+                self.success = 1;
+                return
+            }
+            // Nestable block comments for Swift
+            let i = self.pos;
+            let end = self.end;
+            let bytes = &self.bytes;
+            if i + 1 < end && bytes[i] == b'/' && bytes[i + 1] == b'*' {
+                let mut j = i + 2;
+                let mut depth: i32 = 1;
+                while j + 1 < end && depth > 0 {
+                    if bytes[j] == b'/' && bytes[j + 1] == b'*' {
+                        depth += 1;
+                        j += 2;
+                    } else if bytes[j] == b'*' && bytes[j + 1] == b'/' {
+                        depth -= 1;
+                        j += 2;
+                    } else {
+                        j += 1;
+                    }
+                }
+                self.result_pos = j;
+                self.success = 1;
+                return
+            }
+            self.success = 0;
+        }
+
+        fn _s_SkipString_hdl_frame_enter(&mut self, __e: &SwiftSyntaxSkipperFsmFrameEvent) {
+            let i = self.pos;
+            let end = self.end;
+            let bytes = &self.bytes;
+            // Swift multi-line string """...""" (must check before simple string)
+            if i + 2 < end && bytes[i] == b'"' && bytes[i + 1] == b'"' && bytes[i + 2] == b'"' {
+                let mut j = i + 3;
+                while j + 2 < end {
+                    if bytes[j] == b'"' && bytes[j + 1] == b'"' && bytes[j + 2] == b'"' {
+                        self.result_pos = j + 3;
+                        self.success = 1;
+                        return
+                    }
                     j += 1;
                 }
+                self.result_pos = end;
+                self.success = 1;
+                return
             }
-            self.result_pos = j;
-            self.success = 1;
-            return
-        }
-        self.success = 0;
-    }
-
-    fn _s_SkipString_hdl_frame_enter(&mut self, __e: &SwiftSyntaxSkipperFsmFrameEvent) {
-        let i = self.pos;
-        let end = self.end;
-        let bytes = &self.bytes;
-        // Swift multi-line string """...""" (must check before simple string)
-        if i + 2 < end && bytes[i] == b'"' && bytes[i + 1] == b'"' && bytes[i + 2] == b'"' {
-            let mut j = i + 3;
-            while j + 2 < end {
-                if bytes[j] == b'"' && bytes[j + 1] == b'"' && bytes[j + 2] == b'"' {
-                    self.result_pos = j + 3;
-                    self.success = 1;
-                    return
-                }
-                j += 1;
+            // Simple string via shared helper
+            if let Some(j) = skip_simple_string(&self.bytes, self.pos, self.end) {
+                self.result_pos = j;
+                self.success = 1;
+                return
             }
-            self.result_pos = end;
-            self.success = 1;
-            return
+            self.success = 0;
         }
-        // Simple string via shared helper
-        if let Some(j) = skip_simple_string(&self.bytes, self.pos, self.end) {
-            self.result_pos = j;
-            self.success = 1;
-            return
-        }
-        self.success = 0;
-    }
 
-    fn _s_FindLineEnd_hdl_frame_enter(&mut self, __e: &SwiftSyntaxSkipperFsmFrameEvent) {
-        self.result_pos = find_line_end_c_like(&self.bytes, self.pos, self.end);
-    }
-
-    fn _s_BalancedParenEnd_hdl_frame_enter(&mut self, __e: &SwiftSyntaxSkipperFsmFrameEvent) {
-        if let Some(j) = balanced_paren_end_c_like(&self.bytes, self.pos, self.end) {
-            self.result_pos = j;
-            self.success = 1;
-            return
+        fn _s_FindLineEnd_hdl_frame_enter(&mut self, __e: &SwiftSyntaxSkipperFsmFrameEvent) {
+            self.result_pos = find_line_end_c_like(&self.bytes, self.pos, self.end);
         }
-        self.success = 0;
+
+        fn _s_BalancedParenEnd_hdl_frame_enter(&mut self, __e: &SwiftSyntaxSkipperFsmFrameEvent) {
+            if let Some(j) = balanced_paren_end_c_like(&self.bytes, self.pos, self.end) {
+                self.result_pos = j;
+                self.success = 1;
+                return
+            }
+            self.success = 0;
+        }
     }
 }
+pub use _swift_syntax_skipper_fsm_framec::*;
+

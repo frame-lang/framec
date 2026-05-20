@@ -41,6 +41,8 @@
 #[allow(clippy::single_match)]
 mod _java_await_rewrite_fsm_framec {
     use super::*;
+    extern crate alloc;
+    use alloc::{vec, format};
     #[derive(Clone, Debug)]
     #[allow(dead_code, non_camel_case_types)]
     enum JavaAwaitRewriteFsmFrameEvent {
@@ -52,7 +54,7 @@ mod _java_await_rewrite_fsm_framec {
     #[derive(Clone)]
     #[allow(dead_code, non_camel_case_types)]
     enum JavaAwaitRewriteFsmFrameReturn {
-        _Lifecycle(std::rc::Rc<dyn std::any::Any>),
+        _Lifecycle(alloc::rc::Rc<dyn core::any::Any>),
     }
 
     #[allow(dead_code)]
@@ -74,23 +76,23 @@ mod _java_await_rewrite_fsm_framec {
         Bool(bool),
         Str(String),
         List(Vec<Self>),
-        Dict(std::collections::HashMap<String, Self>),
+        Dict(alloc::collections::BTreeMap<String, Self>),
     }
 
     #[allow(dead_code, non_camel_case_types)]
     struct JavaAwaitRewriteFsmFrameContext {
-        event: std::rc::Rc<JavaAwaitRewriteFsmFrameEvent>,
+        event: alloc::rc::Rc<JavaAwaitRewriteFsmFrameEvent>,
         _return: Option<JavaAwaitRewriteFsmFrameReturn>,
-        _data: std::collections::HashMap<String, JavaAwaitRewriteFsmFrameValue>,
+        _data: alloc::collections::BTreeMap<String, JavaAwaitRewriteFsmFrameValue>,
         _transitioned: bool,
     }
 
     impl JavaAwaitRewriteFsmFrameContext {
-        fn new(event: std::rc::Rc<JavaAwaitRewriteFsmFrameEvent>, default_return: Option<JavaAwaitRewriteFsmFrameReturn>) -> Self {
+        fn new(event: alloc::rc::Rc<JavaAwaitRewriteFsmFrameEvent>, default_return: Option<JavaAwaitRewriteFsmFrameReturn>) -> Self {
             Self {
                 event,
                 _return: default_return,
-                _data: std::collections::HashMap::new(),
+                _data: alloc::collections::BTreeMap::new(),
                 _transitioned: false,
             }
         }
@@ -177,8 +179,8 @@ mod _java_await_rewrite_fsm_framec {
         pub fn __create() -> Self {
             let mut c = Self::new();
             c.__compartment = c.__prepareEnter("Init", vec![]);
-            let __e = std::rc::Rc::new(JavaAwaitRewriteFsmFrameEvent::FrameEnter { args: c.__compartment.enter_args.clone() });
-            let __ctx = JavaAwaitRewriteFsmFrameContext::new(std::rc::Rc::clone(&__e), None);
+            let __e = alloc::rc::Rc::new(JavaAwaitRewriteFsmFrameEvent::FrameEnter { args: c.__compartment.enter_args.clone() });
+            let __ctx = JavaAwaitRewriteFsmFrameContext::new(alloc::rc::Rc::clone(&__e), None);
             c._context_stack.push(__ctx);
             c.__kernel(&__e);
             c._context_stack.pop();
@@ -219,7 +221,7 @@ mod _java_await_rewrite_fsm_framec {
             }
         }
 
-        fn __kernel(&mut self, __e: &std::rc::Rc<JavaAwaitRewriteFsmFrameEvent>) {
+        fn __kernel(&mut self, __e: &alloc::rc::Rc<JavaAwaitRewriteFsmFrameEvent>) {
             // Route event to current state.
             self.__router(__e);
             // Drain any transitions queued by the handler.
@@ -227,7 +229,7 @@ mod _java_await_rewrite_fsm_framec {
                 let next_compartment = self.__next_compartment.take().expect("invariant: while-loop guard checked is_some()");
                 // Exit the current (leaf) state.
                 let exit_args = self.__compartment.exit_args.clone();
-                let exit_event = std::rc::Rc::new(JavaAwaitRewriteFsmFrameEvent::FrameExit { args: exit_args });
+                let exit_event = alloc::rc::Rc::new(JavaAwaitRewriteFsmFrameEvent::FrameExit { args: exit_args });
                 self.__router(&exit_event);
                 // Switch to the new compartment.
                 self.__compartment = next_compartment;
@@ -238,22 +240,22 @@ mod _java_await_rewrite_fsm_framec {
                     None => {
                         // No forwarded event — synthesize a fresh $>.
                         let enter_args = self.__compartment.enter_args.clone();
-                        let enter_event = std::rc::Rc::new(JavaAwaitRewriteFsmFrameEvent::FrameEnter { args: enter_args });
+                        let enter_event = alloc::rc::Rc::new(JavaAwaitRewriteFsmFrameEvent::FrameEnter { args: enter_args });
                         self.__router(&enter_event);
                     }
                     Some(fwd) if matches!(fwd, JavaAwaitRewriteFsmFrameEvent::FrameEnter { .. }) => {
                         // Forwarded event IS $> — dispatch directly so the
                         // destination's $> handler receives the caller's payload.
-                        let fwd_rc = std::rc::Rc::new(fwd);
+                        let fwd_rc = alloc::rc::Rc::new(fwd);
                         self.__router(&fwd_rc);
                     }
                     Some(fwd) => {
                         // Forwarded event is not $> — initialize the destination
                         // with a fresh $>, then dispatch the forward.
                         let enter_args = self.__compartment.enter_args.clone();
-                        let enter_event = std::rc::Rc::new(JavaAwaitRewriteFsmFrameEvent::FrameEnter { args: enter_args });
+                        let enter_event = alloc::rc::Rc::new(JavaAwaitRewriteFsmFrameEvent::FrameEnter { args: enter_args });
                         self.__router(&enter_event);
-                        let fwd_rc = std::rc::Rc::new(fwd);
+                        let fwd_rc = alloc::rc::Rc::new(fwd);
                         self.__router(&fwd_rc);
                     }
                 }
@@ -263,7 +265,7 @@ mod _java_await_rewrite_fsm_framec {
             }
         }
 
-        fn __router(&mut self, __e: &std::rc::Rc<JavaAwaitRewriteFsmFrameEvent>) {
+        fn __router(&mut self, __e: &alloc::rc::Rc<JavaAwaitRewriteFsmFrameEvent>) {
             let __ev: &JavaAwaitRewriteFsmFrameEvent = __e;
             match self.__compartment.state.as_str() {
                 "Init" => self._state_Init(__ev),
@@ -280,8 +282,8 @@ mod _java_await_rewrite_fsm_framec {
         }
 
         pub fn rewrite(&mut self) {
-            let __e = std::rc::Rc::new(JavaAwaitRewriteFsmFrameEvent::Rewrite {});
-            let mut __ctx = JavaAwaitRewriteFsmFrameContext::new(std::rc::Rc::clone(&__e), None);
+            let __e = alloc::rc::Rc::new(JavaAwaitRewriteFsmFrameEvent::Rewrite {});
+            let mut __ctx = JavaAwaitRewriteFsmFrameContext::new(alloc::rc::Rc::clone(&__e), None);
             self._context_stack.push(__ctx);
             self.__kernel(&__e);
             self._context_stack.pop();
@@ -537,3 +539,4 @@ mod _java_await_rewrite_fsm_framec {
     }
 }
 pub use _java_await_rewrite_fsm_framec::*;
+

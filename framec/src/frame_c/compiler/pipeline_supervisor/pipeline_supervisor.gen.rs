@@ -66,6 +66,8 @@
 #[allow(clippy::single_match)]
 mod _pipeline_supervisor_framec {
     use super::*;
+    extern crate alloc;
+    use alloc::{vec, format};
     #[derive(Clone, Debug)]
     #[allow(dead_code, non_camel_case_types)]
     enum PipelineSupervisorFrameEvent {
@@ -88,7 +90,7 @@ mod _pipeline_supervisor_framec {
         Finish(String),
         RecordNonfatal(String),
         Summary(String),
-        _Lifecycle(std::rc::Rc<dyn std::any::Any>),
+        _Lifecycle(alloc::rc::Rc<dyn core::any::Any>),
     }
 
     #[allow(dead_code)]
@@ -115,23 +117,23 @@ mod _pipeline_supervisor_framec {
         Bool(bool),
         Str(String),
         List(Vec<Self>),
-        Dict(std::collections::HashMap<String, Self>),
+        Dict(alloc::collections::BTreeMap<String, Self>),
     }
 
     #[allow(dead_code, non_camel_case_types)]
     struct PipelineSupervisorFrameContext {
-        event: std::rc::Rc<PipelineSupervisorFrameEvent>,
+        event: alloc::rc::Rc<PipelineSupervisorFrameEvent>,
         _return: Option<PipelineSupervisorFrameReturn>,
-        _data: std::collections::HashMap<String, PipelineSupervisorFrameValue>,
+        _data: alloc::collections::BTreeMap<String, PipelineSupervisorFrameValue>,
         _transitioned: bool,
     }
 
     impl PipelineSupervisorFrameContext {
-        fn new(event: std::rc::Rc<PipelineSupervisorFrameEvent>, default_return: Option<PipelineSupervisorFrameReturn>) -> Self {
+        fn new(event: alloc::rc::Rc<PipelineSupervisorFrameEvent>, default_return: Option<PipelineSupervisorFrameReturn>) -> Self {
             Self {
                 event,
                 _return: default_return,
-                _data: std::collections::HashMap::new(),
+                _data: alloc::collections::BTreeMap::new(),
                 _transitioned: false,
             }
         }
@@ -218,8 +220,8 @@ mod _pipeline_supervisor_framec {
         pub fn __create() -> Self {
             let mut c = Self::new();
             c.__compartment = c.__prepareEnter("Idle", vec![]);
-            let __e = std::rc::Rc::new(PipelineSupervisorFrameEvent::FrameEnter { args: c.__compartment.enter_args.clone() });
-            let __ctx = PipelineSupervisorFrameContext::new(std::rc::Rc::clone(&__e), None);
+            let __e = alloc::rc::Rc::new(PipelineSupervisorFrameEvent::FrameEnter { args: c.__compartment.enter_args.clone() });
+            let __ctx = PipelineSupervisorFrameContext::new(alloc::rc::Rc::clone(&__e), None);
             c._context_stack.push(__ctx);
             c.__kernel(&__e);
             c._context_stack.pop();
@@ -260,7 +262,7 @@ mod _pipeline_supervisor_framec {
             }
         }
 
-        fn __kernel(&mut self, __e: &std::rc::Rc<PipelineSupervisorFrameEvent>) {
+        fn __kernel(&mut self, __e: &alloc::rc::Rc<PipelineSupervisorFrameEvent>) {
             // Route event to current state.
             self.__router(__e);
             // Drain any transitions queued by the handler.
@@ -268,7 +270,7 @@ mod _pipeline_supervisor_framec {
                 let next_compartment = self.__next_compartment.take().expect("invariant: while-loop guard checked is_some()");
                 // Exit the current (leaf) state.
                 let exit_args = self.__compartment.exit_args.clone();
-                let exit_event = std::rc::Rc::new(PipelineSupervisorFrameEvent::FrameExit { args: exit_args });
+                let exit_event = alloc::rc::Rc::new(PipelineSupervisorFrameEvent::FrameExit { args: exit_args });
                 self.__router(&exit_event);
                 // Switch to the new compartment.
                 self.__compartment = next_compartment;
@@ -279,22 +281,22 @@ mod _pipeline_supervisor_framec {
                     None => {
                         // No forwarded event — synthesize a fresh $>.
                         let enter_args = self.__compartment.enter_args.clone();
-                        let enter_event = std::rc::Rc::new(PipelineSupervisorFrameEvent::FrameEnter { args: enter_args });
+                        let enter_event = alloc::rc::Rc::new(PipelineSupervisorFrameEvent::FrameEnter { args: enter_args });
                         self.__router(&enter_event);
                     }
                     Some(fwd) if matches!(fwd, PipelineSupervisorFrameEvent::FrameEnter { .. }) => {
                         // Forwarded event IS $> — dispatch directly so the
                         // destination's $> handler receives the caller's payload.
-                        let fwd_rc = std::rc::Rc::new(fwd);
+                        let fwd_rc = alloc::rc::Rc::new(fwd);
                         self.__router(&fwd_rc);
                     }
                     Some(fwd) => {
                         // Forwarded event is not $> — initialize the destination
                         // with a fresh $>, then dispatch the forward.
                         let enter_args = self.__compartment.enter_args.clone();
-                        let enter_event = std::rc::Rc::new(PipelineSupervisorFrameEvent::FrameEnter { args: enter_args });
+                        let enter_event = alloc::rc::Rc::new(PipelineSupervisorFrameEvent::FrameEnter { args: enter_args });
                         self.__router(&enter_event);
-                        let fwd_rc = std::rc::Rc::new(fwd);
+                        let fwd_rc = alloc::rc::Rc::new(fwd);
                         self.__router(&fwd_rc);
                     }
                 }
@@ -304,7 +306,7 @@ mod _pipeline_supervisor_framec {
             }
         }
 
-        fn __router(&mut self, __e: &std::rc::Rc<PipelineSupervisorFrameEvent>) {
+        fn __router(&mut self, __e: &alloc::rc::Rc<PipelineSupervisorFrameEvent>) {
             let __ev: &PipelineSupervisorFrameEvent = __e;
             match self.__compartment.state.as_str() {
                 "Idle" => self._state_Idle(__ev),
@@ -321,8 +323,8 @@ mod _pipeline_supervisor_framec {
         }
 
         pub fn begin_phase(&mut self, name: String) -> String {
-            let __e = std::rc::Rc::new(PipelineSupervisorFrameEvent::BeginPhase { name: name.clone() });
-            let mut __ctx = PipelineSupervisorFrameContext::new(std::rc::Rc::clone(&__e), None);
+            let __e = alloc::rc::Rc::new(PipelineSupervisorFrameEvent::BeginPhase { name: name.clone() });
+            let mut __ctx = PipelineSupervisorFrameContext::new(alloc::rc::Rc::clone(&__e), None);
             self._context_stack.push(__ctx);
             self.__kernel(&__e);
             let __ctx = self._context_stack.pop().expect("invariant: handler must have pushed a context before reading return");
@@ -334,8 +336,8 @@ mod _pipeline_supervisor_framec {
         }
 
         pub fn complete_phase(&mut self) -> String {
-            let __e = std::rc::Rc::new(PipelineSupervisorFrameEvent::CompletePhase {});
-            let mut __ctx = PipelineSupervisorFrameContext::new(std::rc::Rc::clone(&__e), None);
+            let __e = alloc::rc::Rc::new(PipelineSupervisorFrameEvent::CompletePhase {});
+            let mut __ctx = PipelineSupervisorFrameContext::new(alloc::rc::Rc::clone(&__e), None);
             self._context_stack.push(__ctx);
             self.__kernel(&__e);
             let __ctx = self._context_stack.pop().expect("invariant: handler must have pushed a context before reading return");
@@ -347,8 +349,8 @@ mod _pipeline_supervisor_framec {
         }
 
         pub fn record_nonfatal(&mut self, code: String, msg: String) -> String {
-            let __e = std::rc::Rc::new(PipelineSupervisorFrameEvent::RecordNonfatal { code: code.clone(), msg: msg.clone() });
-            let mut __ctx = PipelineSupervisorFrameContext::new(std::rc::Rc::clone(&__e), None);
+            let __e = alloc::rc::Rc::new(PipelineSupervisorFrameEvent::RecordNonfatal { code: code.clone(), msg: msg.clone() });
+            let mut __ctx = PipelineSupervisorFrameContext::new(alloc::rc::Rc::clone(&__e), None);
             self._context_stack.push(__ctx);
             self.__kernel(&__e);
             let __ctx = self._context_stack.pop().expect("invariant: handler must have pushed a context before reading return");
@@ -360,8 +362,8 @@ mod _pipeline_supervisor_framec {
         }
 
         pub fn abort(&mut self, code: String, msg: String) -> String {
-            let __e = std::rc::Rc::new(PipelineSupervisorFrameEvent::Abort { code: code.clone(), msg: msg.clone() });
-            let mut __ctx = PipelineSupervisorFrameContext::new(std::rc::Rc::clone(&__e), None);
+            let __e = alloc::rc::Rc::new(PipelineSupervisorFrameEvent::Abort { code: code.clone(), msg: msg.clone() });
+            let mut __ctx = PipelineSupervisorFrameContext::new(alloc::rc::Rc::clone(&__e), None);
             self._context_stack.push(__ctx);
             self.__kernel(&__e);
             let __ctx = self._context_stack.pop().expect("invariant: handler must have pushed a context before reading return");
@@ -373,8 +375,8 @@ mod _pipeline_supervisor_framec {
         }
 
         pub fn finish(&mut self) -> String {
-            let __e = std::rc::Rc::new(PipelineSupervisorFrameEvent::Finish {});
-            let mut __ctx = PipelineSupervisorFrameContext::new(std::rc::Rc::clone(&__e), None);
+            let __e = alloc::rc::Rc::new(PipelineSupervisorFrameEvent::Finish {});
+            let mut __ctx = PipelineSupervisorFrameContext::new(alloc::rc::Rc::clone(&__e), None);
             self._context_stack.push(__ctx);
             self.__kernel(&__e);
             let __ctx = self._context_stack.pop().expect("invariant: handler must have pushed a context before reading return");
@@ -386,8 +388,8 @@ mod _pipeline_supervisor_framec {
         }
 
         pub fn summary(&mut self) -> String {
-            let __e = std::rc::Rc::new(PipelineSupervisorFrameEvent::Summary {});
-            let mut __ctx = PipelineSupervisorFrameContext::new(std::rc::Rc::clone(&__e), None);
+            let __e = alloc::rc::Rc::new(PipelineSupervisorFrameEvent::Summary {});
+            let mut __ctx = PipelineSupervisorFrameContext::new(alloc::rc::Rc::clone(&__e), None);
             self._context_stack.push(__ctx);
             self.__kernel(&__e);
             let __ctx = self._context_stack.pop().expect("invariant: handler must have pushed a context before reading return");
@@ -564,10 +566,10 @@ mod _pipeline_supervisor_framec {
         }
 
         fn _s_Running_hdl_user_summary(&mut self, __e: &PipelineSupervisorFrameEvent) {
-            let __return_val = PipelineSupervisorFrameReturn::Summary((format!(
+            let __return_val = PipelineSupervisorFrameReturn::Summary(format!(
                                 "RUNNING|phases={}|current={}|errors={}|warnings=0",
                                 self.phase_log, self.current_phase, self.error_count
-                            )));
+                            ));
                             if let Some(ctx) = self._context_stack.last_mut() { ctx._return = Some(__return_val); }
         }
 
@@ -597,10 +599,10 @@ mod _pipeline_supervisor_framec {
         }
 
         fn _s_Aborted_hdl_user_summary(&mut self, __e: &PipelineSupervisorFrameEvent) {
-            let __return_val = PipelineSupervisorFrameReturn::Summary((format!(
+            let __return_val = PipelineSupervisorFrameReturn::Summary(format!(
                                 "ABORTED|phases={}|code={}|msg={}|errors={}",
                                 self.phase_log, self.abort_code, self.abort_msg, self.error_count
-                            )));
+                            ));
                             if let Some(ctx) = self._context_stack.last_mut() { ctx._return = Some(__return_val); }
         }
 
@@ -630,10 +632,10 @@ mod _pipeline_supervisor_framec {
         }
 
         fn _s_Failed_hdl_user_summary(&mut self, __e: &PipelineSupervisorFrameEvent) {
-            let __return_val = PipelineSupervisorFrameReturn::Summary((format!(
+            let __return_val = PipelineSupervisorFrameReturn::Summary(format!(
                                 "FAILED|phases={}|errors={}|warnings=0",
                                 self.phase_log, self.error_count
-                            )));
+                            ));
                             if let Some(ctx) = self._context_stack.last_mut() { ctx._return = Some(__return_val); }
         }
 
