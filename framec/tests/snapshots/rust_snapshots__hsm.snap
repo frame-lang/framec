@@ -17,6 +17,8 @@ expression: "compile_fixture(\"02_hsm\", \"rust\")"
 #[allow(clippy::single_match)]
 mod _mini_hsm_framec {
     use super::*;
+    extern crate alloc;
+    use alloc::{vec, format};
     #[derive(Clone, Debug)]
     #[allow(dead_code, non_camel_case_types)]
     enum MiniHsmFrameEvent {
@@ -30,7 +32,7 @@ mod _mini_hsm_framec {
     #[derive(Clone)]
     #[allow(dead_code, non_camel_case_types)]
     enum MiniHsmFrameReturn {
-        _Lifecycle(std::rc::Rc<dyn std::any::Any>),
+        _Lifecycle(alloc::rc::Rc<dyn core::any::Any>),
     }
 
     #[allow(dead_code)]
@@ -54,23 +56,23 @@ mod _mini_hsm_framec {
         Bool(bool),
         Str(String),
         List(Vec<Self>),
-        Dict(std::collections::HashMap<String, Self>),
+        Dict(alloc::collections::BTreeMap<String, Self>),
     }
 
     #[allow(dead_code, non_camel_case_types)]
     struct MiniHsmFrameContext {
-        event: std::rc::Rc<MiniHsmFrameEvent>,
+        event: alloc::rc::Rc<MiniHsmFrameEvent>,
         _return: Option<MiniHsmFrameReturn>,
-        _data: std::collections::HashMap<String, MiniHsmFrameValue>,
+        _data: alloc::collections::BTreeMap<String, MiniHsmFrameValue>,
         _transitioned: bool,
     }
 
     impl MiniHsmFrameContext {
-        fn new(event: std::rc::Rc<MiniHsmFrameEvent>, default_return: Option<MiniHsmFrameReturn>) -> Self {
+        fn new(event: alloc::rc::Rc<MiniHsmFrameEvent>, default_return: Option<MiniHsmFrameReturn>) -> Self {
             Self {
                 event,
                 _return: default_return,
-                _data: std::collections::HashMap::new(),
+                _data: alloc::collections::BTreeMap::new(),
                 _transitioned: false,
             }
         }
@@ -149,8 +151,8 @@ mod _mini_hsm_framec {
         pub fn __create() -> Self {
             let mut c = Self::new();
             c.__compartment = c.__prepareEnter("Live", vec![]);
-            let __e = std::rc::Rc::new(MiniHsmFrameEvent::FrameEnter { args: c.__compartment.enter_args.clone() });
-            let __ctx = MiniHsmFrameContext::new(std::rc::Rc::clone(&__e), None);
+            let __e = alloc::rc::Rc::new(MiniHsmFrameEvent::FrameEnter { args: c.__compartment.enter_args.clone() });
+            let __ctx = MiniHsmFrameContext::new(alloc::rc::Rc::clone(&__e), None);
             c._context_stack.push(__ctx);
             c.__kernel(&__e);
             c._context_stack.pop();
@@ -189,7 +191,7 @@ mod _mini_hsm_framec {
             }
         }
 
-        fn __kernel(&mut self, __e: &std::rc::Rc<MiniHsmFrameEvent>) {
+        fn __kernel(&mut self, __e: &alloc::rc::Rc<MiniHsmFrameEvent>) {
             // Route event to current state.
             self.__router(__e);
             // Drain any transitions queued by the handler.
@@ -197,7 +199,7 @@ mod _mini_hsm_framec {
                 let next_compartment = self.__next_compartment.take().expect("invariant: while-loop guard checked is_some()");
                 // Exit the current (leaf) state.
                 let exit_args = self.__compartment.exit_args.clone();
-                let exit_event = std::rc::Rc::new(MiniHsmFrameEvent::FrameExit { args: exit_args });
+                let exit_event = alloc::rc::Rc::new(MiniHsmFrameEvent::FrameExit { args: exit_args });
                 self.__router(&exit_event);
                 // Switch to the new compartment.
                 self.__compartment = next_compartment;
@@ -208,22 +210,22 @@ mod _mini_hsm_framec {
                     None => {
                         // No forwarded event — synthesize a fresh $>.
                         let enter_args = self.__compartment.enter_args.clone();
-                        let enter_event = std::rc::Rc::new(MiniHsmFrameEvent::FrameEnter { args: enter_args });
+                        let enter_event = alloc::rc::Rc::new(MiniHsmFrameEvent::FrameEnter { args: enter_args });
                         self.__router(&enter_event);
                     }
                     Some(fwd) if matches!(fwd, MiniHsmFrameEvent::FrameEnter { .. }) => {
                         // Forwarded event IS $> — dispatch directly so the
                         // destination's $> handler receives the caller's payload.
-                        let fwd_rc = std::rc::Rc::new(fwd);
+                        let fwd_rc = alloc::rc::Rc::new(fwd);
                         self.__router(&fwd_rc);
                     }
                     Some(fwd) => {
                         // Forwarded event is not $> — initialize the destination
                         // with a fresh $>, then dispatch the forward.
                         let enter_args = self.__compartment.enter_args.clone();
-                        let enter_event = std::rc::Rc::new(MiniHsmFrameEvent::FrameEnter { args: enter_args });
+                        let enter_event = alloc::rc::Rc::new(MiniHsmFrameEvent::FrameEnter { args: enter_args });
                         self.__router(&enter_event);
-                        let fwd_rc = std::rc::Rc::new(fwd);
+                        let fwd_rc = alloc::rc::Rc::new(fwd);
                         self.__router(&fwd_rc);
                     }
                 }
@@ -233,7 +235,7 @@ mod _mini_hsm_framec {
             }
         }
 
-        fn __router(&mut self, __e: &std::rc::Rc<MiniHsmFrameEvent>) {
+        fn __router(&mut self, __e: &alloc::rc::Rc<MiniHsmFrameEvent>) {
             let __ev: &MiniHsmFrameEvent = __e;
             match self.__compartment.state.as_str() {
                 "Live" => self._state_Live(__ev),
@@ -248,24 +250,24 @@ mod _mini_hsm_framec {
         }
 
         pub fn wake(&mut self) {
-            let __e = std::rc::Rc::new(MiniHsmFrameEvent::Wake {});
-            let mut __ctx = MiniHsmFrameContext::new(std::rc::Rc::clone(&__e), None);
+            let __e = alloc::rc::Rc::new(MiniHsmFrameEvent::Wake {});
+            let mut __ctx = MiniHsmFrameContext::new(alloc::rc::Rc::clone(&__e), None);
             self._context_stack.push(__ctx);
             self.__kernel(&__e);
             self._context_stack.pop();
         }
 
         pub fn sleep(&mut self) {
-            let __e = std::rc::Rc::new(MiniHsmFrameEvent::Sleep {});
-            let mut __ctx = MiniHsmFrameContext::new(std::rc::Rc::clone(&__e), None);
+            let __e = alloc::rc::Rc::new(MiniHsmFrameEvent::Sleep {});
+            let mut __ctx = MiniHsmFrameContext::new(alloc::rc::Rc::clone(&__e), None);
             self._context_stack.push(__ctx);
             self.__kernel(&__e);
             self._context_stack.pop();
         }
 
         pub fn signal(&mut self) {
-            let __e = std::rc::Rc::new(MiniHsmFrameEvent::Signal {});
-            let mut __ctx = MiniHsmFrameContext::new(std::rc::Rc::clone(&__e), None);
+            let __e = alloc::rc::Rc::new(MiniHsmFrameEvent::Signal {});
+            let mut __ctx = MiniHsmFrameContext::new(alloc::rc::Rc::clone(&__e), None);
             self._context_stack.push(__ctx);
             self.__kernel(&__e);
             self._context_stack.pop();

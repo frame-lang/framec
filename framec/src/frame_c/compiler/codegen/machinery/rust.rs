@@ -160,7 +160,7 @@ while let Some(c) = cursor {
         let event_class = format!("{}FrameEvent", system.name);
         Some(CodegenNode::Method {
             name: "__kernel".to_string(),
-            params: vec![Param::new("__e").with_type(&format!("&std::rc::Rc<{}>", event_class))],
+            params: vec![Param::new("__e").with_type(&format!("&alloc::rc::Rc<{}>", event_class))],
             return_type: None,
             body: vec![CodegenNode::NativeBlock {
                 code: format!(
@@ -171,7 +171,7 @@ while self.__next_compartment.is_some() {{
     let next_compartment = self.__next_compartment.take().expect("invariant: while-loop guard checked is_some()");
     // Exit the current (leaf) state.
     let exit_args = self.__compartment.exit_args.clone();
-    let exit_event = std::rc::Rc::new({evt}::FrameExit {{ args: exit_args }});
+    let exit_event = alloc::rc::Rc::new({evt}::FrameExit {{ args: exit_args }});
     self.__router(&exit_event);
     // Switch to the new compartment.
     self.__compartment = next_compartment;
@@ -182,22 +182,22 @@ while self.__next_compartment.is_some() {{
         None => {{
             // No forwarded event — synthesize a fresh $>.
             let enter_args = self.__compartment.enter_args.clone();
-            let enter_event = std::rc::Rc::new({evt}::FrameEnter {{ args: enter_args }});
+            let enter_event = alloc::rc::Rc::new({evt}::FrameEnter {{ args: enter_args }});
             self.__router(&enter_event);
         }}
         Some(fwd) if matches!(fwd, {evt}::FrameEnter {{ .. }}) => {{
             // Forwarded event IS $> — dispatch directly so the
             // destination's $> handler receives the caller's payload.
-            let fwd_rc = std::rc::Rc::new(fwd);
+            let fwd_rc = alloc::rc::Rc::new(fwd);
             self.__router(&fwd_rc);
         }}
         Some(fwd) => {{
             // Forwarded event is not $> — initialize the destination
             // with a fresh $>, then dispatch the forward.
             let enter_args = self.__compartment.enter_args.clone();
-            let enter_event = std::rc::Rc::new({evt}::FrameEnter {{ args: enter_args }});
+            let enter_event = alloc::rc::Rc::new({evt}::FrameEnter {{ args: enter_args }});
             self.__router(&enter_event);
-            let fwd_rc = std::rc::Rc::new(fwd);
+            let fwd_rc = alloc::rc::Rc::new(fwd);
             self.__router(&fwd_rc);
         }}
     }}
@@ -243,7 +243,7 @@ while self.__next_compartment.is_some() {{
         router_code.push_str("    _ => {}\n}");
         Some(CodegenNode::Method {
             name: "__router".to_string(),
-            params: vec![Param::new("__e").with_type(&format!("&std::rc::Rc<{}>", event_class))],
+            params: vec![Param::new("__e").with_type(&format!("&alloc::rc::Rc<{}>", event_class))],
             return_type: None,
             body: vec![CodegenNode::NativeBlock {
                 code: router_code,

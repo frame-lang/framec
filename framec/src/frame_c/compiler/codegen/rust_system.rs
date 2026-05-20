@@ -61,7 +61,8 @@ fn rust_handler_arg_expr(name: &str, source_type: &str, resolved_type: &str) -> 
     let is_non_copy = resolved_type == "String"
         || resolved_type.starts_with("Vec<")
         || resolved_type.starts_with("HashMap<")
-        || resolved_type.starts_with("std::collections::HashMap");
+        || resolved_type.starts_with("std::collections::HashMap")
+        || resolved_type.contains("BTreeMap");
     if is_non_copy {
         format!("{}.clone()", name)
     } else {
@@ -389,8 +390,8 @@ fn generate_rust_constructor(system: &SystemAst) -> CodegenNode {
             // parameters are typed).
             body.push(CodegenNode::NativeBlock {
                 code: format!(
-                    "let __e = std::rc::Rc::new({}::FrameEnter {{ args: self.__compartment.enter_args.clone() }});\n\
-                     let __ctx = {}::new(std::rc::Rc::clone(&__e), None);\n\
+                    "let __e = alloc::rc::Rc::new({}::FrameEnter {{ args: self.__compartment.enter_args.clone() }});\n\
+                     let __ctx = {}::new(alloc::rc::Rc::clone(&__e), None);\n\
                      self._context_stack.push(__ctx);\n\
                      self.__kernel(&__e);\n\
                      self._context_stack.pop();",
@@ -765,7 +766,7 @@ pub(crate) fn generate_rust_interface_body(
     // `{ .. }` uniformly. Construct accordingly.
     let mut code = if method.params.is_empty() {
         format!(
-            "let __e = std::rc::Rc::new({}::{} {{}});\n",
+            "let __e = alloc::rc::Rc::new({}::{} {{}});\n",
             event_class, variant
         )
     } else {
@@ -783,7 +784,7 @@ pub(crate) fn generate_rust_interface_body(
             })
             .collect();
         format!(
-            "let __e = std::rc::Rc::new({}::{} {{ {} }});\n",
+            "let __e = alloc::rc::Rc::new({}::{} {{ {} }});\n",
             event_class,
             variant,
             field_inits.join(", ")
@@ -791,7 +792,7 @@ pub(crate) fn generate_rust_interface_body(
     };
 
     code.push_str(&format!(
-        "let mut __ctx = {}::new(std::rc::Rc::clone(&__e), None);\n",
+        "let mut __ctx = {}::new(alloc::rc::Rc::clone(&__e), None);\n",
         context_class
     ));
     let return_enum = format!("{}FrameReturn", system_name);
@@ -1197,7 +1198,7 @@ pub(crate) fn rust_expand_box_return_bare(
 fn build_return_val_expr(system_name: &str, event_name: &str, payload_expr: &str) -> String {
     if event_name == "$>" || event_name == "$<" {
         format!(
-            "{}FrameReturn::_Lifecycle(std::rc::Rc::new({}))",
+            "{}FrameReturn::_Lifecycle(alloc::rc::Rc::new({}))",
             system_name, payload_expr
         )
     } else {

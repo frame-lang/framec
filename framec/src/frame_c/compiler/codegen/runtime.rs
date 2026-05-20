@@ -1195,7 +1195,7 @@ fn generate_rust_runtime_types(
         let return_ty = &return_types[*event_name];
         code.push_str(&format!("    {}({}),\n", variant, return_ty));
     }
-    code.push_str("    _Lifecycle(std::rc::Rc<dyn std::any::Any>),\n");
+    code.push_str("    _Lifecycle(alloc::rc::Rc<dyn core::any::Any>),\n");
     code.push_str("}\n\n");
 
     // Generate name() method — Frame source spelling of the event,
@@ -1242,7 +1242,7 @@ fn generate_rust_runtime_types(
     code.push_str("    Bool(bool),\n");
     code.push_str("    Str(String),\n");
     code.push_str("    List(Vec<Self>),\n");
-    code.push_str("    Dict(std::collections::HashMap<String, Self>),\n");
+    code.push_str("    Dict(alloc::collections::BTreeMap<String, Self>),\n");
     code.push_str("}\n\n");
 
     // Generate FrameContext struct (call context for reentrancy).
@@ -1255,7 +1255,7 @@ fn generate_rust_runtime_types(
     code.push_str("#[allow(dead_code, non_camel_case_types)]\n");
     code.push_str(&format!("struct {}FrameContext {{\n", system_name));
     code.push_str(&format!(
-        "    event: std::rc::Rc<{}FrameEvent>,\n",
+        "    event: alloc::rc::Rc<{}FrameEvent>,\n",
         system_name
     ));
     code.push_str(&format!(
@@ -1263,7 +1263,7 @@ fn generate_rust_runtime_types(
         system_name
     ));
     code.push_str(&format!(
-        "    _data: std::collections::HashMap<String, {}FrameValue>,\n",
+        "    _data: alloc::collections::BTreeMap<String, {}FrameValue>,\n",
         system_name
     ));
     code.push_str("    _transitioned: bool,\n");
@@ -1272,13 +1272,13 @@ fn generate_rust_runtime_types(
     // Generate FrameContext impl with new()
     code.push_str(&format!("impl {}FrameContext {{\n", system_name));
     code.push_str(&format!(
-        "    fn new(event: std::rc::Rc<{}FrameEvent>, default_return: Option<{}FrameReturn>) -> Self {{\n",
+        "    fn new(event: alloc::rc::Rc<{}FrameEvent>, default_return: Option<{}FrameReturn>) -> Self {{\n",
         system_name, system_name
     ));
     code.push_str("        Self {\n");
     code.push_str("            event,\n");
     code.push_str("            _return: default_return,\n");
-    code.push_str("            _data: std::collections::HashMap::new(),\n");
+    code.push_str("            _data: alloc::collections::BTreeMap::new(),\n");
     code.push_str("            _transitioned: false,\n");
     code.push_str("        }\n");
     code.push_str("    }\n");

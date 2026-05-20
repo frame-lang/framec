@@ -668,8 +668,10 @@ impl LanguageBackend for RustBackend {
     }
 
     fn runtime_imports(&self) -> Vec<String> {
-        // Don't emit HashMap import - we use full paths (std::collections::HashMap)
-        // and native prolog may already have the import
+        // No map import needed — the runtime uses fully-qualified
+        // portable paths (`alloc::collections::BTreeMap`) so it resolves
+        // in both hosted and no_std builds, and a user's native prolog
+        // may bring its own map type into scope.
         vec![]
     }
 
@@ -722,14 +724,14 @@ impl RustBackend {
     /// Convert type annotation from generic/Python types to Rust types
     fn convert_type(&self, type_str: &str) -> String {
         match type_str {
-            "Any" => "Box<dyn std::any::Any>".to_string(),
+            "Any" => "Box<dyn core::any::Any>".to_string(),
             "int" => "i64".to_string(),
             "float" => "f64".to_string(),
             "str" | "string" | "String" => "String".to_string(),
             "bool" => "bool".to_string(),
             "None" => "()".to_string(),
-            "List" => "Vec<Box<dyn std::any::Any>>".to_string(),
-            "Dict" => "HashMap<String, Box<dyn std::any::Any>>".to_string(),
+            "List" => "Vec<Box<dyn core::any::Any>>".to_string(),
+            "Dict" => "alloc::collections::BTreeMap<String, Box<dyn core::any::Any>>".to_string(),
             // Keep Rust types as-is
             t if t.starts_with("Vec<") || t.starts_with("HashMap<") || t.starts_with("&") => {
                 t.to_string()

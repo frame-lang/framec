@@ -440,7 +440,7 @@ pub(super) fn emit_handler_return_init(
             // Use _Lifecycle escape hatch for $> / $< handlers.
             let payload = if handler.event == "$>" || handler.event == "$<" {
                 format!(
-                    "{}FrameReturn::_Lifecycle(std::rc::Rc::new({}))",
+                    "{}FrameReturn::_Lifecycle(alloc::rc::Rc::new({}))",
                     system_name, init_expr
                 )
             } else {
