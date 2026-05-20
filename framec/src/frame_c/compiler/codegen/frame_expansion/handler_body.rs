@@ -197,13 +197,15 @@ fn needs_statement_terminator(out: &str, lang: TargetLanguage) -> bool {
     // User is mid-expression — adding `;` would split the
     // expression and break parsing.
     //
-    // `)` deliberately NOT excluded: while Java type casts like
-    // `(double) X` would want it excluded (the cast continues into
-    // X), Frame source uses `(args)` as state-args bundles
-    // (`(label)` before `-> $State`) where the parenthesized form
-    // IS a complete statement needing `;`. The cast case is left
-    // as a known limitation; users who need it can write an
-    // explicit `;` in their Frame source.
+    // `)` deliberately NOT excluded: a trailing `)` from a call
+    // (`foo()`) or a state-args bundle before a transition IS a
+    // complete statement that needs `;`. The one case where a
+    // trailing `)` is mid-expression — a C-style cast like
+    // `(double) @@:self.m()` — is handled at the call site by NOT
+    // injecting a terminator before an INLINE self-call (see the
+    // `inline_self_call` gate in `emit_handler_body_via_statements`);
+    // that path never reaches this heuristic. So treating `)` as
+    // statement-complete here is correct for every case that does.
     if trimmed.ends_with(|c: char| {
         matches!(
             c,
@@ -366,6 +368,19 @@ pub(crate) fn emit_handler_body_via_statements(
                         // helper excludes mid-expression positions
                         // (after `=`, binary operators, open
                         // delimiters) where a `;` would break parsing.
+                        // An INLINE self-call (e.g. `x = (double) @@:self.m()`)
+                        // continues the current expression — it is not a new
+                        // statement, so the prior-statement terminator must not
+                        // be injected. Without this gate, `needs_statement_terminator`
+                        // sees the trailing `)` of a `(double)` cast, mistakes it
+                        // for a complete statement, and splices `;` mid-expression
+                        // (`x = (double); this.m()`), which fails to compile on
+                        // C#/Java/etc. A self-call is standalone (a real new
+                        // statement) only when it starts its own line.
+                        let inline_self_call = matches!(
+                            kind,
+                            FrameSegmentKind::ContextSelfCall
+                        ) && !(out.is_empty() || out.ends_with('\n'));
                         if (is_transition
                             || matches!(
                                 kind,
@@ -373,6 +388,7 @@ pub(crate) fn emit_handler_body_via_statements(
                                     | FrameSegmentKind::ReturnStatement
                                     | FrameSegmentKind::ReturnCall
                             ))
+                            && !inline_self_call
                             && needs_statement_terminator(&out, lang)
                         {
                             let last_non_ws = out.rfind(|c: char| !c.is_whitespace());
