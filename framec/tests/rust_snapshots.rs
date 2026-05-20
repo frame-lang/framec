@@ -660,9 +660,12 @@ fn bug31_no_std_portable_paths() {
         );
     }
 
+    // NB: no `use alloc::{vec, format};` — that breaks edition-2015
+    // compilation (see FRAMEC_BUGS #31). `vec!`/`format!` come from the
+    // std prelude (hosted) or a consumer's `#[macro_use] extern crate
+    // alloc;` (no_std). The preamble carries only `extern crate alloc;`.
     for needed in [
         "extern crate alloc;",
-        "use alloc::{vec, format};",
         "alloc::rc::Rc",
         "alloc::collections::BTreeMap",
         "core::any::Any",

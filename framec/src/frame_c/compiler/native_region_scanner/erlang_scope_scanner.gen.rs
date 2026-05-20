@@ -29,7 +29,6 @@
 mod _erlang_scope_scanner_fsm_framec {
     use super::*;
     extern crate alloc;
-    use alloc::{vec, format};
     #[derive(Clone, Debug)]
     #[allow(dead_code, non_camel_case_types)]
     enum ErlangScopeScannerFsmFrameEvent {

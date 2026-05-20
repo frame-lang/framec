@@ -283,24 +283,27 @@ pub fn assemble(
                         // scope by their own `pub use`).
                         output.push_str("    use super::*;\n");
                         // RFC issue #31 (no_std): the runtime references
-                        // `alloc::rc::Rc` and `alloc::collections::BTreeMap`
-                        // (and `core::any::Any`) by portable path rather
-                        // than `std::*`, so a Frame system compiles
-                        // unchanged in both hosted and `#![no_std]` + alloc
-                        // crates. `extern crate alloc;` links the alloc
-                        // crate into this module's scope; it is a no-op in
-                        // hosted builds (std re-exports alloc) and required
-                        // on bare-metal targets. Scoped to the wrapping
-                        // `mod` so it is legal whether the file is built
-                        // standalone or pulled in via `include!()`.
+                        // `alloc::rc::Rc` / `alloc::collections::BTreeMap`
+                        // (and `core::any::Any`) by portable path rather than
+                        // `std::*`, so a Frame system compiles unchanged in
+                        // both hosted and `#![no_std]` + alloc crates.
+                        // `extern crate alloc;` links the alloc crate so those
+                        // paths resolve; it is a no-op in hosted builds (std
+                        // re-exports alloc) and required on bare-metal targets.
+                        // Scoped to the wrapping `mod` so it is legal whether
+                        // the file is built standalone or pulled in via
+                        // `include!()`.
+                        //
+                        // Deliberately NOT `use alloc::{vec, format};`: a
+                        // crate-relative `use alloc::...` fails to resolve
+                        // under edition 2015 (bare `rustc foo.rs`), which
+                        // regressed compilation that worked pre-#31 (see
+                        // FRAMEC_BUGS #31). Instead the `vec!`/`format!`
+                        // macros come from the std prelude in hosted builds
+                        // (every edition); a no_std consumer brings them in
+                        // with `#[macro_use] extern crate alloc;` at its crate
+                        // root — standard no_std practice.
                         output.push_str("    extern crate alloc;\n");
-                        // The runtime emits the `vec!` macro (and, in some
-                        // shapes, `format!`); these live in the std prelude
-                        // for hosted builds but must be imported explicitly
-                        // under no_std. Bring them in here so the module is
-                        // self-contained in both. Harmless in hosted builds
-                        // (same macros); `unused_imports` is allowed above.
-                        output.push_str("    use alloc::{vec, format};\n");
                         // Indent the generated content by 4 spaces.
                         for line in expanded.lines() {
                             if line.is_empty() {
