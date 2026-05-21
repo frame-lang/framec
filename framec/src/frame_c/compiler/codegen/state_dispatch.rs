@@ -1535,14 +1535,17 @@ pub(crate) fn generate_handler_from_arcanum(
     }
 
     // Add handler parameters — for Rust, the START STATE'S lifecycle
-    // handlers ($>, $<) bind their params from `self.__sys_<name>` in
-    // the body preamble (the constructor populates these from the
-    // system header params), so we drop them from the signature. For
-    // non-start state lifecycle handlers and all interface handlers,
-    // declared params stay in the signature.
-    let skip_handler_params = matches!(lang, TargetLanguage::Rust)
-        && (handler.is_enter || handler.is_exit)
-        && is_start_state;
+    // The start state's ENTER handler ($>) binds its params from
+    // `self.__sys_<name>` in the body preamble (the constructor populates
+    // these from the system header params), so we drop them from the
+    // signature. This is `$>`-ONLY: the start state's `<$` exit handler
+    // takes ordinary exit args (from `(args) ->` transitions that leave
+    // it), which the dispatcher binds from the typed ctx and passes as
+    // method params — so they must stay in the signature (RFC-0025.1 #35).
+    // Non-start lifecycle handlers and all interface handlers keep their
+    // declared params too.
+    let skip_handler_params =
+        matches!(lang, TargetLanguage::Rust) && handler.is_enter && is_start_state;
     if !skip_handler_params {
         for p in &handler.params {
             let type_str = p.symbol_type.as_deref().unwrap_or("Any");

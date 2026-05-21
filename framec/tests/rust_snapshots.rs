@@ -919,3 +919,90 @@ fn bug34_enter_args_type_faithful() {
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// FRAMEC_BUGS #35 / RFC-0025.1 regression — a `<$` exit handler with
+// params, on the START state, must bind its exit args from the typed
+// ctx. The start-state lifecycle special-case (which drops params for
+// the START `$>` enter handler, since those come from the system header)
+// wrongly swallowed the START `<$` exit handler too — the dispatcher
+// emitted the no-arg arm and the method signature dropped the param, so
+// `<$(code)` produced uncompilable Rust (unbound `code`). Gating that
+// special-case to `$>`-only fixes it. `$A` here IS the start state.
+// ─────────────────────────────────────────────────────────────────────
+#[test]
+fn bug35_start_state_exit_arg_binds() {
+    use std::process::Command;
+
+    let generated = compile_source(
+        r#"
+@@system Bug35 {
+    interface:
+        go()
+        seen(): int
+    machine:
+        $A {
+            go()          { (99) -> $B }
+            <$(code: int) { self.s = code }
+        }
+        $B {
+            seen(): int { @@:(self.s) }
+        }
+    domain:
+        s: int = 0
+}
+"#,
+        "rust",
+    );
+
+    // The start state's exit handler must take + bind `code` (not the
+    // no-arg start-state special-case).
+    assert!(
+        generated.contains("fn _s_A_hdl_frame_exit(&mut self, __e: &Bug35FrameEvent, code:"),
+        "start-state `<$` exit handler must keep its `code` param (#35)\n{generated}"
+    );
+    assert!(
+        generated.contains("StateContext::A(ref mut ctx)") && generated.contains("ctx.code = 99"),
+        "exit arg must write into the typed source ctx (#35)\n{generated}"
+    );
+
+    // Compile + run: the exit arg round-trips (seen == 99).
+    let tmp = std::env::temp_dir().join(format!("framec_bug35_{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&tmp);
+    let main_rs = format!(
+        "{generated}\n\
+         fn main() {{\n\
+         let mut m = Bug35::new();\n\
+         m.go();\n\
+         assert_eq!(m.seen(), 99, \"start-state exit arg did not bind\");\n\
+         }}\n"
+    );
+    let src = tmp.join("main.rs");
+    std::fs::write(&src, &main_rs).expect("write main.rs");
+    let bin = tmp.join("bug35");
+    let build = match Command::new("rustc")
+        .args(["--edition", "2021", "-o"])
+        .arg(&bin)
+        .arg(&src)
+        .output()
+    {
+        Ok(o) => o,
+        Err(_) => {
+            eprintln!("bug35_start_state_exit_arg_binds: SKIP — rustc not invokable");
+            return;
+        }
+    };
+    assert!(
+        build.status.success(),
+        "start-state exit-arg fixture failed to compile (regresses #35)\n--- rustc stderr ---\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(&bin).output().expect("run bug35 bin");
+    assert!(
+        run.status.success(),
+        "exit arg did not arrive at runtime (regresses #35)\n--- stderr ---\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}

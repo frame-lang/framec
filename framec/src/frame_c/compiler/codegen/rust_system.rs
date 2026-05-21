@@ -589,10 +589,14 @@ pub(crate) fn generate_rust_state_dispatch(
                 ));
                 continue;
             }
-            if is_start_state {
-                // Start state's lifecycle handler binds params from
-                // `self.__sys_<name>` in the body preamble; dispatcher
-                // just calls without args.
+            if is_start_state && event == "$>" {
+                // Start state's ENTER handler binds its params from the
+                // system header (`self.__sys_<name>`) via the start-chain
+                // write into the Start ctx; the dispatcher calls it without
+                // args. This applies ONLY to `$>` — the start state's `<$`
+                // exit handler takes ordinary exit args (from `(args) ->`
+                // transitions that leave it) and must bind them from the
+                // typed ctx like any other state (RFC-0025.1 #35).
                 code.push_str(&format!(
                     "    {}::{} {{ .. }} => {{ self.{}(__e); }}\n",
                     event_class, variant, handler_method
