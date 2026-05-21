@@ -148,6 +148,13 @@ For a deep dive into the compilation pipeline, runtime model, and generated code
 This is the most common type of contribution. See the detailed guide:
 [Adding a Backend](docs/contributing/adding-a-backend.md)
 
+### Cutting a Release
+
+The step-by-step release runbook — RC validation, version bump,
+changelog, tagging, and post-release monitoring:
+[Cutting a Release](docs/contributing/releasing.md). The normative
+process and rationale live in [RFC-0031](docs/rfcs/rfc-0031.md).
+
 ### Working with Generated Scanners (`.frs` → `.gen.rs`)
 
 Several internal scanners and parsers in `framec/src/frame_c/compiler/` are themselves Frame state machines. They live as paired files:
