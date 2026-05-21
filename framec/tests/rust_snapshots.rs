@@ -801,3 +801,102 @@ fn bug33_generated_compiles_no_std() {
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// FRAMEC_BUGS #34 / RFC-0025.1 regression — enter args are type-faithful
+// (Vec<Rc<dyn Any>> + downcast), NOT stringified (Vec<String> + parse).
+//
+// The old path bound `let n: i64 = args.get(0)...parse::<i64>()...`, which
+// silently defaulted on a parse miss (a literal `42` would round-trip, but
+// the contract was fragile) and was a HARD COMPILE BREAK for compound types
+// (`Vec<i64>: FromStr` not satisfied). This test asserts the dispatcher
+// downcasts, and compiles + RUNS a system exercising both a literal `int`
+// enter arg (Rust-inferred `i32`, widened to the declared `i64`) and a
+// compound `Vec<i64>` enter arg.
+// ─────────────────────────────────────────────────────────────────────
+#[test]
+fn bug34_enter_args_type_faithful() {
+    use std::process::Command;
+
+    let generated = compile_source(
+        r#"
+@@system Bug34 {
+    interface:
+        run()
+        sum(): int
+        head(): int
+    machine:
+        $Start { run() { -> (42) $Mid } }
+        $Mid {
+            $>(n: int)   { self.total = n + 1 }
+            sum(): int   { @@:(self.total) }
+            run()        { -> (self.nums) $End }
+        }
+        $End {
+            $>(nums: Vec<i64>) { self.total = nums[0] }
+            head(): int        { @@:(self.total) }
+        }
+    domain:
+        total: int = 0
+        nums: Vec<i64> = vec![10, 20]
+}
+"#,
+        "rust",
+    );
+
+    // Static contract: downcast, never stringify-and-parse.
+    assert!(
+        generated.contains("downcast_ref::<i64>"),
+        "enter arg must bind via downcast, not parse (#34)\n{generated}"
+    );
+    assert!(
+        !generated.contains("parse::<i64>"),
+        "enter arg must NOT stringify-and-parse — regresses #34\n{generated}"
+    );
+
+    // Runtime contract: literal int enter arg widens to i64 (n+1==43), and
+    // a compound Vec<i64> enter arg round-trips (head==10).
+    let tmp = std::env::temp_dir().join(format!("framec_bug34_{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&tmp);
+    let main_rs = format!(
+        "{generated}\n\
+         fn main() {{\n\
+         let mut m = Bug34::new();\n\
+         m.run();\n\
+         assert_eq!(m.sum(), 43, \"literal int enter arg did not widen to i64\");\n\
+         m.run();\n\
+         assert_eq!(m.head(), 10, \"compound Vec<i64> enter arg did not round-trip\");\n\
+         }}\n"
+    );
+    let src = tmp.join("main.rs");
+    std::fs::write(&src, &main_rs).expect("write main.rs");
+    let bin = tmp.join("bug34");
+
+    let build = Command::new("rustc")
+        .args(["--edition", "2021", "-o"])
+        .arg(&bin)
+        .arg(&src)
+        .output();
+    let build = match build {
+        Ok(o) => o,
+        Err(_) => {
+            eprintln!("bug34_enter_args_type_faithful: SKIP — rustc not invokable");
+            return;
+        }
+    };
+    assert!(
+        build.status.success(),
+        "generated Rust failed to compile (regresses #34)\n--- rustc stderr ---\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let run = Command::new(&bin).output().expect("run bug34 bin");
+    assert!(
+        run.status.success(),
+        "enter args did not arrive type-faithfully at runtime (regresses #34)\n\
+         --- stderr ---\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
