@@ -1,0 +1,233 @@
+---
+source: framec/tests/typescript_snapshots.rs
+expression: "compile_fixture(\"13_lifecycle_args\", \"typescript\")"
+---
+class LifecycleArgsFrameEvent {
+    public _message: string;
+    public _parameters: any[];
+
+    constructor(message: string, parameters: any[]) {
+        this._message = message;
+        this._parameters = parameters;
+    }
+}
+
+
+class LifecycleArgsFrameContext {
+    public event: LifecycleArgsFrameEvent;
+    public _return: any;
+    public _data: Record<string, any>;
+    public _transitioned: boolean;
+
+    constructor(event: LifecycleArgsFrameEvent, default_return: any) {
+        this.event = event;
+        this._return = default_return;
+        this._data = {  };
+        this._transitioned = false;
+    }
+}
+
+
+class LifecycleArgsCompartment {
+    public state: string;
+    public state_args: any[];
+    public state_vars: Record<string, any>;
+    public enter_args: any[];
+    public exit_args: any[];
+    public forward_event: any;
+    public parent_compartment: LifecycleArgsCompartment | null;
+
+    constructor(state: string, parent_compartment: LifecycleArgsCompartment | null = null) {
+        this.state = state;
+        this.state_args = [];
+        this.state_vars = {  };
+        this.enter_args = [];
+        this.exit_args = [];
+        this.forward_event = null;
+        this.parent_compartment = parent_compartment;
+    }
+
+    public copy(): LifecycleArgsCompartment {
+        const c = new LifecycleArgsCompartment(this.state, this.parent_compartment);
+        c.state_args = {...this.state_args};
+        c.state_vars = {...this.state_vars};
+        c.enter_args = {...this.enter_args};
+        c.exit_args = {...this.exit_args};
+        c.forward_event = this.forward_event;
+        return c;
+    }
+}
+
+
+export class LifecycleArgs {
+    private _state_stack: Array<any>;
+    private __compartment: LifecycleArgsCompartment;
+    private __next_compartment: LifecycleArgsCompartment | null;
+    private _context_stack: Array<any>;
+    private sum: number = 0;
+    private label: string = "";
+
+    constructor() {
+        this._state_stack = [];
+        this._context_stack = [];
+        this.__compartment = this.__prepareEnter("Idle", [], []);
+        this.__next_compartment = null;
+    }
+
+    _frame_init(): void {
+        const __e = new LifecycleArgsFrameEvent("$>", this.__compartment.enter_args);
+        const __ctx = new LifecycleArgsFrameContext(__e, null);
+        this._context_stack.push(__ctx);
+        this.__kernel(__e);
+        this._context_stack.pop();
+    }
+
+    static _create(): LifecycleArgs {
+        const c = new LifecycleArgs();
+        c._frame_init();
+        return c;
+    }
+
+    static readonly _HSM_CHAIN: Record<string, string[]> = {
+        "Idle": ["Idle"],
+        "Active": ["Active"],
+    };
+    private __prepareEnter(leaf: string, state_args: any[], enter_args: any[]): LifecycleArgsCompartment {
+        let comp: LifecycleArgsCompartment | null = null;
+        for (const name of LifecycleArgs._HSM_CHAIN[leaf]) {
+            const new_comp = new LifecycleArgsCompartment(name);
+            new_comp.state_args = [...state_args];
+            new_comp.enter_args = [...enter_args];
+            new_comp.parent_compartment = comp;
+            comp = new_comp;
+        }
+        return comp!;
+    }
+
+    private __prepareExit(exit_args: any[]) {
+        let comp: LifecycleArgsCompartment | null = this.__compartment;
+        while (comp !== null) {
+            comp.exit_args = [...exit_args];
+            comp = comp.parent_compartment;
+        }
+    }
+
+    private __kernel(__e: LifecycleArgsFrameEvent) {
+        // Route event to current state.
+        this.__router(__e);
+        // Drain any transitions queued by the handler.
+        while (this.__next_compartment !== null) {
+            const next_compartment = this.__next_compartment;
+            this.__next_compartment = null;
+            // Exit the current (leaf) state.
+            const exit_event = new LifecycleArgsFrameEvent("<$", this.__compartment.exit_args);
+            this.__router(exit_event);
+            // Switch to the new compartment.
+            this.__compartment = next_compartment;
+            // Three-branch forward-event handling.
+            const forward_event = next_compartment.forward_event;
+            next_compartment.forward_event = null;
+            if (forward_event === null) {
+                // No forwarded event — synthesize a fresh $>.
+                const enter_event = new LifecycleArgsFrameEvent("$>", this.__compartment.enter_args);
+                this.__router(enter_event);
+            } else if (forward_event._message === "$>") {
+                // Forwarded event IS $> — dispatch directly so the
+                // destination's $> handler receives the caller's payload.
+                this.__router(forward_event);
+            } else {
+                // Forwarded event is not $> — initialize the destination
+                // with a fresh $>, then dispatch the forward.
+                const enter_event = new LifecycleArgsFrameEvent("$>", this.__compartment.enter_args);
+                this.__router(enter_event);
+                this.__router(forward_event);
+            }
+            for (const ctx of this._context_stack) {
+                ctx._transitioned = true;
+            }
+        }
+    }
+
+    private __router(__e: LifecycleArgsFrameEvent) {
+        const handler_name = `_state_${this.__compartment.state}`;
+        const handler = (this as any)[handler_name];
+        if (handler) {
+            handler.call(this, __e, this.__compartment);
+        }
+    }
+
+    private __transition(next_compartment: LifecycleArgsCompartment) {
+        this.__next_compartment = next_compartment;
+    }
+
+    public load(n: number, label: string) {
+        const __e = new LifecycleArgsFrameEvent("load", [n, label]);
+        const __ctx = new LifecycleArgsFrameContext(__e, null);
+        this._context_stack.push(__ctx);
+        this.__kernel(__e);
+        this._context_stack.pop();
+    }
+
+    public total(): number {
+        const __e = new LifecycleArgsFrameEvent("total", []);
+        const __ctx = new LifecycleArgsFrameContext(__e, null);
+        this._context_stack.push(__ctx);
+        this.__kernel(__e);
+        return this._context_stack.pop()!._return;
+    }
+
+    public tag(): string {
+        const __e = new LifecycleArgsFrameEvent("tag", []);
+        const __ctx = new LifecycleArgsFrameContext(__e, null);
+        this._context_stack.push(__ctx);
+        this.__kernel(__e);
+        return this._context_stack.pop()!._return;
+    }
+
+    private _state_Idle(__e: LifecycleArgsFrameEvent, compartment: LifecycleArgsCompartment) {
+        if (__e._message === "load") {
+            this._s_Idle_hdl_user_load(__e, compartment);
+            return;
+        }
+    }
+
+    private _state_Active(__e: LifecycleArgsFrameEvent, compartment: LifecycleArgsCompartment) {
+        if (__e._message === "$>") {
+            this._s_Active_hdl_frame_enter(__e, compartment);
+            return;
+        }
+        if (__e._message === "tag") {
+            this._s_Active_hdl_user_tag(__e, compartment);
+            return;
+        }
+        if (__e._message === "total") {
+            this._s_Active_hdl_user_total(__e, compartment);
+            return;
+        }
+    }
+
+    private _s_Idle_hdl_user_load(__e: LifecycleArgsFrameEvent, compartment: LifecycleArgsCompartment) {
+        const n = __e._parameters[0];
+        const label = __e._parameters[1];
+        const __compartment = this.__prepareEnter("Active", [], [n, label]);
+        this.__transition(__compartment);
+        return;
+    }
+
+    private _s_Active_hdl_frame_enter(__e: LifecycleArgsFrameEvent, compartment: LifecycleArgsCompartment) {
+        const count = compartment.enter_args[0];
+        const name = compartment.enter_args[1];
+        self.sum = count + 1;
+        self.label = name;
+    }
+
+    private _s_Active_hdl_user_tag(__e: LifecycleArgsFrameEvent, compartment: LifecycleArgsCompartment) {
+        this._context_stack[this._context_stack.length - 1]._return = self.label;
+                        return
+    }
+
+    private _s_Active_hdl_user_total(__e: LifecycleArgsFrameEvent, compartment: LifecycleArgsCompartment) {
+        this._context_stack[this._context_stack.length - 1]._return = self.sum;
+                        return
+    }
+}

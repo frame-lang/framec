@@ -68,6 +68,18 @@ fn no_persist() {
     insta::assert_snapshot!(compile_fixture("12_no_persist", "rust"));
 }
 
+// RFC-0025.1 prevention fixture: a COMPOUND-typed (`list`) enter arg
+// delivered via `-> (items) $Loaded`. This is the exact shape #34 hid
+// behind — the matrix/snapshot corpus only had primitive lifecycle args
+// (and `08_lifecycle`'s `(label) ->` is a no-op, never delivering one),
+// so the Rust stringify (`Vec<String>` + `parse`) and the compound
+// hard-break (`Vec<i64>: FromStr`) went uncaught. Frozen across all 17
+// backends so any future erasure/stringify regression surfaces in the diff.
+#[test]
+fn lifecycle_args() {
+    insta::assert_snapshot!(compile_fixture("13_lifecycle_args", "rust"));
+}
+
 // ─────────────────────────────────────────────────────────────────────
 // RFC-0033 regression tests — borrowed-type promotion, lint preamble,
 // expression-form state-var initializers. Inline source so the

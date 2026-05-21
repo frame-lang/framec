@@ -1,0 +1,359 @@
+---
+source: framec/tests/rust_snapshots.rs
+expression: "compile_fixture(\"13_lifecycle_args\", \"rust\")"
+---
+#[allow(dead_code)]
+#[allow(non_camel_case_types)]
+#[allow(non_snake_case)]
+#[allow(unused_variables)]
+#[allow(unused_mut)]
+#[allow(unused_imports)]
+#[allow(clippy::assign_op_pattern)]
+#[allow(clippy::clone_on_copy)]
+#[allow(clippy::derivable_impls)]
+#[allow(clippy::match_single_binding)]
+#[allow(clippy::needless_return)]
+#[allow(clippy::new_without_default)]
+#[allow(clippy::single_match)]
+mod _lifecycle_args_framec {
+    use super::*;
+    extern crate alloc;
+    use alloc::{vec, format};
+    #[derive(Clone, Debug)]
+    #[allow(dead_code, non_camel_case_types)]
+    enum LifecycleArgsFrameEvent {
+        Load { n: i64, label: String },
+        Total {  },
+        Tag {  },
+        FrameEnter {},
+        FrameExit {},
+    }
+
+    #[derive(Clone)]
+    #[allow(dead_code, non_camel_case_types)]
+    enum LifecycleArgsFrameReturn {
+        Tag(String),
+        Total(i64),
+        _Lifecycle(alloc::rc::Rc<dyn core::any::Any>),
+    }
+
+    #[allow(dead_code)]
+    impl LifecycleArgsFrameEvent {
+        fn name(&self) -> &'static str {
+            match self {
+                LifecycleArgsFrameEvent::Load { .. } => "load",
+                LifecycleArgsFrameEvent::Total { .. } => "total",
+                LifecycleArgsFrameEvent::Tag { .. } => "tag",
+                LifecycleArgsFrameEvent::FrameEnter { .. } => "$>",
+                LifecycleArgsFrameEvent::FrameExit { .. } => "<$",
+            }
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    #[allow(dead_code, non_camel_case_types)]
+    enum LifecycleArgsFrameValue {
+        Int(i64),
+        Float(f64),
+        Bool(bool),
+        Str(String),
+        List(Vec<Self>),
+        Dict(alloc::collections::BTreeMap<String, Self>),
+    }
+
+    #[allow(dead_code, non_camel_case_types)]
+    struct LifecycleArgsFrameContext {
+        event: alloc::rc::Rc<LifecycleArgsFrameEvent>,
+        _return: Option<LifecycleArgsFrameReturn>,
+        _data: alloc::collections::BTreeMap<String, LifecycleArgsFrameValue>,
+        _transitioned: bool,
+    }
+
+    impl LifecycleArgsFrameContext {
+        fn new(event: alloc::rc::Rc<LifecycleArgsFrameEvent>, default_return: Option<LifecycleArgsFrameReturn>) -> Self {
+            Self {
+                event,
+                _return: default_return,
+                _data: alloc::collections::BTreeMap::new(),
+                _transitioned: false,
+            }
+        }
+    }
+
+    #[derive(Clone)]
+    struct ActiveContext {
+        count: i64,
+        name: String,
+    }
+
+    impl Default for ActiveContext {
+        fn default() -> Self {
+            Self {
+                count: 0,
+                name: String::new(),
+            }
+        }
+    }
+
+    #[allow(dead_code, non_camel_case_types)]
+    #[derive(Clone)]
+    enum LifecycleArgsStateContext {
+        Idle,
+        Active(ActiveContext),
+        Empty,
+    }
+
+    impl Default for LifecycleArgsStateContext {
+        fn default() -> Self {
+            LifecycleArgsStateContext::Idle
+        }
+    }
+
+    #[allow(dead_code, non_camel_case_types)]
+    #[derive(Clone)]
+    struct LifecycleArgsCompartment {
+        state: String,
+        state_context: LifecycleArgsStateContext,
+        forward_event: Option<LifecycleArgsFrameEvent>,
+        parent_compartment: Option<Box<LifecycleArgsCompartment>>,
+    }
+
+    impl LifecycleArgsCompartment {
+        fn new(state: &str) -> Self {
+            let state_context = match state {
+                "Idle" => LifecycleArgsStateContext::Idle,
+                "Active" => LifecycleArgsStateContext::Active(ActiveContext::default()),
+                _ => LifecycleArgsStateContext::Empty,
+            };
+            Self {
+                state: state.to_string(),
+                state_context,
+                forward_event: None,
+                parent_compartment: None,
+            }
+        }
+    }
+
+    #[allow(dead_code)]
+    pub struct LifecycleArgs {
+        _state_stack: Vec<LifecycleArgsCompartment>,
+        __compartment: LifecycleArgsCompartment,
+        __next_compartment: Option<LifecycleArgsCompartment>,
+        _context_stack: Vec<LifecycleArgsFrameContext>,
+        pub sum: i64,
+        pub label: String,
+    }
+
+    #[allow(non_snake_case)]
+    impl LifecycleArgs {
+        pub fn new() -> Self {
+            Self {
+                _state_stack: Vec::new(),
+                _context_stack: Vec::new(),
+                sum: (0) as i64,
+                label: String::from(""),
+                __compartment: LifecycleArgsCompartment::new("Idle"),
+                __next_compartment: None,
+            }
+        }
+
+        pub fn __create() -> Self {
+            let mut c = Self::new();
+            c.__compartment = c.__prepareEnter("Idle");
+            let __e = alloc::rc::Rc::new(LifecycleArgsFrameEvent::FrameEnter {});
+            let __ctx = LifecycleArgsFrameContext::new(alloc::rc::Rc::clone(&__e), None);
+            c._context_stack.push(__ctx);
+            c.__kernel(&__e);
+            c._context_stack.pop();
+            c
+        }
+
+        fn __hsm_chain(&mut self, leaf: &str) -> &'static [&'static str] {
+            match leaf {
+                "Idle" => &["Idle"],
+                "Active" => &["Active"],
+                _ => &[],
+            }
+        }
+
+        fn __prepareEnter(&mut self, leaf: &str) -> LifecycleArgsCompartment {
+            let chain = self.__hsm_chain(leaf);
+            let mut comp: Option<LifecycleArgsCompartment> = None;
+            for name in chain.iter() {
+                let mut new_comp = LifecycleArgsCompartment::new(name);
+                if let Some(parent) = comp.take() {
+                    new_comp.parent_compartment = Some(Box::new(parent));
+                }
+                comp = Some(new_comp);
+            }
+            comp.expect("chain must contain at least the leaf state")
+        }
+
+        fn __kernel(&mut self, __e: &alloc::rc::Rc<LifecycleArgsFrameEvent>) {
+            // Route event to current state.
+            self.__router(__e);
+            // Drain any transitions queued by the handler.
+            while self.__next_compartment.is_some() {
+                let next_compartment = self.__next_compartment.take().expect("invariant: while-loop guard checked is_some()");
+                // Exit the current (leaf) state. RFC-0025.1: exit args live in the
+                // source state's typed ctx (written at the transition site), so the
+                // synthesized `<$` event carries no payload.
+                let exit_event = alloc::rc::Rc::new(LifecycleArgsFrameEvent::FrameExit {});
+                self.__router(&exit_event);
+                // Switch to the new compartment.
+                self.__compartment = next_compartment;
+                // Three-branch forward-event handling (RFC-0025 Track B.1: forward
+                // event is matched on enum variant; $> recognition is now a
+                // structural match, not a string compare).
+                match self.__compartment.forward_event.take() {
+                    None => {
+                        // No forwarded event — synthesize a fresh $>. RFC-0025.1:
+                        // enter args live in the destination's typed ctx.
+                        let enter_event = alloc::rc::Rc::new(LifecycleArgsFrameEvent::FrameEnter {});
+                        self.__router(&enter_event);
+                    }
+                    Some(fwd) if matches!(fwd, LifecycleArgsFrameEvent::FrameEnter { .. }) => {
+                        // Forwarded event IS $> — dispatch directly so the
+                        // destination's $> handler receives the caller's payload.
+                        let fwd_rc = alloc::rc::Rc::new(fwd);
+                        self.__router(&fwd_rc);
+                    }
+                    Some(fwd) => {
+                        // Forwarded event is not $> — initialize the destination
+                        // with a fresh $>, then dispatch the forward.
+                        let enter_event = alloc::rc::Rc::new(LifecycleArgsFrameEvent::FrameEnter {});
+                        self.__router(&enter_event);
+                        let fwd_rc = alloc::rc::Rc::new(fwd);
+                        self.__router(&fwd_rc);
+                    }
+                }
+                for ctx in self._context_stack.iter_mut() {
+                    ctx._transitioned = true;
+                }
+            }
+        }
+
+        fn __router(&mut self, __e: &alloc::rc::Rc<LifecycleArgsFrameEvent>) {
+            let __ev: &LifecycleArgsFrameEvent = __e;
+            match self.__compartment.state.as_str() {
+                "Idle" => self._state_Idle(__ev),
+                "Active" => self._state_Active(__ev),
+                _ => {}
+            }
+        }
+
+        fn __transition(&mut self, next_compartment: LifecycleArgsCompartment) {
+            self.__next_compartment = Some(next_compartment);
+        }
+
+        pub fn load(&mut self, n: i64, label: String) {
+            let __e = alloc::rc::Rc::new(LifecycleArgsFrameEvent::Load { n: n.clone(), label: label.clone() });
+            let mut __ctx = LifecycleArgsFrameContext::new(alloc::rc::Rc::clone(&__e), None);
+            self._context_stack.push(__ctx);
+            self.__kernel(&__e);
+            self._context_stack.pop();
+        }
+
+        pub fn total(&mut self) -> i64 {
+            let __e = alloc::rc::Rc::new(LifecycleArgsFrameEvent::Total {});
+            let mut __ctx = LifecycleArgsFrameContext::new(alloc::rc::Rc::clone(&__e), None);
+            self._context_stack.push(__ctx);
+            self.__kernel(&__e);
+            let __ctx = self._context_stack.pop().expect("invariant: handler must have pushed a context before reading return");
+            match __ctx._return {
+                Some(LifecycleArgsFrameReturn::Total(v)) => v,
+                Some(LifecycleArgsFrameReturn::_Lifecycle(v)) => v.downcast_ref::<i64>().cloned().unwrap_or_default(),
+                _ => Default::default(),
+            }
+        }
+
+        pub fn tag(&mut self) -> String {
+            let __e = alloc::rc::Rc::new(LifecycleArgsFrameEvent::Tag {});
+            let mut __ctx = LifecycleArgsFrameContext::new(alloc::rc::Rc::clone(&__e), None);
+            self._context_stack.push(__ctx);
+            self.__kernel(&__e);
+            let __ctx = self._context_stack.pop().expect("invariant: handler must have pushed a context before reading return");
+            match __ctx._return {
+                Some(LifecycleArgsFrameReturn::Tag(v)) => v,
+                Some(LifecycleArgsFrameReturn::_Lifecycle(v)) => v.downcast_ref::<String>().cloned().unwrap_or_default(),
+                _ => Default::default(),
+            }
+        }
+
+        fn _state_Idle(&mut self, __e: &LifecycleArgsFrameEvent) {
+            match __e {
+                LifecycleArgsFrameEvent::Load { n, label, .. } => {
+                    self._s_Idle_hdl_user_load(__e, *n, label.clone());
+                }
+                _ => {}
+            }
+        }
+
+        fn _state_Active(&mut self, __e: &LifecycleArgsFrameEvent) {
+            match __e {
+                LifecycleArgsFrameEvent::FrameEnter { .. } => {
+                    let count = {
+                        let mut __sc = &self.__compartment;
+                        while __sc.state != "Active" {
+                            match __sc.parent_compartment.as_deref() {
+                                Some(p) => __sc = p,
+                                None => break,
+                            }
+                        }
+                        match &__sc.state_context {
+                            LifecycleArgsStateContext::Active(ctx) => ctx.count.clone(),
+                            _ => Default::default(),
+                        }
+                    };
+                    let name = {
+                        let mut __sc = &self.__compartment;
+                        while __sc.state != "Active" {
+                            match __sc.parent_compartment.as_deref() {
+                                Some(p) => __sc = p,
+                                None => break,
+                            }
+                        }
+                        match &__sc.state_context {
+                            LifecycleArgsStateContext::Active(ctx) => ctx.name.clone(),
+                            _ => Default::default(),
+                        }
+                    };
+                    self._s_Active_hdl_frame_enter(__e, count, name);
+                }
+                LifecycleArgsFrameEvent::Tag { .. } => { self._s_Active_hdl_user_tag(__e); }
+                LifecycleArgsFrameEvent::Total { .. } => { self._s_Active_hdl_user_total(__e); }
+                _ => {}
+            }
+        }
+
+        fn _s_Idle_hdl_user_load(&mut self, __e: &LifecycleArgsFrameEvent, n: i64, label: String) {
+            let mut __compartment = self.__prepareEnter("Active");
+            {
+                if let LifecycleArgsStateContext::Active(ref mut ctx) = __compartment.state_context {
+                    ctx.count = n;
+                    ctx.name = label;
+                }
+            }
+            self.__transition(__compartment);
+            return;
+        }
+
+        fn _s_Active_hdl_frame_enter(&mut self, __e: &LifecycleArgsFrameEvent, count: i64, name: String) {
+            self.sum = count + 1;
+            self.label = name;
+        }
+
+        fn _s_Active_hdl_user_tag(&mut self, __e: &LifecycleArgsFrameEvent) {
+            let __return_val = LifecycleArgsFrameReturn::Tag(self.label.clone());
+                            if let Some(ctx) = self._context_stack.last_mut() { ctx._return = Some(__return_val); }
+                            return;
+        }
+
+        fn _s_Active_hdl_user_total(&mut self, __e: &LifecycleArgsFrameEvent) {
+            let __return_val = LifecycleArgsFrameReturn::Total((self.sum) as i64);
+                            if let Some(ctx) = self._context_stack.last_mut() { ctx._return = Some(__return_val); }
+                            return;
+        }
+    }
+}
+pub use _lifecycle_args_framec::*;

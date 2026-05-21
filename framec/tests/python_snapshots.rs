@@ -79,6 +79,11 @@ fn no_persist() {
     insta::assert_snapshot!(compile_fixture("12_no_persist", "python_3"));
 }
 
+#[test]
+fn lifecycle_args() {
+    insta::assert_snapshot!(compile_fixture("13_lifecycle_args", "python_3"));
+}
+
 /// RFC-0034: every canonical fixture's framec-emitted Python
 /// output must parse cleanly under `python3 -m py_compile`. Closes
 /// the snapshot-doesn't-compile gap for Python — snapshots only

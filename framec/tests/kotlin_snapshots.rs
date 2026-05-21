@@ -67,3 +67,8 @@ fn consts() {
 fn no_persist() {
     insta::assert_snapshot!(compile_fixture("12_no_persist", "kotlin"));
 }
+
+#[test]
+fn lifecycle_args() {
+    insta::assert_snapshot!(compile_fixture("13_lifecycle_args", "kotlin"));
+}

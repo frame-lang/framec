@@ -68,6 +68,11 @@ fn no_persist() {
     insta::assert_snapshot!(compile_fixture("12_no_persist", "csharp"));
 }
 
+#[test]
+fn lifecycle_args() {
+    insta::assert_snapshot!(compile_fixture("13_lifecycle_args", "csharp"));
+}
+
 // ─────────────────────────────────────────────────────────────────────
 // FRAMEC_BUGS #32 regression — a type-cast directly before an inline
 // `@@:self.method()` self-call must not get a spurious statement
