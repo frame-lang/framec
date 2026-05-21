@@ -1218,7 +1218,7 @@ this._context_stack.pop();"#,
                     )
                 }
                 TargetLanguage::Rust => format!(
-                    r#"let __e = alloc::rc::Rc::new({}::FrameEnter {{ args: self.__compartment.enter_args.clone() }});
+                    r#"let __e = alloc::rc::Rc::new({}::FrameEnter {{}});
 let __ctx = {}FrameContext::new(alloc::rc::Rc::clone(&__e), None);
 self._context_stack.push(__ctx);
 self.__kernel(&__e);

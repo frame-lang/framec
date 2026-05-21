@@ -1123,8 +1123,12 @@ fn generate_rust_runtime_types(
     // methods literally named `frame_enter` / `frame_exit`).
     // RFC-0025.1: lifecycle args are carried type-faithfully as
     // `Rc<dyn Any>` (same as the `_Lifecycle` return), NOT stringified.
-    code.push_str("    FrameEnter { args: Vec<alloc::rc::Rc<dyn core::any::Any>> },\n");
-    code.push_str("    FrameExit { args: Vec<alloc::rc::Rc<dyn core::any::Any>> },\n");
+    // RFC-0025.1: lifecycle events carry NO payload — enter/exit args live
+    // in the destination/source state's typed `StateContext` (written at
+    // the transition site, read by the handler). Empty struct variants so
+    // existing `{ .. }` match arms keep working.
+    code.push_str("    FrameEnter {},\n");
+    code.push_str("    FrameExit {},\n");
     code.push_str("}\n\n");
 
     // Build return-type lookup keyed by event name, merging
@@ -1400,11 +1404,10 @@ fn generate_rust_runtime_types(
         "    state_context: {}StateContext,\n",
         system_name
     ));
-    // RFC-0025.1: type-faithful lifecycle args (not stringified). Not
-    // persisted — `persistence.rs` serializes StateContext / stack /
-    // domain only — so `Rc<dyn Any>` (Clone, no Serialize) is fine.
-    code.push_str("    enter_args: Vec<alloc::rc::Rc<dyn core::any::Any>>,\n");
-    code.push_str("    exit_args: Vec<alloc::rc::Rc<dyn core::any::Any>>,\n");
+    // RFC-0025.1: no `enter_args`/`exit_args` fields — lifecycle args are
+    // carried in the typed per-state `StateContext` (written at the
+    // transition site, read by the handler), so the compartment holds only
+    // the durable state + the typed context.
     code.push_str(&format!(
         "    forward_event: Option<{}FrameEvent>,\n",
         system_name
@@ -1445,8 +1448,6 @@ fn generate_rust_runtime_types(
     code.push_str("        Self {\n");
     code.push_str("            state: state.to_string(),\n");
     code.push_str("            state_context,\n");
-    code.push_str("            enter_args: Vec::new(),\n");
-    code.push_str("            exit_args: Vec::new(),\n");
     code.push_str("            forward_event: None,\n");
     code.push_str("            parent_compartment: None,\n");
     code.push_str("        }\n");

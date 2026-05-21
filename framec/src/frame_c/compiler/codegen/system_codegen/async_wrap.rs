@@ -230,7 +230,7 @@ this._context_stack.pop();"#,
                 // before pushing the context and dispatching.
                 // RFC-0025 Track B.1: $> is the FrameEnter variant
                 // (lifecycle args are empty for the no-args async case).
-                r#"let __e = alloc::rc::Rc::new({s}FrameEvent::FrameEnter {{ args: Vec::new() }});
+                r#"let __e = alloc::rc::Rc::new({s}FrameEvent::FrameEnter {{}});
 let __ctx = {s}FrameContext::new(alloc::rc::Rc::clone(&__e), None);
 self._context_stack.push(__ctx);
 self.__kernel(&__e).await;

@@ -64,7 +64,12 @@ pub(crate) fn generate_rust_persistence_methods(system: &SystemAst) -> Vec<Codeg
             // value. Iterate BOTH so all Context fields land in
             // the saved JSON. Same root pattern as the JSON-backend
             // persist sweep (framepiler 8fd22d2).
-            let has_ctx_fields = !state.state_vars.is_empty() || !state.params.is_empty();
+            // RFC-0025.1: the variant shape must match the enum, which is
+            // a tuple variant whenever the state has params, ENTER/EXIT
+            // params, or state vars. But we serialize only the DURABLE
+            // fields (state params + state vars) — enter/exit args are
+            // transition-transient and deliberately not persisted.
+            let has_ctx_fields = super::rust_state_has_ctx(state);
             if !has_ctx_fields {
                 save_body.push_str(&format!(
                     "        {}StateContext::{} => serde_json::json!({{}}),\n",
@@ -175,7 +180,11 @@ pub(crate) fn generate_rust_persistence_methods(system: &SystemAst) -> Vec<Codeg
             // reconstructed correctly. State-args declared via
             // `$S(x: int)` end up in state.params with the type
             // info needed for json extraction.
-            let has_ctx_fields = !state.state_vars.is_empty() || !state.params.is_empty();
+            // RFC-0025.1: match the enum's tuple/unit decision. Restore
+            // only the DURABLE fields (state params + state vars); the
+            // Context's transient enter/exit-arg fields are filled by
+            // `..Default::default()` (they're not persisted).
+            let has_ctx_fields = super::rust_state_has_ctx(state);
             if !has_ctx_fields {
                 restore_body.push_str(&format!(
                     "        \"{}\" => {}StateContext::{},\n",
@@ -196,6 +205,7 @@ pub(crate) fn generate_rust_persistence_methods(system: &SystemAst) -> Vec<Codeg
                     restore_body
                         .push_str(&format!("            {}: {},\n", var.name, json_extract));
                 }
+                restore_body.push_str("            ..Default::default()\n");
                 restore_body.push_str("        }),\n");
             }
         }

@@ -80,10 +80,7 @@ impl MachineryGenerator for RustMachinery {
         // docs/frame_runtime.md § "How propagation works in the runtime").
         Some(CodegenNode::Method {
             name: "__prepareEnter".to_string(),
-            params: vec![
-                Param::new("leaf").with_type("&str"),
-                Param::new("enter_args").with_type("Vec<alloc::rc::Rc<dyn core::any::Any>>"),
-            ],
+            params: vec![Param::new("leaf").with_type("&str")],
             return_type: Some(compartment_class.to_string()),
             body: vec![CodegenNode::NativeBlock {
                 code: format!(
@@ -91,7 +88,6 @@ impl MachineryGenerator for RustMachinery {
 let mut comp: Option<{0}> = None;
 for name in chain.iter() {{
     let mut new_comp = {0}::new(name);
-    new_comp.enter_args = enter_args.clone();
     if let Some(parent) = comp.take() {{
         new_comp.parent_compartment = Some(Box::new(parent));
     }}
@@ -110,28 +106,12 @@ comp.expect("chain must contain at least the leaf state")"#,
     }
 
     fn emit_prepare_exit(&self, _system: &SystemAst) -> Option<CodegenNode> {
-        // __prepareExit — populate exit_args on every layer of current chain.
-        Some(CodegenNode::Method {
-            name: "__prepareExit".to_string(),
-            params: vec![
-                Param::new("exit_args").with_type("Vec<alloc::rc::Rc<dyn core::any::Any>>")
-            ],
-            return_type: None,
-            body: vec![CodegenNode::NativeBlock {
-                code: r#"self.__compartment.exit_args = exit_args.clone();
-let mut cursor = self.__compartment.parent_compartment.as_deref_mut();
-while let Some(c) = cursor {
-    c.exit_args = exit_args.clone();
-    cursor = c.parent_compartment.as_deref_mut();
-}"#
-                .to_string(),
-                span: None,
-            }],
-            is_async: false,
-            is_static: false,
-            visibility: Visibility::Private,
-            decorators: vec![],
-        })
+        // RFC-0025.1: exit args now write directly into the source state's
+        // typed `StateContext` ctx field at the transition site (see
+        // `rust_expand_transition`), so the old `__prepareExit` helper —
+        // which populated a type-erased `exit_args` Vec on every source
+        // layer — is no longer needed.
+        None
     }
 
     fn emit_route_to_state(&self, _system: &SystemAst) -> Option<CodegenNode> {
@@ -171,9 +151,10 @@ self.__router(__e);
 // Drain any transitions queued by the handler.
 while self.__next_compartment.is_some() {{
     let next_compartment = self.__next_compartment.take().expect("invariant: while-loop guard checked is_some()");
-    // Exit the current (leaf) state.
-    let exit_args = self.__compartment.exit_args.clone();
-    let exit_event = alloc::rc::Rc::new({evt}::FrameExit {{ args: exit_args }});
+    // Exit the current (leaf) state. RFC-0025.1: exit args live in the
+    // source state's typed ctx (written at the transition site), so the
+    // synthesized `<$` event carries no payload.
+    let exit_event = alloc::rc::Rc::new({evt}::FrameExit {{}});
     self.__router(&exit_event);
     // Switch to the new compartment.
     self.__compartment = next_compartment;
@@ -182,9 +163,9 @@ while self.__next_compartment.is_some() {{
     // structural match, not a string compare).
     match self.__compartment.forward_event.take() {{
         None => {{
-            // No forwarded event — synthesize a fresh $>.
-            let enter_args = self.__compartment.enter_args.clone();
-            let enter_event = alloc::rc::Rc::new({evt}::FrameEnter {{ args: enter_args }});
+            // No forwarded event — synthesize a fresh $>. RFC-0025.1:
+            // enter args live in the destination's typed ctx.
+            let enter_event = alloc::rc::Rc::new({evt}::FrameEnter {{}});
             self.__router(&enter_event);
         }}
         Some(fwd) if matches!(fwd, {evt}::FrameEnter {{ .. }}) => {{
@@ -196,8 +177,7 @@ while self.__next_compartment.is_some() {{
         Some(fwd) => {{
             // Forwarded event is not $> — initialize the destination
             // with a fresh $>, then dispatch the forward.
-            let enter_args = self.__compartment.enter_args.clone();
-            let enter_event = alloc::rc::Rc::new({evt}::FrameEnter {{ args: enter_args }});
+            let enter_event = alloc::rc::Rc::new({evt}::FrameEnter {{}});
             self.__router(&enter_event);
             let fwd_rc = alloc::rc::Rc::new(fwd);
             self.__router(&fwd_rc);

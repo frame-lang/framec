@@ -64,6 +64,20 @@ pub(crate) fn rust_state_has_ctx(state: &StateAst) -> bool {
     !state.state_vars.is_empty() || !rust_ctx_param_fields(state).is_empty()
 }
 
+/// Coerce a transition-arg value expression for assignment into a typed
+/// `StateContext` ctx field. A string literal is `&str` but the field is
+/// `String`, so wrap it in `.to_string()`. Numeric/bool literals coerce to
+/// the field type at the bare assignment (`ctx.n = 42` where `n: i64`);
+/// expanded domain reads already `.clone()`. Used for state args AND
+/// enter/exit args so the typed-ctx write is uniform.
+fn coerce_ctx_field_value(v: &str) -> String {
+    if v.trim_start().starts_with('"') {
+        format!("({}).to_string()", v)
+    } else {
+        v.to_string()
+    }
+}
+
 /// Split a transition arg-expression list (`"1, 2"` or `"a=1, b=2"`) into
 /// just the value expressions, in declaration order. Mirrors the `'='`
 /// split the state-args path already uses for the optional `name=` form.
@@ -411,31 +425,37 @@ fn generate_rust_constructor(system: &SystemAst) -> CodegenNode {
                 CodegenNode::Ident("None".to_string()),
             ));
 
-            // Build the start chain via __prepareEnter, passing system
-            // header EnterArg params as the enter_args payload. The
-            // helper writes the Vec into every layer's `enter_args`
-            // field so the cascade's per-layer `$>` events all see the
-            // same args (signature-match rule).
-            let enter_arg_pushes: Vec<String> = system
-                .params
-                .iter()
-                .filter(|p| matches!(p.kind, ParamKind::EnterArg))
-                // RFC-0025.1: type-faithful enter args (Rc<dyn Any>), not stringified.
-                .map(|p| {
-                    format!(
-                        "alloc::rc::Rc::new(self.__sys_{}.clone()) as alloc::rc::Rc<dyn core::any::Any>",
-                        p.name
-                    )
-                })
-                .collect();
+            // Build the start chain. RFC-0025.1: system-header EnterArg
+            // params (the start state's `$>` params) are written into the
+            // Start state's typed `StateContext` ctx field — not a
+            // type-erased Vec — coercing at the typed assignment exactly
+            // like every other enter arg.
             body.push(CodegenNode::NativeBlock {
                 code: format!(
-                    "self.__compartment = self.__prepareEnter(\"{}\", vec![{}]);",
-                    first_state.name,
-                    enter_arg_pushes.join(", ")
+                    "self.__compartment = self.__prepareEnter(\"{}\");",
+                    first_state.name
                 ),
                 span: None,
             });
+            let sys_enter_params: Vec<String> = system
+                .params
+                .iter()
+                .filter(|p| matches!(p.kind, ParamKind::EnterArg))
+                .map(|p| p.name.clone())
+                .collect();
+            if !sys_enter_params.is_empty() {
+                let mut writes = String::new();
+                for name in &sys_enter_params {
+                    writes.push_str(&format!("    ctx.{0} = self.__sys_{0}.clone();\n", name));
+                }
+                body.push(CodegenNode::NativeBlock {
+                    code: format!(
+                        "if let {0}StateContext::{1}(ref mut ctx) = self.__compartment.state_context {{\n{2}}}",
+                        system.name, first_state.name, writes
+                    ),
+                    span: None,
+                });
+            }
 
             // RFC-0019: dispatch the start state's `$>` event to the
             // leaf (like an interface call), inside a FrameContext (so
@@ -454,7 +474,7 @@ fn generate_rust_constructor(system: &SystemAst) -> CodegenNode {
             // parameters are typed).
             body.push(CodegenNode::NativeBlock {
                 code: format!(
-                    "let __e = alloc::rc::Rc::new({}::FrameEnter {{ args: self.__compartment.enter_args.clone() }});\n\
+                    "let __e = alloc::rc::Rc::new({}::FrameEnter {{}});\n\
                      let __ctx = {}::new(alloc::rc::Rc::clone(&__e), None);\n\
                      self._context_stack.push(__ctx);\n\
                      self.__kernel(&__e);\n\
@@ -977,7 +997,12 @@ pub(crate) fn rust_expand_transition(
             ));
             for (i, v) in vals.iter().enumerate() {
                 if let Some(name) = exit_names.get(i) {
-                    code.push_str(&format!("{}    ctx.{} = {};\n", indent_str, name, v));
+                    code.push_str(&format!(
+                        "{}    ctx.{} = {};\n",
+                        indent_str,
+                        name,
+                        coerce_ctx_field_value(v)
+                    ));
                 }
             }
             code.push_str(&format!("{}}}\n", indent_str));
@@ -1018,7 +1043,12 @@ pub(crate) fn rust_expand_transition(
                 ));
                 for (i, v) in vals.iter().enumerate() {
                     if let Some(name) = leaf_names.get(i) {
-                        code.push_str(&format!("{}        ctx.{} = {};\n", indent_str, name, v));
+                        code.push_str(&format!(
+                            "{}        ctx.{} = {};\n",
+                            indent_str,
+                            name,
+                            coerce_ctx_field_value(v)
+                        ));
                     }
                 }
                 code.push_str(&format!("{}    }}\n", indent_str));
@@ -1047,7 +1077,12 @@ pub(crate) fn rust_expand_transition(
                 ));
                 for (i, v) in vals.iter().enumerate() {
                     if let Some(name) = anames.get(i) {
-                        code.push_str(&format!("{}            ctx.{} = {};\n", indent_str, name, v));
+                        code.push_str(&format!(
+                            "{}            ctx.{} = {};\n",
+                            indent_str,
+                            name,
+                            coerce_ctx_field_value(v)
+                        ));
                     }
                 }
                 code.push_str(&format!("{}        }}\n", indent_str));
@@ -1116,7 +1151,12 @@ pub(crate) fn rust_expand_transition(
                 indent_str, ctx.system_name, leaf
             ));
             for (k, v) in &arg_values {
-                code.push_str(&format!("{}        ctx.{} = {};\n", indent_str, k, v));
+                code.push_str(&format!(
+                    "{}        ctx.{} = {};\n",
+                    indent_str,
+                    k,
+                    coerce_ctx_field_value(v)
+                ));
             }
             code.push_str(&format!("{}    }}\n", indent_str));
 
@@ -1153,7 +1193,9 @@ pub(crate) fn rust_expand_transition(
                     if let Some(field_name) = ancestor_params.get(i) {
                         code.push_str(&format!(
                             "{}            ctx.{} = {};\n",
-                            indent_str, field_name, v
+                            indent_str,
+                            field_name,
+                            coerce_ctx_field_value(v)
                         ));
                     }
                 }
@@ -1188,7 +1230,7 @@ pub(crate) fn rust_expand_forward_transition(
     // forwarded event carries its own params, dispatched after the
     // enter cascade by __process_transition_loop.
     code.push_str(&format!(
-        "{}let mut __compartment = self.__prepareEnter(\"{}\", Vec::new());\n",
+        "{}let mut __compartment = self.__prepareEnter(\"{}\");\n",
         indent_str, target
     ));
     code.push_str(&format!(
@@ -1535,7 +1577,7 @@ pub(crate) fn rust_push_transition(
 ) -> String {
     format!(
         "{0}self._state_stack.push(self.__compartment.clone());\n\
-         {0}let __compartment = self.__prepareEnter(\"{1}\", Vec::new());\n\
+         {0}let __compartment = self.__prepareEnter(\"{1}\");\n\
          {0}self.__transition(__compartment);\n\
          {0}return;",
         indent_str, target
