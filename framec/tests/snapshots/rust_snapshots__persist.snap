@@ -24,8 +24,8 @@ mod _counter_framec {
     enum CounterFrameEvent {
         Increment { by: i32 },
         Value {  },
-        FrameEnter { args: Vec<String> },
-        FrameExit { args: Vec<String> },
+        FrameEnter { args: Vec<alloc::rc::Rc<dyn core::any::Any>> },
+        FrameExit { args: Vec<alloc::rc::Rc<dyn core::any::Any>> },
     }
 
     #[derive(Clone)]
@@ -95,8 +95,8 @@ mod _counter_framec {
     struct CounterCompartment {
         state: String,
         state_context: CounterStateContext,
-        enter_args: Vec<String>,
-        exit_args: Vec<String>,
+        enter_args: Vec<alloc::rc::Rc<dyn core::any::Any>>,
+        exit_args: Vec<alloc::rc::Rc<dyn core::any::Any>>,
         forward_event: Option<CounterFrameEvent>,
         parent_compartment: Option<Box<CounterCompartment>>,
     }
@@ -157,7 +157,7 @@ mod _counter_framec {
             }
         }
 
-        fn __prepareEnter(&mut self, leaf: &str, enter_args: Vec<String>) -> CounterCompartment {
+        fn __prepareEnter(&mut self, leaf: &str, enter_args: Vec<alloc::rc::Rc<dyn core::any::Any>>) -> CounterCompartment {
             let chain = self.__hsm_chain(leaf);
             let mut comp: Option<CounterCompartment> = None;
             for name in chain.iter() {
@@ -171,7 +171,7 @@ mod _counter_framec {
             comp.expect("chain must contain at least the leaf state")
         }
 
-        fn __prepareExit(&mut self, exit_args: Vec<String>) {
+        fn __prepareExit(&mut self, exit_args: Vec<alloc::rc::Rc<dyn core::any::Any>>) {
             self.__compartment.exit_args = exit_args.clone();
             let mut cursor = self.__compartment.parent_compartment.as_deref_mut();
             while let Some(c) = cursor {

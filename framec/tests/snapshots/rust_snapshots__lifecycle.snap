@@ -24,8 +24,8 @@ mod _lifecycle_framec {
     enum LifecycleFrameEvent {
         Start { label: String },
         Stop {  },
-        FrameEnter { args: Vec<String> },
-        FrameExit { args: Vec<String> },
+        FrameEnter { args: Vec<alloc::rc::Rc<dyn core::any::Any>> },
+        FrameExit { args: Vec<alloc::rc::Rc<dyn core::any::Any>> },
     }
 
     #[derive(Clone)]
@@ -95,8 +95,8 @@ mod _lifecycle_framec {
     struct LifecycleCompartment {
         state: String,
         state_context: LifecycleStateContext,
-        enter_args: Vec<String>,
-        exit_args: Vec<String>,
+        enter_args: Vec<alloc::rc::Rc<dyn core::any::Any>>,
+        exit_args: Vec<alloc::rc::Rc<dyn core::any::Any>>,
         forward_event: Option<LifecycleFrameEvent>,
         parent_compartment: Option<Box<LifecycleCompartment>>,
     }
@@ -163,7 +163,7 @@ mod _lifecycle_framec {
             }
         }
 
-        fn __prepareEnter(&mut self, leaf: &str, enter_args: Vec<String>) -> LifecycleCompartment {
+        fn __prepareEnter(&mut self, leaf: &str, enter_args: Vec<alloc::rc::Rc<dyn core::any::Any>>) -> LifecycleCompartment {
             let chain = self.__hsm_chain(leaf);
             let mut comp: Option<LifecycleCompartment> = None;
             for name in chain.iter() {
@@ -177,7 +177,7 @@ mod _lifecycle_framec {
             comp.expect("chain must contain at least the leaf state")
         }
 
-        fn __prepareExit(&mut self, exit_args: Vec<String>) {
+        fn __prepareExit(&mut self, exit_args: Vec<alloc::rc::Rc<dyn core::any::Any>>) {
             self.__compartment.exit_args = exit_args.clone();
             let mut cursor = self.__compartment.parent_compartment.as_deref_mut();
             while let Some(c) = cursor {
@@ -272,7 +272,7 @@ mod _lifecycle_framec {
             match __e {
                 LifecycleFrameEvent::FrameExit { .. } => { self._s_Running_hdl_frame_exit(__e); }
                 LifecycleFrameEvent::FrameEnter { args } => {
-                    let label: String = args.get(0).cloned().unwrap_or_default();
+                    let label: String = args.get(0).and_then(|a| a.downcast_ref::<String>().cloned().or_else(|| a.downcast_ref::<&str>().map(|s| s.to_string()))).unwrap_or_default();
                     self._s_Running_hdl_frame_enter(__e, label);
                 }
                 LifecycleFrameEvent::Stop { .. } => { self._s_Running_hdl_user_stop(__e); }

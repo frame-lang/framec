@@ -31,8 +31,8 @@ mod _swift_map_type_framec {
     #[allow(dead_code, non_camel_case_types)]
     enum SwiftMapTypeFrameEvent {
         Map { t: String },
-        FrameEnter { args: Vec<String> },
-        FrameExit { args: Vec<String> },
+        FrameEnter { args: Vec<alloc::rc::Rc<dyn core::any::Any>> },
+        FrameExit { args: Vec<alloc::rc::Rc<dyn core::any::Any>> },
     }
 
     #[derive(Clone)]
@@ -101,8 +101,8 @@ mod _swift_map_type_framec {
     struct SwiftMapTypeCompartment {
         state: String,
         state_context: SwiftMapTypeStateContext,
-        enter_args: Vec<String>,
-        exit_args: Vec<String>,
+        enter_args: Vec<alloc::rc::Rc<dyn core::any::Any>>,
+        exit_args: Vec<alloc::rc::Rc<dyn core::any::Any>>,
         forward_event: Option<SwiftMapTypeFrameEvent>,
         parent_compartment: Option<Box<SwiftMapTypeCompartment>>,
     }
@@ -161,7 +161,7 @@ mod _swift_map_type_framec {
             }
         }
 
-        fn __prepareEnter(&mut self, leaf: &str, enter_args: Vec<String>) -> SwiftMapTypeCompartment {
+        fn __prepareEnter(&mut self, leaf: &str, enter_args: Vec<alloc::rc::Rc<dyn core::any::Any>>) -> SwiftMapTypeCompartment {
             let chain = self.__hsm_chain(leaf);
             let mut comp: Option<SwiftMapTypeCompartment> = None;
             for name in chain.iter() {
@@ -175,7 +175,7 @@ mod _swift_map_type_framec {
             comp.expect("chain must contain at least the leaf state")
         }
 
-        fn __prepareExit(&mut self, exit_args: Vec<String>) {
+        fn __prepareExit(&mut self, exit_args: Vec<alloc::rc::Rc<dyn core::any::Any>>) {
             self.__compartment.exit_args = exit_args.clone();
             let mut cursor = self.__compartment.parent_compartment.as_deref_mut();
             while let Some(c) = cursor {

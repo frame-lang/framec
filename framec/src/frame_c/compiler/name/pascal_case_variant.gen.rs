@@ -38,8 +38,8 @@ mod _pascal_case_variant_framec {
     #[allow(dead_code, non_camel_case_types)]
     enum PascalCaseVariantFrameEvent {
         Convert { s: String },
-        FrameEnter { args: Vec<String> },
-        FrameExit { args: Vec<String> },
+        FrameEnter { args: Vec<alloc::rc::Rc<dyn core::any::Any>> },
+        FrameExit { args: Vec<alloc::rc::Rc<dyn core::any::Any>> },
     }
 
     #[derive(Clone)]
@@ -108,8 +108,8 @@ mod _pascal_case_variant_framec {
     struct PascalCaseVariantCompartment {
         state: String,
         state_context: PascalCaseVariantStateContext,
-        enter_args: Vec<String>,
-        exit_args: Vec<String>,
+        enter_args: Vec<alloc::rc::Rc<dyn core::any::Any>>,
+        exit_args: Vec<alloc::rc::Rc<dyn core::any::Any>>,
         forward_event: Option<PascalCaseVariantFrameEvent>,
         parent_compartment: Option<Box<PascalCaseVariantCompartment>>,
     }
@@ -168,7 +168,7 @@ mod _pascal_case_variant_framec {
             }
         }
 
-        fn __prepareEnter(&mut self, leaf: &str, enter_args: Vec<String>) -> PascalCaseVariantCompartment {
+        fn __prepareEnter(&mut self, leaf: &str, enter_args: Vec<alloc::rc::Rc<dyn core::any::Any>>) -> PascalCaseVariantCompartment {
             let chain = self.__hsm_chain(leaf);
             let mut comp: Option<PascalCaseVariantCompartment> = None;
             for name in chain.iter() {
@@ -182,7 +182,7 @@ mod _pascal_case_variant_framec {
             comp.expect("chain must contain at least the leaf state")
         }
 
-        fn __prepareExit(&mut self, exit_args: Vec<String>) {
+        fn __prepareExit(&mut self, exit_args: Vec<alloc::rc::Rc<dyn core::any::Any>>) {
             self.__compartment.exit_args = exit_args.clone();
             let mut cursor = self.__compartment.parent_compartment.as_deref_mut();
             while let Some(c) = cursor {

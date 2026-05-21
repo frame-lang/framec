@@ -40,8 +40,8 @@ mod _rust_map_type_framec {
     #[allow(dead_code, non_camel_case_types)]
     enum RustMapTypeFrameEvent {
         Map { t: String },
-        FrameEnter { args: Vec<String> },
-        FrameExit { args: Vec<String> },
+        FrameEnter { args: Vec<alloc::rc::Rc<dyn core::any::Any>> },
+        FrameExit { args: Vec<alloc::rc::Rc<dyn core::any::Any>> },
     }
 
     #[derive(Clone)]
@@ -110,8 +110,8 @@ mod _rust_map_type_framec {
     struct RustMapTypeCompartment {
         state: String,
         state_context: RustMapTypeStateContext,
-        enter_args: Vec<String>,
-        exit_args: Vec<String>,
+        enter_args: Vec<alloc::rc::Rc<dyn core::any::Any>>,
+        exit_args: Vec<alloc::rc::Rc<dyn core::any::Any>>,
         forward_event: Option<RustMapTypeFrameEvent>,
         parent_compartment: Option<Box<RustMapTypeCompartment>>,
     }
@@ -170,7 +170,7 @@ mod _rust_map_type_framec {
             }
         }
 
-        fn __prepareEnter(&mut self, leaf: &str, enter_args: Vec<String>) -> RustMapTypeCompartment {
+        fn __prepareEnter(&mut self, leaf: &str, enter_args: Vec<alloc::rc::Rc<dyn core::any::Any>>) -> RustMapTypeCompartment {
             let chain = self.__hsm_chain(leaf);
             let mut comp: Option<RustMapTypeCompartment> = None;
             for name in chain.iter() {
@@ -184,7 +184,7 @@ mod _rust_map_type_framec {
             comp.expect("chain must contain at least the leaf state")
         }
 
-        fn __prepareExit(&mut self, exit_args: Vec<String>) {
+        fn __prepareExit(&mut self, exit_args: Vec<alloc::rc::Rc<dyn core::any::Any>>) {
             self.__compartment.exit_args = exit_args.clone();
             let mut cursor = self.__compartment.parent_compartment.as_deref_mut();
             while let Some(c) = cursor {

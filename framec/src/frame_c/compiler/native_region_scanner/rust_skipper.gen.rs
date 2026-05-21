@@ -31,8 +31,8 @@ mod _rust_syntax_skipper_fsm_framec {
         DoSkipString {  },
         DoFindLineEnd {  },
         DoBalancedParenEnd {  },
-        FrameEnter { args: Vec<String> },
-        FrameExit { args: Vec<String> },
+        FrameEnter { args: Vec<alloc::rc::Rc<dyn core::any::Any>> },
+        FrameExit { args: Vec<alloc::rc::Rc<dyn core::any::Any>> },
     }
 
     #[derive(Clone)]
@@ -107,8 +107,8 @@ mod _rust_syntax_skipper_fsm_framec {
     struct RustSyntaxSkipperFsmCompartment {
         state: String,
         state_context: RustSyntaxSkipperFsmStateContext,
-        enter_args: Vec<String>,
-        exit_args: Vec<String>,
+        enter_args: Vec<alloc::rc::Rc<dyn core::any::Any>>,
+        exit_args: Vec<alloc::rc::Rc<dyn core::any::Any>>,
         forward_event: Option<RustSyntaxSkipperFsmFrameEvent>,
         parent_compartment: Option<Box<RustSyntaxSkipperFsmCompartment>>,
     }
@@ -185,7 +185,7 @@ mod _rust_syntax_skipper_fsm_framec {
             }
         }
 
-        fn __prepareEnter(&mut self, leaf: &str, enter_args: Vec<String>) -> RustSyntaxSkipperFsmCompartment {
+        fn __prepareEnter(&mut self, leaf: &str, enter_args: Vec<alloc::rc::Rc<dyn core::any::Any>>) -> RustSyntaxSkipperFsmCompartment {
             let chain = self.__hsm_chain(leaf);
             let mut comp: Option<RustSyntaxSkipperFsmCompartment> = None;
             for name in chain.iter() {
@@ -199,7 +199,7 @@ mod _rust_syntax_skipper_fsm_framec {
             comp.expect("chain must contain at least the leaf state")
         }
 
-        fn __prepareExit(&mut self, exit_args: Vec<String>) {
+        fn __prepareExit(&mut self, exit_args: Vec<alloc::rc::Rc<dyn core::any::Any>>) {
             self.__compartment.exit_args = exit_args.clone();
             let mut cursor = self.__compartment.parent_compartment.as_deref_mut();
             while let Some(c) = cursor {

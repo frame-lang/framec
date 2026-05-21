@@ -30,8 +30,8 @@ mod _ruby_body_closer_fsm_framec {
     #[allow(dead_code, non_camel_case_types)]
     enum RubyBodyCloserFsmFrameEvent {
         Scan {  },
-        FrameEnter { args: Vec<String> },
-        FrameExit { args: Vec<String> },
+        FrameEnter { args: Vec<alloc::rc::Rc<dyn core::any::Any>> },
+        FrameExit { args: Vec<alloc::rc::Rc<dyn core::any::Any>> },
     }
 
     #[derive(Clone)]
@@ -102,8 +102,8 @@ mod _ruby_body_closer_fsm_framec {
     struct RubyBodyCloserFsmCompartment {
         state: String,
         state_context: RubyBodyCloserFsmStateContext,
-        enter_args: Vec<String>,
-        exit_args: Vec<String>,
+        enter_args: Vec<alloc::rc::Rc<dyn core::any::Any>>,
+        exit_args: Vec<alloc::rc::Rc<dyn core::any::Any>>,
         forward_event: Option<RubyBodyCloserFsmFrameEvent>,
         parent_compartment: Option<Box<RubyBodyCloserFsmCompartment>>,
     }
@@ -182,7 +182,7 @@ mod _ruby_body_closer_fsm_framec {
             }
         }
 
-        fn __prepareEnter(&mut self, leaf: &str, enter_args: Vec<String>) -> RubyBodyCloserFsmCompartment {
+        fn __prepareEnter(&mut self, leaf: &str, enter_args: Vec<alloc::rc::Rc<dyn core::any::Any>>) -> RubyBodyCloserFsmCompartment {
             let chain = self.__hsm_chain(leaf);
             let mut comp: Option<RubyBodyCloserFsmCompartment> = None;
             for name in chain.iter() {
@@ -196,7 +196,7 @@ mod _ruby_body_closer_fsm_framec {
             comp.expect("chain must contain at least the leaf state")
         }
 
-        fn __prepareExit(&mut self, exit_args: Vec<String>) {
+        fn __prepareExit(&mut self, exit_args: Vec<alloc::rc::Rc<dyn core::any::Any>>) {
             self.__compartment.exit_args = exit_args.clone();
             let mut cursor = self.__compartment.parent_compartment.as_deref_mut();
             while let Some(c) = cursor {

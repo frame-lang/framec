@@ -23,8 +23,8 @@ mod _return_explicit_framec {
     #[allow(dead_code, non_camel_case_types)]
     enum ReturnExplicitFrameEvent {
         Decide { score: i32 },
-        FrameEnter { args: Vec<String> },
-        FrameExit { args: Vec<String> },
+        FrameEnter { args: Vec<alloc::rc::Rc<dyn core::any::Any>> },
+        FrameExit { args: Vec<alloc::rc::Rc<dyn core::any::Any>> },
     }
 
     #[derive(Clone)]
@@ -93,8 +93,8 @@ mod _return_explicit_framec {
     struct ReturnExplicitCompartment {
         state: String,
         state_context: ReturnExplicitStateContext,
-        enter_args: Vec<String>,
-        exit_args: Vec<String>,
+        enter_args: Vec<alloc::rc::Rc<dyn core::any::Any>>,
+        exit_args: Vec<alloc::rc::Rc<dyn core::any::Any>>,
         forward_event: Option<ReturnExplicitFrameEvent>,
         parent_compartment: Option<Box<ReturnExplicitCompartment>>,
     }
@@ -153,7 +153,7 @@ mod _return_explicit_framec {
             }
         }
 
-        fn __prepareEnter(&mut self, leaf: &str, enter_args: Vec<String>) -> ReturnExplicitCompartment {
+        fn __prepareEnter(&mut self, leaf: &str, enter_args: Vec<alloc::rc::Rc<dyn core::any::Any>>) -> ReturnExplicitCompartment {
             let chain = self.__hsm_chain(leaf);
             let mut comp: Option<ReturnExplicitCompartment> = None;
             for name in chain.iter() {
@@ -167,7 +167,7 @@ mod _return_explicit_framec {
             comp.expect("chain must contain at least the leaf state")
         }
 
-        fn __prepareExit(&mut self, exit_args: Vec<String>) {
+        fn __prepareExit(&mut self, exit_args: Vec<alloc::rc::Rc<dyn core::any::Any>>) {
             self.__compartment.exit_args = exit_args.clone();
             let mut cursor = self.__compartment.parent_compartment.as_deref_mut();
             while let Some(c) = cursor {
