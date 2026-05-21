@@ -362,7 +362,13 @@ fn generate_rust_constructor(system: &SystemAst) -> CodegenNode {
                 .params
                 .iter()
                 .filter(|p| matches!(p.kind, ParamKind::EnterArg))
-                .map(|p| format!("self.__sys_{}.to_string()", p.name))
+                // RFC-0025.1: type-faithful enter args (Rc<dyn Any>), not stringified.
+                .map(|p| {
+                    format!(
+                        "alloc::rc::Rc::new(self.__sys_{}.clone()) as alloc::rc::Rc<dyn core::any::Any>",
+                        p.name
+                    )
+                })
                 .collect();
             body.push(CodegenNode::NativeBlock {
                 code: format!(
@@ -527,18 +533,38 @@ pub(crate) fn generate_rust_state_dispatch(
                     "str" | "string" => "String",
                     other => other,
                 };
-                // Lifecycle args are stringified (persist contract);
-                // dispatch parses to the declared receiver type.
-                let extraction = if param_type == "String" {
-                    format!(
-                        "        let {}: String = args.get({}).cloned().unwrap_or_default();\n",
+                // RFC-0025.1: lifecycle args are carried type-faithfully
+                // (`Vec<Rc<dyn Any>>`); bind by `downcast_ref::<T>()` to the
+                // declared receiver type — no stringify/parse round-trip.
+                // (The "persist contract" justification for the old
+                // `Vec<String>` path was incorrect: lifecycle args are not
+                // persisted; see rust_system/persistence.rs.)
+                //
+                // Numeric/string literals in a transition's enter/exit-arg
+                // expression (`-> (42) $S`, `-> ("x") $S`) infer to Rust's
+                // default literal type (`i32` / `&str`), not the declared
+                // receiver type (`i64` / `String`). The write side stores the
+                // value as-inferred, so the read site downcasts to the
+                // declared `T` first, then falls back to the
+                // literal-inferred type and widens — making the bind robust
+                // without threading param types to the write site.
+                let extraction = match param_type {
+                    "i64" => format!(
+                        "        let {0}: i64 = args.get({1}).and_then(|a| a.downcast_ref::<i64>().copied().or_else(|| a.downcast_ref::<i32>().map(|v| *v as i64))).unwrap_or_default();\n",
                         param.name, idx
-                    )
-                } else {
-                    format!(
-                        "        let {}: {} = args.get({}).and_then(|s| s.parse::<{}>().ok()).unwrap_or_default();\n",
-                        param.name, param_type, idx, param_type
-                    )
+                    ),
+                    "f64" => format!(
+                        "        let {0}: f64 = args.get({1}).and_then(|a| a.downcast_ref::<f64>().copied().or_else(|| a.downcast_ref::<i64>().map(|v| *v as f64)).or_else(|| a.downcast_ref::<i32>().map(|v| *v as f64))).unwrap_or_default();\n",
+                        param.name, idx
+                    ),
+                    "String" => format!(
+                        "        let {0}: String = args.get({1}).and_then(|a| a.downcast_ref::<String>().cloned().or_else(|| a.downcast_ref::<&str>().map(|s| s.to_string()))).unwrap_or_default();\n",
+                        param.name, idx
+                    ),
+                    other => format!(
+                        "        let {0}: {2} = args.get({1}).and_then(|a| a.downcast_ref::<{2}>()).cloned().unwrap_or_default();\n",
+                        param.name, idx, other
+                    ),
                 };
                 code.push_str(&extraction);
             }
@@ -901,12 +927,12 @@ pub(crate) fn rust_expand_transition(
                 } else {
                     arg
                 };
-                // Wrap in parens before `.to_string()` so negative
-                // literals and other expressions parse correctly:
-                // `-3.to_string()` is `-(3.to_string())` (invalid),
-                // but `(-3).to_string()` is well-formed. Surfaced
-                // by Phase 19 wave 3 P8/P9 with negative LIT.
-                format!("({}).to_string()", raw)
+                // RFC-0025.1: carry the exit arg type-faithfully as
+                // `Rc<dyn Any>` (parens guard negative/operator exprs).
+                format!(
+                    "alloc::rc::Rc::new(({}).clone()) as alloc::rc::Rc<dyn core::any::Any>",
+                    raw
+                )
             })
             .collect();
         if !vals.is_empty() {
@@ -930,10 +956,12 @@ pub(crate) fn rust_expand_transition(
                 } else {
                     arg
                 };
-                // Same paren wrap as exit_args above — protects
-                // negative literals and operator-containing
-                // expressions from precedence ambiguity.
-                format!("({}).to_string()", raw)
+                // RFC-0025.1: type-faithful enter arg as `Rc<dyn Any>`
+                // (parens guard negative/operator exprs).
+                format!(
+                    "alloc::rc::Rc::new(({}).clone()) as alloc::rc::Rc<dyn core::any::Any>",
+                    raw
+                )
             })
             .collect::<Vec<_>>()
     } else {

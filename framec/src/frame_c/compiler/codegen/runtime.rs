@@ -1121,8 +1121,10 @@ fn generate_rust_runtime_types(
     // any reasonable Frame interface method name (PascalCase
     // `FrameEnter` / `FrameExit` would only collide with user
     // methods literally named `frame_enter` / `frame_exit`).
-    code.push_str("    FrameEnter { args: Vec<String> },\n");
-    code.push_str("    FrameExit { args: Vec<String> },\n");
+    // RFC-0025.1: lifecycle args are carried type-faithfully as
+    // `Rc<dyn Any>` (same as the `_Lifecycle` return), NOT stringified.
+    code.push_str("    FrameEnter { args: Vec<alloc::rc::Rc<dyn core::any::Any>> },\n");
+    code.push_str("    FrameExit { args: Vec<alloc::rc::Rc<dyn core::any::Any>> },\n");
     code.push_str("}\n\n");
 
     // Build return-type lookup keyed by event name, merging
@@ -1398,8 +1400,11 @@ fn generate_rust_runtime_types(
         "    state_context: {}StateContext,\n",
         system_name
     ));
-    code.push_str("    enter_args: Vec<String>,\n");
-    code.push_str("    exit_args: Vec<String>,\n");
+    // RFC-0025.1: type-faithful lifecycle args (not stringified). Not
+    // persisted — `persistence.rs` serializes StateContext / stack /
+    // domain only — so `Rc<dyn Any>` (Clone, no Serialize) is fine.
+    code.push_str("    enter_args: Vec<alloc::rc::Rc<dyn core::any::Any>>,\n");
+    code.push_str("    exit_args: Vec<alloc::rc::Rc<dyn core::any::Any>>,\n");
     code.push_str(&format!(
         "    forward_event: Option<{}FrameEvent>,\n",
         system_name

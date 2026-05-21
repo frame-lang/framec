@@ -34,6 +34,7 @@ numbers are not re-used.
 | 0023 | — | (unassigned) | numbering reserved; no document |
 | [0024](rfc-0024.md) | Remove `@@import` — host-language imports via Oceans Model | Accepted; shipped in 4.2.0 | supersedes [0022](rfc-0022.md), [0022.1](rfc-0022-1.md); breaking change |
 | [0025](rfc-0025.md) | Quality remediation — structured errors + typed compartment payload | Accepted; shipped (Rust target) in 4.2.0 | companion to [0026](rfc-0026.md), [0027](rfc-0027.md) |
+| [0025.1](rfc-0025-1.md) | Typed lifecycle args — close the stringify gap in the typed-payload contract | Accepted (2026-05-21); shipped in 4.2.1 | amends [0025](rfc-0025.md); resolves FRAMEC_BUGS #34 |
 | [0026](rfc-0026.md) | Oceans Model as calculus — pre-backend normalization, preservation theorem, formal grammar | Draft (Exploration) | companion to [0025](rfc-0025.md), [0027](rfc-0027.md); no execution commitment |
 | [0027](rfc-0027.md) | In-tree snapshot tests per backend (insta) | Accepted; shipped in 4.2.0 | companion to [0025](rfc-0025.md), [0026](rfc-0026.md) |
 | [0028](rfc-0028.md) | In-process framec API | Draft (Forward-looking) | replaces roadmap #171 |

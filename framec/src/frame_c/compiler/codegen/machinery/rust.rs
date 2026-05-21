@@ -82,7 +82,7 @@ impl MachineryGenerator for RustMachinery {
             name: "__prepareEnter".to_string(),
             params: vec![
                 Param::new("leaf").with_type("&str"),
-                Param::new("enter_args").with_type("Vec<String>"),
+                Param::new("enter_args").with_type("Vec<alloc::rc::Rc<dyn core::any::Any>>"),
             ],
             return_type: Some(compartment_class.to_string()),
             body: vec![CodegenNode::NativeBlock {
@@ -113,7 +113,9 @@ comp.expect("chain must contain at least the leaf state")"#,
         // __prepareExit — populate exit_args on every layer of current chain.
         Some(CodegenNode::Method {
             name: "__prepareExit".to_string(),
-            params: vec![Param::new("exit_args").with_type("Vec<String>")],
+            params: vec![
+                Param::new("exit_args").with_type("Vec<alloc::rc::Rc<dyn core::any::Any>>")
+            ],
             return_type: None,
             body: vec![CodegenNode::NativeBlock {
                 code: r#"self.__compartment.exit_args = exit_args.clone();
