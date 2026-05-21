@@ -830,32 +830,39 @@ fn bug34_enter_args_type_faithful() {
         $Mid {
             $>(n: int)   { self.total = n + 1 }
             sum(): int   { @@:(self.total) }
-            run()        { -> (self.nums) $End }
+            run()        { -> (vec![99]) $End }
         }
         $End {
-            $>(nums: Vec<i64>) { self.total = nums[0] }
-            head(): int        { @@:(self.total) }
+            $>(xs: Vec<i64>) { self.total = xs[0] }
+            head(): int      { @@:(self.total) }
         }
     domain:
         total: int = 0
-        nums: Vec<i64> = vec![10, 20]
 }
 "#,
         "rust",
     );
 
-    // Static contract: downcast, never stringify-and-parse.
+    // Static contract (RFC-0025.1): enter args are carried in the typed
+    // per-state StateContext, NOT stringified or type-erased. The literal
+    // `int` enter arg is written into the typed ctx field (`ctx.n = 42`,
+    // coercing to i64) and read back typed — no `Vec<String>`, no
+    // `parse::<T>()`, no `Rc<dyn Any>` lifecycle channel.
     assert!(
-        generated.contains("downcast_ref::<i64>"),
-        "enter arg must bind via downcast, not parse (#34)\n{generated}"
+        !generated.contains("parse::<i64>") && !generated.contains("parse::<Vec"),
+        "enter arg must NOT stringify-and-parse — regresses #34\n{generated}"
     );
     assert!(
-        !generated.contains("parse::<i64>"),
-        "enter arg must NOT stringify-and-parse — regresses #34\n{generated}"
+        !generated.contains("enter_args: Vec<String>") && !generated.contains("FrameEnter { args:"),
+        "enter args must not ride a stringified/erased Vec — regresses RFC-0025.1\n{generated}"
+    );
+    assert!(
+        generated.contains("StateContext::Mid(ref mut ctx)") && generated.contains("ctx.n ="),
+        "enter arg must be written into the typed StateContext ctx field\n{generated}"
     );
 
     // Runtime contract: literal int enter arg widens to i64 (n+1==43), and
-    // a compound Vec<i64> enter arg round-trips (head==10).
+    // a compound Vec<i64> enter arg round-trips (head==99).
     let tmp = std::env::temp_dir().join(format!("framec_bug34_{}", std::process::id()));
     let _ = std::fs::create_dir_all(&tmp);
     let main_rs = format!(
@@ -865,7 +872,7 @@ fn bug34_enter_args_type_faithful() {
          m.run();\n\
          assert_eq!(m.sum(), 43, \"literal int enter arg did not widen to i64\");\n\
          m.run();\n\
-         assert_eq!(m.head(), 10, \"compound Vec<i64> enter arg did not round-trip\");\n\
+         assert_eq!(m.head(), 99, \"compound Vec<i64> enter arg did not round-trip\");\n\
          }}\n"
     );
     let src = tmp.join("main.rs");

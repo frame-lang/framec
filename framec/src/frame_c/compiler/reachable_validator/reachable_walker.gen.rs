@@ -64,8 +64,8 @@ mod _reachable_walker_framec {
         Enqueue { name: String },
         Next {  },
         Unreachable { all_csv: String },
-        FrameEnter { args: Vec<alloc::rc::Rc<dyn core::any::Any>> },
-        FrameExit { args: Vec<alloc::rc::Rc<dyn core::any::Any>> },
+        FrameEnter {},
+        FrameExit {},
     }
 
     #[derive(Clone)]
@@ -142,8 +142,6 @@ mod _reachable_walker_framec {
     struct ReachableWalkerCompartment {
         state: String,
         state_context: ReachableWalkerStateContext,
-        enter_args: Vec<alloc::rc::Rc<dyn core::any::Any>>,
-        exit_args: Vec<alloc::rc::Rc<dyn core::any::Any>>,
         forward_event: Option<ReachableWalkerFrameEvent>,
         parent_compartment: Option<Box<ReachableWalkerCompartment>>,
     }
@@ -159,8 +157,6 @@ mod _reachable_walker_framec {
             Self {
                 state: state.to_string(),
                 state_context,
-                enter_args: Vec::new(),
-                exit_args: Vec::new(),
                 forward_event: None,
                 parent_compartment: None,
             }
@@ -192,8 +188,8 @@ mod _reachable_walker_framec {
 
         pub fn __create() -> Self {
             let mut c = Self::new();
-            c.__compartment = c.__prepareEnter("Initial", vec![]);
-            let __e = alloc::rc::Rc::new(ReachableWalkerFrameEvent::FrameEnter { args: c.__compartment.enter_args.clone() });
+            c.__compartment = c.__prepareEnter("Initial");
+            let __e = alloc::rc::Rc::new(ReachableWalkerFrameEvent::FrameEnter {});
             let __ctx = ReachableWalkerFrameContext::new(alloc::rc::Rc::clone(&__e), None);
             c._context_stack.push(__ctx);
             c.__kernel(&__e);
@@ -210,12 +206,11 @@ mod _reachable_walker_framec {
             }
         }
 
-        fn __prepareEnter(&mut self, leaf: &str, enter_args: Vec<alloc::rc::Rc<dyn core::any::Any>>) -> ReachableWalkerCompartment {
+        fn __prepareEnter(&mut self, leaf: &str) -> ReachableWalkerCompartment {
             let chain = self.__hsm_chain(leaf);
             let mut comp: Option<ReachableWalkerCompartment> = None;
             for name in chain.iter() {
                 let mut new_comp = ReachableWalkerCompartment::new(name);
-                new_comp.enter_args = enter_args.clone();
                 if let Some(parent) = comp.take() {
                     new_comp.parent_compartment = Some(Box::new(parent));
                 }
@@ -224,24 +219,16 @@ mod _reachable_walker_framec {
             comp.expect("chain must contain at least the leaf state")
         }
 
-        fn __prepareExit(&mut self, exit_args: Vec<alloc::rc::Rc<dyn core::any::Any>>) {
-            self.__compartment.exit_args = exit_args.clone();
-            let mut cursor = self.__compartment.parent_compartment.as_deref_mut();
-            while let Some(c) = cursor {
-                c.exit_args = exit_args.clone();
-                cursor = c.parent_compartment.as_deref_mut();
-            }
-        }
-
         fn __kernel(&mut self, __e: &alloc::rc::Rc<ReachableWalkerFrameEvent>) {
             // Route event to current state.
             self.__router(__e);
             // Drain any transitions queued by the handler.
             while self.__next_compartment.is_some() {
                 let next_compartment = self.__next_compartment.take().expect("invariant: while-loop guard checked is_some()");
-                // Exit the current (leaf) state.
-                let exit_args = self.__compartment.exit_args.clone();
-                let exit_event = alloc::rc::Rc::new(ReachableWalkerFrameEvent::FrameExit { args: exit_args });
+                // Exit the current (leaf) state. RFC-0025.1: exit args live in the
+                // source state's typed ctx (written at the transition site), so the
+                // synthesized `<$` event carries no payload.
+                let exit_event = alloc::rc::Rc::new(ReachableWalkerFrameEvent::FrameExit {});
                 self.__router(&exit_event);
                 // Switch to the new compartment.
                 self.__compartment = next_compartment;
@@ -250,9 +237,9 @@ mod _reachable_walker_framec {
                 // structural match, not a string compare).
                 match self.__compartment.forward_event.take() {
                     None => {
-                        // No forwarded event — synthesize a fresh $>.
-                        let enter_args = self.__compartment.enter_args.clone();
-                        let enter_event = alloc::rc::Rc::new(ReachableWalkerFrameEvent::FrameEnter { args: enter_args });
+                        // No forwarded event — synthesize a fresh $>. RFC-0025.1:
+                        // enter args live in the destination's typed ctx.
+                        let enter_event = alloc::rc::Rc::new(ReachableWalkerFrameEvent::FrameEnter {});
                         self.__router(&enter_event);
                     }
                     Some(fwd) if matches!(fwd, ReachableWalkerFrameEvent::FrameEnter { .. }) => {
@@ -264,8 +251,7 @@ mod _reachable_walker_framec {
                     Some(fwd) => {
                         // Forwarded event is not $> — initialize the destination
                         // with a fresh $>, then dispatch the forward.
-                        let enter_args = self.__compartment.enter_args.clone();
-                        let enter_event = alloc::rc::Rc::new(ReachableWalkerFrameEvent::FrameEnter { args: enter_args });
+                        let enter_event = alloc::rc::Rc::new(ReachableWalkerFrameEvent::FrameEnter {});
                         self.__router(&enter_event);
                         let fwd_rc = alloc::rc::Rc::new(fwd);
                         self.__router(&fwd_rc);
@@ -381,7 +367,7 @@ mod _reachable_walker_framec {
         fn _s_Initial_hdl_user_seed(&mut self, __e: &ReachableWalkerFrameEvent, start: String) {
                             self.queue = start.clone();
                             self.visited = start.clone();
-                            let mut __compartment = self.__prepareEnter("Walking", vec![]);
+                            let mut __compartment = self.__prepareEnter("Walking");
                             self.__transition(__compartment);
             let __return_val = ReachableWalkerFrameReturn::Seed("READY".to_string());
                             if let Some(ctx) = self._context_stack.last_mut() { ctx._return = Some(__return_val); }
@@ -414,7 +400,7 @@ mod _reachable_walker_framec {
 
         fn _s_Walking_hdl_user_next(&mut self, __e: &ReachableWalkerFrameEvent) {
                             if self.queue.is_empty() {
-                                let mut __compartment = self.__prepareEnter("Done", vec![]);
+                                let mut __compartment = self.__prepareEnter("Done");
                                 self.__transition(__compartment);
             let __return_val = ReachableWalkerFrameReturn::Next("DONE".to_string());
                                 if let Some(ctx) = self._context_stack.last_mut() { ctx._return = Some(__return_val); }

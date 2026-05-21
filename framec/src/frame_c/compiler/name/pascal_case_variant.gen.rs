@@ -38,8 +38,8 @@ mod _pascal_case_variant_framec {
     #[allow(dead_code, non_camel_case_types)]
     enum PascalCaseVariantFrameEvent {
         Convert { s: String },
-        FrameEnter { args: Vec<alloc::rc::Rc<dyn core::any::Any>> },
-        FrameExit { args: Vec<alloc::rc::Rc<dyn core::any::Any>> },
+        FrameEnter {},
+        FrameExit {},
     }
 
     #[derive(Clone)]
@@ -108,8 +108,6 @@ mod _pascal_case_variant_framec {
     struct PascalCaseVariantCompartment {
         state: String,
         state_context: PascalCaseVariantStateContext,
-        enter_args: Vec<alloc::rc::Rc<dyn core::any::Any>>,
-        exit_args: Vec<alloc::rc::Rc<dyn core::any::Any>>,
         forward_event: Option<PascalCaseVariantFrameEvent>,
         parent_compartment: Option<Box<PascalCaseVariantCompartment>>,
     }
@@ -123,8 +121,6 @@ mod _pascal_case_variant_framec {
             Self {
                 state: state.to_string(),
                 state_context,
-                enter_args: Vec::new(),
-                exit_args: Vec::new(),
                 forward_event: None,
                 parent_compartment: None,
             }
@@ -152,8 +148,8 @@ mod _pascal_case_variant_framec {
 
         pub fn __create() -> Self {
             let mut c = Self::new();
-            c.__compartment = c.__prepareEnter("Active", vec![]);
-            let __e = alloc::rc::Rc::new(PascalCaseVariantFrameEvent::FrameEnter { args: c.__compartment.enter_args.clone() });
+            c.__compartment = c.__prepareEnter("Active");
+            let __e = alloc::rc::Rc::new(PascalCaseVariantFrameEvent::FrameEnter {});
             let __ctx = PascalCaseVariantFrameContext::new(alloc::rc::Rc::clone(&__e), None);
             c._context_stack.push(__ctx);
             c.__kernel(&__e);
@@ -168,12 +164,11 @@ mod _pascal_case_variant_framec {
             }
         }
 
-        fn __prepareEnter(&mut self, leaf: &str, enter_args: Vec<alloc::rc::Rc<dyn core::any::Any>>) -> PascalCaseVariantCompartment {
+        fn __prepareEnter(&mut self, leaf: &str) -> PascalCaseVariantCompartment {
             let chain = self.__hsm_chain(leaf);
             let mut comp: Option<PascalCaseVariantCompartment> = None;
             for name in chain.iter() {
                 let mut new_comp = PascalCaseVariantCompartment::new(name);
-                new_comp.enter_args = enter_args.clone();
                 if let Some(parent) = comp.take() {
                     new_comp.parent_compartment = Some(Box::new(parent));
                 }
@@ -182,24 +177,16 @@ mod _pascal_case_variant_framec {
             comp.expect("chain must contain at least the leaf state")
         }
 
-        fn __prepareExit(&mut self, exit_args: Vec<alloc::rc::Rc<dyn core::any::Any>>) {
-            self.__compartment.exit_args = exit_args.clone();
-            let mut cursor = self.__compartment.parent_compartment.as_deref_mut();
-            while let Some(c) = cursor {
-                c.exit_args = exit_args.clone();
-                cursor = c.parent_compartment.as_deref_mut();
-            }
-        }
-
         fn __kernel(&mut self, __e: &alloc::rc::Rc<PascalCaseVariantFrameEvent>) {
             // Route event to current state.
             self.__router(__e);
             // Drain any transitions queued by the handler.
             while self.__next_compartment.is_some() {
                 let next_compartment = self.__next_compartment.take().expect("invariant: while-loop guard checked is_some()");
-                // Exit the current (leaf) state.
-                let exit_args = self.__compartment.exit_args.clone();
-                let exit_event = alloc::rc::Rc::new(PascalCaseVariantFrameEvent::FrameExit { args: exit_args });
+                // Exit the current (leaf) state. RFC-0025.1: exit args live in the
+                // source state's typed ctx (written at the transition site), so the
+                // synthesized `<$` event carries no payload.
+                let exit_event = alloc::rc::Rc::new(PascalCaseVariantFrameEvent::FrameExit {});
                 self.__router(&exit_event);
                 // Switch to the new compartment.
                 self.__compartment = next_compartment;
@@ -208,9 +195,9 @@ mod _pascal_case_variant_framec {
                 // structural match, not a string compare).
                 match self.__compartment.forward_event.take() {
                     None => {
-                        // No forwarded event — synthesize a fresh $>.
-                        let enter_args = self.__compartment.enter_args.clone();
-                        let enter_event = alloc::rc::Rc::new(PascalCaseVariantFrameEvent::FrameEnter { args: enter_args });
+                        // No forwarded event — synthesize a fresh $>. RFC-0025.1:
+                        // enter args live in the destination's typed ctx.
+                        let enter_event = alloc::rc::Rc::new(PascalCaseVariantFrameEvent::FrameEnter {});
                         self.__router(&enter_event);
                     }
                     Some(fwd) if matches!(fwd, PascalCaseVariantFrameEvent::FrameEnter { .. }) => {
@@ -222,8 +209,7 @@ mod _pascal_case_variant_framec {
                     Some(fwd) => {
                         // Forwarded event is not $> — initialize the destination
                         // with a fresh $>, then dispatch the forward.
-                        let enter_args = self.__compartment.enter_args.clone();
-                        let enter_event = alloc::rc::Rc::new(PascalCaseVariantFrameEvent::FrameEnter { args: enter_args });
+                        let enter_event = alloc::rc::Rc::new(PascalCaseVariantFrameEvent::FrameEnter {});
                         self.__router(&enter_event);
                         let fwd_rc = alloc::rc::Rc::new(fwd);
                         self.__router(&fwd_rc);

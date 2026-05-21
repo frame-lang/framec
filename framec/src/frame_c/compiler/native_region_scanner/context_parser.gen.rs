@@ -46,8 +46,8 @@ mod _context_parser_fsm_framec {
     #[allow(dead_code, non_camel_case_types)]
     enum ContextParserFsmFrameEvent {
         DoParse {  },
-        FrameEnter { args: Vec<alloc::rc::Rc<dyn core::any::Any>> },
-        FrameExit { args: Vec<alloc::rc::Rc<dyn core::any::Any>> },
+        FrameEnter {},
+        FrameExit {},
     }
 
     #[derive(Clone)]
@@ -125,8 +125,6 @@ mod _context_parser_fsm_framec {
     struct ContextParserFsmCompartment {
         state: String,
         state_context: ContextParserFsmStateContext,
-        enter_args: Vec<alloc::rc::Rc<dyn core::any::Any>>,
-        exit_args: Vec<alloc::rc::Rc<dyn core::any::Any>>,
         forward_event: Option<ContextParserFsmFrameEvent>,
         parent_compartment: Option<Box<ContextParserFsmCompartment>>,
     }
@@ -150,8 +148,6 @@ mod _context_parser_fsm_framec {
             Self {
                 state: state.to_string(),
                 state_context,
-                enter_args: Vec::new(),
-                exit_args: Vec::new(),
                 forward_event: None,
                 parent_compartment: None,
             }
@@ -198,8 +194,8 @@ mod _context_parser_fsm_framec {
 
         pub fn __create() -> Self {
             let mut c = Self::new();
-            c.__compartment = c.__prepareEnter("Init", vec![]);
-            let __e = alloc::rc::Rc::new(ContextParserFsmFrameEvent::FrameEnter { args: c.__compartment.enter_args.clone() });
+            c.__compartment = c.__prepareEnter("Init");
+            let __e = alloc::rc::Rc::new(ContextParserFsmFrameEvent::FrameEnter {});
             let __ctx = ContextParserFsmFrameContext::new(alloc::rc::Rc::clone(&__e), None);
             c._context_stack.push(__ctx);
             c.__kernel(&__e);
@@ -224,12 +220,11 @@ mod _context_parser_fsm_framec {
             }
         }
 
-        fn __prepareEnter(&mut self, leaf: &str, enter_args: Vec<alloc::rc::Rc<dyn core::any::Any>>) -> ContextParserFsmCompartment {
+        fn __prepareEnter(&mut self, leaf: &str) -> ContextParserFsmCompartment {
             let chain = self.__hsm_chain(leaf);
             let mut comp: Option<ContextParserFsmCompartment> = None;
             for name in chain.iter() {
                 let mut new_comp = ContextParserFsmCompartment::new(name);
-                new_comp.enter_args = enter_args.clone();
                 if let Some(parent) = comp.take() {
                     new_comp.parent_compartment = Some(Box::new(parent));
                 }
@@ -238,24 +233,16 @@ mod _context_parser_fsm_framec {
             comp.expect("chain must contain at least the leaf state")
         }
 
-        fn __prepareExit(&mut self, exit_args: Vec<alloc::rc::Rc<dyn core::any::Any>>) {
-            self.__compartment.exit_args = exit_args.clone();
-            let mut cursor = self.__compartment.parent_compartment.as_deref_mut();
-            while let Some(c) = cursor {
-                c.exit_args = exit_args.clone();
-                cursor = c.parent_compartment.as_deref_mut();
-            }
-        }
-
         fn __kernel(&mut self, __e: &alloc::rc::Rc<ContextParserFsmFrameEvent>) {
             // Route event to current state.
             self.__router(__e);
             // Drain any transitions queued by the handler.
             while self.__next_compartment.is_some() {
                 let next_compartment = self.__next_compartment.take().expect("invariant: while-loop guard checked is_some()");
-                // Exit the current (leaf) state.
-                let exit_args = self.__compartment.exit_args.clone();
-                let exit_event = alloc::rc::Rc::new(ContextParserFsmFrameEvent::FrameExit { args: exit_args });
+                // Exit the current (leaf) state. RFC-0025.1: exit args live in the
+                // source state's typed ctx (written at the transition site), so the
+                // synthesized `<$` event carries no payload.
+                let exit_event = alloc::rc::Rc::new(ContextParserFsmFrameEvent::FrameExit {});
                 self.__router(&exit_event);
                 // Switch to the new compartment.
                 self.__compartment = next_compartment;
@@ -264,9 +251,9 @@ mod _context_parser_fsm_framec {
                 // structural match, not a string compare).
                 match self.__compartment.forward_event.take() {
                     None => {
-                        // No forwarded event — synthesize a fresh $>.
-                        let enter_args = self.__compartment.enter_args.clone();
-                        let enter_event = alloc::rc::Rc::new(ContextParserFsmFrameEvent::FrameEnter { args: enter_args });
+                        // No forwarded event — synthesize a fresh $>. RFC-0025.1:
+                        // enter args live in the destination's typed ctx.
+                        let enter_event = alloc::rc::Rc::new(ContextParserFsmFrameEvent::FrameEnter {});
                         self.__router(&enter_event);
                     }
                     Some(fwd) if matches!(fwd, ContextParserFsmFrameEvent::FrameEnter { .. }) => {
@@ -278,8 +265,7 @@ mod _context_parser_fsm_framec {
                     Some(fwd) => {
                         // Forwarded event is not $> — initialize the destination
                         // with a fresh $>, then dispatch the forward.
-                        let enter_args = self.__compartment.enter_args.clone();
-                        let enter_event = alloc::rc::Rc::new(ContextParserFsmFrameEvent::FrameEnter { args: enter_args });
+                        let enter_event = alloc::rc::Rc::new(ContextParserFsmFrameEvent::FrameEnter {});
                         self.__router(&enter_event);
                         let fwd_rc = alloc::rc::Rc::new(fwd);
                         self.__router(&fwd_rc);
@@ -399,7 +385,7 @@ mod _context_parser_fsm_framec {
         }
 
         fn _s_Init_hdl_user_do_parse(&mut self, __e: &ContextParserFsmFrameEvent) {
-            let mut __compartment = self.__prepareEnter("Dispatching", vec![]);
+            let mut __compartment = self.__prepareEnter("Dispatching");
             self.__transition(__compartment);
             return;
         }
@@ -411,7 +397,7 @@ mod _context_parser_fsm_framec {
             
             if i >= end {
                 self.has_result = false;
-                let mut __compartment = self.__prepareEnter("Done", vec![]);
+                let mut __compartment = self.__prepareEnter("Done");
                 self.__transition(__compartment);
                 return;
             }
@@ -420,7 +406,7 @@ mod _context_parser_fsm_framec {
             
             if b == b':' {
                 self.pos = i + 1;
-                let mut __compartment = self.__prepareEnter("DispatchColon", vec![]);
+                let mut __compartment = self.__prepareEnter("DispatchColon");
                 self.__transition(__compartment);
                 return;
             } else if b == b'!' {
@@ -432,26 +418,26 @@ mod _context_parser_fsm_framec {
                 if j < end && bytes[j].is_ascii_uppercase() {
                     self.pos = j;
                     self.result_no_init = true;
-                    let mut __compartment = self.__prepareEnter("ParseInstantiation", vec![]);
+                    let mut __compartment = self.__prepareEnter("ParseInstantiation");
                     self.__transition(__compartment);
                     return;
                 } else {
                     self.result_end = i;
                     self.has_result = false;
-                    let mut __compartment = self.__prepareEnter("Done", vec![]);
+                    let mut __compartment = self.__prepareEnter("Done");
                     self.__transition(__compartment);
                     return;
                 }
             } else if b.is_ascii_uppercase() {
                 // @@SystemName — pos stays at start of name;
-                let mut __compartment = self.__prepareEnter("ParseInstantiation", vec![]);
+                let mut __compartment = self.__prepareEnter("ParseInstantiation");
                 self.__transition(__compartment);
                 return;
             } else {
                 // Just @@ without . or : or uppercase or !
                 self.result_end = i;
                 self.has_result = false;
-                let mut __compartment = self.__prepareEnter("Done", vec![]);
+                let mut __compartment = self.__prepareEnter("Done");
                 self.__transition(__compartment);
                 return;
             }
@@ -465,47 +451,47 @@ mod _context_parser_fsm_framec {
             
             if i + 5 < end && &bytes[i..i + 6] == b"return" {
                 self.pos = i + 6;
-                let mut __compartment = self.__prepareEnter("ParseReturn", vec![]);
+                let mut __compartment = self.__prepareEnter("ParseReturn");
                 self.__transition(__compartment);
                 return;
             } else if i + 4 < end && &bytes[i..i + 5] == b"event" {
                 self.result_end = i + 5;
                 self.result_kind = 3; // ContextEvent
                 self.has_result = true;
-                let mut __compartment = self.__prepareEnter("Done", vec![]);
+                let mut __compartment = self.__prepareEnter("Done");
                 self.__transition(__compartment);
                 return;
             } else if i + 3 < end && &bytes[i..i + 4] == b"data" {
                 self.pos = i + 4;
-                let mut __compartment = self.__prepareEnter("ParseData", vec![]);
+                let mut __compartment = self.__prepareEnter("ParseData");
                 self.__transition(__compartment);
                 return;
             } else if i + 5 < end && &bytes[i..i + 6] == b"params" {
                 self.pos = i + 6;
-                let mut __compartment = self.__prepareEnter("ParseParams", vec![]);
+                let mut __compartment = self.__prepareEnter("ParseParams");
                 self.__transition(__compartment);
                 return;
             } else if i + 3 < end && &bytes[i..i + 4] == b"self" {
                 self.pos = i + 4;
-                let mut __compartment = self.__prepareEnter("ParseSelf", vec![]);
+                let mut __compartment = self.__prepareEnter("ParseSelf");
                 self.__transition(__compartment);
                 return;
             } else if i + 5 < end && &bytes[i..i + 6] == b"system" {
                 self.pos = i + 6;
-                let mut __compartment = self.__prepareEnter("ParseSystem", vec![]);
+                let mut __compartment = self.__prepareEnter("ParseSystem");
                 self.__transition(__compartment);
                 return;
             } else if i < end && bytes[i] == b'(' {
                 // @@:(expr) — context return expression
                 self.pos = i;
-                let mut __compartment = self.__prepareEnter("ParseContextReturnExpr", vec![]);
+                let mut __compartment = self.__prepareEnter("ParseContextReturnExpr");
                 self.__transition(__compartment);
                 return;
             } else {
                 // Unknown @@: variant
                 self.result_end = i;
                 self.has_result = false;
-                let mut __compartment = self.__prepareEnter("Done", vec![]);
+                let mut __compartment = self.__prepareEnter("Done");
                 self.__transition(__compartment);
                 return;
             }
@@ -536,7 +522,7 @@ mod _context_parser_fsm_framec {
                 self.result_end = i;
                 self.result_kind = 9; // ReturnCall
                 self.has_result = true;
-                let mut __compartment = self.__prepareEnter("Done", vec![]);
+                let mut __compartment = self.__prepareEnter("Done");
                 self.__transition(__compartment);
                 return;
             } else if i < end && bytes[i] == b'=' && (i + 1 >= end || bytes[i + 1] != b'=') {
@@ -552,7 +538,7 @@ mod _context_parser_fsm_framec {
                 self.result_end = i;
                 self.result_kind = 2; // ContextReturn
                 self.has_result = true;
-                let mut __compartment = self.__prepareEnter("Done", vec![]);
+                let mut __compartment = self.__prepareEnter("Done");
                 self.__transition(__compartment);
                 return;
             } else {
@@ -560,7 +546,7 @@ mod _context_parser_fsm_framec {
                 self.result_end = i;
                 self.result_kind = 2; // ContextReturn (read mode)
                 self.has_result = true;
-                let mut __compartment = self.__prepareEnter("Done", vec![]);
+                let mut __compartment = self.__prepareEnter("Done");
                 self.__transition(__compartment);
                 return;
             }
@@ -603,7 +589,7 @@ mod _context_parser_fsm_framec {
             self.result_end = i;
             self.result_kind = 8; // ContextReturnExpr
             self.has_result = true;
-            let mut __compartment = self.__prepareEnter("Done", vec![]);
+            let mut __compartment = self.__prepareEnter("Done");
             self.__transition(__compartment);
             return;
         }
@@ -645,7 +631,7 @@ mod _context_parser_fsm_framec {
             }
             
             self.has_result = true;
-            let mut __compartment = self.__prepareEnter("Done", vec![]);
+            let mut __compartment = self.__prepareEnter("Done");
             self.__transition(__compartment);
             return;
         }
@@ -667,7 +653,7 @@ mod _context_parser_fsm_framec {
             self.result_end = i;
             self.result_kind = 6; // ContextParams
             self.has_result = true;
-            let mut __compartment = self.__prepareEnter("Done", vec![]);
+            let mut __compartment = self.__prepareEnter("Done");
             self.__transition(__compartment);
             return;
         }
@@ -720,7 +706,7 @@ mod _context_parser_fsm_framec {
                 self.has_result = true;
             }
             
-            let mut __compartment = self.__prepareEnter("Done", vec![]);
+            let mut __compartment = self.__prepareEnter("Done");
             self.__transition(__compartment);
             return;
         }
@@ -745,7 +731,7 @@ mod _context_parser_fsm_framec {
                 self.has_result = true;
             }
             
-            let mut __compartment = self.__prepareEnter("Done", vec![]);
+            let mut __compartment = self.__prepareEnter("Done");
             self.__transition(__compartment);
             return;
         }
@@ -780,7 +766,7 @@ mod _context_parser_fsm_framec {
                 self.has_result = false;
             }
             
-            let mut __compartment = self.__prepareEnter("Done", vec![]);
+            let mut __compartment = self.__prepareEnter("Done");
             self.__transition(__compartment);
             return;
         }

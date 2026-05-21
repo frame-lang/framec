@@ -28,8 +28,8 @@ mod _cs_body_closer_fsm_framec {
     #[allow(dead_code, non_camel_case_types)]
     enum CsBodyCloserFsmFrameEvent {
         Scan {  },
-        FrameEnter { args: Vec<alloc::rc::Rc<dyn core::any::Any>> },
-        FrameExit { args: Vec<alloc::rc::Rc<dyn core::any::Any>> },
+        FrameEnter {},
+        FrameExit {},
     }
 
     #[derive(Clone)]
@@ -105,8 +105,6 @@ mod _cs_body_closer_fsm_framec {
     struct CsBodyCloserFsmCompartment {
         state: String,
         state_context: CsBodyCloserFsmStateContext,
-        enter_args: Vec<alloc::rc::Rc<dyn core::any::Any>>,
-        exit_args: Vec<alloc::rc::Rc<dyn core::any::Any>>,
         forward_event: Option<CsBodyCloserFsmFrameEvent>,
         parent_compartment: Option<Box<CsBodyCloserFsmCompartment>>,
     }
@@ -128,8 +126,6 @@ mod _cs_body_closer_fsm_framec {
             Self {
                 state: state.to_string(),
                 state_context,
-                enter_args: Vec::new(),
-                exit_args: Vec::new(),
                 forward_event: None,
                 parent_compartment: None,
             }
@@ -171,8 +167,8 @@ mod _cs_body_closer_fsm_framec {
 
         pub fn __create() -> Self {
             let mut c = Self::new();
-            c.__compartment = c.__prepareEnter("Init", vec![]);
-            let __e = alloc::rc::Rc::new(CsBodyCloserFsmFrameEvent::FrameEnter { args: c.__compartment.enter_args.clone() });
+            c.__compartment = c.__prepareEnter("Init");
+            let __e = alloc::rc::Rc::new(CsBodyCloserFsmFrameEvent::FrameEnter {});
             let __ctx = CsBodyCloserFsmFrameContext::new(alloc::rc::Rc::clone(&__e), None);
             c._context_stack.push(__ctx);
             c.__kernel(&__e);
@@ -195,12 +191,11 @@ mod _cs_body_closer_fsm_framec {
             }
         }
 
-        fn __prepareEnter(&mut self, leaf: &str, enter_args: Vec<alloc::rc::Rc<dyn core::any::Any>>) -> CsBodyCloserFsmCompartment {
+        fn __prepareEnter(&mut self, leaf: &str) -> CsBodyCloserFsmCompartment {
             let chain = self.__hsm_chain(leaf);
             let mut comp: Option<CsBodyCloserFsmCompartment> = None;
             for name in chain.iter() {
                 let mut new_comp = CsBodyCloserFsmCompartment::new(name);
-                new_comp.enter_args = enter_args.clone();
                 if let Some(parent) = comp.take() {
                     new_comp.parent_compartment = Some(Box::new(parent));
                 }
@@ -209,24 +204,16 @@ mod _cs_body_closer_fsm_framec {
             comp.expect("chain must contain at least the leaf state")
         }
 
-        fn __prepareExit(&mut self, exit_args: Vec<alloc::rc::Rc<dyn core::any::Any>>) {
-            self.__compartment.exit_args = exit_args.clone();
-            let mut cursor = self.__compartment.parent_compartment.as_deref_mut();
-            while let Some(c) = cursor {
-                c.exit_args = exit_args.clone();
-                cursor = c.parent_compartment.as_deref_mut();
-            }
-        }
-
         fn __kernel(&mut self, __e: &alloc::rc::Rc<CsBodyCloserFsmFrameEvent>) {
             // Route event to current state.
             self.__router(__e);
             // Drain any transitions queued by the handler.
             while self.__next_compartment.is_some() {
                 let next_compartment = self.__next_compartment.take().expect("invariant: while-loop guard checked is_some()");
-                // Exit the current (leaf) state.
-                let exit_args = self.__compartment.exit_args.clone();
-                let exit_event = alloc::rc::Rc::new(CsBodyCloserFsmFrameEvent::FrameExit { args: exit_args });
+                // Exit the current (leaf) state. RFC-0025.1: exit args live in the
+                // source state's typed ctx (written at the transition site), so the
+                // synthesized `<$` event carries no payload.
+                let exit_event = alloc::rc::Rc::new(CsBodyCloserFsmFrameEvent::FrameExit {});
                 self.__router(&exit_event);
                 // Switch to the new compartment.
                 self.__compartment = next_compartment;
@@ -235,9 +222,9 @@ mod _cs_body_closer_fsm_framec {
                 // structural match, not a string compare).
                 match self.__compartment.forward_event.take() {
                     None => {
-                        // No forwarded event — synthesize a fresh $>.
-                        let enter_args = self.__compartment.enter_args.clone();
-                        let enter_event = alloc::rc::Rc::new(CsBodyCloserFsmFrameEvent::FrameEnter { args: enter_args });
+                        // No forwarded event — synthesize a fresh $>. RFC-0025.1:
+                        // enter args live in the destination's typed ctx.
+                        let enter_event = alloc::rc::Rc::new(CsBodyCloserFsmFrameEvent::FrameEnter {});
                         self.__router(&enter_event);
                     }
                     Some(fwd) if matches!(fwd, CsBodyCloserFsmFrameEvent::FrameEnter { .. }) => {
@@ -249,8 +236,7 @@ mod _cs_body_closer_fsm_framec {
                     Some(fwd) => {
                         // Forwarded event is not $> — initialize the destination
                         // with a fresh $>, then dispatch the forward.
-                        let enter_args = self.__compartment.enter_args.clone();
-                        let enter_event = alloc::rc::Rc::new(CsBodyCloserFsmFrameEvent::FrameEnter { args: enter_args });
+                        let enter_event = alloc::rc::Rc::new(CsBodyCloserFsmFrameEvent::FrameEnter {});
                         self.__router(&enter_event);
                         let fwd_rc = alloc::rc::Rc::new(fwd);
                         self.__router(&fwd_rc);
@@ -354,7 +340,7 @@ mod _cs_body_closer_fsm_framec {
         }
 
         fn _s_Init_hdl_user_scan(&mut self, __e: &CsBodyCloserFsmFrameEvent) {
-            let mut __compartment = self.__prepareEnter("Scanning", vec![]);
+            let mut __compartment = self.__prepareEnter("Scanning");
             self.__transition(__compartment);
             return;
         }
@@ -367,34 +353,34 @@ mod _cs_body_closer_fsm_framec {
                     self.pos += 1;
                 } else if b == b'/' && self.pos + 1 < n && self.bytes[self.pos + 1] == b'/' {
                     self.pos += 2;
-                    let mut __compartment = self.__prepareEnter("InLineComment", vec![]);
+                    let mut __compartment = self.__prepareEnter("InLineComment");
                     self.__transition(__compartment);
                     return;
                 } else if b == b'/' && self.pos + 1 < n && self.bytes[self.pos + 1] == b'*' {
                     self.pos += 2;
-                    let mut __compartment = self.__prepareEnter("InBlockComment", vec![]);
+                    let mut __compartment = self.__prepareEnter("InBlockComment");
                     self.__transition(__compartment);
                     return;
                 } else if b == b'#' {
                     self.pos += 1;
-                    let mut __compartment = self.__prepareEnter("InPreprocessor", vec![]);
+                    let mut __compartment = self.__prepareEnter("InPreprocessor");
                     self.__transition(__compartment);
                     return;
                 } else if b == b'\'' {
                     self.pos += 1;
-                    let mut __compartment = self.__prepareEnter("InCharLiteral", vec![]);
+                    let mut __compartment = self.__prepareEnter("InCharLiteral");
                     self.__transition(__compartment);
                     return;
                 } else if b == b'@' {
                     // @"verbatim" or @$"verbatim interp"
                     if self.pos + 1 < n && self.bytes[self.pos + 1] == b'"' {
                         self.pos += 2;
-                        let mut __compartment = self.__prepareEnter("InVerbatimString", vec![]);
+                        let mut __compartment = self.__prepareEnter("InVerbatimString");
                         self.__transition(__compartment);
                         return;
                     } else if self.pos + 2 < n && self.bytes[self.pos + 1] == b'$' && self.bytes[self.pos + 2] == b'"' {
                         self.pos += 3;
-                        let mut __compartment = self.__prepareEnter("InVerbatimString", vec![]);
+                        let mut __compartment = self.__prepareEnter("InVerbatimString");
                         self.__transition(__compartment);
                         return;
                     } else {
@@ -413,13 +399,13 @@ mod _cs_body_closer_fsm_framec {
                         // Raw string $"""..."""
                         self.raw_quotes = quotes;
                         self.pos = k;
-                        let mut __compartment = self.__prepareEnter("InRawString", vec![]);
+                        let mut __compartment = self.__prepareEnter("InRawString");
                         self.__transition(__compartment);
                         return;
                     } else if j < n && self.bytes[j] == b'"' {
                         // $"interpolated"
                         self.pos = j + 1;
-                        let mut __compartment = self.__prepareEnter("InString", vec![]);
+                        let mut __compartment = self.__prepareEnter("InString");
                         self.__transition(__compartment);
                         return;
                     } else {
@@ -427,7 +413,7 @@ mod _cs_body_closer_fsm_framec {
                     }
                 } else if b == b'"' {
                     self.pos += 1;
-                    let mut __compartment = self.__prepareEnter("InString", vec![]);
+                    let mut __compartment = self.__prepareEnter("InString");
                     self.__transition(__compartment);
                     return;
                 } else if b == b'{' {
@@ -458,7 +444,7 @@ mod _cs_body_closer_fsm_framec {
                 }
                 if self.bytes[self.pos] == b'"' {
                     self.pos += 1;
-                    let mut __compartment = self.__prepareEnter("Scanning", vec![]);
+                    let mut __compartment = self.__prepareEnter("Scanning");
                     self.__transition(__compartment);
                     return;
                 }
@@ -477,7 +463,7 @@ mod _cs_body_closer_fsm_framec {
                 }
                 if self.bytes[self.pos] == b'\'' {
                     self.pos += 1;
-                    let mut __compartment = self.__prepareEnter("Scanning", vec![]);
+                    let mut __compartment = self.__prepareEnter("Scanning");
                     self.__transition(__compartment);
                     return;
                 }
@@ -497,7 +483,7 @@ mod _cs_body_closer_fsm_framec {
                 }
                 if self.bytes[self.pos] == b'"' {
                     self.pos += 1;
-                    let mut __compartment = self.__prepareEnter("Scanning", vec![]);
+                    let mut __compartment = self.__prepareEnter("Scanning");
                     self.__transition(__compartment);
                     return;
                 }
@@ -517,7 +503,7 @@ mod _cs_body_closer_fsm_framec {
                     while p < n && self.bytes[p] == b'"' { q += 1; p += 1; }
                     if q >= self.raw_quotes {
                         self.pos = p;
-                        let mut __compartment = self.__prepareEnter("Scanning", vec![]);
+                        let mut __compartment = self.__prepareEnter("Scanning");
                         self.__transition(__compartment);
                         return;
                     }
@@ -535,7 +521,7 @@ mod _cs_body_closer_fsm_framec {
             while self.pos < n && self.bytes[self.pos] != b'\n' {
                 self.pos += 1;
             }
-            let mut __compartment = self.__prepareEnter("Scanning", vec![]);
+            let mut __compartment = self.__prepareEnter("Scanning");
             self.__transition(__compartment);
             return;
         }
@@ -545,7 +531,7 @@ mod _cs_body_closer_fsm_framec {
             while self.pos + 1 < n {
                 if self.bytes[self.pos] == b'*' && self.bytes[self.pos + 1] == b'/' {
                     self.pos += 2;
-                    let mut __compartment = self.__prepareEnter("Scanning", vec![]);
+                    let mut __compartment = self.__prepareEnter("Scanning");
                     self.__transition(__compartment);
                     return;
                 }
@@ -560,7 +546,7 @@ mod _cs_body_closer_fsm_framec {
             while self.pos < n && self.bytes[self.pos] != b'\n' {
                 self.pos += 1;
             }
-            let mut __compartment = self.__prepareEnter("Scanning", vec![]);
+            let mut __compartment = self.__prepareEnter("Scanning");
             self.__transition(__compartment);
             return;
         }
