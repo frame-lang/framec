@@ -11,6 +11,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 > [`docs/migration/4.1_to_4.2.md`](docs/migration/4.1_to_4.2.md) for
 > the upgrade walk-through.
 
+### Added — `no_std` support for the Rust target (#31, #33)
+
+- The Rust backend no longer hardcodes `std::` paths in the runtime.
+  It emits `core::any::Any`, `alloc::rc::Rc`, and
+  `alloc::collections::BTreeMap`, plus an `extern crate alloc;` +
+  `use alloc::{vec, format};` module preamble — so a generated system
+  compiles unchanged in a `#![no_std]` + `alloc` crate (e.g. a
+  bare-metal kernel), with the consumer providing only the heap
+  *types* (`String`/`Vec`/`Box`). Hosted builds are unaffected (std
+  re-exports `alloc` + the prelude macros).
+- framec's Rust output now targets **edition 2018+** (every Cargo
+  consumer is 2018/2021/2024; a crate-relative `use alloc::…` does not
+  resolve under the legacy edition-2015 default of bare `rustc`).
+- The map backing call-scoped `@@:data` and the `Dict` value type
+  changed from `HashMap` to `BTreeMap`; iteration is now sorted by
+  key (the map is only ever inserted/read, never order-iterated, so
+  this is unobservable in practice).
+
+### Fixed
+
+- **C# / Java:** a host-language type-cast immediately before an
+  inline `@@:self.method()` self-call no longer mangles the call
+  (`x = (double) @@:self.m()` previously emitted
+  `x = (double); this.m();`, an E824/CS1525 compile break) (#32).
+- **Rust:** multiline `@@:(…)` return values no longer emit redundant
+  double-parens (`Variant((expr))`), clearing
+  `clippy::double_parens`; the codebase is `cargo clippy --all-targets
+  -- -D warnings` clean.
+
 ### Removed — RFC-0032 `@@codegen { ... }` directive (breaking)
 
 - **`@@codegen { ... }` is gone.** The directive's single config knob

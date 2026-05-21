@@ -42,10 +42,12 @@ the flake is a release blocker, not a personality trait
 ```bash
 # ── framec local ────────────────────────────────────────────────
 cd /path/to/framec
+cargo build --release --locked --bin framec  # exactly what release.yml builds; needs a current committed Cargo.lock
 cargo test --release                       # unit + RFC-0027 snapshot tests
 cargo clippy --release --all-targets -- -D warnings
 cargo fmt --check
 python3 scripts/validate_doc_samples.py    # every runnable docs/ sample compiles + runs
+cargo package -p framec                     # dry-run the crates.io package (catches metadata/file issues pre-publish)
 
 # ── 17-backend differential matrix ──────────────────────────────
 cd /path/to/framec-test-env/docker
@@ -106,9 +108,10 @@ blocked if any fail. There is **no "merge anyway"** without a
 written exception in the PR naming the RFC or roadmap task that
 tracks the regression.
 
-Before tagging, confirm the `main` you're tagging is green on all
-three. (If CI is not yet wired — see RFC-0031 Layer 2 / roadmap
-#437 — Layer 1 above *is* the gate, and it's on the RC author.)
+These run via `.github/workflows/ci.yml`, `matrix-smoke.yml`, and
+`fuzz-smoke.yml`; `nightly.yml` and `quarterly-audit.yml` cover
+Layer 4. Before tagging, confirm the `main` you're tagging is green
+on all three per-push jobs.
 
 ---
 
@@ -160,13 +163,34 @@ git tag -a vX.Y.Z -m "release X.Y.Z"
 git push origin vX.Y.Z          # triggers the GitHub Actions release workflow
 ```
 
-Pushing the tag triggers the release pipeline (cross-platform
-binary builds; `-rc.N` tags auto-flag as pre-release). For a
-release candidate, tag `vX.Y.Z-rc.N`; promote to `vX.Y.Z` after
-the monitoring window.
+Pushing the tag triggers `.github/workflows/release.yml` — it runs
+`cargo build --release --locked --target <T> --bin framec` for each
+platform, attests provenance, generates `SHA256SUMS`, and creates
+the GitHub Release with the binaries attached. `-rc.N` tags
+auto-flag as pre-release. For a release candidate, tag
+`vX.Y.Z-rc.N`; promote to `vX.Y.Z` after the monitoring window.
 
 **Never `git push --force` a tag.** If a tag must move, delete it
 and re-tag with the next version number.
+
+### 5a. Publish to crates.io (manual)
+
+`framec` is a published crate, and **`cargo publish` is deliberately
+NOT in `release.yml`** — it stays under direct human control (see
+the comment at the top of the workflow; automation is gated on a
+provisioned `CARGO_REGISTRY_TOKEN`). After the GitHub release is up
+and you've smoke-checked a downloaded binary, publish the crate by
+hand from the tagged commit:
+
+```bash
+git checkout vX.Y.Z            # publish from exactly what you tagged
+cargo publish -p framec --dry-run   # final gate — packages + verifies the build
+cargo publish -p framec             # irreversible: a version can be yanked but never overwritten
+```
+
+`cargo publish` is **one-way** — you cannot re-publish a version
+number. If a published version is broken, `cargo yank` it and ship
+`vX.Y.(Z+1)`. This is why the `--dry-run` + the RC bar matter.
 
 ---
 
@@ -209,13 +233,15 @@ Automated (RFC-0031 Layer 4), but know what feeds the next release:
 
 ```
 [ ] Decide version (semver)
-[ ] Layer 1 RC validation — all clean (incl. full fuzz for a release)
+[ ] Layer 1 RC validation — all clean (incl. cargo build --release --locked,
+    cargo package, and full fuzz for a release)
 [ ] CI green on the main you're tagging
 [ ] Bump version: Cargo.toml + README badge + CHANGELOG
-[ ] CHANGELOG entry written (edited, not git-log dump)
+[ ] CHANGELOG entry written (edited, not git-log dump) — complete, covers all user-visible changes
 [ ] Migration guide added (if breaking)
 [ ] Commit bump, push main
-[ ] git tag -a vX.Y.Z + push tag
+[ ] git tag -a vX.Y.Z + push tag  → release.yml builds binaries + GitHub Release
+[ ] cargo publish -p framec  (manual; --dry-run first; one-way)
 [ ] Announce + monitor 24 h
 ```
 
