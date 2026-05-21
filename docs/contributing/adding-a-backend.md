@@ -271,6 +271,21 @@ The key insight is that **read and write must agree on a single positional conve
 
 Note: Lua uses 1-based indexing (`state_args[1]` for the first parameter).
 
+**Lifecycle args must be type-faithful — never stringified (RFC-0025.1).**
+When your backend stores `enter_args` / `exit_args`, store each value in
+its **declared type** using the language's type-erased-but-faithful
+container (`Object`/`any`/`std::any`/`interface{}`/`Rc<dyn Any>` + a
+downcast on read; a native term for dynamic targets) — the same shape
+you use for `state_args` and the `_return` slot. Do **not** serialize a
+lifecycle arg to a string and `parse()`/reparse it back: that silently
+yields a default on a parse miss and cannot represent compound or custom
+types (`Vec<T>`, structs). The read site downcasts to the declared
+receiver type; for languages whose literals infer a narrower type than
+the declared one (Rust `42` is `i32`, Frame `int` is `i64`; `"x"` is
+`&str`, `str` is `String`), widen on read with a typed fallback. See
+[`type-ignorant-codegen.md`](type-ignorant-codegen.md) §3 and
+FRAMEC_BUGS #34.
+
 This change required updating every transition emit site in `frame_expansion.rs` and the manual `state_args[0]` reads in `tests/common/positive/primary/26_state_params.*` (17 versions, one per backend).
 
 ### Field/param name collision (Q2) — a non-issue

@@ -106,8 +106,21 @@ that are shared by every state in the system, so they can't be
 statically typed:
 
 - `state_args` / `enter_args` / `exit_args` — `List<Object>` (Java),
-  `[Any]` (Swift), `[]interface{}` (Go), `Vec<Box<dyn Any>>` (Rust),
-  `<sys>_FrameVec*` of `void*` (C), `List<dynamic>` (Dart), …
+  `[Any]` (Swift), `[]interface{}` (Go), `<sys>_FrameVec*` of `void*`
+  (C), `List<dynamic>` (Dart), … On **Rust**, `enter_args` / `exit_args`
+  are `Vec<alloc::rc::Rc<dyn core::any::Any>>` (read back by
+  `downcast_ref::<T>()`), and `state_args` are carried in the typed
+  per-state `StateContext` enum (RFC-0025 Track B).
+
+  > **Lifecycle args are type-faithful — never stringified (RFC-0025.1).**
+  > Every value channel — state args, enter args, exit args, `@@:data`,
+  > `@@:return`, interface params — carries the value in its declared
+  > type and reads it back by downcast/cast/native term. A backend MUST
+  > NOT serialize a lifecycle arg to a string and `parse()` it back to
+  > move it across the dispatch boundary. (The Rust target did exactly
+  > this for enter/exit args until 4.2.1 — `Vec<String>` + `parse::<T>()`
+  > — which silently defaulted on a parse miss and hard-broke for
+  > compound types like `Vec<i64>`. See FRAMEC_BUGS #34 / RFC-0025.1.)
 - `__e._parameters` (the event payload) — same shape.
 - the per-call context `_return` slot — `Object` / `Any` / `std::any` /
   `void*` / `Box<dyn Any>` / `interface{}`.
