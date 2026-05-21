@@ -1296,7 +1296,7 @@ fn generate_rust_runtime_types(
         let states_with_storage: Vec<_> = machine
             .states
             .iter()
-            .filter(|s| !s.state_vars.is_empty() || !s.params.is_empty())
+            .filter(|s| super::rust_system::rust_state_has_ctx(s))
             .collect();
 
         for state in &states_with_storage {
@@ -1308,9 +1308,9 @@ fn generate_rust_runtime_types(
             // Rust requires concrete types, so we map Frame's portable
             // type names (`int`/`str`/`bool`) to Rust-native spellings
             // and fall back to `String` for untyped params.
-            for p in &state.params {
-                let type_str = frame_type_to_rust_type(&p.param_type);
-                code.push_str(&format!("    {}: {},\n", p.name, type_str));
+            for (name, ty) in super::rust_system::rust_ctx_param_fields(state) {
+                let type_str = frame_type_to_rust_type(&ty);
+                code.push_str(&format!("    {}: {},\n", name, type_str));
             }
             for var in &state.state_vars {
                 // Use the Rust-aware type mapping so Frame's portable
@@ -1329,9 +1329,9 @@ fn generate_rust_runtime_types(
             code.push_str(&format!("impl Default for {}Context {{\n", state.name));
             code.push_str("    fn default() -> Self {\n");
             code.push_str("        Self {\n");
-            for p in &state.params {
-                let init_val = frame_type_to_rust_default(&p.param_type);
-                code.push_str(&format!("            {}: {},\n", p.name, init_val));
+            for (name, ty) in super::rust_system::rust_ctx_param_fields(state) {
+                let init_val = frame_type_to_rust_default(&ty);
+                code.push_str(&format!("            {}: {},\n", name, init_val));
             }
             for var in &state.state_vars {
                 let init_val = if let Some(ref init) = var.init {
@@ -1356,7 +1356,7 @@ fn generate_rust_runtime_types(
     ));
     if let Some(ref machine) = system.machine {
         for state in &machine.states {
-            if state.state_vars.is_empty() && state.params.is_empty() {
+            if !super::rust_system::rust_state_has_ctx(state) {
                 code.push_str(&format!("    {},\n", state.name));
             } else {
                 code.push_str(&format!("    {}({}Context),\n", state.name, state.name));
@@ -1374,7 +1374,7 @@ fn generate_rust_runtime_types(
                 system_name
             ));
             code.push_str("    fn default() -> Self {\n");
-            if first_state.state_vars.is_empty() && first_state.params.is_empty() {
+            if !super::rust_system::rust_state_has_ctx(first_state) {
                 code.push_str(&format!(
                     "        {}StateContext::{}\n",
                     system_name, first_state.name
@@ -1424,7 +1424,7 @@ fn generate_rust_runtime_types(
     code.push_str(&format!("        let state_context = match state {{\n"));
     if let Some(ref machine) = system.machine {
         for state in &machine.states {
-            if state.state_vars.is_empty() && state.params.is_empty() {
+            if !super::rust_system::rust_state_has_ctx(state) {
                 code.push_str(&format!(
                     "            \"{}\" => {}StateContext::{},\n",
                     state.name, system_name, state.name

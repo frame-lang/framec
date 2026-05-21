@@ -18,9 +18,67 @@ use super::state_dispatch::{generate_handler_from_arcanum, handler_method_name};
 use super::system_codegen::{expand_system_instantiation_in_domain, init_references_param};
 use crate::frame_c::compiler::arcanum::{Arcanum, HandlerEntry};
 use crate::frame_c::compiler::frame_ast::{
-    InterfaceMethod, MachineAst, ParamKind, StateVarAst, SystemAst, Type,
+    InterfaceMethod, MachineAst, ParamKind, StateAst, StateVarAst, SystemAst, Type,
 };
 use crate::frame_c::visitors::TargetLanguage;
+
+/// RFC-0025.1: the typed per-state `Context` carries the state's **params
+/// AND its enter/exit handler params** (deduped by name; state params win,
+/// then enter, then exit), so lifecycle args are stored type-faithfully —
+/// in their declared Rust type — instead of being type-erased into a
+/// `Vec<Rc<dyn Any>>`. Returns `(name, type)` in that declaration order.
+/// State vars are handled separately (they carry initializer expressions).
+///
+/// Persist deliberately does NOT serialize the enter/exit-param fields
+/// (they're transition-transient) — `persistence.rs` iterates only
+/// `state.params` + `state_vars`, leaving lifecycle fields at their
+/// `Default` after a restore. This helper governs only the in-memory
+/// `Context` shape.
+pub(crate) fn rust_ctx_param_fields(state: &StateAst) -> Vec<(String, Type)> {
+    let mut seen = std::collections::HashSet::<String>::new();
+    let mut out: Vec<(String, Type)> = Vec::new();
+    for p in &state.params {
+        if seen.insert(p.name.clone()) {
+            out.push((p.name.clone(), p.param_type.clone()));
+        }
+    }
+    let lifecycle_params = state
+        .enter
+        .as_ref()
+        .map(|e| &e.params)
+        .into_iter()
+        .chain(state.exit.as_ref().map(|e| &e.params));
+    for params in lifecycle_params {
+        for p in params {
+            if seen.insert(p.name.clone()) {
+                out.push((p.name.clone(), p.param_type.clone()));
+            }
+        }
+    }
+    out
+}
+
+/// True if a state needs a typed `Context` struct + tuple `StateContext`
+/// variant: it declares state params, enter/exit params, or state vars.
+pub(crate) fn rust_state_has_ctx(state: &StateAst) -> bool {
+    !state.state_vars.is_empty() || !rust_ctx_param_fields(state).is_empty()
+}
+
+/// Split a transition arg-expression list (`"1, 2"` or `"a=1, b=2"`) into
+/// just the value expressions, in declaration order. Mirrors the `'='`
+/// split the state-args path already uses for the optional `name=` form.
+fn split_transition_arg_values(s: &str) -> Vec<String> {
+    s.split(',')
+        .map(|x| x.trim())
+        .filter(|x| !x.is_empty())
+        .map(|arg| {
+            arg.find('=')
+                .map(|p| arg[p + 1..].trim())
+                .unwrap_or(arg)
+                .to_string()
+        })
+        .collect()
+}
 
 /// Generate the complete Rust system from a Frame AST.
 ///
@@ -521,52 +579,37 @@ pub(crate) fn generate_rust_state_dispatch(
                 ));
                 continue;
             }
+            // RFC-0025.1: enter/exit args live in the typed per-state
+            // `StateContext` (the same place state args live), NOT a
+            // type-erased `Vec<Rc<dyn Any>>`. The transition wrote them to
+            // the destination (enter) / source (exit) chain's typed ctx
+            // fields, so bind each param by walking to its owning state and
+            // reading the typed field — genuinely typed, no downcast, no
+            // stringify, and literals coerce at the ctx-field assignment
+            // (i32→i64, &str→String) for free, exactly like state args.
             code.push_str(&format!(
-                "    {}::{} {{ args }} => {{\n",
+                "    {}::{} {{ .. }} => {{\n",
                 event_class, variant
             ));
-            for (idx, param) in handler.params.iter().enumerate() {
-                let raw_type = param.symbol_type.as_deref().unwrap_or("String");
-                let param_type = match raw_type {
-                    "int" => "i64",
-                    "float" => "f64",
-                    "str" | "string" => "String",
-                    other => other,
-                };
-                // RFC-0025.1: lifecycle args are carried type-faithfully
-                // (`Vec<Rc<dyn Any>>`); bind by `downcast_ref::<T>()` to the
-                // declared receiver type — no stringify/parse round-trip.
-                // (The "persist contract" justification for the old
-                // `Vec<String>` path was incorrect: lifecycle args are not
-                // persisted; see rust_system/persistence.rs.)
-                //
-                // Numeric/string literals in a transition's enter/exit-arg
-                // expression (`-> (42) $S`, `-> ("x") $S`) infer to Rust's
-                // default literal type (`i32` / `&str`), not the declared
-                // receiver type (`i64` / `String`). The write side stores the
-                // value as-inferred, so the read site downcasts to the
-                // declared `T` first, then falls back to the
-                // literal-inferred type and widens — making the bind robust
-                // without threading param types to the write site.
-                let extraction = match param_type {
-                    "i64" => format!(
-                        "        let {0}: i64 = args.get({1}).and_then(|a| a.downcast_ref::<i64>().copied().or_else(|| a.downcast_ref::<i32>().map(|v| *v as i64))).unwrap_or_default();\n",
-                        param.name, idx
+            for param in &handler.params {
+                code.push_str(&format!(
+                    concat!(
+                        "        let {0} = {{\n",
+                        "            let mut __sc = &self.__compartment;\n",
+                        "            while __sc.state != \"{2}\" {{\n",
+                        "                match __sc.parent_compartment.as_deref() {{\n",
+                        "                    Some(p) => __sc = p,\n",
+                        "                    None => break,\n",
+                        "                }}\n",
+                        "            }}\n",
+                        "            match &__sc.state_context {{\n",
+                        "                {1}StateContext::{2}(ctx) => ctx.{0}.clone(),\n",
+                        "                _ => Default::default(),\n",
+                        "            }}\n",
+                        "        }};\n"
                     ),
-                    "f64" => format!(
-                        "        let {0}: f64 = args.get({1}).and_then(|a| a.downcast_ref::<f64>().copied().or_else(|| a.downcast_ref::<i64>().map(|v| *v as f64)).or_else(|| a.downcast_ref::<i32>().map(|v| *v as f64))).unwrap_or_default();\n",
-                        param.name, idx
-                    ),
-                    "String" => format!(
-                        "        let {0}: String = args.get({1}).and_then(|a| a.downcast_ref::<String>().cloned().or_else(|| a.downcast_ref::<&str>().map(|s| s.to_string()))).unwrap_or_default();\n",
-                        param.name, idx
-                    ),
-                    other => format!(
-                        "        let {0}: {2} = args.get({1}).and_then(|a| a.downcast_ref::<{2}>()).cloned().unwrap_or_default();\n",
-                        param.name, idx, other
-                    ),
-                };
-                code.push_str(&extraction);
+                    param.name, system_name, state_name
+                ));
             }
             let param_names: Vec<_> = handler.params.iter().map(|p| p.name.clone()).collect();
             code.push_str(&format!(
@@ -915,64 +958,108 @@ pub(crate) fn rust_expand_transition(
 
     let mut code = String::new();
 
-    // ---- exit_args → __prepareExit (every source-chain layer) ----
+    // ---- exit_args → SOURCE state's typed ctx (RFC-0025.1) ----
+    // Exit args feed the source state's `<$` handler, which runs before
+    // the compartment swaps. Write them into the source compartment's
+    // typed ctx field (by exit-param name) — values coerce to the field
+    // type at assignment, no `Rc<dyn Any>` erasure.
     if let Some(ref exit) = exit_str {
-        let vals: Vec<String> = exit
-            .split(',')
-            .map(|x| x.trim())
-            .filter(|x| !x.is_empty())
-            .map(|arg| {
-                let raw = if let Some(eq_pos) = arg.find('=') {
-                    arg[eq_pos + 1..].trim()
-                } else {
-                    arg
-                };
-                // RFC-0025.1: carry the exit arg type-faithfully as
-                // `Rc<dyn Any>` (parens guard negative/operator exprs).
-                format!(
-                    "alloc::rc::Rc::new(({}).clone()) as alloc::rc::Rc<dyn core::any::Any>",
-                    raw
-                )
-            })
-            .collect();
-        if !vals.is_empty() {
+        let exit_names = ctx
+            .state_exit_param_names
+            .get(&ctx.state_name)
+            .cloned()
+            .unwrap_or_default();
+        let vals: Vec<String> = split_transition_arg_values(exit);
+        if !vals.is_empty() && !exit_names.is_empty() {
             code.push_str(&format!(
-                "{}self.__prepareExit(vec![{}]);\n",
-                indent_str,
-                vals.join(", ")
+                "{0}if let {1}StateContext::{2}(ref mut ctx) = self.__compartment.state_context {{\n",
+                indent_str, ctx.system_name, ctx.state_name
             ));
+            for (i, v) in vals.iter().enumerate() {
+                if let Some(name) = exit_names.get(i) {
+                    code.push_str(&format!("{}    ctx.{} = {};\n", indent_str, name, v));
+                }
+            }
+            code.push_str(&format!("{}}}\n", indent_str));
         }
     }
 
-    // ---- enter_args → __prepareEnter (every destination-chain layer) ----
-    let enter_args_vec = if let Some(ref enter) = enter_str {
-        enter
-            .split(',')
-            .map(|x| x.trim())
-            .filter(|x| !x.is_empty())
-            .map(|arg| {
-                let raw = if let Some(eq_pos) = arg.find('=') {
-                    arg[eq_pos + 1..].trim()
-                } else {
-                    arg
-                };
-                // RFC-0025.1: type-faithful enter arg as `Rc<dyn Any>`
-                // (parens guard negative/operator exprs).
-                format!(
-                    "alloc::rc::Rc::new(({}).clone()) as alloc::rc::Rc<dyn core::any::Any>",
-                    raw
-                )
-            })
-            .collect::<Vec<_>>()
-    } else {
-        Vec::new()
-    };
+    // ---- build the destination chain (no args — they go to the ctx) ----
     code.push_str(&format!(
-        "{}let mut __compartment = self.__prepareEnter(\"{}\", vec![{}]);\n",
-        indent_str,
-        target,
-        enter_args_vec.join(", ")
+        "{}let mut __compartment = self.__prepareEnter(\"{}\");\n",
+        indent_str, target
     ));
+
+    // ---- enter_args → DEST chain typed ctx (RFC-0025.1) ----
+    // Enter args feed each destination-chain layer's `$>` handler. Write
+    // them into the typed ctx field by that layer's own enter-param name
+    // (HSM signature-match rule), mirroring state-arg propagation. The
+    // typed field assignment coerces the value (i32→i64, &str→String) —
+    // no type erasure, no downcast.
+    if let Some(ref enter) = enter_str {
+        let vals: Vec<String> = split_transition_arg_values(enter);
+        if !vals.is_empty() {
+            let mut chain: Vec<String> = vec![target.to_string()];
+            let mut cursor = target.to_string();
+            while let Some(parent) = ctx.state_hsm_parents.get(&cursor) {
+                chain.push(parent.clone());
+                cursor = parent.clone();
+            }
+            code.push_str(&format!("{}{{\n", indent_str));
+            let leaf_names = ctx
+                .state_enter_param_names
+                .get(&chain[0])
+                .cloned()
+                .unwrap_or_default();
+            if !leaf_names.is_empty() {
+                code.push_str(&format!(
+                    "{0}    if let {1}StateContext::{2}(ref mut ctx) = __compartment.state_context {{\n",
+                    indent_str, ctx.system_name, chain[0]
+                ));
+                for (i, v) in vals.iter().enumerate() {
+                    if let Some(name) = leaf_names.get(i) {
+                        code.push_str(&format!("{}        ctx.{} = {};\n", indent_str, name, v));
+                    }
+                }
+                code.push_str(&format!("{}    }}\n", indent_str));
+            }
+            let mut pc = "__compartment.parent_compartment".to_string();
+            for ancestor in &chain[1..] {
+                let anames = ctx
+                    .state_enter_param_names
+                    .get(ancestor)
+                    .cloned()
+                    .unwrap_or_default();
+                if anames.is_empty() {
+                    pc = format!(
+                        "{}.as_mut().expect(\"invariant: HSM ancestor chain checked by validator\").parent_compartment",
+                        pc
+                    );
+                    continue;
+                }
+                code.push_str(&format!(
+                    "{0}    if let Some(ref mut __anc) = {1} {{\n",
+                    indent_str, pc
+                ));
+                code.push_str(&format!(
+                    "{0}        if let {1}StateContext::{2}(ref mut ctx) = __anc.state_context {{\n",
+                    indent_str, ctx.system_name, ancestor
+                ));
+                for (i, v) in vals.iter().enumerate() {
+                    if let Some(name) = anames.get(i) {
+                        code.push_str(&format!("{}            ctx.{} = {};\n", indent_str, name, v));
+                    }
+                }
+                code.push_str(&format!("{}        }}\n", indent_str));
+                code.push_str(&format!("{}    }}\n", indent_str));
+                pc = format!(
+                    "{}.as_mut().expect(\"invariant: HSM ancestor chain checked by validator\").parent_compartment",
+                    pc
+                );
+            }
+            code.push_str(&format!("{}}}\n", indent_str));
+        }
+    }
 
     // ---- state_args → typed StateContext on tuple-variant layers ----
     // Walk the destination chain, writing the positional state args
