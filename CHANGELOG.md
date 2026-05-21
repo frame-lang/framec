@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [4.2.0] - 2026-05-21
+
 > **Migrating from 4.1.x?** Two hard-cut breaking changes and one
 > wire-format break in this release. See
 > [`docs/migration/4.1_to_4.2.md`](docs/migration/4.1_to_4.2.md) for
