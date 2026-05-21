@@ -681,3 +681,123 @@ fn bug31_no_std_portable_paths() {
         );
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// FRAMEC_BUGS #33 regression — generated Rust must actually COMPILE in a
+// `#![no_std]` + alloc consumer that provides only the heap *types*
+// (String/Vec/Box), with NO `#[macro_use]`. #33 was a regression where
+// the `use alloc::{vec, format};` import was dropped: the text was absent
+// AND, more importantly, `vec!`/`format!` failed to resolve under no_std
+// (`cannot find macro vec`). A string-presence check (bug31 above) can't
+// prove resolution; this test does an end-to-end `x86_64-unknown-none`
+// compile — the exact Frame OS bare-metal scenario.
+//
+// Skipped (not failed) when the bare-metal target's precompiled core/alloc
+// aren't installed (`rustup target add x86_64-unknown-none`), so it's a
+// no-op on dev/CI hosts without it rather than a false failure.
+// ─────────────────────────────────────────────────────────────────────
+#[test]
+fn bug33_generated_compiles_no_std() {
+    use std::process::Command;
+
+    const TARGET: &str = "x86_64-unknown-none";
+
+    // Probe: are the target's precompiled core/alloc available? Compile a
+    // trivial `#![no_std]` lib; if core is missing rustc errors with E0463
+    // ("can't find crate for `core`"). Treat that as "skip", anything else
+    // as "target usable".
+    let tmp = std::env::temp_dir().join(format!("framec_bug33_{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&tmp);
+    let probe = tmp.join("probe.rs");
+    std::fs::write(&probe, "#![no_std]\npub fn p() {}\n").expect("write probe");
+    let probe_out = Command::new("rustc")
+        .args([
+            "--edition",
+            "2021",
+            "--crate-type",
+            "lib",
+            "--target",
+            TARGET,
+            "-o",
+        ])
+        .arg(tmp.join("probe.rlib"))
+        .arg(&probe)
+        .output();
+    let target_available = match &probe_out {
+        Ok(o) => {
+            let err = String::from_utf8_lossy(&o.stderr);
+            o.status.success() || !err.contains("can't find crate for `core`")
+        }
+        Err(_) => false, // rustc not invokable — skip
+    };
+    if !target_available {
+        eprintln!(
+            "bug33_generated_compiles_no_std: SKIP — `{}` core/alloc not \
+             installed (run `rustup target add {}`)",
+            TARGET, TARGET
+        );
+        return;
+    }
+
+    // Generate a system that exercises Rc / BTreeMap / Any / vec! /
+    // (interface return) — i.e. every no_std-sensitive emission.
+    let generated = compile_source(
+        r#"
+@@system Bug33 {
+    interface:
+        bump()
+        total(): int
+    machine:
+        $A {
+            bump()       { -> $B }
+            total(): int { @@:(0) }
+        }
+        $B {
+            total(): int { @@:(1) }
+        }
+}
+"#,
+        "rust",
+    );
+
+    // The exact #33 consumer shape: `#![no_std]`, heap TYPES only via the
+    // include site, NO `#[macro_use]`. If `use alloc::{vec, format};` is
+    // dropped again, `vec!` in `__prepareEnter(...)` fails to resolve here.
+    let lib = format!(
+        "#![no_std]\n\
+         extern crate alloc;\n\
+         mod frame_systems {{\n\
+         pub use alloc::boxed::Box;\n\
+         pub use alloc::string::{{String, ToString}};\n\
+         pub use alloc::vec::Vec;\n\
+         {generated}\n\
+         }}\n"
+    );
+    let lib_path = tmp.join("lib.rs");
+    std::fs::write(&lib_path, &lib).expect("write lib.rs");
+
+    let out = Command::new("rustc")
+        .args([
+            "--edition",
+            "2021",
+            "--crate-type",
+            "lib",
+            "--target",
+            TARGET,
+            "-o",
+        ])
+        .arg(tmp.join("out.rlib"))
+        .arg(&lib_path)
+        .output()
+        .expect("invoke rustc");
+
+    assert!(
+        out.status.success(),
+        "generated Rust failed to compile under #![no_std] ({}) — regresses #33\n\
+         --- rustc stderr ---\n{}",
+        TARGET,
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
