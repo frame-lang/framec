@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [4.2.1] - 2026-05-22
+
+Rust-target codegen fixes. No surface-syntax or wire-format changes; all
+16 other backends are unaffected.
+
+### Fixed
+
+- **Typed lifecycle args (RFC-0025.1, #34/#35).** The Rust target carried
+  `$>` / `<$` enter/exit args through a stringified `Vec<String>` +
+  `parse::<T>()`, losing type fidelity (silent default on a parse miss)
+  and hard-breaking on compound types (`Vec<i64>: FromStr`). Enter/exit
+  args now ride the typed per-state `StateContext`, like state args — no
+  stringify, no type erasure. Includes the start-state `<$` exit-handler
+  binding (#35) and decorated `pop$` args (exit → source ctx, enter →
+  a `match` over the restored compartment's variants).
+- **`E0124` on a state named `$Empty` (#40).** The `StateContext` enum's
+  synthesized no-context sentinel was hardcoded as `Empty`, colliding with
+  a user state `$Empty` ("name defined multiple times"). The sentinel is
+  now the reserved `__NoContext`.
+- **`E0124` on a state var + same-named lifecycle/state param.** A state
+  with `$.name` and `$>(name)` emitted a duplicate ctx field; the param
+  now reuses the state var's field.
+
+### Added
+
+- **Validator E115.** State names beginning with the reserved `__` prefix
+  are rejected, guaranteeing user state names never collide with
+  framec-synthesized identifiers (across every backend).
+
 ## [4.2.0] - 2026-05-21
 
 > **Migrating from 4.1.x?** Two hard-cut breaking changes and one
