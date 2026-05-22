@@ -93,7 +93,7 @@ mod _cpp_syntax_skipper_fsm_framec {
         SkipString,
         FindLineEnd,
         BalancedParenEnd,
-        Empty,
+        __NoContext,
     }
 
     impl Default for CppSyntaxSkipperFsmStateContext {
@@ -119,7 +119,7 @@ mod _cpp_syntax_skipper_fsm_framec {
                 "SkipString" => CppSyntaxSkipperFsmStateContext::SkipString,
                 "FindLineEnd" => CppSyntaxSkipperFsmStateContext::FindLineEnd,
                 "BalancedParenEnd" => CppSyntaxSkipperFsmStateContext::BalancedParenEnd,
-                _ => CppSyntaxSkipperFsmStateContext::Empty,
+                _ => CppSyntaxSkipperFsmStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

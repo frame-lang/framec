@@ -80,7 +80,7 @@ mod _go_map_type_framec {
     #[derive(Clone)]
     enum GoMapTypeStateContext {
         Active,
-        Empty,
+        __NoContext,
     }
 
     impl Default for GoMapTypeStateContext {
@@ -102,7 +102,7 @@ mod _go_map_type_framec {
         fn new(state: &str) -> Self {
             let state_context = match state {
                 "Active" => GoMapTypeStateContext::Active,
-                _ => GoMapTypeStateContext::Empty,
+                _ => GoMapTypeStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

@@ -80,7 +80,7 @@ mod _java_map_type_framec {
     #[derive(Clone)]
     enum JavaMapTypeStateContext {
         Active,
-        Empty,
+        __NoContext,
     }
 
     impl Default for JavaMapTypeStateContext {
@@ -102,7 +102,7 @@ mod _java_map_type_framec {
         fn new(state: &str) -> Self {
             let state_context = match state {
                 "Active" => JavaMapTypeStateContext::Active,
-                _ => JavaMapTypeStateContext::Empty,
+                _ => JavaMapTypeStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

@@ -94,7 +94,7 @@ mod _erlang_syntax_skipper_fsm_framec {
         SkipString,
         FindLineEnd,
         BalancedParenEnd,
-        Empty,
+        __NoContext,
     }
 
     impl Default for ErlangSyntaxSkipperFsmStateContext {
@@ -120,7 +120,7 @@ mod _erlang_syntax_skipper_fsm_framec {
                 "SkipString" => ErlangSyntaxSkipperFsmStateContext::SkipString,
                 "FindLineEnd" => ErlangSyntaxSkipperFsmStateContext::FindLineEnd,
                 "BalancedParenEnd" => ErlangSyntaxSkipperFsmStateContext::BalancedParenEnd,
-                _ => ErlangSyntaxSkipperFsmStateContext::Empty,
+                _ => ErlangSyntaxSkipperFsmStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

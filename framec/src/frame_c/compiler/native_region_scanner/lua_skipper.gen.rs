@@ -96,7 +96,7 @@ mod _lua_syntax_skipper_fsm_framec {
         SkipString,
         FindLineEnd,
         BalancedParenEnd,
-        Empty,
+        __NoContext,
     }
 
     impl Default for LuaSyntaxSkipperFsmStateContext {
@@ -122,7 +122,7 @@ mod _lua_syntax_skipper_fsm_framec {
                 "SkipString" => LuaSyntaxSkipperFsmStateContext::SkipString,
                 "FindLineEnd" => LuaSyntaxSkipperFsmStateContext::FindLineEnd,
                 "BalancedParenEnd" => LuaSyntaxSkipperFsmStateContext::BalancedParenEnd,
-                _ => LuaSyntaxSkipperFsmStateContext::Empty,
+                _ => LuaSyntaxSkipperFsmStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

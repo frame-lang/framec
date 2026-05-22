@@ -81,7 +81,7 @@ mod _consts_framec {
     #[derive(Clone)]
     enum ConstsStateContext {
         Running,
-        Empty,
+        __NoContext,
     }
 
     impl Default for ConstsStateContext {
@@ -103,7 +103,7 @@ mod _consts_framec {
         fn new(state: &str) -> Self {
             let state_context = match state {
                 "Running" => ConstsStateContext::Running,
-                _ => ConstsStateContext::Empty,
+                _ => ConstsStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

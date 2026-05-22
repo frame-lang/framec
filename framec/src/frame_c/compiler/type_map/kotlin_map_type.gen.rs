@@ -81,7 +81,7 @@ mod _kotlin_map_type_framec {
     #[derive(Clone)]
     enum KotlinMapTypeStateContext {
         Active,
-        Empty,
+        __NoContext,
     }
 
     impl Default for KotlinMapTypeStateContext {
@@ -103,7 +103,7 @@ mod _kotlin_map_type_framec {
         fn new(state: &str) -> Self {
             let state_context = match state {
                 "Active" => KotlinMapTypeStateContext::Active,
-                _ => KotlinMapTypeStateContext::Empty,
+                _ => KotlinMapTypeStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

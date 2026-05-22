@@ -94,7 +94,7 @@ mod _lifecycle_framec {
     enum LifecycleStateContext {
         Idle,
         Running(RunningContext),
-        Empty,
+        __NoContext,
     }
 
     impl Default for LifecycleStateContext {
@@ -117,7 +117,7 @@ mod _lifecycle_framec {
             let state_context = match state {
                 "Idle" => LifecycleStateContext::Idle,
                 "Running" => LifecycleStateContext::Running(RunningContext::default()),
-                _ => LifecycleStateContext::Empty,
+                _ => LifecycleStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

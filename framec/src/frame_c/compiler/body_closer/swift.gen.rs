@@ -87,7 +87,7 @@ mod _swift_body_closer_fsm_framec {
         InRawString,
         InLineComment,
         InBlockComment,
-        Empty,
+        __NoContext,
     }
 
     impl Default for SwiftBodyCloserFsmStateContext {
@@ -114,7 +114,7 @@ mod _swift_body_closer_fsm_framec {
                 "InRawString" => SwiftBodyCloserFsmStateContext::InRawString,
                 "InLineComment" => SwiftBodyCloserFsmStateContext::InLineComment,
                 "InBlockComment" => SwiftBodyCloserFsmStateContext::InBlockComment,
-                _ => SwiftBodyCloserFsmStateContext::Empty,
+                _ => SwiftBodyCloserFsmStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

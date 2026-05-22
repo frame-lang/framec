@@ -93,7 +93,7 @@ mod _kotlin_syntax_skipper_fsm_framec {
         SkipString,
         FindLineEnd,
         BalancedParenEnd,
-        Empty,
+        __NoContext,
     }
 
     impl Default for KotlinSyntaxSkipperFsmStateContext {
@@ -119,7 +119,7 @@ mod _kotlin_syntax_skipper_fsm_framec {
                 "SkipString" => KotlinSyntaxSkipperFsmStateContext::SkipString,
                 "FindLineEnd" => KotlinSyntaxSkipperFsmStateContext::FindLineEnd,
                 "BalancedParenEnd" => KotlinSyntaxSkipperFsmStateContext::BalancedParenEnd,
-                _ => KotlinSyntaxSkipperFsmStateContext::Empty,
+                _ => KotlinSyntaxSkipperFsmStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

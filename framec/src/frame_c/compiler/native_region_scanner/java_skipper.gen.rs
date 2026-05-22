@@ -93,7 +93,7 @@ mod _java_syntax_skipper_fsm_framec {
         SkipString,
         FindLineEnd,
         BalancedParenEnd,
-        Empty,
+        __NoContext,
     }
 
     impl Default for JavaSyntaxSkipperFsmStateContext {
@@ -119,7 +119,7 @@ mod _java_syntax_skipper_fsm_framec {
                 "SkipString" => JavaSyntaxSkipperFsmStateContext::SkipString,
                 "FindLineEnd" => JavaSyntaxSkipperFsmStateContext::FindLineEnd,
                 "BalancedParenEnd" => JavaSyntaxSkipperFsmStateContext::BalancedParenEnd,
-                _ => JavaSyntaxSkipperFsmStateContext::Empty,
+                _ => JavaSyntaxSkipperFsmStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

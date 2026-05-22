@@ -93,7 +93,7 @@ mod _c_sharp_syntax_skipper_fsm_framec {
         SkipString,
         FindLineEnd,
         BalancedParenEnd,
-        Empty,
+        __NoContext,
     }
 
     impl Default for CSharpSyntaxSkipperFsmStateContext {
@@ -119,7 +119,7 @@ mod _c_sharp_syntax_skipper_fsm_framec {
                 "SkipString" => CSharpSyntaxSkipperFsmStateContext::SkipString,
                 "FindLineEnd" => CSharpSyntaxSkipperFsmStateContext::FindLineEnd,
                 "BalancedParenEnd" => CSharpSyntaxSkipperFsmStateContext::BalancedParenEnd,
-                _ => CSharpSyntaxSkipperFsmStateContext::Empty,
+                _ => CSharpSyntaxSkipperFsmStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

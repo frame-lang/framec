@@ -93,7 +93,7 @@ mod _java_script_syntax_skipper_fsm_framec {
         SkipString,
         FindLineEnd,
         BalancedParenEnd,
-        Empty,
+        __NoContext,
     }
 
     impl Default for JavaScriptSyntaxSkipperFsmStateContext {
@@ -119,7 +119,7 @@ mod _java_script_syntax_skipper_fsm_framec {
                 "SkipString" => JavaScriptSyntaxSkipperFsmStateContext::SkipString,
                 "FindLineEnd" => JavaScriptSyntaxSkipperFsmStateContext::FindLineEnd,
                 "BalancedParenEnd" => JavaScriptSyntaxSkipperFsmStateContext::BalancedParenEnd,
-                _ => JavaScriptSyntaxSkipperFsmStateContext::Empty,
+                _ => JavaScriptSyntaxSkipperFsmStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

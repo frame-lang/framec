@@ -81,7 +81,7 @@ mod _actions_framec {
     #[derive(Clone)]
     enum ActionsStateContext {
         Counting,
-        Empty,
+        __NoContext,
     }
 
     impl Default for ActionsStateContext {
@@ -103,7 +103,7 @@ mod _actions_framec {
         fn new(state: &str) -> Self {
             let state_context = match state {
                 "Counting" => ActionsStateContext::Counting,
-                _ => ActionsStateContext::Empty,
+                _ => ActionsStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

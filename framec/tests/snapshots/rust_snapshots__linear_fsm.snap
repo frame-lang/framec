@@ -84,7 +84,7 @@ mod _linear_fsm_framec {
         Idle,
         Active,
         Done,
-        Empty,
+        __NoContext,
     }
 
     impl Default for LinearFsmStateContext {
@@ -108,7 +108,7 @@ mod _linear_fsm_framec {
                 "Idle" => LinearFsmStateContext::Idle,
                 "Active" => LinearFsmStateContext::Active,
                 "Done" => LinearFsmStateContext::Done,
-                _ => LinearFsmStateContext::Empty,
+                _ => LinearFsmStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

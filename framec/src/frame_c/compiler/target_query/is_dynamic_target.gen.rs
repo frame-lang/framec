@@ -91,7 +91,7 @@ mod _is_dynamic_target_framec {
     #[derive(Clone)]
     enum IsDynamicTargetStateContext {
         Active,
-        Empty,
+        __NoContext,
     }
 
     impl Default for IsDynamicTargetStateContext {
@@ -113,7 +113,7 @@ mod _is_dynamic_target_framec {
         fn new(state: &str) -> Self {
             let state_context = match state {
                 "Active" => IsDynamicTargetStateContext::Active,
-                _ => IsDynamicTargetStateContext::Empty,
+                _ => IsDynamicTargetStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

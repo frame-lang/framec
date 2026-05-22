@@ -86,7 +86,7 @@ mod _state_var_parser_fsm_framec {
         CheckAssign,
         ScanExpr,
         Done,
-        Empty,
+        __NoContext,
     }
 
     impl Default for StateVarParserFsmStateContext {
@@ -112,7 +112,7 @@ mod _state_var_parser_fsm_framec {
                 "CheckAssign" => StateVarParserFsmStateContext::CheckAssign,
                 "ScanExpr" => StateVarParserFsmStateContext::ScanExpr,
                 "Done" => StateVarParserFsmStateContext::Done,
-                _ => StateVarParserFsmStateContext::Empty,
+                _ => StateVarParserFsmStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

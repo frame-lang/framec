@@ -91,7 +91,7 @@ mod _rust_owned_promotion_framec {
     #[derive(Clone)]
     enum RustOwnedPromotionStateContext {
         Active,
-        Empty,
+        __NoContext,
     }
 
     impl Default for RustOwnedPromotionStateContext {
@@ -113,7 +113,7 @@ mod _rust_owned_promotion_framec {
         fn new(state: &str) -> Self {
             let state_context = match state {
                 "Active" => RustOwnedPromotionStateContext::Active,
-                _ => RustOwnedPromotionStateContext::Empty,
+                _ => RustOwnedPromotionStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

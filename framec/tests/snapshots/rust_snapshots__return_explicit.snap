@@ -79,7 +79,7 @@ mod _return_explicit_framec {
     #[derive(Clone)]
     enum ReturnExplicitStateContext {
         Judging,
-        Empty,
+        __NoContext,
     }
 
     impl Default for ReturnExplicitStateContext {
@@ -101,7 +101,7 @@ mod _return_explicit_framec {
         fn new(state: &str) -> Self {
             let state_context = match state {
                 "Judging" => ReturnExplicitStateContext::Judging,
-                _ => ReturnExplicitStateContext::Empty,
+                _ => ReturnExplicitStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

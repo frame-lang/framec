@@ -92,7 +92,7 @@ mod _c_syntax_skipper_fsm_framec {
         SkipString,
         FindLineEnd,
         BalancedParenEnd,
-        Empty,
+        __NoContext,
     }
 
     impl Default for CSyntaxSkipperFsmStateContext {
@@ -118,7 +118,7 @@ mod _c_syntax_skipper_fsm_framec {
                 "SkipString" => CSyntaxSkipperFsmStateContext::SkipString,
                 "FindLineEnd" => CSyntaxSkipperFsmStateContext::FindLineEnd,
                 "BalancedParenEnd" => CSyntaxSkipperFsmStateContext::BalancedParenEnd,
-                _ => CSyntaxSkipperFsmStateContext::Empty,
+                _ => CSyntaxSkipperFsmStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

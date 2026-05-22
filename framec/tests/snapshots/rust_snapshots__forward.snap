@@ -82,7 +82,7 @@ mod _forward_framec {
         Start,
         Middle,
         End,
-        Empty,
+        __NoContext,
     }
 
     impl Default for ForwardStateContext {
@@ -106,7 +106,7 @@ mod _forward_framec {
                 "Start" => ForwardStateContext::Start,
                 "Middle" => ForwardStateContext::Middle,
                 "End" => ForwardStateContext::End,
-                _ => ForwardStateContext::Empty,
+                _ => ForwardStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

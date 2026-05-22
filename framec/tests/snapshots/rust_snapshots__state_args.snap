@@ -97,7 +97,7 @@ mod _state_args_framec {
     enum StateArgsStateContext {
         Idle,
         Holding(HoldingContext),
-        Empty,
+        __NoContext,
     }
 
     impl Default for StateArgsStateContext {
@@ -120,7 +120,7 @@ mod _state_args_framec {
             let state_context = match state {
                 "Idle" => StateArgsStateContext::Idle,
                 "Holding" => StateArgsStateContext::Holding(HoldingContext::default()),
-                _ => StateArgsStateContext::Empty,
+                _ => StateArgsStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

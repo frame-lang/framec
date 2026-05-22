@@ -89,7 +89,7 @@ mod _rust_dispatch_convert_framec {
     #[derive(Clone)]
     enum RustDispatchConvertStateContext {
         Active,
-        Empty,
+        __NoContext,
     }
 
     impl Default for RustDispatchConvertStateContext {
@@ -111,7 +111,7 @@ mod _rust_dispatch_convert_framec {
         fn new(state: &str) -> Self {
             let state_context = match state {
                 "Active" => RustDispatchConvertStateContext::Active,
-                _ => RustDispatchConvertStateContext::Empty,
+                _ => RustDispatchConvertStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

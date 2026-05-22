@@ -88,7 +88,7 @@ mod _go_body_closer_fsm_framec {
         InCharLiteral,
         InLineComment,
         InBlockComment,
-        Empty,
+        __NoContext,
     }
 
     impl Default for GoBodyCloserFsmStateContext {
@@ -116,7 +116,7 @@ mod _go_body_closer_fsm_framec {
                 "InCharLiteral" => GoBodyCloserFsmStateContext::InCharLiteral,
                 "InLineComment" => GoBodyCloserFsmStateContext::InLineComment,
                 "InBlockComment" => GoBodyCloserFsmStateContext::InBlockComment,
-                _ => GoBodyCloserFsmStateContext::Empty,
+                _ => GoBodyCloserFsmStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

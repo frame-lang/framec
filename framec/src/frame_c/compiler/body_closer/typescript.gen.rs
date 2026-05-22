@@ -86,7 +86,7 @@ mod _ts_body_closer_fsm_framec {
         InTemplate,
         InLineComment,
         InBlockComment,
-        Empty,
+        __NoContext,
     }
 
     impl Default for TsBodyCloserFsmStateContext {
@@ -113,7 +113,7 @@ mod _ts_body_closer_fsm_framec {
                 "InTemplate" => TsBodyCloserFsmStateContext::InTemplate,
                 "InLineComment" => TsBodyCloserFsmStateContext::InLineComment,
                 "InBlockComment" => TsBodyCloserFsmStateContext::InBlockComment,
-                _ => TsBodyCloserFsmStateContext::Empty,
+                _ => TsBodyCloserFsmStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

@@ -100,7 +100,7 @@ mod _lifecycle_args_framec {
     enum LifecycleArgsStateContext {
         Idle,
         Active(ActiveContext),
-        Empty,
+        __NoContext,
     }
 
     impl Default for LifecycleArgsStateContext {
@@ -123,7 +123,7 @@ mod _lifecycle_args_framec {
             let state_context = match state {
                 "Idle" => LifecycleArgsStateContext::Idle,
                 "Active" => LifecycleArgsStateContext::Active(ActiveContext::default()),
-                _ => LifecycleArgsStateContext::Empty,
+                _ => LifecycleArgsStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

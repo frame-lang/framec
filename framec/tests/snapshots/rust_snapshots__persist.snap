@@ -81,7 +81,7 @@ mod _counter_framec {
     #[derive(Clone)]
     enum CounterStateContext {
         Counting,
-        Empty,
+        __NoContext,
     }
 
     impl Default for CounterStateContext {
@@ -103,7 +103,7 @@ mod _counter_framec {
         fn new(state: &str) -> Self {
             let state_context = match state {
                 "Counting" => CounterStateContext::Counting,
-                _ => CounterStateContext::Empty,
+                _ => CounterStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),
@@ -268,7 +268,7 @@ mod _counter_framec {
             fn serialize_state_context(ctx: &CounterStateContext) -> serde_json::Value {
                 match ctx {
                     CounterStateContext::Counting => serde_json::json!({}),
-                    CounterStateContext::Empty => serde_json::json!({}),
+                    CounterStateContext::__NoContext => serde_json::json!({}),
                 }
             }
             fn serialize_comp(comp: &CounterCompartment) -> serde_json::Value {
@@ -299,7 +299,7 @@ mod _counter_framec {
             fn deserialize_state_context(state: &str, data: &serde_json::Value) -> CounterStateContext {
                 match state {
                     "Counting" => CounterStateContext::Counting,
-                    _ => CounterStateContext::Empty,
+                    _ => CounterStateContext::__NoContext,
                 }
             }
             fn deserialize_comp(data: &serde_json::Value) -> CounterCompartment {

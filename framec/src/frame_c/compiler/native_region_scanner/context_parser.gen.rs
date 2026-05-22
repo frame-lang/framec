@@ -111,7 +111,7 @@ mod _context_parser_fsm_framec {
         ParseSystem,
         ParseInstantiation,
         Done,
-        Empty,
+        __NoContext,
     }
 
     impl Default for ContextParserFsmStateContext {
@@ -143,7 +143,7 @@ mod _context_parser_fsm_framec {
                 "ParseSystem" => ContextParserFsmStateContext::ParseSystem,
                 "ParseInstantiation" => ContextParserFsmStateContext::ParseInstantiation,
                 "Done" => ContextParserFsmStateContext::Done,
-                _ => ContextParserFsmStateContext::Empty,
+                _ => ContextParserFsmStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

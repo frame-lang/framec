@@ -94,7 +94,7 @@ mod _pascal_case_variant_framec {
     #[derive(Clone)]
     enum PascalCaseVariantStateContext {
         Active,
-        Empty,
+        __NoContext,
     }
 
     impl Default for PascalCaseVariantStateContext {
@@ -116,7 +116,7 @@ mod _pascal_case_variant_framec {
         fn new(state: &str) -> Self {
             let state_context = match state {
                 "Active" => PascalCaseVariantStateContext::Active,
-                _ => PascalCaseVariantStateContext::Empty,
+                _ => PascalCaseVariantStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

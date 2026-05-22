@@ -86,7 +86,7 @@ mod _no_persist_framec {
     #[derive(Clone)]
     enum NoPersistStateContext {
         Active,
-        Empty,
+        __NoContext,
     }
 
     impl Default for NoPersistStateContext {
@@ -108,7 +108,7 @@ mod _no_persist_framec {
         fn new(state: &str) -> Self {
             let state_context = match state {
                 "Active" => NoPersistStateContext::Active,
-                _ => NoPersistStateContext::Empty,
+                _ => NoPersistStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),
@@ -306,7 +306,7 @@ mod _no_persist_framec {
             fn serialize_state_context(ctx: &NoPersistStateContext) -> serde_json::Value {
                 match ctx {
                     NoPersistStateContext::Active => serde_json::json!({}),
-                    NoPersistStateContext::Empty => serde_json::json!({}),
+                    NoPersistStateContext::__NoContext => serde_json::json!({}),
                 }
             }
             fn serialize_comp(comp: &NoPersistCompartment) -> serde_json::Value {
@@ -337,7 +337,7 @@ mod _no_persist_framec {
             fn deserialize_state_context(state: &str, data: &serde_json::Value) -> NoPersistStateContext {
                 match state {
                     "Active" => NoPersistStateContext::Active,
-                    _ => NoPersistStateContext::Empty,
+                    _ => NoPersistStateContext::__NoContext,
                 }
             }
             fn deserialize_comp(data: &serde_json::Value) -> NoPersistCompartment {

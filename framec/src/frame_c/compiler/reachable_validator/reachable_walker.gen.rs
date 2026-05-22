@@ -128,7 +128,7 @@ mod _reachable_walker_framec {
         Initial,
         Walking,
         Done,
-        Empty,
+        __NoContext,
     }
 
     impl Default for ReachableWalkerStateContext {
@@ -152,7 +152,7 @@ mod _reachable_walker_framec {
                 "Initial" => ReachableWalkerStateContext::Initial,
                 "Walking" => ReachableWalkerStateContext::Walking,
                 "Done" => ReachableWalkerStateContext::Done,
-                _ => ReachableWalkerStateContext::Empty,
+                _ => ReachableWalkerStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

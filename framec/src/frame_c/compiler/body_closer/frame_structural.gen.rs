@@ -100,7 +100,7 @@ mod _frame_structural_body_closer_fsm_framec {
         InString,
         InLineComment,
         InBlockComment,
-        Empty,
+        __NoContext,
     }
 
     impl Default for FrameStructuralBodyCloserFsmStateContext {
@@ -126,7 +126,7 @@ mod _frame_structural_body_closer_fsm_framec {
                 "InString" => FrameStructuralBodyCloserFsmStateContext::InString,
                 "InLineComment" => FrameStructuralBodyCloserFsmStateContext::InLineComment,
                 "InBlockComment" => FrameStructuralBodyCloserFsmStateContext::InBlockComment,
-                _ => FrameStructuralBodyCloserFsmStateContext::Empty,
+                _ => FrameStructuralBodyCloserFsmStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

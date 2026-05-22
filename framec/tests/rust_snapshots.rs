@@ -1109,3 +1109,72 @@ fn pop_decorated_args_typed() {
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// FRAMEC_BUGS #40 — a state named `$Empty` must not collide with the
+// synthesized no-context sentinel. The StateContext enum emits a variant
+// per state PLUS a catch-all sentinel; the sentinel used to be hardcoded
+// as `Empty`, so a user `$Empty` state produced a second `Empty` variant
+// → `error[E0428]: the name 'Empty' is defined multiple times`. The
+// sentinel is now `__NoContext` (reserved prefix). Compile-only is enough
+// (the bug was a hard compile break).
+// ─────────────────────────────────────────────────────────────────────
+#[test]
+fn bug40_empty_state_name_no_variant_collision() {
+    let generated = compile_source(
+        r#"
+@@system EmptyName {
+    interface:
+        go()
+        poke()
+    machine:
+        $Empty {
+            go() { -> $Active }
+        }
+        $Active {
+            poke() {}
+        }
+}
+"#,
+        "rust",
+    );
+
+    // The sentinel is namespaced, and the user `$Empty` state keeps its
+    // own `Empty` variant — no duplicate.
+    assert!(
+        generated.contains("__NoContext"),
+        "no-context sentinel must be the reserved `__NoContext`, not `Empty`\n{generated}"
+    );
+    assert_eq!(
+        generated.matches("    Empty,\n").count(),
+        1,
+        "exactly one `Empty` variant (the user state) — the sentinel must \
+         not add a second (#40)\n{generated}"
+    );
+
+    // Compile the generated Rust — this is the actual #40 repro (E0428).
+    let tmp = std::env::temp_dir().join(format!("framec_bug40_{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&tmp);
+    let src = tmp.join("lib.rs");
+    std::fs::write(&src, &generated).expect("write lib.rs");
+    let out = tmp.join("libbug40.rlib");
+    let build = match std::process::Command::new("rustc")
+        .args(["--edition", "2021", "--crate-type", "lib", "-o"])
+        .arg(&out)
+        .arg(&src)
+        .output()
+    {
+        Ok(o) => o,
+        Err(_) => {
+            eprintln!("bug40_empty_state_name_no_variant_collision: SKIP — rustc not invokable");
+            return;
+        }
+    };
+    assert!(
+        build.status.success(),
+        "`$Empty` state must compile (regresses #40 / E0428)\n--- rustc stderr ---\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}

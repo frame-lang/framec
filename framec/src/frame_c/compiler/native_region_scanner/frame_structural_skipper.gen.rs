@@ -95,7 +95,7 @@ mod _frame_structural_syntax_skipper_fsm_framec {
         SkipString,
         FindLineEnd,
         BalancedParenEnd,
-        Empty,
+        __NoContext,
     }
 
     impl Default for FrameStructuralSyntaxSkipperFsmStateContext {
@@ -121,7 +121,7 @@ mod _frame_structural_syntax_skipper_fsm_framec {
                 "SkipString" => FrameStructuralSyntaxSkipperFsmStateContext::SkipString,
                 "FindLineEnd" => FrameStructuralSyntaxSkipperFsmStateContext::FindLineEnd,
                 "BalancedParenEnd" => FrameStructuralSyntaxSkipperFsmStateContext::BalancedParenEnd,
-                _ => FrameStructuralSyntaxSkipperFsmStateContext::Empty,
+                _ => FrameStructuralSyntaxSkipperFsmStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

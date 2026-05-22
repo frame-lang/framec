@@ -87,7 +87,7 @@ mod _cpp_body_closer_fsm_framec {
         InLineComment,
         InBlockComment,
         InRawString,
-        Empty,
+        __NoContext,
     }
 
     impl Default for CppBodyCloserFsmStateContext {
@@ -115,7 +115,7 @@ mod _cpp_body_closer_fsm_framec {
                 "InLineComment" => CppBodyCloserFsmStateContext::InLineComment,
                 "InBlockComment" => CppBodyCloserFsmStateContext::InBlockComment,
                 "InRawString" => CppBodyCloserFsmStateContext::InRawString,
-                _ => CppBodyCloserFsmStateContext::Empty,
+                _ => CppBodyCloserFsmStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

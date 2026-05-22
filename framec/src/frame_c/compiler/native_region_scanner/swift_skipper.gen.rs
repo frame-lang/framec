@@ -95,7 +95,7 @@ mod _swift_syntax_skipper_fsm_framec {
         SkipString,
         FindLineEnd,
         BalancedParenEnd,
-        Empty,
+        __NoContext,
     }
 
     impl Default for SwiftSyntaxSkipperFsmStateContext {
@@ -121,7 +121,7 @@ mod _swift_syntax_skipper_fsm_framec {
                 "SkipString" => SwiftSyntaxSkipperFsmStateContext::SkipString,
                 "FindLineEnd" => SwiftSyntaxSkipperFsmStateContext::FindLineEnd,
                 "BalancedParenEnd" => SwiftSyntaxSkipperFsmStateContext::BalancedParenEnd,
-                _ => SwiftSyntaxSkipperFsmStateContext::Empty,
+                _ => SwiftSyntaxSkipperFsmStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

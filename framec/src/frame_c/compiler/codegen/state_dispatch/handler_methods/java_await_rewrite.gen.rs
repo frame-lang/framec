@@ -106,7 +106,7 @@ mod _java_await_rewrite_fsm_framec {
         InLineComment,
         InBlockComment,
         InString,
-        Empty,
+        __NoContext,
     }
 
     impl Default for JavaAwaitRewriteFsmStateContext {
@@ -132,7 +132,7 @@ mod _java_await_rewrite_fsm_framec {
                 "InLineComment" => JavaAwaitRewriteFsmStateContext::InLineComment,
                 "InBlockComment" => JavaAwaitRewriteFsmStateContext::InBlockComment,
                 "InString" => JavaAwaitRewriteFsmStateContext::InString,
-                _ => JavaAwaitRewriteFsmStateContext::Empty,
+                _ => JavaAwaitRewriteFsmStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

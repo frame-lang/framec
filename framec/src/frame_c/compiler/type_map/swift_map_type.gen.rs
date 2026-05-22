@@ -87,7 +87,7 @@ mod _swift_map_type_framec {
     #[derive(Clone)]
     enum SwiftMapTypeStateContext {
         Active,
-        Empty,
+        __NoContext,
     }
 
     impl Default for SwiftMapTypeStateContext {
@@ -109,7 +109,7 @@ mod _swift_map_type_framec {
         fn new(state: &str) -> Self {
             let state_context = match state {
                 "Active" => SwiftMapTypeStateContext::Active,
-                _ => SwiftMapTypeStateContext::Empty,
+                _ => SwiftMapTypeStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

@@ -81,7 +81,7 @@ mod _self_call_framec {
     #[derive(Clone)]
     enum SelfCallStateContext {
         Active,
-        Empty,
+        __NoContext,
     }
 
     impl Default for SelfCallStateContext {
@@ -103,7 +103,7 @@ mod _self_call_framec {
         fn new(state: &str) -> Self {
             let state_context = match state {
                 "Active" => SelfCallStateContext::Active,
-                _ => SelfCallStateContext::Empty,
+                _ => SelfCallStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

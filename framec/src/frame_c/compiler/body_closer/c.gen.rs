@@ -91,7 +91,7 @@ mod _c_body_closer_fsm_framec {
         InCharLiteral,
         InLineComment,
         InBlockComment,
-        Empty,
+        __NoContext,
     }
 
     impl Default for CBodyCloserFsmStateContext {
@@ -118,7 +118,7 @@ mod _c_body_closer_fsm_framec {
                 "InCharLiteral" => CBodyCloserFsmStateContext::InCharLiteral,
                 "InLineComment" => CBodyCloserFsmStateContext::InLineComment,
                 "InBlockComment" => CBodyCloserFsmStateContext::InBlockComment,
-                _ => CBodyCloserFsmStateContext::Empty,
+                _ => CBodyCloserFsmStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

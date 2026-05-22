@@ -87,7 +87,7 @@ mod _rust_body_closer_fsm_framec {
         InLineComment,
         InBlockComment,
         InRawString,
-        Empty,
+        __NoContext,
     }
 
     impl Default for RustBodyCloserFsmStateContext {
@@ -115,7 +115,7 @@ mod _rust_body_closer_fsm_framec {
                 "InLineComment" => RustBodyCloserFsmStateContext::InLineComment,
                 "InBlockComment" => RustBodyCloserFsmStateContext::InBlockComment,
                 "InRawString" => RustBodyCloserFsmStateContext::InRawString,
-                _ => RustBodyCloserFsmStateContext::Empty,
+                _ => RustBodyCloserFsmStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

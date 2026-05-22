@@ -112,7 +112,7 @@ mod _g_d_script_multi_sys_assembler_fsm_framec {
         SkipLeading,
         ReadExtends,
         IndentBody,
-        Empty,
+        __NoContext,
     }
 
     impl Default for GDScriptMultiSysAssemblerFsmStateContext {
@@ -137,7 +137,7 @@ mod _g_d_script_multi_sys_assembler_fsm_framec {
                 "SkipLeading" => GDScriptMultiSysAssemblerFsmStateContext::SkipLeading,
                 "ReadExtends" => GDScriptMultiSysAssemblerFsmStateContext::ReadExtends,
                 "IndentBody" => GDScriptMultiSysAssemblerFsmStateContext::IndentBody,
-                _ => GDScriptMultiSysAssemblerFsmStateContext::Empty,
+                _ => GDScriptMultiSysAssemblerFsmStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

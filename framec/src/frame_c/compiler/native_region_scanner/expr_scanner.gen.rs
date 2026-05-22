@@ -83,7 +83,7 @@ mod _expr_scanner_fsm_framec {
     enum ExprScannerFsmStateContext {
         Init,
         Scanning,
-        Empty,
+        __NoContext,
     }
 
     impl Default for ExprScannerFsmStateContext {
@@ -106,7 +106,7 @@ mod _expr_scanner_fsm_framec {
             let state_context = match state {
                 "Init" => ExprScannerFsmStateContext::Init,
                 "Scanning" => ExprScannerFsmStateContext::Scanning,
-                _ => ExprScannerFsmStateContext::Empty,
+                _ => ExprScannerFsmStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

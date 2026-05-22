@@ -86,7 +86,7 @@ mod _java_body_closer_fsm_framec {
         InCharLiteral,
         InLineComment,
         InBlockComment,
-        Empty,
+        __NoContext,
     }
 
     impl Default for JavaBodyCloserFsmStateContext {
@@ -113,7 +113,7 @@ mod _java_body_closer_fsm_framec {
                 "InCharLiteral" => JavaBodyCloserFsmStateContext::InCharLiteral,
                 "InLineComment" => JavaBodyCloserFsmStateContext::InLineComment,
                 "InBlockComment" => JavaBodyCloserFsmStateContext::InBlockComment,
-                _ => JavaBodyCloserFsmStateContext::Empty,
+                _ => JavaBodyCloserFsmStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

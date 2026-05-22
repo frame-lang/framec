@@ -93,7 +93,7 @@ mod _type_script_syntax_skipper_fsm_framec {
         SkipString,
         FindLineEnd,
         BalancedParenEnd,
-        Empty,
+        __NoContext,
     }
 
     impl Default for TypeScriptSyntaxSkipperFsmStateContext {
@@ -119,7 +119,7 @@ mod _type_script_syntax_skipper_fsm_framec {
                 "SkipString" => TypeScriptSyntaxSkipperFsmStateContext::SkipString,
                 "FindLineEnd" => TypeScriptSyntaxSkipperFsmStateContext::FindLineEnd,
                 "BalancedParenEnd" => TypeScriptSyntaxSkipperFsmStateContext::BalancedParenEnd,
-                _ => TypeScriptSyntaxSkipperFsmStateContext::Empty,
+                _ => TypeScriptSyntaxSkipperFsmStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

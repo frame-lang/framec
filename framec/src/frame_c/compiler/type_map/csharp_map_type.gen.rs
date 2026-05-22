@@ -84,7 +84,7 @@ mod _csharp_map_type_framec {
     #[derive(Clone)]
     enum CsharpMapTypeStateContext {
         Active,
-        Empty,
+        __NoContext,
     }
 
     impl Default for CsharpMapTypeStateContext {
@@ -106,7 +106,7 @@ mod _csharp_map_type_framec {
         fn new(state: &str) -> Self {
             let state_context = match state {
                 "Active" => CsharpMapTypeStateContext::Active,
-                _ => CsharpMapTypeStateContext::Empty,
+                _ => CsharpMapTypeStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

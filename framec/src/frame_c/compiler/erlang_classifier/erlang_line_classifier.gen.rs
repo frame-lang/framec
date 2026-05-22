@@ -127,7 +127,7 @@ mod _erlang_line_classifier_framec {
     #[derive(Clone)]
     enum ErlangLineClassifierStateContext {
         Active,
-        Empty,
+        __NoContext,
     }
 
     impl Default for ErlangLineClassifierStateContext {
@@ -149,7 +149,7 @@ mod _erlang_line_classifier_framec {
         fn new(state: &str) -> Self {
             let state_context = match state {
                 "Active" => ErlangLineClassifierStateContext::Active,
-                _ => ErlangLineClassifierStateContext::Empty,
+                _ => ErlangLineClassifierStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

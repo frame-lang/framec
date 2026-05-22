@@ -93,7 +93,7 @@ mod _rust_syntax_skipper_fsm_framec {
         SkipString,
         FindLineEnd,
         BalancedParenEnd,
-        Empty,
+        __NoContext,
     }
 
     impl Default for RustSyntaxSkipperFsmStateContext {
@@ -119,7 +119,7 @@ mod _rust_syntax_skipper_fsm_framec {
                 "SkipString" => RustSyntaxSkipperFsmStateContext::SkipString,
                 "FindLineEnd" => RustSyntaxSkipperFsmStateContext::FindLineEnd,
                 "BalancedParenEnd" => RustSyntaxSkipperFsmStateContext::BalancedParenEnd,
-                _ => RustSyntaxSkipperFsmStateContext::Empty,
+                _ => RustSyntaxSkipperFsmStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

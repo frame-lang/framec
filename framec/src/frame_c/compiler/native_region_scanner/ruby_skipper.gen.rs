@@ -93,7 +93,7 @@ mod _ruby_syntax_skipper_fsm_framec {
         SkipString,
         FindLineEnd,
         BalancedParenEnd,
-        Empty,
+        __NoContext,
     }
 
     impl Default for RubySyntaxSkipperFsmStateContext {
@@ -119,7 +119,7 @@ mod _ruby_syntax_skipper_fsm_framec {
                 "SkipString" => RubySyntaxSkipperFsmStateContext::SkipString,
                 "FindLineEnd" => RubySyntaxSkipperFsmStateContext::FindLineEnd,
                 "BalancedParenEnd" => RubySyntaxSkipperFsmStateContext::BalancedParenEnd,
-                _ => RubySyntaxSkipperFsmStateContext::Empty,
+                _ => RubySyntaxSkipperFsmStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

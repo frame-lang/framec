@@ -96,7 +96,7 @@ mod _rust_map_type_framec {
     #[derive(Clone)]
     enum RustMapTypeStateContext {
         Active,
-        Empty,
+        __NoContext,
     }
 
     impl Default for RustMapTypeStateContext {
@@ -118,7 +118,7 @@ mod _rust_map_type_framec {
         fn new(state: &str) -> Self {
             let state_context = match state {
                 "Active" => RustMapTypeStateContext::Active,
-                _ => RustMapTypeStateContext::Empty,
+                _ => RustMapTypeStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

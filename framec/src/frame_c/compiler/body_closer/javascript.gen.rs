@@ -86,7 +86,7 @@ mod _js_body_closer_fsm_framec {
         InTemplate,
         InLineComment,
         InBlockComment,
-        Empty,
+        __NoContext,
     }
 
     impl Default for JsBodyCloserFsmStateContext {
@@ -113,7 +113,7 @@ mod _js_body_closer_fsm_framec {
                 "InTemplate" => JsBodyCloserFsmStateContext::InTemplate,
                 "InLineComment" => JsBodyCloserFsmStateContext::InLineComment,
                 "InBlockComment" => JsBodyCloserFsmStateContext::InBlockComment,
-                _ => JsBodyCloserFsmStateContext::Empty,
+                _ => JsBodyCloserFsmStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

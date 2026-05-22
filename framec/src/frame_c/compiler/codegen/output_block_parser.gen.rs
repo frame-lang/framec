@@ -92,7 +92,7 @@ mod _output_block_parser_fsm_framec {
     enum OutputBlockParserFsmStateContext {
         Init,
         Parsing,
-        Empty,
+        __NoContext,
     }
 
     impl Default for OutputBlockParserFsmStateContext {
@@ -115,7 +115,7 @@ mod _output_block_parser_fsm_framec {
             let state_context = match state {
                 "Init" => OutputBlockParserFsmStateContext::Init,
                 "Parsing" => OutputBlockParserFsmStateContext::Parsing,
-                _ => OutputBlockParserFsmStateContext::Empty,
+                _ => OutputBlockParserFsmStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

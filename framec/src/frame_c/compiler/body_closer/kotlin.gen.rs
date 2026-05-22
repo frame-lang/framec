@@ -88,7 +88,7 @@ mod _kotlin_body_closer_fsm_framec {
         InCharLiteral,
         InLineComment,
         InBlockComment,
-        Empty,
+        __NoContext,
     }
 
     impl Default for KotlinBodyCloserFsmStateContext {
@@ -116,7 +116,7 @@ mod _kotlin_body_closer_fsm_framec {
                 "InCharLiteral" => KotlinBodyCloserFsmStateContext::InCharLiteral,
                 "InLineComment" => KotlinBodyCloserFsmStateContext::InLineComment,
                 "InBlockComment" => KotlinBodyCloserFsmStateContext::InBlockComment,
-                _ => KotlinBodyCloserFsmStateContext::Empty,
+                _ => KotlinBodyCloserFsmStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

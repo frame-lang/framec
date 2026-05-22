@@ -95,7 +95,7 @@ mod _to_snake_case_framec {
     #[derive(Clone)]
     enum ToSnakeCaseStateContext {
         Active,
-        Empty,
+        __NoContext,
     }
 
     impl Default for ToSnakeCaseStateContext {
@@ -117,7 +117,7 @@ mod _to_snake_case_framec {
         fn new(state: &str) -> Self {
             let state_context = match state {
                 "Active" => ToSnakeCaseStateContext::Active,
-                _ => ToSnakeCaseStateContext::Empty,
+                _ => ToSnakeCaseStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

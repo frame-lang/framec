@@ -88,7 +88,7 @@ mod _output_block_lexer_fsm_framec {
     enum OutputBlockLexerFsmStateContext {
         Init,
         Scanning,
-        Empty,
+        __NoContext,
     }
 
     impl Default for OutputBlockLexerFsmStateContext {
@@ -111,7 +111,7 @@ mod _output_block_lexer_fsm_framec {
             let state_context = match state {
                 "Init" => OutputBlockLexerFsmStateContext::Init,
                 "Scanning" => OutputBlockLexerFsmStateContext::Scanning,
-                _ => OutputBlockLexerFsmStateContext::Empty,
+                _ => OutputBlockLexerFsmStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

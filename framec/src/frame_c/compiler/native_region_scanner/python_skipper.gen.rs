@@ -92,7 +92,7 @@ mod _python_syntax_skipper_fsm_framec {
         SkipString,
         FindLineEnd,
         BalancedParenEnd,
-        Empty,
+        __NoContext,
     }
 
     impl Default for PythonSyntaxSkipperFsmStateContext {
@@ -118,7 +118,7 @@ mod _python_syntax_skipper_fsm_framec {
                 "SkipString" => PythonSyntaxSkipperFsmStateContext::SkipString,
                 "FindLineEnd" => PythonSyntaxSkipperFsmStateContext::FindLineEnd,
                 "BalancedParenEnd" => PythonSyntaxSkipperFsmStateContext::BalancedParenEnd,
-                _ => PythonSyntaxSkipperFsmStateContext::Empty,
+                _ => PythonSyntaxSkipperFsmStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

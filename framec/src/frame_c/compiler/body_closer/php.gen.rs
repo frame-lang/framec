@@ -91,7 +91,7 @@ mod _php_body_closer_fsm_framec {
         InString,
         InLineComment,
         InBlockComment,
-        Empty,
+        __NoContext,
     }
 
     impl Default for PhpBodyCloserFsmStateContext {
@@ -117,7 +117,7 @@ mod _php_body_closer_fsm_framec {
                 "InString" => PhpBodyCloserFsmStateContext::InString,
                 "InLineComment" => PhpBodyCloserFsmStateContext::InLineComment,
                 "InBlockComment" => PhpBodyCloserFsmStateContext::InBlockComment,
-                _ => PhpBodyCloserFsmStateContext::Empty,
+                _ => PhpBodyCloserFsmStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

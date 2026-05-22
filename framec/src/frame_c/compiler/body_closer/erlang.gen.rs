@@ -80,7 +80,7 @@ mod _erlang_body_closer_fsm_framec {
     enum ErlangBodyCloserFsmStateContext {
         Init,
         Scanning,
-        Empty,
+        __NoContext,
     }
 
     impl Default for ErlangBodyCloserFsmStateContext {
@@ -103,7 +103,7 @@ mod _erlang_body_closer_fsm_framec {
             let state_context = match state {
                 "Init" => ErlangBodyCloserFsmStateContext::Init,
                 "Scanning" => ErlangBodyCloserFsmStateContext::Scanning,
-                _ => ErlangBodyCloserFsmStateContext::Empty,
+                _ => ErlangBodyCloserFsmStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

@@ -93,7 +93,7 @@ mod _php_syntax_skipper_fsm_framec {
         SkipString,
         FindLineEnd,
         BalancedParenEnd,
-        Empty,
+        __NoContext,
     }
 
     impl Default for PhpSyntaxSkipperFsmStateContext {
@@ -119,7 +119,7 @@ mod _php_syntax_skipper_fsm_framec {
                 "SkipString" => PhpSyntaxSkipperFsmStateContext::SkipString,
                 "FindLineEnd" => PhpSyntaxSkipperFsmStateContext::FindLineEnd,
                 "BalancedParenEnd" => PhpSyntaxSkipperFsmStateContext::BalancedParenEnd,
-                _ => PhpSyntaxSkipperFsmStateContext::Empty,
+                _ => PhpSyntaxSkipperFsmStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

@@ -108,7 +108,7 @@ mod _section_order_validator_framec {
     enum SectionOrderValidatorStateContext {
         Walking,
         OutOfOrder,
-        Empty,
+        __NoContext,
     }
 
     impl Default for SectionOrderValidatorStateContext {
@@ -131,7 +131,7 @@ mod _section_order_validator_framec {
             let state_context = match state {
                 "Walking" => SectionOrderValidatorStateContext::Walking,
                 "OutOfOrder" => SectionOrderValidatorStateContext::OutOfOrder,
-                _ => SectionOrderValidatorStateContext::Empty,
+                _ => SectionOrderValidatorStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

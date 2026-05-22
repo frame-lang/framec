@@ -85,7 +85,7 @@ mod _python_body_closer_fsm_framec {
         InString,
         InTripleString,
         InLineComment,
-        Empty,
+        __NoContext,
     }
 
     impl Default for PythonBodyCloserFsmStateContext {
@@ -111,7 +111,7 @@ mod _python_body_closer_fsm_framec {
                 "InString" => PythonBodyCloserFsmStateContext::InString,
                 "InTripleString" => PythonBodyCloserFsmStateContext::InTripleString,
                 "InLineComment" => PythonBodyCloserFsmStateContext::InLineComment,
-                _ => PythonBodyCloserFsmStateContext::Empty,
+                _ => PythonBodyCloserFsmStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

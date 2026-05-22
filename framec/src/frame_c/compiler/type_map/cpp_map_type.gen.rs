@@ -80,7 +80,7 @@ mod _cpp_map_type_framec {
     #[derive(Clone)]
     enum CppMapTypeStateContext {
         Active,
-        Empty,
+        __NoContext,
     }
 
     impl Default for CppMapTypeStateContext {
@@ -102,7 +102,7 @@ mod _cpp_map_type_framec {
         fn new(state: &str) -> Self {
             let state_context = match state {
                 "Active" => CppMapTypeStateContext::Active,
-                _ => CppMapTypeStateContext::Empty,
+                _ => CppMapTypeStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

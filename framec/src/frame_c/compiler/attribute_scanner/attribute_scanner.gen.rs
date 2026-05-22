@@ -121,7 +121,7 @@ mod _attribute_scanner_fsm_framec {
         BracketBeforeClose,
         BareName,
         BareValue,
-        Empty,
+        __NoContext,
     }
 
     impl Default for AttributeScannerFsmStateContext {
@@ -149,7 +149,7 @@ mod _attribute_scanner_fsm_framec {
                 "BracketBeforeClose" => AttributeScannerFsmStateContext::BracketBeforeClose,
                 "BareName" => AttributeScannerFsmStateContext::BareName,
                 "BareValue" => AttributeScannerFsmStateContext::BareValue,
-                _ => AttributeScannerFsmStateContext::Empty,
+                _ => AttributeScannerFsmStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

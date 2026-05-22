@@ -85,7 +85,7 @@ mod _push_pop_framec {
     enum PushPopStateContext {
         Idle,
         Nested,
-        Empty,
+        __NoContext,
     }
 
     impl Default for PushPopStateContext {
@@ -108,7 +108,7 @@ mod _push_pop_framec {
             let state_context = match state {
                 "Idle" => PushPopStateContext::Idle,
                 "Nested" => PushPopStateContext::Nested,
-                _ => PushPopStateContext::Empty,
+                _ => PushPopStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

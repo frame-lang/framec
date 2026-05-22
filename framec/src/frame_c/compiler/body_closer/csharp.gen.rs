@@ -91,7 +91,7 @@ mod _cs_body_closer_fsm_framec {
         InLineComment,
         InBlockComment,
         InPreprocessor,
-        Empty,
+        __NoContext,
     }
 
     impl Default for CsBodyCloserFsmStateContext {
@@ -121,7 +121,7 @@ mod _cs_body_closer_fsm_framec {
                 "InLineComment" => CsBodyCloserFsmStateContext::InLineComment,
                 "InBlockComment" => CsBodyCloserFsmStateContext::InBlockComment,
                 "InPreprocessor" => CsBodyCloserFsmStateContext::InPreprocessor,
-                _ => CsBodyCloserFsmStateContext::Empty,
+                _ => CsBodyCloserFsmStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

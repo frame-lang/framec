@@ -84,7 +84,7 @@ mod _mini_hsm_framec {
         Live,
         Awake,
         Asleep,
-        Empty,
+        __NoContext,
     }
 
     impl Default for MiniHsmStateContext {
@@ -108,7 +108,7 @@ mod _mini_hsm_framec {
                 "Live" => MiniHsmStateContext::Live,
                 "Awake" => MiniHsmStateContext::Awake,
                 "Asleep" => MiniHsmStateContext::Asleep,
-                _ => MiniHsmStateContext::Empty,
+                _ => MiniHsmStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

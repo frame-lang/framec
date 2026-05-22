@@ -1367,7 +1367,11 @@ fn generate_rust_runtime_types(
             }
         }
     }
-    code.push_str("    Empty,\n");
+    // Synthesized catch-all / no-context sentinel. Named with the reserved
+    // `__` prefix so it can never collide with a user state's variant — a
+    // state named `$Empty` previously produced a second `Empty` variant
+    // here (E0428: name defined multiple times). See FRAMEC_BUGS #40.
+    code.push_str("    __NoContext,\n");
     code.push_str("}\n\n");
 
     // Default impl for StateContext
@@ -1441,7 +1445,7 @@ fn generate_rust_runtime_types(
         }
     }
     code.push_str(&format!(
-        "            _ => {}StateContext::Empty,\n",
+        "            _ => {}StateContext::__NoContext,\n",
         system_name
     ));
     code.push_str("        };\n");

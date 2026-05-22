@@ -88,7 +88,7 @@ mod _ruby_body_closer_fsm_framec {
         Scanning,
         InString,
         InLineComment,
-        Empty,
+        __NoContext,
     }
 
     impl Default for RubyBodyCloserFsmStateContext {
@@ -113,7 +113,7 @@ mod _ruby_body_closer_fsm_framec {
                 "Scanning" => RubyBodyCloserFsmStateContext::Scanning,
                 "InString" => RubyBodyCloserFsmStateContext::InString,
                 "InLineComment" => RubyBodyCloserFsmStateContext::InLineComment,
-                _ => RubyBodyCloserFsmStateContext::Empty,
+                _ => RubyBodyCloserFsmStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

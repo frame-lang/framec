@@ -87,7 +87,7 @@ mod _lua_body_closer_fsm_framec {
         InLongString,
         InLineComment,
         InBlockComment,
-        Empty,
+        __NoContext,
     }
 
     impl Default for LuaBodyCloserFsmStateContext {
@@ -114,7 +114,7 @@ mod _lua_body_closer_fsm_framec {
                 "InLongString" => LuaBodyCloserFsmStateContext::InLongString,
                 "InLineComment" => LuaBodyCloserFsmStateContext::InLineComment,
                 "InBlockComment" => LuaBodyCloserFsmStateContext::InBlockComment,
-                _ => LuaBodyCloserFsmStateContext::Empty,
+                _ => LuaBodyCloserFsmStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

@@ -97,7 +97,7 @@ pub(crate) fn generate_rust_persistence_methods(system: &SystemAst) -> Vec<Codeg
         }
     }
     save_body.push_str(&format!(
-        "        {}StateContext::Empty => serde_json::json!({{}}),\n",
+        "        {}StateContext::__NoContext => serde_json::json!({{}}),\n",
         system.name
     ));
     save_body.push_str("    }\n");
@@ -211,7 +211,7 @@ pub(crate) fn generate_rust_persistence_methods(system: &SystemAst) -> Vec<Codeg
         }
     }
     restore_body.push_str(&format!(
-        "        _ => {}StateContext::Empty,\n",
+        "        _ => {}StateContext::__NoContext,\n",
         system.name
     ));
     restore_body.push_str("    }\n");

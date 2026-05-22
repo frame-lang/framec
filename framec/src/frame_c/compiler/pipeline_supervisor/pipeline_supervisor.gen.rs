@@ -147,7 +147,7 @@ mod _pipeline_supervisor_framec {
         Aborted,
         Failed,
         Done,
-        Empty,
+        __NoContext,
     }
 
     impl Default for PipelineSupervisorStateContext {
@@ -173,7 +173,7 @@ mod _pipeline_supervisor_framec {
                 "Aborted" => PipelineSupervisorStateContext::Aborted,
                 "Failed" => PipelineSupervisorStateContext::Failed,
                 "Done" => PipelineSupervisorStateContext::Done,
-                _ => PipelineSupervisorStateContext::Empty,
+                _ => PipelineSupervisorStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

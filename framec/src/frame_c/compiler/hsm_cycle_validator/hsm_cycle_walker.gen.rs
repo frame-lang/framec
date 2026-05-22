@@ -114,7 +114,7 @@ mod _hsm_cycle_walker_framec {
         Walking,
         CycleFound,
         ChainRoot,
-        Empty,
+        __NoContext,
     }
 
     impl Default for HsmCycleWalkerStateContext {
@@ -139,7 +139,7 @@ mod _hsm_cycle_walker_framec {
                 "Walking" => HsmCycleWalkerStateContext::Walking,
                 "CycleFound" => HsmCycleWalkerStateContext::CycleFound,
                 "ChainRoot" => HsmCycleWalkerStateContext::ChainRoot,
-                _ => HsmCycleWalkerStateContext::Empty,
+                _ => HsmCycleWalkerStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),

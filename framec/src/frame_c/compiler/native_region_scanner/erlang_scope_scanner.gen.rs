@@ -91,7 +91,7 @@ mod _erlang_scope_scanner_fsm_framec {
         Init,
         CheckFun,
         ScanBody,
-        Empty,
+        __NoContext,
     }
 
     impl Default for ErlangScopeScannerFsmStateContext {
@@ -115,7 +115,7 @@ mod _erlang_scope_scanner_fsm_framec {
                 "Init" => ErlangScopeScannerFsmStateContext::Init,
                 "CheckFun" => ErlangScopeScannerFsmStateContext::CheckFun,
                 "ScanBody" => ErlangScopeScannerFsmStateContext::ScanBody,
-                _ => ErlangScopeScannerFsmStateContext::Empty,
+                _ => ErlangScopeScannerFsmStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),
