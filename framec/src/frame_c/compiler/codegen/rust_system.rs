@@ -36,6 +36,15 @@ use crate::frame_c::visitors::TargetLanguage;
 /// `Context` shape.
 pub(crate) fn rust_ctx_param_fields(state: &StateAst) -> Vec<(String, Type)> {
     let mut seen = std::collections::HashSet::<String>::new();
+    // A state var already occupies a ctx field. A param that shares a state
+    // var's name (e.g. `$.name: str` with `$>(name: str) { $.name = name }`)
+    // REUSES that field — the transition writes it, the handler reads it —
+    // rather than declaring a duplicate (`E0124: field already declared`).
+    // Seed `seen` with the state-var names so such params aren't re-added as
+    // separate fields; the state var owns the field (and its type).
+    for sv in &state.state_vars {
+        seen.insert(sv.name.clone());
+    }
     let mut out: Vec<(String, Type)> = Vec::new();
     for p in &state.params {
         if seen.insert(p.name.clone()) {
