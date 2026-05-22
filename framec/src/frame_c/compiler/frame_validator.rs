@@ -291,6 +291,7 @@ impl FrameValidator {
         self.validate_section_order(system);
         self.validate_duplicate_sections(system);
         self.validate_duplicate_system_params(system);
+        self.validate_state_names_not_reserved(system);
 
         // Build lookup tables
         let state_map = self.build_state_map(system);
@@ -1635,6 +1636,52 @@ mod tests {
         assert!(
             !codes.iter().any(|c| c == "E111"),
             "false-positive E111 on distinct params: {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_e115_reserved_state_name_prefix() {
+        // A state named `$__Foo` would collide with framec-synthesized
+        // `__`-prefixed identifiers (e.g. the Rust `__NoContext`
+        // StateContext sentinel — FRAMEC_BUGS #40). Must be rejected.
+        let source = r#"
+@@system R {
+    interface:
+        go()
+    machine:
+        $__Foo {
+            go() { }
+        }
+}"#;
+        let codes = v4_codes(source);
+        assert!(
+            codes.iter().any(|c| c == "E115"),
+            "expected E115 for reserved `__` state-name prefix, got {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_e115_ordinary_state_names_pass() {
+        // `$Empty` is fine — it's the SENTINEL that's namespaced, not user
+        // states. No false positive on ordinary (or `Empty`) names.
+        let source = r#"
+@@system R {
+    interface:
+        go()
+    machine:
+        $Empty {
+            go() { -> $Active }
+        }
+        $Active {
+            go() { }
+        }
+}"#;
+        let codes = v4_codes(source);
+        assert!(
+            !codes.iter().any(|c| c == "E115"),
+            "false-positive E115 on ordinary state names: {:?}",
             codes
         );
     }

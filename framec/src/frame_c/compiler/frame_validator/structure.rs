@@ -50,6 +50,33 @@ impl FrameValidator {
         }
     }
 
+    /// E115: A state name must not begin with the reserved `__` prefix.
+    /// framec synthesizes `__`-prefixed identifiers internally (e.g. the
+    /// Rust target's `__NoContext` StateContext sentinel — see
+    /// FRAMEC_BUGS #40); a user state `$__Foo` would collide with them.
+    /// Reserving the prefix keeps the generated identifier namespace
+    /// disjoint from user state names across every backend.
+    pub(super) fn validate_state_names_not_reserved(&mut self, system: &SystemAst) {
+        if let Some(ref machine) = system.machine {
+            for state in &machine.states {
+                if state.name.starts_with("__") {
+                    self.errors.push(
+                        ValidationError::new(
+                            "E115",
+                            format!(
+                                "state '${}' uses the reserved `__` prefix in system \
+                                 '{}'; `__`-prefixed names are reserved for \
+                                 framec-synthesized identifiers — rename the state",
+                                state.name, system.name
+                            ),
+                        )
+                        .with_span(state.span.clone()),
+                    );
+                }
+            }
+        }
+    }
+
     /// E114: Validate no duplicate sections in system
     pub(super) fn validate_duplicate_sections(&mut self, system: &SystemAst) {
         if let Some(dup_kind) = system.has_duplicate_sections() {
