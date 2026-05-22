@@ -107,20 +107,25 @@ statically typed:
 
 - `state_args` / `enter_args` / `exit_args` — `List<Object>` (Java),
   `[Any]` (Swift), `[]interface{}` (Go), `<sys>_FrameVec*` of `void*`
-  (C), `List<dynamic>` (Dart), … On **Rust**, `enter_args` / `exit_args`
-  are `Vec<alloc::rc::Rc<dyn core::any::Any>>` (read back by
-  `downcast_ref::<T>()`), and `state_args` are carried in the typed
-  per-state `StateContext` enum (RFC-0025 Track B).
+  (C), `List<dynamic>` (Dart), … On **Rust** these are *not* a runtime
+  collection at all: `state_args`, `enter_args`, and `exit_args` are all
+  carried as genuinely-typed fields of the per-state `StateContext` enum
+  (RFC-0025 Track B for state args; RFC-0025.1 for enter/exit args). The
+  `FrameEnter` / `FrameExit` event variants carry no payload, and the
+  compartment has no `enter_args` / `exit_args` field.
 
-  > **Lifecycle args are type-faithful — never stringified (RFC-0025.1).**
-  > Every value channel — state args, enter args, exit args, `@@:data`,
-  > `@@:return`, interface params — carries the value in its declared
-  > type and reads it back by downcast/cast/native term. A backend MUST
-  > NOT serialize a lifecycle arg to a string and `parse()` it back to
-  > move it across the dispatch boundary. (The Rust target did exactly
-  > this for enter/exit args until 4.2.1 — `Vec<String>` + `parse::<T>()`
-  > — which silently defaulted on a parse miss and hard-broke for
-  > compound types like `Vec<i64>`. See FRAMEC_BUGS #34 / RFC-0025.1.)
+  > **Lifecycle args are type-faithful — never stringified, never
+  > type-erased (RFC-0025.1).** Every value channel — state args, enter
+  > args, exit args, `@@:data`, `@@:return`, interface params — carries
+  > the value in its declared type and reads it back by native field /
+  > downcast / cast / native term. A backend MUST NOT serialize a
+  > lifecycle arg to a string and `parse()` it back to move it across the
+  > dispatch boundary. (The Rust target did exactly this for enter/exit
+  > args until 4.2.1 — `Vec<String>` + `parse::<T>()` — which silently
+  > defaulted on a parse miss and hard-broke for compound types like
+  > `Vec<i64>`. The fix carries them in the typed `StateContext`, like
+  > state args — not a `Vec<Rc<dyn Any>>`, which would still sit outside
+  > the type system. See FRAMEC_BUGS #34 / RFC-0025.1.)
 - `__e._parameters` (the event payload) — same shape.
 - the per-call context `_return` slot — `Object` / `Any` / `std::any` /
   `void*` / `Box<dyn Any>` / `interface{}`.

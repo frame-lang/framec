@@ -274,15 +274,24 @@ Note: Lua uses 1-based indexing (`state_args[1]` for the first parameter).
 **Lifecycle args must be type-faithful — never stringified (RFC-0025.1).**
 When your backend stores `enter_args` / `exit_args`, store each value in
 its **declared type** using the language's type-erased-but-faithful
-container (`Object`/`any`/`std::any`/`interface{}`/`Rc<dyn Any>` + a
-downcast on read; a native term for dynamic targets) — the same shape
-you use for `state_args` and the `_return` slot. Do **not** serialize a
-lifecycle arg to a string and `parse()`/reparse it back: that silently
-yields a default on a parse miss and cannot represent compound or custom
-types (`Vec<T>`, structs). The read site downcasts to the declared
-receiver type; for languages whose literals infer a narrower type than
-the declared one (Rust `42` is `i32`, Frame `int` is `i64`; `"x"` is
-`&str`, `str` is `String`), widen on read with a typed fallback. See
+container (`Object`/`any`/`std::any`/`interface{}` + a cast on read; a
+native term for dynamic targets) — the same shape you use for
+`state_args` and the `_return` slot. Do **not** serialize a lifecycle
+arg to a string and `parse()`/reparse it back: that silently yields a
+default on a parse miss and cannot represent compound or custom types
+(`Vec<T>`, structs). The read site casts to the declared receiver type;
+for languages whose literals infer a narrower type than the declared one
+(Rust `42` is `i32`, Frame `int` is `i64`; `"x"` is `&str`, `str` is
+`String`), widen on read with a typed fallback.
+
+> **Rust goes further — fully typed, no erasure.** Rust does not use a
+> runtime args collection (and not a `Vec<Rc<dyn Any>>` either): enter
+> and exit params become genuinely-typed fields of the per-state
+> `StateContext` enum, exactly like state args. The transition site
+> writes `ctx.<param> = <value>`, the dispatcher reads it back from the
+> ctx and binds it as a typed handler-method param. See RFC-0025.1.
+
+See
 [`type-ignorant-codegen.md`](type-ignorant-codegen.md) §3 and
 FRAMEC_BUGS #34.
 
@@ -367,7 +376,7 @@ C and Go are different — they have no field-level initializer at all. Strip un
 
 - **Kotlin** requires every property to have an initializer, a `late init` modifier, or be abstract. When the field-level init is stripped, append a type-appropriate default placeholder (`var name: String = ""`) so the constructor body can overwrite it. Kotlin also needs a primary constructor on the class header (`class Robot(x: Int)`) to bring the params into scope inside the `init {}` block — bare params (not `val`/`var`) so Kotlin doesn't auto-synthesize a property of the same name that would collide with a domain field.
 - **Dart** rejects non-nullable fields without an initializer. Prepend `late ` to the field declaration so the constructor body's `this.field = init;` becomes the legal initialization point.
-- **Rust** can't generate a HashMap-based `state_args` field on its compartment without breaking the existing typed serialize/deserialize logic. System header state and enter args for the start state are stored as typed `__sys_<name>: <type>` fields directly on the system struct, and the handler body for the start state's handlers prepends `let <name> = self.__sys_<name>.clone();` so handlers read the params by bare name. Non-start states with declared params use a separate path: the `XContext` struct gains a field per declared param (mapped to Rust-native types via `frame_type_to_rust_type`), the typed `StateContext::<State>(ref mut ctx)` variant is populated by the transition site, and the handler preamble binds each param via `if let StateContext::X(ref ctx) = self.__compartment.state_context { ctx.field.clone() }`. Non-start state lifecycle handlers read enter/exit params from `__e.parameters` by declared name (matching the named-key writes that the Phase 3 standardization sweep put in place).
+- **Rust** can't generate a HashMap-based `state_args` field on its compartment without breaking the existing typed serialize/deserialize logic. System header state and enter args for the start state are stored as typed `__sys_<name>: <type>` fields directly on the system struct, and the handler body for the start state's handlers prepends `let <name> = self.__sys_<name>.clone();` so handlers read the params by bare name. Non-start states with declared params use a separate path: the `XContext` struct gains a field per declared param (mapped to Rust-native types via `frame_type_to_rust_type`), the typed `StateContext::<State>(ref mut ctx)` variant is populated by the transition site, and the handler preamble binds each param via `if let StateContext::X(ref ctx) = self.__compartment.state_context { ctx.field.clone() }`. **Enter/exit (lifecycle) params use the same typed-`StateContext` path** (RFC-0025.1): `rust_ctx_param_fields` merges a state's enter/exit params into its `XContext` struct (deduped by name, state params win), the transition site writes them (`ctx.<param> = <value>`; enter args → dest-chain ctx, exit args → source ctx; decorated `pop$` enter args → a `match __popped.state_context` over poppable variants since the restored state is dynamic), and the dispatcher reads each back from the ctx and binds it as a typed handler-method param — never `__e.parameters`, never a stringified or `Rc<dyn Any>` Vec. The `FrameEnter`/`FrameExit` event variants carry no payload, and the start state's `$>` still binds from `__sys_<name>` while its `<$` binds from the ctx like any other state (FRAMEC_BUGS #35).
 
 #### Type-aware init wrapping (Rust and C++)
 
