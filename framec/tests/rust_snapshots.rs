@@ -1006,3 +1006,106 @@ fn bug35_start_state_exit_arg_binds() {
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// RFC-0025.1 — decorated `pop$` args ride the typed StateContext, never a
+// stringified Vec. Exit args (`(7) ->`) write the SOURCE state's ctx
+// (known); enter args (`-> (42)`) write the RESTORED state's ctx via a
+// `match __popped` over poppable variants (the restored state is dynamic).
+// `$Idle` is pushed, then popped back into with both decorations.
+// ─────────────────────────────────────────────────────────────────────
+#[test]
+fn pop_decorated_args_typed() {
+    use std::process::Command;
+
+    let generated = compile_source(
+        r#"
+@@system PopArgs {
+    interface:
+        go()
+        nest()
+        back()
+        entered(): int
+        exited(): int
+    machine:
+        $Start { go() { -> $Idle } }
+        $Idle {
+            $>(tag: int)   { self.e = self.e + tag }
+            nest()         { push$ -> $Nested }
+            entered(): int { @@:(self.e) }
+            exited(): int  { @@:(self.x) }
+        }
+        $Nested {
+            <$(code: int) { self.x = code }
+            back()        { (7) -> (42) pop$ }
+        }
+    domain:
+        e: int = 0
+        x: int = 0
+}
+"#,
+        "rust",
+    );
+
+    // Exit arg → source ctx; enter arg → match over restored ctx variants.
+    // No stringified pop arg Vec.
+    assert!(
+        generated.contains("if let PopArgsStateContext::Nested(ref mut ctx) =")
+            && generated.contains("ctx.code = 7"),
+        "pop exit arg must write the source state's typed ctx\n{generated}"
+    );
+    assert!(
+        generated.contains("match __popped.state_context")
+            && generated.contains("PopArgsStateContext::Idle(ref mut ctx)")
+            && generated.contains("ctx.tag = 42"),
+        "pop enter arg must write the restored state's typed ctx via a match\n{generated}"
+    );
+    assert!(
+        !generated.contains("enter_args") && !generated.contains("exit_args"),
+        "pop args must not ride a stringified Vec (RFC-0025.1)\n{generated}"
+    );
+
+    // Compile + run: exit arg (7) reaches `$Nested.<$`, enter arg (42)
+    // reaches the restored `$Idle.$>`.
+    let tmp = std::env::temp_dir().join(format!("framec_popargs_{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&tmp);
+    let main_rs = format!(
+        "{generated}\n\
+         fn main() {{\n\
+         let mut m = PopArgs::new();\n\
+         m.go();\n\
+         m.nest();\n\
+         m.back();\n\
+         assert_eq!(m.exited(), 7, \"pop exit arg -> source <$\");\n\
+         assert_eq!(m.entered(), 42, \"pop enter arg -> restored $>\");\n\
+         }}\n"
+    );
+    let src = tmp.join("main.rs");
+    std::fs::write(&src, &main_rs).expect("write main.rs");
+    let bin = tmp.join("popargs");
+    let build = match Command::new("rustc")
+        .args(["--edition", "2021", "-o"])
+        .arg(&bin)
+        .arg(&src)
+        .output()
+    {
+        Ok(o) => o,
+        Err(_) => {
+            eprintln!("pop_decorated_args_typed: SKIP — rustc not invokable");
+            return;
+        }
+    };
+    assert!(
+        build.status.success(),
+        "decorated pop fixture failed to compile (RFC-0025.1)\n--- rustc stderr ---\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(&bin).output().expect("run popargs bin");
+    assert!(
+        run.status.success(),
+        "decorated pop args did not arrive at runtime\n--- stderr ---\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}

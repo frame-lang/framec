@@ -1609,45 +1609,117 @@ pub(crate) fn rust_transition_guard(indent_str: &str) -> String {
     )
 }
 
-// ─── Pop Transition Delegates ───────────────────────────────────────
+// ─── Pop Transition (RFC-0025.1: type-faithful) ─────────────────────
 
-/// Pop: exit_args write (positional push)
-pub(crate) fn rust_pop_exit_arg(indent: &str, value: &str) -> String {
-    format!(
-        "{}self.__compartment.exit_args.push({}.to_string());\n",
-        indent, value
-    )
-}
+/// Emit a full Rust `pop$` transition with type-faithful decorated args.
+///
+/// `pop$` restores a saved compartment from the modal stack. Its decorated
+/// forms carry args that, like every other lifecycle arg (RFC-0025.1),
+/// ride the typed per-state `StateContext` ctx — never a stringified Vec:
+///
+///   1. **exit args** (`-> (exit) pop$`) write the SOURCE state's ctx. The
+///      source is the state running the `pop$` handler — known at codegen
+///      time (`ctx.state_name`).
+///   2. Pop the saved compartment into `__popped`.
+///   3. **enter args** (`-> () (enter) pop$`) write the RESTORED state's
+///      ctx. The restored state is dynamic (whatever was pushed), so we
+///      `match` over the poppable states' `StateContext` variants and
+///      write each one's enter-param fields at the same positional index.
+///   4. forward event (`-> => pop$`), 5. transition + return.
+///
+/// `exit_vals` / `enter_vals` are the already-`expand_expression`'d value
+/// expressions (caller does the expansion). `coerce_ctx_field_value`
+/// handles the str-literal → `String` field case, matching the regular
+/// transition path.
+pub(crate) fn rust_pop_transition_full(
+    indent: &str,
+    ctx: &HandlerContext,
+    exit_vals: &[String],
+    enter_vals: &[String],
+    is_forward: bool,
+) -> String {
+    let sys = &ctx.system_name;
+    let mut code = String::new();
 
-/// Pop: stack pop
-pub(crate) fn rust_pop_stack(indent: &str) -> String {
-    format!(
+    // 1. exit args → source state's typed ctx (source state is known).
+    if !exit_vals.is_empty() {
+        let exit_names = ctx
+            .state_exit_param_names
+            .get(&ctx.state_name)
+            .cloned()
+            .unwrap_or_default();
+        if !exit_names.is_empty() {
+            code.push_str(&format!(
+                "{0}if let {1}StateContext::{2}(ref mut ctx) = self.__compartment.state_context {{\n",
+                indent, sys, ctx.state_name
+            ));
+            for (i, v) in exit_vals.iter().enumerate() {
+                if let Some(name) = exit_names.get(i) {
+                    code.push_str(&format!(
+                        "{}    ctx.{} = {};\n",
+                        indent,
+                        name,
+                        coerce_ctx_field_value(v)
+                    ));
+                }
+            }
+            code.push_str(&format!("{}}}\n", indent));
+        }
+    }
+
+    // 2. pop the saved compartment.
+    code.push_str(&format!(
         "{}let mut __popped = self._state_stack.pop().expect(\"invariant: pop$ must follow push$\");\n",
         indent
-    )
-}
+    ));
 
-/// Pop: enter_args write (positional push)
-pub(crate) fn rust_pop_enter_arg(indent: &str, value: &str) -> String {
-    format!(
-        "{}__popped.enter_args.push({}.to_string());\n",
-        indent, value
-    )
-}
+    // 3. enter args → restored (dynamic) state's typed ctx, via a match
+    //    over the poppable states that declare enter params.
+    if !enter_vals.is_empty() {
+        let mut states: Vec<(&String, &Vec<String>)> = ctx
+            .state_enter_param_names
+            .iter()
+            .filter(|(_, names)| !names.is_empty())
+            .collect();
+        states.sort_by(|a, b| a.0.cmp(b.0));
+        if !states.is_empty() {
+            code.push_str(&format!("{}match __popped.state_context {{\n", indent));
+            for (state, names) in states {
+                code.push_str(&format!(
+                    "{0}    {1}StateContext::{2}(ref mut ctx) => {{\n",
+                    indent, sys, state
+                ));
+                for (i, v) in enter_vals.iter().enumerate() {
+                    if let Some(name) = names.get(i) {
+                        code.push_str(&format!(
+                            "{}        ctx.{} = {};\n",
+                            indent,
+                            name,
+                            coerce_ctx_field_value(v)
+                        ));
+                    }
+                }
+                code.push_str(&format!("{}    }}\n", indent));
+            }
+            code.push_str(&format!("{}    _ => {{}}\n", indent));
+            code.push_str(&format!("{}}}\n", indent));
+        }
+    }
 
-/// Pop: forward event
-pub(crate) fn rust_pop_forward(indent: &str) -> String {
-    format!("{}__popped.forward_event = Some(__e.clone());\n", indent)
-}
+    // 4. forward event (RFC-0008: `-> => pop$`).
+    if is_forward {
+        code.push_str(&format!(
+            "{}__popped.forward_event = Some(__e.clone());\n",
+            indent
+        ));
+    }
 
-/// Pop: variable name (Rust uses `__popped`, others use `__saved`)
-pub(crate) fn rust_pop_var_name() -> &'static str {
-    "__popped"
-}
-
-/// Pop: transition call
-pub(crate) fn rust_pop_transition(indent: &str) -> String {
-    format!("{}self.__transition(__popped);\n{}return;", indent, indent)
+    // 5. transition + return.
+    code.push_str(&format!(
+        "{}self.__transition(__popped);\n{}return;",
+        indent, indent
+    ));
+    code
 }
 
 // ═══════════════════════════════════════════════════════════════════════

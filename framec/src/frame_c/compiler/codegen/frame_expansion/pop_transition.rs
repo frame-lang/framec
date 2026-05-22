@@ -44,6 +44,36 @@ pub(super) fn generate_pop_transition(
 ) -> String {
     let mut code = String::new();
 
+    // Rust carries decorated pop args in the typed per-state StateContext
+    // (RFC-0025.1), not a stringified Vec — emit the whole pop via the
+    // dedicated typed generator. The shared per-value loops below are for
+    // the other 16 backends (their Rust arms are unreachable no-ops).
+    if matches!(lang, TargetLanguage::Rust) {
+        let expand_vals = |args: &Option<String>| -> Vec<String> {
+            args.as_ref()
+                .map(|s| {
+                    s.split(',')
+                        .map(|x| x.trim())
+                        .filter(|x| !x.is_empty())
+                        .map(|arg| {
+                            let raw = arg.find('=').map(|i| arg[i + 1..].trim()).unwrap_or(arg);
+                            expand_expression(raw, lang, ctx)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let exit_vals = expand_vals(exit_args);
+        let enter_vals = expand_vals(enter_args);
+        return super::super::rust_system::rust_pop_transition_full(
+            indent,
+            ctx,
+            &exit_vals,
+            &enter_vals,
+            is_forward,
+        );
+    }
+
     // Helper: emit exit_args writes on current compartment (positional append)
     if let Some(ref exit) = exit_args {
         for arg in exit.split(',').map(|x| x.trim()).filter(|x| !x.is_empty()) {
@@ -71,9 +101,7 @@ pub(super) fn generate_pop_transition(
                         indent, value
                     ));
                 }
-                TargetLanguage::Rust => {
-                    code.push_str(&super::super::rust_system::rust_pop_exit_arg(indent, value));
-                }
+                TargetLanguage::Rust => {}
                 TargetLanguage::C => {
                     code.push_str(&format!("{}{}_FrameVec_push(self->__compartment->exit_args, (void*)(intptr_t)({}));\n", indent, ctx.system_name, value));
                 }
@@ -143,7 +171,7 @@ pub(super) fn generate_pop_transition(
         TargetLanguage::TypeScript => code.push_str(&format!("{}const __saved = this._state_stack.pop()!;\n", indent)),
         TargetLanguage::Dart => code.push_str(&format!("{}final __saved = this._state_stack.removeLast();\n", indent)),
         TargetLanguage::JavaScript => code.push_str(&format!("{}const __saved = this._state_stack.pop();\n", indent)),
-        TargetLanguage::Rust => code.push_str(&super::super::rust_system::rust_pop_stack(indent)),
+        TargetLanguage::Rust => {}
         TargetLanguage::C => code.push_str(&format!("{}{}_Compartment* __saved = ({}_Compartment*){}_FrameVec_pop(self->_state_stack);\n", indent, ctx.system_name, ctx.system_name, ctx.system_name)),
         TargetLanguage::Cpp => code.push_str(&format!("{}auto __saved = std::move(_state_stack.back()); _state_stack.pop_back();\n", indent)),
         TargetLanguage::Java => code.push_str(&format!("{}var __saved = _state_stack.remove(_state_stack.size() - 1);\n", indent)),
@@ -202,11 +230,7 @@ pub(super) fn generate_pop_transition(
                 TargetLanguage::Dart => {
                     code.push_str(&format!("{}__saved.enter_args.add({});\n", indent, value));
                 }
-                TargetLanguage::Rust => {
-                    code.push_str(&super::super::rust_system::rust_pop_enter_arg(
-                        indent, value,
-                    ));
-                }
+                TargetLanguage::Rust => {}
                 TargetLanguage::C => {
                     code.push_str(&format!(
                         "{}{}_FrameVec_push(__saved->enter_args, (void*)(intptr_t)({}));\n",
@@ -263,9 +287,7 @@ pub(super) fn generate_pop_transition(
             TargetLanguage::TypeScript | TargetLanguage::JavaScript | TargetLanguage::Dart => {
                 code.push_str(&format!("{}__saved.forward_event = __e;\n", indent));
             }
-            TargetLanguage::Rust => {
-                code.push_str(&super::super::rust_system::rust_pop_forward(indent));
-            }
+            TargetLanguage::Rust => {}
             TargetLanguage::C => {
                 code.push_str(&format!("{}__saved->forward_event = __e;\n", indent));
             }
@@ -298,11 +320,7 @@ pub(super) fn generate_pop_transition(
     }
 
     // Transition + return
-    let var = if matches!(lang, TargetLanguage::Rust) {
-        super::super::rust_system::rust_pop_var_name()
-    } else {
-        "__saved"
-    };
+    let var = "__saved"; // Rust returns early above
     match lang {
         TargetLanguage::Python3 | TargetLanguage::GDScript => {
             code.push_str(&format!(
@@ -316,9 +334,7 @@ pub(super) fn generate_pop_transition(
                 indent, var, indent
             ));
         }
-        TargetLanguage::Rust => {
-            code.push_str(&super::super::rust_system::rust_pop_transition(indent));
-        }
+        TargetLanguage::Rust => {}
         TargetLanguage::C => {
             code.push_str(&format!(
                 "{}{}_transition(self, {});\n{}return;",

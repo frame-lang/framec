@@ -1904,6 +1904,21 @@ mod tests {
                 continue; // Erlang handles pop via gen_statem
             }
             let code = v4_output_for(POP_EXIT, target);
+            if matches!(target, VTarget::Rust) {
+                // RFC-0025.1: Rust carries pop exit args in the typed
+                // per-state ctx, never a stringified `exit_args` Vec. This
+                // fixture has no `<$` consumer, so the typed path correctly
+                // writes nothing (no field to write) — the invariant under
+                // test is that the erased Vec is gone. End-to-end typed
+                // write+bind coverage lives in rust_snapshots' decorated
+                // pop test.
+                assert!(
+                    !code.contains("exit_args"),
+                    "Rust must not carry pop exit args in a stringified Vec:\n{}",
+                    code
+                );
+                continue;
+            }
             assert!(
                 code.contains("exit_args") || code.contains("exitArgs"),
                 "{:?}: pop with exit args should write exit_args:\n{}",
@@ -1920,6 +1935,19 @@ mod tests {
                 continue;
             }
             let code = v4_output_for(POP_ENTER, target);
+            if matches!(target, VTarget::Rust) {
+                // RFC-0025.1: Rust carries pop enter args in the restored
+                // state's typed ctx (via a `match __popped` over poppable
+                // variants), never a stringified `enter_args` Vec. This
+                // fixture has no `$>` consumer, so nothing is written; the
+                // invariant under test is that the erased Vec is gone.
+                assert!(
+                    !code.contains("enter_args"),
+                    "Rust must not carry pop enter args in a stringified Vec:\n{}",
+                    code
+                );
+                continue;
+            }
             assert!(
                 code.contains("enter_args") || code.contains("enterArgs"),
                 "{:?}: pop with enter args should write enter_args:\n{}",
