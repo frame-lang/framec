@@ -45,6 +45,8 @@ numbers are not re-used.
 | [0033](rfc-0033.md) | Idiomatic Rust output — borrowed parameters, lint-clean preamble, expression-form state-var initializers | Draft | builds on [0019](rfc-0019.md), [0025](rfc-0025.md) |
 | [0034](rfc-0034.md) | In-process compile checks for every backend's snapshot fixtures | Draft | builds on [0027](rfc-0027.md), [0033](rfc-0033.md) |
 | [0035](rfc-0035.md) | Dogfooding inventory — existing FSMs, migration candidates, and single-state test corpus | Draft | builds on [0027](rfc-0027.md), [0033](rfc-0033.md), [0034](rfc-0034.md) |
+| [0036](rfc-0036.md) | No-allocation dispatch for `no_std` / interrupt / hot-path use | Draft | builds on [0020](rfc-0020.md), [0021](rfc-0021.md), [0025](rfc-0025.md); lifts + prioritizes [0021](rfc-0021.md) item 1 |
+| [0037](rfc-0037.md) | Reserved identifier namespace — the `__` prefix (validator E115) | Accepted | builds on [0025](rfc-0025.md) / [0025.1](rfc-0025-1.md); resolves the #40 residual edge |
 
 ## Other documents in this directory
 
