@@ -79,14 +79,20 @@ The backend must emit code that implements Frame's runtime semantics:
 **Before you write a `match` on a Frame primitive type name** (`int`,
 `str`, `bool`, `float`, `list`, `dict`, …), read
 [type-ignorant-codegen.md](type-ignorant-codegen.md). The short version:
-framec emits the user's declared type *spelled the target way* and lets
-the target's own tooling (serializer, `==`, `toString`) do the type work.
-The only per-type branching that's allowed is (1) the spelling itself —
-`map_type` and friends, which always have a verbatim pass-through arm;
-(2) a definite-init *default value* when a field/state-var has no
-initializer; (3) downcasting out of a type-erased kernel collection
+framec emits the user's declared type **verbatim** and lets the target's
+own tooling (serializer, `==`, `toString`) do the type work. Frame has no
+type system: type names are **not translated** — FRAMEC_BUGS #37 removed
+the per-backend alias tables (`int`→`i64`, `str`→`String`, `Any`→`object`,
+… are gone), so the `map_type` functions are now pure pass-through. Write
+your target's own type names. The only per-type branching that's allowed
+is (1) a definite-init *default value* when a field/state-var has no
+initializer; (2) downcasting out of a type-erased kernel collection
 (`state_args`, `_return`, `state_vars`) or the C `void*` ABI / Rust
-`Box<dyn Any>`. Anything else means you're doing the target's job — emit
+`Box<dyn Any>`; (3) the few **structural** spellings that aren't
+name-aliasing — Rust borrow→owned widening (`&str`→`String`), the
+framework's no-return spelling per language (Kotlin `Unit`, Go empty,
+Swift `Void`), and Swift nullable/array syntax. Anything else means
+you're doing the target's job — emit
 the type verbatim instead.
 
 ## Step 5: Pipeline Registration
