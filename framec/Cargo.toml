@@ -37,6 +37,13 @@ toml = "0.9.5"
 uuid = { version = "1", features = ["v4"] }
 tempfile = "3"
 
+# wasm32 (the in-browser `run()` entry point — RFC-0028 / web playground)
+# needs a JS-backed randomness source for uuid's v4; uuid's `js` feature
+# pulls getrandom's wasm-bindgen backend. Cargo features are additive, so
+# this augments the base `["v4"]` only on wasm targets.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+uuid = { version = "1", features = ["js"] }
+
 [dev-dependencies]
 tempfile = "3"
 # RFC-0027: in-tree snapshot tests per backend. `insta` snapshots
