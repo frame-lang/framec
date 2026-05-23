@@ -144,7 +144,7 @@ private:
     }
 
 public:
-    i32 count = 0;
+    int count = 0;
 
     Counter() {
         __compartment = __prepareEnter("Counting", std::vector<std::any>{}, std::vector<std::any>{});

@@ -1,11 +1,10 @@
 
 // Frame type string → C# type spelling.
-// Used by framec's C# backend for cast/return-type contexts.
-// Part of RFC-0035 round 2: each per-target type mapper is a
-// Frame single-state system. The body is native Rust passthrough
-// — Frame here functions as a declarative wrapper around a
-// match-expression. Showing that Frame can express function-
-// definition syntax across many shapes is the point.
+// Frame has NO type system: type names pass through to the generated
+// code VERBATIM (docs/frame_language.md). The alias table that used to
+// translate str→string, int→int, Any→object, float→double, … was
+// exterminated — it contradicted the passthrough contract. Write C#'s
+// own type names; `void`/empty/user types all pass through unchanged.
 
 #[allow(dead_code)]
 #[allow(non_camel_case_types)]
@@ -246,19 +245,9 @@ mod _csharp_map_type_framec {
         }
 
         fn _s_Active_hdl_user_map(&mut self, __e: &CsharpMapTypeFrameEvent, t: String) {
-                            let result = match t.as_str() {
-                                "Any" => "object".to_string(),
-                                "str" | "string" | "String" => "string".to_string(),
-                                "int" | "i32" | "i64" | "number" => "int".to_string(),
-                                "float" | "f64" | "f32" => "double".to_string(),
-                                "bool" | "boolean" => "bool".to_string(),
-                                "void" => "void".to_string(),
-                                _ => t.clone(),
-                            };
-            let __return_val = CsharpMapTypeFrameReturn::Map(result.clone());
+            let __return_val = CsharpMapTypeFrameReturn::Map(t.clone());
                             if let Some(ctx) = self._context_stack.last_mut() { ctx._return = Some(__return_val); }
         }
     }
 }
 pub use _csharp_map_type_framec::*;
-

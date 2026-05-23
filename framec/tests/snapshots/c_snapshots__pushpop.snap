@@ -331,8 +331,8 @@ struct PushPop {
     PushPop_Compartment* __compartment;
     PushPop_Compartment* __next_compartment;
     PushPop_FrameVec* _context_stack;
-    i32 pings;
-    i32 leaves;
+    int pings;
+    int leaves;
 };
 
 PushPop* PushPop_new(void) {

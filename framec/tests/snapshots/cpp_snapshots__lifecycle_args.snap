@@ -177,7 +177,7 @@ private:
 
 public:
     int sum = 0;
-    str label = "";
+    std::string label = "";
 
     LifecycleArgs() {
         __compartment = __prepareEnter("Idle", std::vector<std::any>{}, std::vector<std::any>{});

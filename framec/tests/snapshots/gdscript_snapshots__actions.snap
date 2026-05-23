@@ -130,14 +130,14 @@ class Actions:
     func __transition(next_compartment):
         self.__next_compartment = next_compartment
 
-    func increment(n: i32):
+    func increment(n: int):
         var __e = ActionsFrameEvent.new("increment", [n])
         var __ctx = ActionsFrameContext.new(__e, null)
         self._context_stack.append(__ctx)
         self.__kernel(__e)
         return self._context_stack.pop_back()._return
 
-    func get_total() -> i32:
+    func get_total() -> int:
         var __e = ActionsFrameEvent.new("get_total", [])
         var __ctx = ActionsFrameContext.new(__e, null)
         self._context_stack.append(__ctx)
@@ -159,5 +159,5 @@ class Actions:
         var n = __e._parameters[0]
         self._scale(n)
 
-    func _scale(n: i32):
+    func _scale(n: int):
         self.total = self.total + n * 2

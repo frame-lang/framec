@@ -319,14 +319,14 @@ static void SelfCall_state_Active(SelfCall* self, SelfCall_FrameEvent* __e, Self
 static void SelfCall_s_Active_hdl_user_kick(SelfCall* self, SelfCall_FrameEvent* __e, SelfCall_Compartment* compartment);
 static void SelfCall_s_Active_hdl_user_report(SelfCall* self, SelfCall_FrameEvent* __e, SelfCall_Compartment* compartment);
 void SelfCall_kick (SelfCall* self);
-i32 SelfCall_report (SelfCall* self);
+int SelfCall_report (SelfCall* self);
 
 struct SelfCall {
     SelfCall_FrameVec* _state_stack;
     SelfCall_Compartment* __compartment;
     SelfCall_Compartment* __next_compartment;
     SelfCall_FrameVec* _context_stack;
-    i32 count;
+    int count;
 };
 
 SelfCall* SelfCall_new(void) {
@@ -486,13 +486,13 @@ void SelfCall_kick(SelfCall* self) {
     SelfCall_FrameEvent_destroy(__e);
 }
 
-i32 SelfCall_report(SelfCall* self) {
+int SelfCall_report(SelfCall* self) {
     SelfCall_FrameEvent* __e = SelfCall_FrameEvent_new("report", NULL, 0);
     SelfCall_FrameContext* __ctx = SelfCall_FrameContext_new(__e, NULL);
     SelfCall_FrameVec_push(self->_context_stack, __ctx);
     SelfCall_kernel(self, __e);
     SelfCall_FrameContext* __result_ctx = (SelfCall_FrameContext*)SelfCall_FrameVec_pop(self->_context_stack);
-    i32 __result = (i32)__result_ctx->_return;
+    int __result = (int)(intptr_t)__result_ctx->_return;
     SelfCall_FrameContext_destroy(__result_ctx);
     SelfCall_FrameEvent_destroy(__e);
     return __result;

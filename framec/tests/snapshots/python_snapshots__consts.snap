@@ -47,7 +47,7 @@ class Consts:
         self.__next_compartment = None
 
     @classmethod
-    def _create(cls, step: i32 = 5, limit: i32 = 20):
+    def _create(cls, step: int = 5, limit: int = 20):
         c = cls()
         c.step = 5
         c.limit = 20
@@ -122,7 +122,7 @@ class Consts:
         self.__kernel(__e)
         return self._context_stack.pop()._return
 
-    def get_count(self) -> i32:
+    def get_count(self) -> int:
         __e = ConstsFrameEvent("get_count", [])
         __ctx = ConstsFrameContext(__e, None)
         self._context_stack.append(__ctx)

@@ -407,9 +407,9 @@ static void NoPersist_s_Active_hdl_user_get_cache(NoPersist* self, NoPersist_Fra
 static void NoPersist_s_Active_hdl_user_get_count(NoPersist* self, NoPersist_FrameEvent* __e, NoPersist_Compartment* compartment);
 static void NoPersist_s_Active_hdl_user_set_cache(NoPersist* self, NoPersist_FrameEvent* __e, NoPersist_Compartment* compartment);
 void NoPersist_bump (NoPersist* self);
-void NoPersist_set_cache (NoPersist* self, i32 v);
-i32 NoPersist_get_count (NoPersist* self);
-i32 NoPersist_get_cache (NoPersist* self);
+void NoPersist_set_cache (NoPersist* self, int v);
+int NoPersist_get_count (NoPersist* self);
+int NoPersist_get_cache (NoPersist* self);
 char* NoPersist_snapshot (NoPersist* self);
 void NoPersist_restore (NoPersist* self, const char* json);
 
@@ -418,8 +418,8 @@ struct NoPersist {
     NoPersist_Compartment* __compartment;
     NoPersist_Compartment* __next_compartment;
     NoPersist_FrameVec* _context_stack;
-    i32 count;
-    i32 cache;
+    int count;
+    int cache;
 };
 
 NoPersist* NoPersist_new(void) {
@@ -581,7 +581,7 @@ void NoPersist_bump(NoPersist* self) {
     NoPersist_FrameEvent_destroy(__e);
 }
 
-void NoPersist_set_cache(NoPersist* self, i32 v) {
+void NoPersist_set_cache(NoPersist* self, int v) {
     NoPersist_FrameVec* __params = NoPersist_FrameVec_new();
     NoPersist_FrameVec_push(__params, (void*)(intptr_t)v);
     NoPersist_FrameEvent* __e = NoPersist_FrameEvent_new("set_cache", __params, 1);
@@ -593,25 +593,25 @@ void NoPersist_set_cache(NoPersist* self, i32 v) {
     NoPersist_FrameEvent_destroy(__e);
 }
 
-i32 NoPersist_get_count(NoPersist* self) {
+int NoPersist_get_count(NoPersist* self) {
     NoPersist_FrameEvent* __e = NoPersist_FrameEvent_new("get_count", NULL, 0);
     NoPersist_FrameContext* __ctx = NoPersist_FrameContext_new(__e, NULL);
     NoPersist_FrameVec_push(self->_context_stack, __ctx);
     NoPersist_kernel(self, __e);
     NoPersist_FrameContext* __result_ctx = (NoPersist_FrameContext*)NoPersist_FrameVec_pop(self->_context_stack);
-    i32 __result = (i32)__result_ctx->_return;
+    int __result = (int)(intptr_t)__result_ctx->_return;
     NoPersist_FrameContext_destroy(__result_ctx);
     NoPersist_FrameEvent_destroy(__e);
     return __result;
 }
 
-i32 NoPersist_get_cache(NoPersist* self) {
+int NoPersist_get_cache(NoPersist* self) {
     NoPersist_FrameEvent* __e = NoPersist_FrameEvent_new("get_cache", NULL, 0);
     NoPersist_FrameContext* __ctx = NoPersist_FrameContext_new(__e, NULL);
     NoPersist_FrameVec_push(self->_context_stack, __ctx);
     NoPersist_kernel(self, __e);
     NoPersist_FrameContext* __result_ctx = (NoPersist_FrameContext*)NoPersist_FrameVec_pop(self->_context_stack);
-    i32 __result = (i32)__result_ctx->_return;
+    int __result = (int)(intptr_t)__result_ctx->_return;
     NoPersist_FrameContext_destroy(__result_ctx);
     NoPersist_FrameEvent_destroy(__e);
     return __result;

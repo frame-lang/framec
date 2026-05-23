@@ -1,14 +1,15 @@
 
-// Frame type string → Swift type spelling. This is the most
-// interesting Frame fit in Round 2: the mapper recurses (for
-// `T | nil` and `T[]` suffixes), and Frame's `@@:(value)` only
-// SETS the return value — it does not return early. So the body
-// has to compute one final answer through a chain of
-// if-let / else and call `@@:(...)` exactly once at the end.
-// Worth recording as a Frame ergonomics observation in
-// RFC-0035: the natural Rust idiom (early-return on prefix
-// match) doesn't translate verbatim. We work around it cleanly
-// here, but the native Rust function is shorter and clearer.
+// Frame type string → Swift type spelling.
+// Frame has NO type system: type names pass through VERBATIM
+// (docs/frame_language.md). The name-alias table (str→String,
+// int→Int, Any→Any, …) was exterminated — it contradicted the
+// passthrough contract. Write Swift's own type names.
+//
+// What REMAINS is structural SYNTAX, not name-aliasing: Frame's
+// portable nullable/array forms map to Swift's spelling — `T | nil`
+// → `T?` and `T[]` → `[T]` (recursing so the inner native type is
+// preserved), and the framework's `void` token → `Void` (Swift's
+// no-return spelling). Everything else passes through unchanged.
 
 #[allow(dead_code)]
 #[allow(non_camel_case_types)]
@@ -256,31 +257,19 @@ mod _swift_map_type_framec {
                                 if suffix == "nil" || suffix == "null" || suffix == "None" {
                                     let inner = crate::frame_c::compiler::type_map::swift_map_type(base);
                                     format!("{}?", inner)
+                                } else if trimmed == "void" {
+                                    "Void".to_string()
                                 } else {
-                                    // pipe present but not a known null sentinel — fall through
-                                    match trimmed {
-                                        "Any" | "Object" | "object" => "Any".to_string(),
-                                        "str" | "string" | "String" => "String".to_string(),
-                                        "int" | "i32" | "i64" | "number" => "Int".to_string(),
-                                        "float" | "f64" | "f32" | "double" => "Double".to_string(),
-                                        "bool" | "boolean" | "Boolean" => "Bool".to_string(),
-                                        "void" => "Void".to_string(),
-                                        other => other.to_string(),
-                                    }
+                                    // pipe present but not a known null sentinel — passthrough
+                                    trimmed.to_string()
                                 }
                             } else if let Some(base) = trimmed.strip_suffix("[]") {
                                 let inner = crate::frame_c::compiler::type_map::swift_map_type(base);
                                 format!("[{}]", inner)
+                            } else if trimmed == "void" {
+                                "Void".to_string()
                             } else {
-                                match trimmed {
-                                    "Any" | "Object" | "object" => "Any".to_string(),
-                                    "str" | "string" | "String" => "String".to_string(),
-                                    "int" | "i32" | "i64" | "number" => "Int".to_string(),
-                                    "float" | "f64" | "f32" | "double" => "Double".to_string(),
-                                    "bool" | "boolean" | "Boolean" => "Bool".to_string(),
-                                    "void" => "Void".to_string(),
-                                    other => other.to_string(),
-                                }
+                                trimmed.to_string()
                             };
             let __return_val = SwiftMapTypeFrameReturn::Map(result.clone());
                             if let Some(ctx) = self._context_stack.last_mut() { ctx._return = Some(__return_val); }
@@ -288,4 +277,3 @@ mod _swift_map_type_framec {
     }
 }
 pub use _swift_map_type_framec::*;
-

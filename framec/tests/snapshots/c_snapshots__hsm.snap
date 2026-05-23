@@ -335,9 +335,9 @@ struct MiniHsm {
     MiniHsm_Compartment* __compartment;
     MiniHsm_Compartment* __next_compartment;
     MiniHsm_FrameVec* _context_stack;
-    i32 awakes;
-    i32 sleeps;
-    i32 last;
+    int awakes;
+    int sleeps;
+    int last;
 };
 
 MiniHsm* MiniHsm_new(void) {

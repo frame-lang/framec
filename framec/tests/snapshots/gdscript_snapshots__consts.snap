@@ -67,7 +67,7 @@ class Consts:
         self.__compartment = self.__prepareEnter("Running", [], [])
         self.__next_compartment = null
 
-    static func _create(step: i32 = 5, limit: i32 = 20):
+    static func _create(step: int = 5, limit: int = 20):
         var c = Consts.new()
         c.step = step
         c.limit = limit
@@ -141,7 +141,7 @@ class Consts:
         self.__kernel(__e)
         return self._context_stack.pop_back()._return
 
-    func get_count() -> i32:
+    func get_count() -> int:
         var __e = ConstsFrameEvent.new("get_count", [])
         var __ctx = ConstsFrameContext.new(__e, null)
         self._context_stack.append(__ctx)

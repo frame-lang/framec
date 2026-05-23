@@ -111,14 +111,14 @@ class Counter:
     def __transition(self, next_compartment):
         self.__next_compartment = next_compartment
 
-    def increment(self, by: i32):
+    def increment(self, by: int):
         __e = CounterFrameEvent("increment", [by])
         __ctx = CounterFrameContext(__e, None)
         self._context_stack.append(__ctx)
         self.__kernel(__e)
         return self._context_stack.pop()._return
 
-    def value(self) -> i32:
+    def value(self) -> int:
         __e = CounterFrameEvent("value", [])
         __ctx = CounterFrameContext(__e, None)
         __ctx._return = 0

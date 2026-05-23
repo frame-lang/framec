@@ -146,9 +146,9 @@ private:
     }
 
 public:
-    i32 step = 5;
-    i32 limit = 20;
-    i32 count = 0;
+    int step = 5;
+    int limit = 20;
+    int count = 0;
 
     Consts() {
         __compartment = __prepareEnter("Running", std::vector<std::any>{}, std::vector<std::any>{});

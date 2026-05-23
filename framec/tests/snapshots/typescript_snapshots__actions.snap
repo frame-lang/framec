@@ -64,7 +64,7 @@ export class Actions {
     private __compartment: ActionsCompartment;
     private __next_compartment: ActionsCompartment | null;
     private _context_stack: Array<any>;
-    private total: i32 = 0;
+    private total: number = 0;
 
     constructor() {
         this._state_stack = [];
@@ -158,7 +158,7 @@ export class Actions {
         this.__next_compartment = next_compartment;
     }
 
-    public increment(n: i32) {
+    public increment(n: number) {
         const __e = new ActionsFrameEvent("increment", [n]);
         const __ctx = new ActionsFrameContext(__e, null);
         this._context_stack.push(__ctx);
@@ -166,7 +166,7 @@ export class Actions {
         this._context_stack.pop();
     }
 
-    public get_total(): i32 {
+    public get_total(): number {
         const __e = new ActionsFrameEvent("get_total", []);
         const __ctx = new ActionsFrameContext(__e, null);
         this._context_stack.push(__ctx);
@@ -194,7 +194,7 @@ export class Actions {
         self._scale(n)
     }
 
-    private _scale(n: i32) {
+    private _scale(n: number) {
                     self.total = self.total + n * 2
     }
 }

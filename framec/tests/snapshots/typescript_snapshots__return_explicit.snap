@@ -157,7 +157,7 @@ export class ReturnExplicit {
         this.__next_compartment = next_compartment;
     }
 
-    public decide(score: i32): String {
+    public decide(score: number): string {
         const __e = new ReturnExplicitFrameEvent("decide", [score]);
         const __ctx = new ReturnExplicitFrameContext(__e, null);
         this._context_stack.push(__ctx);

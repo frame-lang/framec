@@ -143,7 +143,7 @@ class LinearFsm:
         self.__kernel(__e)
         return self._context_stack.pop_back()._return
 
-    func progress(amount: i32):
+    func progress(amount: int):
         var __e = LinearFsmFrameEvent.new("progress", [amount])
         var __ctx = LinearFsmFrameContext.new(__e, null)
         self._context_stack.append(__ctx)

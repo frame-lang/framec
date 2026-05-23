@@ -64,8 +64,8 @@ class NoPersist {
     late NoPersistCompartment __compartment;
     NoPersistCompartment? __next_compartment;
     late List<NoPersistFrameContext> _context_stack;
-    i32 count = 0;
-    i32 cache = -1;
+    int count = 0;
+    int cache = -1;
 
     NoPersist() {
         this._state_stack = [];
@@ -169,7 +169,7 @@ class NoPersist {
         _context_stack.removeLast();
     }
 
-    void set_cache(i32 v) {
+    void set_cache(int v) {
         final __e = NoPersistFrameEvent("set_cache", [v]);
         final __ctx = NoPersistFrameContext(__e, null);
         _context_stack.add(__ctx);
@@ -177,17 +177,17 @@ class NoPersist {
         _context_stack.removeLast();
     }
 
-    i32 get_count() {
+    int get_count() {
         final __e = NoPersistFrameEvent("get_count", []);
-        final __ctx = NoPersistFrameContext(__e, null);
+        final __ctx = NoPersistFrameContext(__e, 0);
         _context_stack.add(__ctx);
         __kernel(__e);
         return _context_stack.removeLast()._return;
     }
 
-    i32 get_cache() {
+    int get_cache() {
         final __e = NoPersistFrameEvent("get_cache", []);
-        final __ctx = NoPersistFrameContext(__e, null);
+        final __ctx = NoPersistFrameContext(__e, 0);
         _context_stack.add(__ctx);
         __kernel(__e);
         return _context_stack.removeLast()._return;
@@ -225,7 +225,7 @@ class NoPersist {
     }
 
     void _s_Active_hdl_user_set_cache(NoPersistFrameEvent __e, NoPersistCompartment compartment) {
-        final v = __e._parameters[0];
+        final v = __e._parameters[0] as int;
         self.cache = v
     }
 
@@ -268,6 +268,6 @@ class NoPersist {
         this.__compartment = deserializeComp(_parsed['_compartment'])!;
         this.__next_compartment = null;
         this._state_stack = (_parsed['_state_stack'] as List?)?.map((c) => deserializeComp(c)!).toList() ?? <NoPersistCompartment>[];
-        this.count = _parsed['count'] as i32;
+        this.count = (_parsed['count'] as num).toInt();
     }
 }

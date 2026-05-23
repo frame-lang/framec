@@ -175,9 +175,9 @@ private:
     }
 
 public:
-    i32 entered = 0;
-    i32 exited = 0;
-    String tag = "";
+    int entered = 0;
+    int exited = 0;
+    std::string tag = "";
 
     Lifecycle() {
         __compartment = __prepareEnter("Idle", std::vector<std::any>{}, std::vector<std::any>{});

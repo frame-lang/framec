@@ -329,8 +329,8 @@ struct Lifecycle {
     Lifecycle_Compartment* __compartment;
     Lifecycle_Compartment* __next_compartment;
     Lifecycle_FrameVec* _context_stack;
-    i32 entered;
-    i32 exited;
+    int entered;
+    int exited;
     char* tag;
 };
 

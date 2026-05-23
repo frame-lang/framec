@@ -172,8 +172,8 @@ private:
     }
 
 public:
-    i32 pings = 0;
-    i32 leaves = 0;
+    int pings = 0;
+    int leaves = 0;
 
     PushPop() {
         __compartment = __prepareEnter("Idle", std::vector<std::any>{}, std::vector<std::any>{});

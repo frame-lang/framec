@@ -1,7 +1,14 @@
 
 // Frame type string → Go type spelling.
-// `void` / `None` map to the empty string (Go has no void return
-// type — the absence of a return spec IS the void form).
+// Frame has NO type system: type names pass through VERBATIM
+// (docs/frame_language.md). The name-alias table (str→string,
+// int→int, Any→any, …) was exterminated — it contradicted the
+// passthrough contract. Write Go's own type names.
+//
+// The ONE transform that remains is structural, not name-aliasing:
+// Go has no void return type, so the framework's `void`/`None` token
+// maps to the empty string (absence of a return spec). Everything
+// else passes through unchanged.
 
 #[allow(dead_code)]
 #[allow(non_camel_case_types)]
@@ -242,14 +249,10 @@ mod _go_map_type_framec {
         }
 
         fn _s_Active_hdl_user_map(&mut self, __e: &GoMapTypeFrameEvent, t: String) {
-                            let result = match t.as_str() {
-                                "Any" | "object" | "Object" => "any".to_string(),
-                                "str" | "string" | "String" => "string".to_string(),
-                                "int" | "i32" | "i64" | "number" => "int".to_string(),
-                                "float" | "f64" | "f32" => "float64".to_string(),
-                                "bool" | "boolean" => "bool".to_string(),
-                                "void" | "None" => String::new(),
-                                _ => t.clone(),
+                            let result = if t == "void" || t == "None" {
+                                String::new()
+                            } else {
+                                t
                             };
             let __return_val = GoMapTypeFrameReturn::Map(result.clone());
                             if let Some(ctx) = self._context_stack.last_mut() { ctx._return = Some(__return_val); }
@@ -257,4 +260,3 @@ mod _go_map_type_framec {
     }
 }
 pub use _go_map_type_framec::*;
-

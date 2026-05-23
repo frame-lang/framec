@@ -14,18 +14,24 @@ use framec::frame_c::utils::RunError;
 use std::convert::TryFrom;
 use std::path::PathBuf;
 
-/// Load a fixture from `tests/fixtures/<name>.frm` and compile it
-/// for the given target language. Returns the generated target
-/// code as a String, suitable for `insta::assert_snapshot!`.
+/// Load a fixture from `tests/fixtures/<target>/<name>.frm` and compile
+/// it for the given target language. Returns the generated target code
+/// as a String, suitable for `insta::assert_snapshot!`.
 ///
-/// Panics with a useful message if the fixture file is missing or
-/// if framec returns an error (snapshot tests assume the fixture
-/// itself is valid Frame; a compile error means the fixture has a
-/// bug, not the snapshot).
+/// Fixtures are **per-backend**: since Frame has no type system (type
+/// names pass through verbatim — FRAMEC_BUGS #37), each backend's fixture
+/// is written in that language's native type names. The per-target files
+/// are generated from `tests/fixtures/_canonical/` by
+/// `scripts/gen_snapshot_fixtures.py`.
+///
+/// Panics with a useful message if the fixture file is missing or if
+/// framec returns an error (snapshot tests assume the fixture itself is
+/// valid Frame; a compile error means the fixture has a bug, not the
+/// snapshot).
 pub fn compile_fixture(fixture_name: &str, target: &str) -> String {
     let lang = TargetLanguage::try_from(target)
         .unwrap_or_else(|e| panic!("unknown target language '{}': {}", target, e));
-    let fixture_path = fixture_path(fixture_name);
+    let fixture_path = fixture_path(target, fixture_name);
     let source = std::fs::read_to_string(&fixture_path)
         .unwrap_or_else(|e| panic!("read fixture {}: {}", fixture_path.display(), e));
     match compile_module(&source, lang) {
@@ -37,11 +43,13 @@ pub fn compile_fixture(fixture_name: &str, target: &str) -> String {
     }
 }
 
-/// Absolute path to a fixture file under `tests/fixtures/`.
-fn fixture_path(fixture_name: &str) -> PathBuf {
+/// Absolute path to a per-target fixture under
+/// `tests/fixtures/<target>/<name>.frm`.
+fn fixture_path(target: &str, fixture_name: &str) -> PathBuf {
     let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     p.push("tests");
     p.push("fixtures");
+    p.push(target);
     p.push(format!("{}.frm", fixture_name));
     p
 }

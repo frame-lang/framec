@@ -318,16 +318,16 @@ static void Actions_prepareExit(Actions* self, Actions_FrameVec* exit_args);
 static void Actions_state_Counting(Actions* self, Actions_FrameEvent* __e, Actions_Compartment* compartment);
 static void Actions_s_Counting_hdl_user_get_total(Actions* self, Actions_FrameEvent* __e, Actions_Compartment* compartment);
 static void Actions_s_Counting_hdl_user_increment(Actions* self, Actions_FrameEvent* __e, Actions_Compartment* compartment);
-void Actions_increment (Actions* self, i32 n);
-i32 Actions_get_total (Actions* self);
-static void Actions__scale (Actions* self, i32 n);
+void Actions_increment (Actions* self, int n);
+int Actions_get_total (Actions* self);
+static void Actions__scale (Actions* self, int n);
 
 struct Actions {
     Actions_FrameVec* _state_stack;
     Actions_Compartment* __compartment;
     Actions_Compartment* __next_compartment;
     Actions_FrameVec* _context_stack;
-    i32 total;
+    int total;
 };
 
 Actions* Actions_new(void) {
@@ -477,7 +477,7 @@ void Actions_destroy(Actions* self) {
     free(self);
 }
 
-void Actions_increment(Actions* self, i32 n) {
+void Actions_increment(Actions* self, int n) {
     Actions_FrameVec* __params = Actions_FrameVec_new();
     Actions_FrameVec_push(__params, (void*)(intptr_t)n);
     Actions_FrameEvent* __e = Actions_FrameEvent_new("increment", __params, 1);
@@ -489,13 +489,13 @@ void Actions_increment(Actions* self, i32 n) {
     Actions_FrameEvent_destroy(__e);
 }
 
-i32 Actions_get_total(Actions* self) {
+int Actions_get_total(Actions* self) {
     Actions_FrameEvent* __e = Actions_FrameEvent_new("get_total", NULL, 0);
     Actions_FrameContext* __ctx = Actions_FrameContext_new(__e, NULL);
     Actions_FrameVec_push(self->_context_stack, __ctx);
     Actions_kernel(self, __e);
     Actions_FrameContext* __result_ctx = (Actions_FrameContext*)Actions_FrameVec_pop(self->_context_stack);
-    i32 __result = (i32)__result_ctx->_return;
+    int __result = (int)(intptr_t)__result_ctx->_return;
     Actions_FrameContext_destroy(__result_ctx);
     Actions_FrameEvent_destroy(__e);
     return __result;
@@ -522,6 +522,6 @@ static void Actions_s_Counting_hdl_user_increment(Actions* self, Actions_FrameEv
     self._scale(n)
 }
 
-static void Actions__scale(Actions* self, i32 n) {
+static void Actions__scale(Actions* self, int n) {
                 self.total = self.total + n * 2
 }

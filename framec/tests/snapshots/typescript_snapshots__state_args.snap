@@ -158,7 +158,7 @@ export class StateArgs {
         this.__next_compartment = next_compartment;
     }
 
-    public load(initial: i32) {
+    public load(initial: number) {
         const __e = new StateArgsFrameEvent("load", [initial]);
         const __ctx = new StateArgsFrameContext(__e, null);
         this._context_stack.push(__ctx);
@@ -166,7 +166,7 @@ export class StateArgs {
         this._context_stack.pop();
     }
 
-    public adjust(delta: i32) {
+    public adjust(delta: number) {
         const __e = new StateArgsFrameEvent("adjust", [delta]);
         const __ctx = new StateArgsFrameContext(__e, null);
         this._context_stack.push(__ctx);
@@ -174,7 +174,7 @@ export class StateArgs {
         this._context_stack.pop();
     }
 
-    public peek(): i32 {
+    public peek(): number {
         const __e = new StateArgsFrameEvent("peek", []);
         const __ctx = new StateArgsFrameContext(__e, null);
         this._context_stack.push(__ctx);

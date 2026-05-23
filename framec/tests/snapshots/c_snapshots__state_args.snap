@@ -320,9 +320,9 @@ static void StateArgs_state_Holding(StateArgs* self, StateArgs_FrameEvent* __e, 
 static void StateArgs_s_Idle_hdl_user_load(StateArgs* self, StateArgs_FrameEvent* __e, StateArgs_Compartment* compartment);
 static void StateArgs_s_Holding_hdl_user_adjust(StateArgs* self, StateArgs_FrameEvent* __e, StateArgs_Compartment* compartment);
 static void StateArgs_s_Holding_hdl_user_peek(StateArgs* self, StateArgs_FrameEvent* __e, StateArgs_Compartment* compartment);
-void StateArgs_load (StateArgs* self, i32 initial);
-void StateArgs_adjust (StateArgs* self, i32 delta);
-i32 StateArgs_peek (StateArgs* self);
+void StateArgs_load (StateArgs* self, int initial);
+void StateArgs_adjust (StateArgs* self, int delta);
+int StateArgs_peek (StateArgs* self);
 
 struct StateArgs {
     StateArgs_FrameVec* _state_stack;
@@ -483,7 +483,7 @@ void StateArgs_destroy(StateArgs* self) {
     free(self);
 }
 
-void StateArgs_load(StateArgs* self, i32 initial) {
+void StateArgs_load(StateArgs* self, int initial) {
     StateArgs_FrameVec* __params = StateArgs_FrameVec_new();
     StateArgs_FrameVec_push(__params, (void*)(intptr_t)initial);
     StateArgs_FrameEvent* __e = StateArgs_FrameEvent_new("load", __params, 1);
@@ -495,7 +495,7 @@ void StateArgs_load(StateArgs* self, i32 initial) {
     StateArgs_FrameEvent_destroy(__e);
 }
 
-void StateArgs_adjust(StateArgs* self, i32 delta) {
+void StateArgs_adjust(StateArgs* self, int delta) {
     StateArgs_FrameVec* __params = StateArgs_FrameVec_new();
     StateArgs_FrameVec_push(__params, (void*)(intptr_t)delta);
     StateArgs_FrameEvent* __e = StateArgs_FrameEvent_new("adjust", __params, 1);
@@ -507,13 +507,13 @@ void StateArgs_adjust(StateArgs* self, i32 delta) {
     StateArgs_FrameEvent_destroy(__e);
 }
 
-i32 StateArgs_peek(StateArgs* self) {
+int StateArgs_peek(StateArgs* self) {
     StateArgs_FrameEvent* __e = StateArgs_FrameEvent_new("peek", NULL, 0);
     StateArgs_FrameContext* __ctx = StateArgs_FrameContext_new(__e, NULL);
     StateArgs_FrameVec_push(self->_context_stack, __ctx);
     StateArgs_kernel(self, __e);
     StateArgs_FrameContext* __result_ctx = (StateArgs_FrameContext*)StateArgs_FrameVec_pop(self->_context_stack);
-    i32 __result = (i32)__result_ctx->_return;
+    int __result = (int)(intptr_t)__result_ctx->_return;
     StateArgs_FrameContext_destroy(__result_ctx);
     StateArgs_FrameEvent_destroy(__e);
     return __result;

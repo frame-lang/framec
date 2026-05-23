@@ -322,7 +322,7 @@ static void LinearFsm_s_Idle_hdl_user_start(LinearFsm* self, LinearFsm_FrameEven
 static void LinearFsm_s_Active_hdl_user_finish(LinearFsm* self, LinearFsm_FrameEvent* __e, LinearFsm_Compartment* compartment);
 static void LinearFsm_s_Active_hdl_user_progress(LinearFsm* self, LinearFsm_FrameEvent* __e, LinearFsm_Compartment* compartment);
 void LinearFsm_start (LinearFsm* self);
-void LinearFsm_progress (LinearFsm* self, i32 amount);
+void LinearFsm_progress (LinearFsm* self, int amount);
 void LinearFsm_finish (LinearFsm* self);
 
 struct LinearFsm {
@@ -330,7 +330,7 @@ struct LinearFsm {
     LinearFsm_Compartment* __compartment;
     LinearFsm_Compartment* __next_compartment;
     LinearFsm_FrameVec* _context_stack;
-    i32 total;
+    int total;
 };
 
 LinearFsm* LinearFsm_new(void) {
@@ -504,7 +504,7 @@ void LinearFsm_start(LinearFsm* self) {
     LinearFsm_FrameEvent_destroy(__e);
 }
 
-void LinearFsm_progress(LinearFsm* self, i32 amount) {
+void LinearFsm_progress(LinearFsm* self, int amount) {
     LinearFsm_FrameVec* __params = LinearFsm_FrameVec_new();
     LinearFsm_FrameVec_push(__params, (void*)(intptr_t)amount);
     LinearFsm_FrameEvent* __e = LinearFsm_FrameEvent_new("progress", __params, 1);

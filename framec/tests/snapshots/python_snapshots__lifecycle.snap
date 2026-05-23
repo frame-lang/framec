@@ -116,7 +116,7 @@ class Lifecycle:
     def __transition(self, next_compartment):
         self.__next_compartment = next_compartment
 
-    def start(self, label: String):
+    def start(self, label: str):
         __e = LifecycleFrameEvent("start", [label])
         __ctx = LifecycleFrameContext(__e, None)
         self._context_stack.append(__ctx)

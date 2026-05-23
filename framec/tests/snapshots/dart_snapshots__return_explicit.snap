@@ -159,7 +159,7 @@ class ReturnExplicit {
         __next_compartment = next_compartment;
     }
 
-    String decide(i32 score) {
+    String decide(int score) {
         final __e = ReturnExplicitFrameEvent("decide", [score]);
         final __ctx = ReturnExplicitFrameContext(__e, '');
         _context_stack.add(__ctx);
@@ -175,7 +175,7 @@ class ReturnExplicit {
     }
 
     void _s_Judging_hdl_user_decide(ReturnExplicitFrameEvent __e, ReturnExplicitCompartment compartment) {
-        final score = __e._parameters[0];
+        final score = __e._parameters[0] as int;
                         if score >= 60 {
         this._context_stack[this._context_stack.length - 1]._return = "pass";
                             return;

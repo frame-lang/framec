@@ -130,14 +130,14 @@ class Counter:
     func __transition(next_compartment):
         self.__next_compartment = next_compartment
 
-    func increment(by: i32):
+    func increment(by: int):
         var __e = CounterFrameEvent.new("increment", [by])
         var __ctx = CounterFrameContext.new(__e, null)
         self._context_stack.append(__ctx)
         self.__kernel(__e)
         return self._context_stack.pop_back()._return
 
-    func value() -> i32:
+    func value() -> int:
         var __e = CounterFrameEvent.new("value", [])
         var __ctx = CounterFrameContext.new(__e, null)
         __ctx._return = 0

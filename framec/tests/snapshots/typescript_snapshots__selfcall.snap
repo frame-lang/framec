@@ -64,7 +64,7 @@ export class SelfCall {
     private __compartment: SelfCallCompartment;
     private __next_compartment: SelfCallCompartment | null;
     private _context_stack: Array<any>;
-    private count: i32 = 0;
+    private count: number = 0;
 
     constructor() {
         this._state_stack = [];
@@ -166,7 +166,7 @@ export class SelfCall {
         this._context_stack.pop();
     }
 
-    public report(): i32 {
+    public report(): number {
         const __e = new SelfCallFrameEvent("report", []);
         const __ctx = new SelfCallFrameContext(__e, null);
         this._context_stack.push(__ctx);

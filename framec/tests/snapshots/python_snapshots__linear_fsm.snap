@@ -124,7 +124,7 @@ class LinearFsm:
         self.__kernel(__e)
         return self._context_stack.pop()._return
 
-    def progress(self, amount: i32):
+    def progress(self, amount: int):
         __e = LinearFsmFrameEvent("progress", [amount])
         __ctx = LinearFsmFrameContext(__e, None)
         self._context_stack.append(__ctx)

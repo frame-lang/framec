@@ -319,16 +319,16 @@ static void Consts_state_Running(Consts* self, Consts_FrameEvent* __e, Consts_Co
 static void Consts_s_Running_hdl_user_get_count(Consts* self, Consts_FrameEvent* __e, Consts_Compartment* compartment);
 static void Consts_s_Running_hdl_user_tick(Consts* self, Consts_FrameEvent* __e, Consts_Compartment* compartment);
 void Consts_tick (Consts* self);
-i32 Consts_get_count (Consts* self);
+int Consts_get_count (Consts* self);
 
 struct Consts {
     Consts_FrameVec* _state_stack;
     Consts_Compartment* __compartment;
     Consts_Compartment* __next_compartment;
     Consts_FrameVec* _context_stack;
-    i32 step;
-    i32 limit;
-    i32 count;
+    int step;
+    int limit;
+    int count;
 };
 
 Consts* Consts_new(void) {
@@ -349,7 +349,7 @@ Consts* Consts_new(void) {
     return self;
 }
 
-Consts* Consts_create(i32 step, i32 limit) {
+Consts* Consts_create(int step, int limit) {
     Consts* self = Consts_new();
     self->_state_stack = Consts_FrameVec_new();
     self->_context_stack = Consts_FrameVec_new();
@@ -492,13 +492,13 @@ void Consts_tick(Consts* self) {
     Consts_FrameEvent_destroy(__e);
 }
 
-i32 Consts_get_count(Consts* self) {
+int Consts_get_count(Consts* self) {
     Consts_FrameEvent* __e = Consts_FrameEvent_new("get_count", NULL, 0);
     Consts_FrameContext* __ctx = Consts_FrameContext_new(__e, NULL);
     Consts_FrameVec_push(self->_context_stack, __ctx);
     Consts_kernel(self, __e);
     Consts_FrameContext* __result_ctx = (Consts_FrameContext*)Consts_FrameVec_pop(self->_context_stack);
-    i32 __result = (i32)__result_ctx->_return;
+    int __result = (int)(intptr_t)__result_ctx->_return;
     Consts_FrameContext_destroy(__result_ctx);
     Consts_FrameEvent_destroy(__e);
     return __result;

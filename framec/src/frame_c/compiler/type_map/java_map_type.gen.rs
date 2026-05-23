@@ -1,7 +1,9 @@
 
 // Frame type string → Java type spelling.
-// Used by framec's Java backend for cast/return-type contexts.
-// Part of RFC-0035 round 2 — see csharp_map_type.frs.
+// Frame has NO type system: type names pass through VERBATIM
+// (docs/frame_language.md). The alias table (str→String, int→int,
+// Any→Object, …) was exterminated — it contradicted the passthrough
+// contract. Write Java's own type names; `void`/user types pass through.
 
 #[allow(dead_code)]
 #[allow(non_camel_case_types)]
@@ -242,19 +244,9 @@ mod _java_map_type_framec {
         }
 
         fn _s_Active_hdl_user_map(&mut self, __e: &JavaMapTypeFrameEvent, t: String) {
-                            let result = match t.as_str() {
-                                "Any" => "Object".to_string(),
-                                "str" | "string" | "String" => "String".to_string(),
-                                "int" | "i32" | "i64" | "number" => "int".to_string(),
-                                "float" | "f64" | "f32" => "double".to_string(),
-                                "bool" | "boolean" => "boolean".to_string(),
-                                "void" => "void".to_string(),
-                                _ => t.clone(),
-                            };
-            let __return_val = JavaMapTypeFrameReturn::Map(result.clone());
+            let __return_val = JavaMapTypeFrameReturn::Map(t.clone());
                             if let Some(ctx) = self._context_stack.last_mut() { ctx._return = Some(__return_val); }
         }
     }
 }
 pub use _java_map_type_framec::*;
-

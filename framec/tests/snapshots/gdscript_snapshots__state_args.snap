@@ -132,21 +132,21 @@ class StateArgs:
     func __transition(next_compartment):
         self.__next_compartment = next_compartment
 
-    func load(initial: i32):
+    func load(initial: int):
         var __e = StateArgsFrameEvent.new("load", [initial])
         var __ctx = StateArgsFrameContext.new(__e, null)
         self._context_stack.append(__ctx)
         self.__kernel(__e)
         return self._context_stack.pop_back()._return
 
-    func adjust(delta: i32):
+    func adjust(delta: int):
         var __e = StateArgsFrameEvent.new("adjust", [delta])
         var __ctx = StateArgsFrameContext.new(__e, null)
         self._context_stack.append(__ctx)
         self.__kernel(__e)
         return self._context_stack.pop_back()._return
 
-    func peek() -> i32:
+    func peek() -> int:
         var __e = StateArgsFrameEvent.new("peek", [])
         var __ctx = StateArgsFrameContext.new(__e, null)
         self._context_stack.append(__ctx)

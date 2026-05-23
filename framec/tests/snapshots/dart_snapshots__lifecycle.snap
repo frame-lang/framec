@@ -64,8 +64,8 @@ class Lifecycle {
     late LifecycleCompartment __compartment;
     LifecycleCompartment? __next_compartment;
     late List<LifecycleFrameContext> _context_stack;
-    i32 entered = 0;
-    i32 exited = 0;
+    int entered = 0;
+    int exited = 0;
     String tag = "";
 
     Lifecycle() {

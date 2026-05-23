@@ -129,7 +129,7 @@ class ReturnExplicit:
     func __transition(next_compartment):
         self.__next_compartment = next_compartment
 
-    func decide(score: i32) -> String:
+    func decide(score: int) -> String:
         var __e = ReturnExplicitFrameEvent.new("decide", [score])
         var __ctx = ReturnExplicitFrameContext.new(__e, null)
         self._context_stack.append(__ctx)

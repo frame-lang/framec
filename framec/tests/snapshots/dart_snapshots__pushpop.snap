@@ -64,8 +64,8 @@ class PushPop {
     late PushPopCompartment __compartment;
     PushPopCompartment? __next_compartment;
     late List<PushPopFrameContext> _context_stack;
-    i32 pings = 0;
-    i32 leaves = 0;
+    int pings = 0;
+    int leaves = 0;
 
     PushPop() {
         this._state_stack = [];

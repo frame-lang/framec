@@ -330,8 +330,8 @@ struct Forward {
     Forward_Compartment* __compartment;
     Forward_Compartment* __next_compartment;
     Forward_FrameVec* _context_stack;
-    i32 starts;
-    i32 middles;
+    int starts;
+    int middles;
 };
 
 Forward* Forward_new(void) {

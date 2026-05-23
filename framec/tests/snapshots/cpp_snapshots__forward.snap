@@ -179,8 +179,8 @@ private:
     }
 
 public:
-    i32 starts = 0;
-    i32 middles = 0;
+    int starts = 0;
+    int middles = 0;
 
     Forward() {
         __compartment = __prepareEnter("Start", std::vector<std::any>{}, std::vector<std::any>{});

@@ -110,7 +110,7 @@ class ReturnExplicit:
     def __transition(self, next_compartment):
         self.__next_compartment = next_compartment
 
-    def decide(self, score: i32) -> String:
+    def decide(self, score: int) -> str:
         __e = ReturnExplicitFrameEvent("decide", [score])
         __ctx = ReturnExplicitFrameContext(__e, None)
         self._context_stack.append(__ctx)

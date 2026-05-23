@@ -924,15 +924,19 @@ impl CBackend {
         }
     }
 
-    /// Convert Frame/Python/TypeScript types to C types
+    /// Convert a Frame type annotation to a C type.
+    ///
+    /// Frame has no type system: type names pass through VERBATIM. The
+    /// name-alias table (str→char*, int→int, Any→int, float→double, …) was
+    /// exterminated (FRAMEC_BUGS #37) — write C's own type names (`int`,
+    /// `char*`, `double`, …). What remains here is purely STRUCTURAL: the
+    /// no-type / no-return spellings, C's runtime container ABI (Frame
+    /// list/dict have no native C type — they're the generated FrameVec /
+    /// FrameDict), framework pointer types, and the `T | null` optional form.
     fn convert_type_to_c(&self, type_ann: &Option<String>, system_name: &str) -> String {
         match type_ann.as_ref().map(|s| s.as_str()) {
             None => "void*".to_string(),
             Some("void") | Some("None") => "void".to_string(),
-            Some("bool") | Some("boolean") => "bool".to_string(),
-            Some("int") | Some("number") | Some("Any") => "int".to_string(), // Default Any to int for C
-            Some("float") | Some("double") => "double".to_string(),
-            Some("str") | Some("string") | Some("String") => "char*".to_string(),
             Some("list") | Some("List") | Some("Array") | Some("Array<any>") => {
                 format!("{}_FrameVec*", system_name)
             }

@@ -113,21 +113,21 @@ class StateArgs:
     def __transition(self, next_compartment):
         self.__next_compartment = next_compartment
 
-    def load(self, initial: i32):
+    def load(self, initial: int):
         __e = StateArgsFrameEvent("load", [initial])
         __ctx = StateArgsFrameContext(__e, None)
         self._context_stack.append(__ctx)
         self.__kernel(__e)
         return self._context_stack.pop()._return
 
-    def adjust(self, delta: i32):
+    def adjust(self, delta: int):
         __e = StateArgsFrameEvent("adjust", [delta])
         __ctx = StateArgsFrameContext(__e, None)
         self._context_stack.append(__ctx)
         self.__kernel(__e)
         return self._context_stack.pop()._return
 
-    def peek(self) -> i32:
+    def peek(self) -> int:
         __e = StateArgsFrameEvent("peek", [])
         __ctx = StateArgsFrameContext(__e, None)
         self._context_stack.append(__ctx)

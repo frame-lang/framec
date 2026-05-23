@@ -64,8 +64,8 @@ class Forward {
     late ForwardCompartment __compartment;
     ForwardCompartment? __next_compartment;
     late List<ForwardFrameContext> _context_stack;
-    i32 starts = 0;
-    i32 middles = 0;
+    int starts = 0;
+    int middles = 0;
 
     Forward() {
         this._state_stack = [];

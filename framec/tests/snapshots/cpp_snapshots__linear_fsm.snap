@@ -170,7 +170,7 @@ private:
     }
 
 public:
-    i32 total = 0;
+    int total = 0;
 
     LinearFsm() {
         __compartment = __prepareEnter("Idle", std::vector<std::any>{}, std::vector<std::any>{});

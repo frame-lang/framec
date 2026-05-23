@@ -64,7 +64,7 @@ export class Counter {
     private __compartment: CounterCompartment;
     private __next_compartment: CounterCompartment | null;
     private _context_stack: Array<any>;
-    private count: i32 = 0;
+    private count: number = 0;
 
     constructor() {
         this._state_stack = [];
@@ -158,7 +158,7 @@ export class Counter {
         this.__next_compartment = next_compartment;
     }
 
-    public increment(by: i32) {
+    public increment(by: number) {
         const __e = new CounterFrameEvent("increment", [by]);
         const __ctx = new CounterFrameContext(__e, null);
         this._context_stack.push(__ctx);
@@ -166,7 +166,7 @@ export class Counter {
         this._context_stack.pop();
     }
 
-    public value(): i32 {
+    public value(): number {
         const __e = new CounterFrameEvent("value", []);
         const __ctx = new CounterFrameContext(__e, null);
         __ctx._return = 0;

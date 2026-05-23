@@ -64,7 +64,7 @@ class Actions {
     late ActionsCompartment __compartment;
     ActionsCompartment? __next_compartment;
     late List<ActionsFrameContext> _context_stack;
-    i32 total = 0;
+    int total = 0;
 
     Actions() {
         this._state_stack = [];
@@ -160,7 +160,7 @@ class Actions {
         __next_compartment = next_compartment;
     }
 
-    void increment(i32 n) {
+    void increment(int n) {
         final __e = ActionsFrameEvent("increment", [n]);
         final __ctx = ActionsFrameContext(__e, null);
         _context_stack.add(__ctx);
@@ -168,9 +168,9 @@ class Actions {
         _context_stack.removeLast();
     }
 
-    i32 get_total() {
+    int get_total() {
         final __e = ActionsFrameEvent("get_total", []);
-        final __ctx = ActionsFrameContext(__e, null);
+        final __ctx = ActionsFrameContext(__e, 0);
         _context_stack.add(__ctx);
         __kernel(__e);
         return _context_stack.removeLast()._return;
@@ -192,11 +192,11 @@ class Actions {
     }
 
     void _s_Counting_hdl_user_increment(ActionsFrameEvent __e, ActionsCompartment compartment) {
-        final n = __e._parameters[0];
+        final n = __e._parameters[0] as int;
         self._scale(n)
     }
 
-    void _scale(i32 n) {
+    void _scale(int n) {
                     self.total = self.total + n * 2
     }
 }

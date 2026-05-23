@@ -64,9 +64,9 @@ export class Lifecycle {
     private __compartment: LifecycleCompartment;
     private __next_compartment: LifecycleCompartment | null;
     private _context_stack: Array<any>;
-    private entered: i32 = 0;
-    private exited: i32 = 0;
-    private tag: String = "";
+    private entered: number = 0;
+    private exited: number = 0;
+    private tag: string = "";
 
     constructor() {
         this._state_stack = [];
@@ -161,7 +161,7 @@ export class Lifecycle {
         this.__next_compartment = next_compartment;
     }
 
-    public start(label: String) {
+    public start(label: string) {
         const __e = new LifecycleFrameEvent("start", [label]);
         const __ctx = new LifecycleFrameContext(__e, null);
         this._context_stack.push(__ctx);

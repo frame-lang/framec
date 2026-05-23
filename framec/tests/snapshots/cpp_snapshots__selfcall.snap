@@ -145,7 +145,7 @@ private:
     }
 
 public:
-    i32 count = 0;
+    int count = 0;
 
     SelfCall() {
         __compartment = __prepareEnter("Active", std::vector<std::any>{}, std::vector<std::any>{});

@@ -64,9 +64,9 @@ export class Consts {
     private __compartment: ConstsCompartment;
     private __next_compartment: ConstsCompartment | null;
     private _context_stack: Array<any>;
-    private step: i32 = 5;
-    private limit: i32 = 20;
-    private count: i32 = 0;
+    private step: number = 5;
+    private limit: number = 20;
+    private count: number = 0;
 
     constructor() {
         this._state_stack = [];
@@ -75,7 +75,7 @@ export class Consts {
         this.__next_compartment = null;
     }
 
-    _frame_init(step: i32 = 5, limit: i32 = 20): void {
+    _frame_init(step: number = 5, limit: number = 20): void {
         this.step = step;
         this.limit = limit;
         const __e = new ConstsFrameEvent("$>", this.__compartment.enter_args);
@@ -85,7 +85,7 @@ export class Consts {
         this._context_stack.pop();
     }
 
-    static _create(step: i32 = 5, limit: i32 = 20): Consts {
+    static _create(step: number = 5, limit: number = 20): Consts {
         const c = new Consts();
         c._frame_init(step, limit);
         return c;
@@ -170,7 +170,7 @@ export class Consts {
         this._context_stack.pop();
     }
 
-    public get_count(): i32 {
+    public get_count(): number {
         const __e = new ConstsFrameEvent("get_count", []);
         const __ctx = new ConstsFrameContext(__e, null);
         this._context_stack.push(__ctx);

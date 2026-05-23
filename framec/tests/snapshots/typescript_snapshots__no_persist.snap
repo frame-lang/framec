@@ -64,8 +64,8 @@ export class NoPersist {
     private __compartment: NoPersistCompartment;
     private __next_compartment: NoPersistCompartment | null;
     private _context_stack: Array<any>;
-    private count: i32 = 0;
-    private cache: i32 = -1;
+    private count: number = 0;
+    private cache: number = -1;
 
     constructor() {
         this._state_stack = [];
@@ -167,7 +167,7 @@ export class NoPersist {
         this._context_stack.pop();
     }
 
-    public set_cache(v: i32) {
+    public set_cache(v: number) {
         const __e = new NoPersistFrameEvent("set_cache", [v]);
         const __ctx = new NoPersistFrameContext(__e, null);
         this._context_stack.push(__ctx);
@@ -175,7 +175,7 @@ export class NoPersist {
         this._context_stack.pop();
     }
 
-    public get_count(): i32 {
+    public get_count(): number {
         const __e = new NoPersistFrameEvent("get_count", []);
         const __ctx = new NoPersistFrameContext(__e, null);
         this._context_stack.push(__ctx);
@@ -183,7 +183,7 @@ export class NoPersist {
         return this._context_stack.pop()!._return;
     }
 
-    public get_cache(): i32 {
+    public get_cache(): number {
         const __e = new NoPersistFrameEvent("get_cache", []);
         const __ctx = new NoPersistFrameContext(__e, null);
         this._context_stack.push(__ctx);

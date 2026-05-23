@@ -64,7 +64,7 @@ class Counter {
     late CounterCompartment __compartment;
     CounterCompartment? __next_compartment;
     late List<CounterFrameContext> _context_stack;
-    i32 count = 0;
+    int count = 0;
 
     Counter() {
         this._state_stack = [];
@@ -160,7 +160,7 @@ class Counter {
         __next_compartment = next_compartment;
     }
 
-    void increment(i32 by) {
+    void increment(int by) {
         final __e = CounterFrameEvent("increment", [by]);
         final __ctx = CounterFrameContext(__e, null);
         _context_stack.add(__ctx);
@@ -168,9 +168,9 @@ class Counter {
         _context_stack.removeLast();
     }
 
-    i32 value() {
+    int value() {
         final __e = CounterFrameEvent("value", []);
-        final __ctx = CounterFrameContext(__e, null);
+        final __ctx = CounterFrameContext(__e, 0);
         __ctx._return = 0;
         _context_stack.add(__ctx);
         __kernel(__e);
@@ -189,7 +189,7 @@ class Counter {
     }
 
     void _s_Counting_hdl_user_increment(CounterFrameEvent __e, CounterCompartment compartment) {
-        final by = __e._parameters[0];
+        final by = __e._parameters[0] as int;
         self.count = self.count + by
     }
 
@@ -236,6 +236,6 @@ class Counter {
         this.__compartment = deserializeComp(_parsed['_compartment'])!;
         this.__next_compartment = null;
         this._state_stack = (_parsed['_state_stack'] as List?)?.map((c) => deserializeComp(c)!).toList() ?? <CounterCompartment>[];
-        this.count = _parsed['count'] as i32;
+        this.count = (_parsed['count'] as num).toInt();
     }
 }

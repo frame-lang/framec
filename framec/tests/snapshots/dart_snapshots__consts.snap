@@ -64,9 +64,9 @@ class Consts {
     late ConstsCompartment __compartment;
     ConstsCompartment? __next_compartment;
     late List<ConstsFrameContext> _context_stack;
-    i32 step = 5;
-    i32 limit = 20;
-    i32 count = 0;
+    int step = 5;
+    int limit = 20;
+    int count = 0;
 
     Consts() {
         this._state_stack = [];
@@ -75,7 +75,7 @@ class Consts {
         this.__next_compartment = null;
     }
 
-    void _frame_init([i32 step = 5, i32 limit = 20]) {
+    void _frame_init([int step = 5, int limit = 20]) {
         this.step = step;
         this.limit = limit;
         final __e = ConstsFrameEvent("\$>", __compartment.enter_args);
@@ -85,7 +85,7 @@ class Consts {
         _context_stack.removeLast();
     }
 
-    static Consts _create([i32 step = 5, i32 limit = 20]) {
+    static Consts _create([int step = 5, int limit = 20]) {
         final c = Consts();
         c._frame_init(step, limit);
         return c;
@@ -172,9 +172,9 @@ class Consts {
         _context_stack.removeLast();
     }
 
-    i32 get_count() {
+    int get_count() {
         final __e = ConstsFrameEvent("get_count", []);
-        final __ctx = ConstsFrameContext(__e, null);
+        final __ctx = ConstsFrameContext(__e, 0);
         _context_stack.add(__ctx);
         __kernel(__e);
         return _context_stack.removeLast()._return;

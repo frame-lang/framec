@@ -1,8 +1,13 @@
 
 // Frame type string → Kotlin type spelling.
-// Note: `Any` maps to `Any?` because Kotlin's `Any?` is the
-// platform-nullable counterpart that round-trips through cast
-// sites without an NPE explosion.
+// Frame has NO type system: type names pass through VERBATIM
+// (docs/frame_language.md). The name-alias table (str→String,
+// int→Int, Any→Any?, …) was exterminated — it contradicted the
+// passthrough contract. Write Kotlin's own type names.
+//
+// The ONE transform that remains is structural, not name-aliasing:
+// Kotlin spells "no return" as `Unit`, so the framework's `void` token
+// is adapted. Everything else passes through unchanged.
 
 #[allow(dead_code)]
 #[allow(non_camel_case_types)]
@@ -243,14 +248,10 @@ mod _kotlin_map_type_framec {
         }
 
         fn _s_Active_hdl_user_map(&mut self, __e: &KotlinMapTypeFrameEvent, t: String) {
-                            let result = match t.as_str() {
-                                "Any" | "Object" | "object" => "Any?".to_string(),
-                                "str" | "string" | "String" => "String".to_string(),
-                                "int" | "i32" | "i64" | "number" => "Int".to_string(),
-                                "float" | "f64" | "f32" | "double" => "Double".to_string(),
-                                "bool" | "boolean" => "Boolean".to_string(),
-                                "void" => "Unit".to_string(),
-                                _ => t.clone(),
+                            let result = if t == "void" {
+                                "Unit".to_string()
+                            } else {
+                                t
                             };
             let __return_val = KotlinMapTypeFrameReturn::Map(result.clone());
                             if let Some(ctx) = self._context_stack.last_mut() { ctx._return = Some(__return_val); }
@@ -258,4 +259,3 @@ mod _kotlin_map_type_framec {
     }
 }
 pub use _kotlin_map_type_framec::*;
-

@@ -119,21 +119,21 @@ class NoPersist:
         self.__kernel(__e)
         return self._context_stack.pop()._return
 
-    def set_cache(self, v: i32):
+    def set_cache(self, v: int):
         __e = NoPersistFrameEvent("set_cache", [v])
         __ctx = NoPersistFrameContext(__e, None)
         self._context_stack.append(__ctx)
         self.__kernel(__e)
         return self._context_stack.pop()._return
 
-    def get_count(self) -> i32:
+    def get_count(self) -> int:
         __e = NoPersistFrameEvent("get_count", [])
         __ctx = NoPersistFrameContext(__e, None)
         self._context_stack.append(__ctx)
         self.__kernel(__e)
         return self._context_stack.pop()._return
 
-    def get_cache(self) -> i32:
+    def get_cache(self) -> int:
         __e = NoPersistFrameEvent("get_cache", [])
         __ctx = NoPersistFrameContext(__e, None)
         self._context_stack.append(__ctx)

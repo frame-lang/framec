@@ -64,8 +64,8 @@ export class PushPop {
     private __compartment: PushPopCompartment;
     private __next_compartment: PushPopCompartment | null;
     private _context_stack: Array<any>;
-    private pings: i32 = 0;
-    private leaves: i32 = 0;
+    private pings: number = 0;
+    private leaves: number = 0;
 
     constructor() {
         this._state_stack = [];

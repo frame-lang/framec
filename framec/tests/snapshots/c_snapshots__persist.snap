@@ -404,8 +404,8 @@ static void Counter_prepareExit(Counter* self, Counter_FrameVec* exit_args);
 static void Counter_state_Counting(Counter* self, Counter_FrameEvent* __e, Counter_Compartment* compartment);
 static void Counter_s_Counting_hdl_user_increment(Counter* self, Counter_FrameEvent* __e, Counter_Compartment* compartment);
 static void Counter_s_Counting_hdl_user_value(Counter* self, Counter_FrameEvent* __e, Counter_Compartment* compartment);
-void Counter_increment (Counter* self, i32 by);
-i32 Counter_value (Counter* self);
+void Counter_increment (Counter* self, int by);
+int Counter_value (Counter* self);
 char* Counter_snapshot (Counter* self);
 void Counter_restore (Counter* self, const char* json);
 
@@ -414,7 +414,7 @@ struct Counter {
     Counter_Compartment* __compartment;
     Counter_Compartment* __next_compartment;
     Counter_FrameVec* _context_stack;
-    i32 count;
+    int count;
 };
 
 Counter* Counter_new(void) {
@@ -564,7 +564,7 @@ void Counter_destroy(Counter* self) {
     free(self);
 }
 
-void Counter_increment(Counter* self, i32 by) {
+void Counter_increment(Counter* self, int by) {
     Counter_FrameVec* __params = Counter_FrameVec_new();
     Counter_FrameVec_push(__params, (void*)(intptr_t)by);
     Counter_FrameEvent* __e = Counter_FrameEvent_new("increment", __params, 1);
@@ -576,14 +576,14 @@ void Counter_increment(Counter* self, i32 by) {
     Counter_FrameEvent_destroy(__e);
 }
 
-i32 Counter_value(Counter* self) {
+int Counter_value(Counter* self) {
     Counter_FrameEvent* __e = Counter_FrameEvent_new("value", NULL, 0);
     Counter_FrameContext* __ctx = Counter_FrameContext_new(__e, NULL);
     __ctx->_return = (void*)(intptr_t)(0);
     Counter_FrameVec_push(self->_context_stack, __ctx);
     Counter_kernel(self, __e);
     Counter_FrameContext* __result_ctx = (Counter_FrameContext*)Counter_FrameVec_pop(self->_context_stack);
-    i32 __result = (i32)__result_ctx->_return;
+    int __result = (int)(intptr_t)__result_ctx->_return;
     Counter_FrameContext_destroy(__result_ctx);
     Counter_FrameEvent_destroy(__e);
     return __result;

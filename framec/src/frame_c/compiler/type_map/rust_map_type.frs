@@ -1,24 +1,28 @@
 @@[target("rust")]
 
-// Frame type string → Rust owned-type spelling.
-// Used inside generated structs (XContext, event variants,
-// return-enum variants). RFC-0033 borrowed → owned promotion
-// fires here: `&str` widens to `String`, `&[T]` widens to
-// `Vec<T>`. The call-boundary keeps the borrowed signature
-// (see rust_owned_promotion + the dispatch site in
-// rust_system.rs); this helper only fires where the value
-// has to be stored owned.
+// Frame type string → Rust storage-type spelling.
 //
-// Note: input here is the *type-name string* (`&str` / `&[i32]`
-// / `MyType`). Frame_ast::Type carries the `Type::Unknown`
-// fallback, which the glue mod collapses to "" before invoking
-// this mapper — i.e. unknown types arrive as an empty input
-// string and we return "String" to match the prior behavior.
+// Frame has NO type system: type names are passed through to the
+// generated code VERBATIM (docs/frame_language.md). Write your target
+// language's own type names (`i64`, `String`, `Vec<i32>`, `MyType`) — this
+// mapper does NOT translate `int`→`i64`, `str`→`String`, etc. (that
+// alias table was removed; it contradicted the passthrough contract).
 //
-// Single match expression at the end so the body's one
-// `@@:(...)` call wins. (See swift_map_type.frs for the
-// observation that Frame's @@:(value) sets the return value
-// rather than returning early.)
+// The two transforms that REMAIN are ownership-widening, not name
+// aliasing: a borrowed param type that has to be stored *owned* inside a
+// generated struct (XContext, event variant, return-enum variant) widens
+// `&str` → `String` and `&[T]` → `Vec<T>`. The call boundary keeps the
+// borrowed signature (see rust_owned_promotion + the dispatch site in
+// rust_system.rs); this fires only where the value is stored owned. This
+// is correctness, not convenience — and framec's own dogfooded `.frs`
+// FSMs rely on it (they take `&str` / `&[&str]` params).
+//
+// `Type::Unknown` (no annotation) arrives as "" and maps to `String` — a
+// safe owned default where a concrete type is required.
+//
+// Single match expression at the end so the body's one `@@:(...)` call
+// wins. (See swift_map_type.frs for the observation that Frame's
+// @@:(value) sets the return value rather than returning early.)
 
 @@system RustMapType {
     interface:
@@ -35,14 +39,7 @@
                     let inner = &t[2..t.len() - 1];
                     format!("Vec<{}>", inner)
                 } else {
-                    match t.as_str() {
-                        "int" => "i64".to_string(),
-                        "float" => "f64".to_string(),
-                        "str" | "string" | "String" => "String".to_string(),
-                        "bool" => "bool".to_string(),
-                        "Any" => "String".to_string(),
-                        other => other.to_string(),
-                    }
+                    t
                 };
                 @@:(result)
             }

@@ -317,7 +317,7 @@ static ReturnExplicit_Compartment* ReturnExplicit_prepareEnter(ReturnExplicit* s
 static void ReturnExplicit_prepareExit(ReturnExplicit* self, ReturnExplicit_FrameVec* exit_args);
 static void ReturnExplicit_state_Judging(ReturnExplicit* self, ReturnExplicit_FrameEvent* __e, ReturnExplicit_Compartment* compartment);
 static void ReturnExplicit_s_Judging_hdl_user_decide(ReturnExplicit* self, ReturnExplicit_FrameEvent* __e, ReturnExplicit_Compartment* compartment);
-char* ReturnExplicit_decide (ReturnExplicit* self, i32 score);
+char* ReturnExplicit_decide (ReturnExplicit* self, int score);
 
 struct ReturnExplicit {
     ReturnExplicit_FrameVec* _state_stack;
@@ -471,7 +471,7 @@ void ReturnExplicit_destroy(ReturnExplicit* self) {
     free(self);
 }
 
-char* ReturnExplicit_decide(ReturnExplicit* self, i32 score) {
+char* ReturnExplicit_decide(ReturnExplicit* self, int score) {
     ReturnExplicit_FrameVec* __params = ReturnExplicit_FrameVec_new();
     ReturnExplicit_FrameVec_push(__params, (void*)(intptr_t)score);
     ReturnExplicit_FrameEvent* __e = ReturnExplicit_FrameEvent_new("decide", __params, 1);

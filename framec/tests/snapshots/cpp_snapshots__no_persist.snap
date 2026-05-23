@@ -162,8 +162,8 @@ private:
     }
 
 public:
-    i32 count = 0;
-    i32 cache = -1;
+    int count = 0;
+    int cache = -1;
 
     NoPersist() {
         __compartment = __prepareEnter("Active", std::vector<std::any>{}, std::vector<std::any>{});

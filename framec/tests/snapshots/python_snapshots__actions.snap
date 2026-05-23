@@ -111,14 +111,14 @@ class Actions:
     def __transition(self, next_compartment):
         self.__next_compartment = next_compartment
 
-    def increment(self, n: i32):
+    def increment(self, n: int):
         __e = ActionsFrameEvent("increment", [n])
         __ctx = ActionsFrameContext(__e, None)
         self._context_stack.append(__ctx)
         self.__kernel(__e)
         return self._context_stack.pop()._return
 
-    def get_total(self) -> i32:
+    def get_total(self) -> int:
         __e = ActionsFrameEvent("get_total", [])
         __ctx = ActionsFrameContext(__e, None)
         self._context_stack.append(__ctx)
@@ -140,5 +140,5 @@ class Actions:
         n = __e._parameters[0]
         self._scale(n)
 
-    def _scale(self, n: i32):
+    def _scale(self, n: int):
         self.total = self.total + n * 2

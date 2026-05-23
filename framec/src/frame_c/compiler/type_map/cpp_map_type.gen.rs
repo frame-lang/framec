@@ -1,7 +1,10 @@
 
-// Frame type string → C++ type spelling. Used for std::any_cast<T>
-// targets and similar contexts. User-defined types (e.g.,
-// std::vector<int>, custom classes) pass through verbatim.
+// Frame type string → C++ type spelling.
+// Frame has NO type system: type names pass through VERBATIM
+// (docs/frame_language.md). The alias table (str→std::string,
+// Any→std::any, int→int, …) was exterminated — it contradicted the
+// passthrough contract. Write C++'s own type names (std::string,
+// std::any, std::vector<int>, custom classes); all pass through.
 
 #[allow(dead_code)]
 #[allow(non_camel_case_types)]
@@ -242,19 +245,9 @@ mod _cpp_map_type_framec {
         }
 
         fn _s_Active_hdl_user_map(&mut self, __e: &CppMapTypeFrameEvent, t: String) {
-                            let result = match t.as_str() {
-                                "Any" => "std::any".to_string(),
-                                "str" | "string" | "String" => "std::string".to_string(),
-                                "int" | "i32" | "i64" | "number" => "int".to_string(),
-                                "float" | "f64" | "f32" => "double".to_string(),
-                                "bool" | "boolean" => "bool".to_string(),
-                                "void" => "void".to_string(),
-                                _ => t.clone(),
-                            };
-            let __return_val = CppMapTypeFrameReturn::Map(result.clone());
+            let __return_val = CppMapTypeFrameReturn::Map(t.clone());
                             if let Some(ctx) = self._context_stack.last_mut() { ctx._return = Some(__return_val); }
         }
     }
 }
 pub use _cpp_map_type_framec::*;
-

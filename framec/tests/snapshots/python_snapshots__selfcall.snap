@@ -118,7 +118,7 @@ class SelfCall:
         self.__kernel(__e)
         return self._context_stack.pop()._return
 
-    def report(self) -> i32:
+    def report(self) -> int:
         __e = SelfCallFrameEvent("report", [])
         __ctx = SelfCallFrameContext(__e, None)
         self._context_stack.append(__ctx)

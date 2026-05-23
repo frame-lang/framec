@@ -213,9 +213,9 @@ private:
     }
 
 public:
-    i32 awakes = 0;
-    i32 sleeps = 0;
-    i32 last = 0;
+    int awakes = 0;
+    int sleeps = 0;
+    int last = 0;
 
     MiniHsm() {
         __compartment = __prepareEnter("Live", std::vector<std::any>{}, std::vector<std::any>{});

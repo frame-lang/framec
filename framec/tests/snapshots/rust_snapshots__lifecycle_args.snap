@@ -22,7 +22,7 @@ mod _lifecycle_args_framec {
     #[derive(Clone, Debug)]
     #[allow(dead_code, non_camel_case_types)]
     enum LifecycleArgsFrameEvent {
-        Load { n: i64, label: String },
+        Load { n: i32, label: String },
         Total {  },
         Tag {  },
         FrameEnter {},
@@ -33,7 +33,7 @@ mod _lifecycle_args_framec {
     #[allow(dead_code, non_camel_case_types)]
     enum LifecycleArgsFrameReturn {
         Tag(String),
-        Total(i64),
+        Total(i32),
         _Lifecycle(alloc::rc::Rc<dyn core::any::Any>),
     }
 
@@ -82,7 +82,7 @@ mod _lifecycle_args_framec {
 
     #[derive(Clone)]
     struct ActiveContext {
-        count: i64,
+        count: i32,
         name: String,
     }
 
@@ -140,7 +140,7 @@ mod _lifecycle_args_framec {
         __compartment: LifecycleArgsCompartment,
         __next_compartment: Option<LifecycleArgsCompartment>,
         _context_stack: Vec<LifecycleArgsFrameContext>,
-        pub sum: i64,
+        pub sum: i32,
         pub label: String,
     }
 
@@ -150,7 +150,7 @@ mod _lifecycle_args_framec {
             Self {
                 _state_stack: Vec::new(),
                 _context_stack: Vec::new(),
-                sum: (0) as i64,
+                sum: 0,
                 label: String::from(""),
                 __compartment: LifecycleArgsCompartment::new("Idle"),
                 __next_compartment: None,
@@ -246,7 +246,7 @@ mod _lifecycle_args_framec {
             self.__next_compartment = Some(next_compartment);
         }
 
-        pub fn load(&mut self, n: i64, label: String) {
+        pub fn load(&mut self, n: i32, label: String) {
             let __e = alloc::rc::Rc::new(LifecycleArgsFrameEvent::Load { n: n.clone(), label: label.clone() });
             let mut __ctx = LifecycleArgsFrameContext::new(alloc::rc::Rc::clone(&__e), None);
             self._context_stack.push(__ctx);
@@ -254,7 +254,7 @@ mod _lifecycle_args_framec {
             self._context_stack.pop();
         }
 
-        pub fn total(&mut self) -> i64 {
+        pub fn total(&mut self) -> i32 {
             let __e = alloc::rc::Rc::new(LifecycleArgsFrameEvent::Total {});
             let mut __ctx = LifecycleArgsFrameContext::new(alloc::rc::Rc::clone(&__e), None);
             self._context_stack.push(__ctx);
@@ -262,7 +262,7 @@ mod _lifecycle_args_framec {
             let __ctx = self._context_stack.pop().expect("invariant: handler must have pushed a context before reading return");
             match __ctx._return {
                 Some(LifecycleArgsFrameReturn::Total(v)) => v,
-                Some(LifecycleArgsFrameReturn::_Lifecycle(v)) => v.downcast_ref::<i64>().cloned().unwrap_or_default(),
+                Some(LifecycleArgsFrameReturn::_Lifecycle(v)) => v.downcast_ref::<i32>().cloned().unwrap_or_default(),
                 _ => Default::default(),
             }
         }
@@ -326,7 +326,7 @@ mod _lifecycle_args_framec {
             }
         }
 
-        fn _s_Idle_hdl_user_load(&mut self, __e: &LifecycleArgsFrameEvent, n: i64, label: String) {
+        fn _s_Idle_hdl_user_load(&mut self, __e: &LifecycleArgsFrameEvent, n: i32, label: String) {
             let mut __compartment = self.__prepareEnter("Active");
             {
                 if let LifecycleArgsStateContext::Active(ref mut ctx) = __compartment.state_context {
@@ -338,7 +338,7 @@ mod _lifecycle_args_framec {
             return;
         }
 
-        fn _s_Active_hdl_frame_enter(&mut self, __e: &LifecycleArgsFrameEvent, count: i64, name: String) {
+        fn _s_Active_hdl_frame_enter(&mut self, __e: &LifecycleArgsFrameEvent, count: i32, name: String) {
             self.sum = count + 1;
             self.label = name;
         }
@@ -350,7 +350,7 @@ mod _lifecycle_args_framec {
         }
 
         fn _s_Active_hdl_user_total(&mut self, __e: &LifecycleArgsFrameEvent) {
-            let __return_val = LifecycleArgsFrameReturn::Total((self.sum) as i64);
+            let __return_val = LifecycleArgsFrameReturn::Total(self.sum);
                             if let Some(ctx) = self._context_stack.last_mut() { ctx._return = Some(__return_val); }
                             return;
         }

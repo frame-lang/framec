@@ -199,89 +199,104 @@ pub(crate) fn rust_owned_promotion(t: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    // FRAMEC_BUGS #37: the type-name alias tables were exterminated. Frame
+    // has no type system — type names pass through VERBATIM. Each backend
+    // mapper now asserts (a) native types pass through unchanged, (b) the
+    // old Frame-isms (`str`/`int`/`Any`) are NO LONGER translated, and
+    // (c) the few genuinely-structural transforms that remain (void-spelling,
+    // Swift nullable/array syntax, Rust borrow→owned widening).
+
     #[test]
     fn csharp_basic() {
-        assert_eq!(csharp_map_type("Any"), "object");
-        assert_eq!(csharp_map_type("str"), "string");
+        // Native types pass through.
+        assert_eq!(csharp_map_type("object"), "object");
+        assert_eq!(csharp_map_type("string"), "string");
         assert_eq!(csharp_map_type("int"), "int");
-        assert_eq!(csharp_map_type("float"), "double");
-        assert_eq!(csharp_map_type("bool"), "bool");
         assert_eq!(csharp_map_type("MyType"), "MyType");
+        // Frame-isms are no longer translated — verbatim passthrough.
+        assert_eq!(csharp_map_type("str"), "str");
+        assert_eq!(csharp_map_type("Any"), "Any");
     }
 
     #[test]
     fn java_basic() {
-        assert_eq!(java_map_type("Any"), "Object");
-        assert_eq!(java_map_type("str"), "String");
-        assert_eq!(java_map_type("bool"), "boolean");
+        assert_eq!(java_map_type("String"), "String");
+        assert_eq!(java_map_type("int"), "int");
         assert_eq!(java_map_type("void"), "void");
+        assert_eq!(java_map_type("str"), "str"); // passthrough now
+        assert_eq!(java_map_type("Any"), "Any");
     }
 
     #[test]
     fn kotlin_basic() {
-        assert_eq!(kotlin_map_type("Any"), "Any?");
-        assert_eq!(kotlin_map_type("Object"), "Any?");
-        assert_eq!(kotlin_map_type("str"), "String");
-        assert_eq!(kotlin_map_type("int"), "Int");
-        assert_eq!(kotlin_map_type("void"), "Unit");
+        assert_eq!(kotlin_map_type("Int"), "Int");
+        assert_eq!(kotlin_map_type("String"), "String");
+        assert_eq!(kotlin_map_type("MyType"), "MyType");
+        assert_eq!(kotlin_map_type("void"), "Unit"); // structural: kept
+        assert_eq!(kotlin_map_type("str"), "str"); // passthrough now
+        assert_eq!(kotlin_map_type("Any"), "Any");
     }
 
     #[test]
     fn go_basic() {
-        assert_eq!(go_map_type("Any"), "any");
-        assert_eq!(go_map_type("str"), "string");
-        assert_eq!(go_map_type("float"), "float64");
-        assert_eq!(go_map_type("void"), "");
-        assert_eq!(go_map_type("None"), "");
+        assert_eq!(go_map_type("string"), "string");
+        assert_eq!(go_map_type("int"), "int");
+        assert_eq!(go_map_type("void"), ""); // structural: kept
+        assert_eq!(go_map_type("None"), ""); // structural: kept
+        assert_eq!(go_map_type("str"), "str"); // passthrough now
+        assert_eq!(go_map_type("any"), "any");
     }
 
     #[test]
     fn cpp_basic() {
-        assert_eq!(cpp_map_type("Any"), "std::any");
-        assert_eq!(cpp_map_type("str"), "std::string");
+        assert_eq!(cpp_map_type("std::string"), "std::string");
         assert_eq!(cpp_map_type("std::vector<int>"), "std::vector<int>");
+        assert_eq!(cpp_map_type("int"), "int");
+        assert_eq!(cpp_map_type("str"), "str"); // passthrough now
+        assert_eq!(cpp_map_type("Any"), "Any");
     }
 
     #[test]
     fn swift_basic() {
+        assert_eq!(swift_map_type("String"), "String");
+        assert_eq!(swift_map_type("Int"), "Int");
+        assert_eq!(swift_map_type("void"), "Void"); // structural: kept
+        assert_eq!(swift_map_type("str"), "str"); // passthrough now
         assert_eq!(swift_map_type("Any"), "Any");
-        assert_eq!(swift_map_type("str"), "String");
-        assert_eq!(swift_map_type("void"), "Void");
-        assert_eq!(swift_map_type("bool"), "Bool");
     }
 
     #[test]
     fn swift_nullable() {
-        assert_eq!(swift_map_type("str | nil"), "String?");
-        assert_eq!(swift_map_type("int | None"), "Int?");
+        // Nullable SYNTAX is kept (structural), inner type passes through.
+        assert_eq!(swift_map_type("String | nil"), "String?");
+        assert_eq!(swift_map_type("Int | None"), "Int?");
     }
 
     #[test]
     fn swift_array() {
-        assert_eq!(swift_map_type("str[]"), "[String]");
-        assert_eq!(swift_map_type("int[]"), "[Int]");
+        // Array SYNTAX is kept (structural), inner type passes through.
+        assert_eq!(swift_map_type("String[]"), "[String]");
+        assert_eq!(swift_map_type("Int[]"), "[Int]");
     }
 
     #[test]
     fn rust_basic() {
-        assert_eq!(frame_type_to_rust_type(&Type::Custom("int".into())), "i64");
+        // Native Rust types pass through.
+        assert_eq!(frame_type_to_rust_type(&Type::Custom("i64".into())), "i64");
         assert_eq!(
-            frame_type_to_rust_type(&Type::Custom("float".into())),
-            "f64"
-        );
-        assert_eq!(
-            frame_type_to_rust_type(&Type::Custom("str".into())),
+            frame_type_to_rust_type(&Type::Custom("String".into())),
             "String"
         );
-        assert_eq!(
-            frame_type_to_rust_type(&Type::Custom("bool".into())),
-            "bool"
-        );
-        assert_eq!(frame_type_to_rust_type(&Type::Unknown), "String");
         assert_eq!(
             frame_type_to_rust_type(&Type::Custom("MyEnum".into())),
             "MyEnum"
         );
+        // Frame-isms are no longer translated — verbatim passthrough.
+        assert_eq!(frame_type_to_rust_type(&Type::Custom("int".into())), "int");
+        assert_eq!(frame_type_to_rust_type(&Type::Custom("str".into())), "str");
+        // Unknown (no annotation) still defaults to an owned String, where a
+        // concrete type is structurally required.
+        assert_eq!(frame_type_to_rust_type(&Type::Unknown), "String");
     }
 
     #[test]

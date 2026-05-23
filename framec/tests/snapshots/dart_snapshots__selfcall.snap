@@ -64,7 +64,7 @@ class SelfCall {
     late SelfCallCompartment __compartment;
     SelfCallCompartment? __next_compartment;
     late List<SelfCallFrameContext> _context_stack;
-    i32 count = 0;
+    int count = 0;
 
     SelfCall() {
         this._state_stack = [];
@@ -168,9 +168,9 @@ class SelfCall {
         _context_stack.removeLast();
     }
 
-    i32 report() {
+    int report() {
         final __e = SelfCallFrameEvent("report", []);
-        final __ctx = SelfCallFrameContext(__e, null);
+        final __ctx = SelfCallFrameContext(__e, 0);
         _context_stack.add(__ctx);
         __kernel(__e);
         return _context_stack.removeLast()._return;

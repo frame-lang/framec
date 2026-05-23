@@ -349,15 +349,14 @@ self._context_stack.pop()"#,
 
                 // Check if method has a non-void return type
                 let return_type_str = method.return_type.as_ref().map(|t| type_to_string(t));
-                // Convert Frame types to C types
+                // Frame has no type system: return type names pass through
+                // VERBATIM (FRAMEC_BUGS #37 — the str→char*/int→int/… alias
+                // table was exterminated). Only the framework's no-return
+                // spelling is normalized (structural). Write C's own types.
                 let return_type_str = return_type_str.map(|s| {
                     match s.as_str() {
-                        "str" | "string" | "String" => "char*".to_string(),
-                        "bool" | "boolean" => "bool".to_string(),
-                        "int" | "number" | "Any" => "int".to_string(),
-                        "float" | "double" => "double".to_string(),
                         "void" | "None" => "void".to_string(),
-                        _ => s
+                        _ => s,
                     }
                 });
                 let has_return_value = return_type_str.as_ref()

@@ -64,8 +64,8 @@ export class Forward {
     private __compartment: ForwardCompartment;
     private __next_compartment: ForwardCompartment | null;
     private _context_stack: Array<any>;
-    private starts: i32 = 0;
-    private middles: i32 = 0;
+    private starts: number = 0;
+    private middles: number = 0;
 
     constructor() {
         this._state_stack = [];

@@ -149,7 +149,7 @@ private:
     }
 
 public:
-    i32 total = 0;
+    int total = 0;
 
     Actions() {
         __compartment = __prepareEnter("Counting", std::vector<std::any>{}, std::vector<std::any>{});

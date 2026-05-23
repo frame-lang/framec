@@ -654,10 +654,10 @@ fn bug31_no_std_portable_paths() {
     let src = r#"
 @@system Foo {
     interface:
-        bar(): int
+        bar(): i64
     machine:
         $A {
-            bar(): int { @@:(1) }
+            bar(): i64 { @@:(1) }
         }
 }
 "#;
@@ -758,14 +758,14 @@ fn bug33_generated_compiles_no_std() {
 @@system Bug33 {
     interface:
         bump()
-        total(): int
+        total(): i64
     machine:
         $A {
             bump()       { -> $B }
-            total(): int { @@:(0) }
+            total(): i64 { @@:(0) }
         }
         $B {
-            total(): int { @@:(1) }
+            total(): i64 { @@:(1) }
         }
 }
 "#,
@@ -835,21 +835,21 @@ fn bug34_enter_args_type_faithful() {
 @@system Bug34 {
     interface:
         run()
-        sum(): int
-        head(): int
+        sum(): i64
+        head(): i64
     machine:
         $Start { run() { -> (42) $Mid } }
         $Mid {
-            $>(n: int)   { self.total = n + 1 }
-            sum(): int   { @@:(self.total) }
+            $>(n: i64)   { self.total = n + 1 }
+            sum(): i64   { @@:(self.total) }
             run()        { -> (vec![99]) $End }
         }
         $End {
             $>(xs: Vec<i64>) { self.total = xs[0] }
-            head(): int      { @@:(self.total) }
+            head(): i64      { @@:(self.total) }
         }
     domain:
-        total: int = 0
+        total: i64 = 0
 }
 "#,
         "rust",
@@ -939,17 +939,17 @@ fn bug35_start_state_exit_arg_binds() {
 @@system Bug35 {
     interface:
         go()
-        seen(): int
+        seen(): i64
     machine:
         $A {
             go()          { (99) -> $B }
-            <$(code: int) { self.s = code }
+            <$(code: i64) { self.s = code }
         }
         $B {
-            seen(): int { @@:(self.s) }
+            seen(): i64 { @@:(self.s) }
         }
     domain:
-        s: int = 0
+        s: i64 = 0
 }
 "#,
         "rust",
@@ -1025,23 +1025,23 @@ fn pop_decorated_args_typed() {
         go()
         nest()
         back()
-        entered(): int
-        exited(): int
+        entered(): i64
+        exited(): i64
     machine:
         $Start { go() { -> $Idle } }
         $Idle {
-            $>(tag: int)   { self.e = self.e + tag }
+            $>(tag: i64)   { self.e = self.e + tag }
             nest()         { push$ -> $Nested }
-            entered(): int { @@:(self.e) }
-            exited(): int  { @@:(self.x) }
+            entered(): i64 { @@:(self.e) }
+            exited(): i64  { @@:(self.x) }
         }
         $Nested {
-            <$(code: int) { self.x = code }
+            <$(code: i64) { self.x = code }
             back()        { (7) -> (42) pop$ }
         }
     domain:
-        e: int = 0
-        x: int = 0
+        e: i64 = 0
+        x: i64 = 0
 }
 "#,
         "rust",

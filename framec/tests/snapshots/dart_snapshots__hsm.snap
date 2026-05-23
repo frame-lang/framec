@@ -64,9 +64,9 @@ class MiniHsm {
     late MiniHsmCompartment __compartment;
     MiniHsmCompartment? __next_compartment;
     late List<MiniHsmFrameContext> _context_stack;
-    i32 awakes = 0;
-    i32 sleeps = 0;
-    i32 last = 0;
+    int awakes = 0;
+    int sleeps = 0;
+    int last = 0;
 
     MiniHsm() {
         this._state_stack = [];

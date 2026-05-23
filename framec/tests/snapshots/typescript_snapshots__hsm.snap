@@ -64,9 +64,9 @@ export class MiniHsm {
     private __compartment: MiniHsmCompartment;
     private __next_compartment: MiniHsmCompartment | null;
     private _context_stack: Array<any>;
-    private awakes: i32 = 0;
-    private sleeps: i32 = 0;
-    private last: i32 = 0;
+    private awakes: number = 0;
+    private sleeps: number = 0;
+    private last: number = 0;
 
     constructor() {
         this._state_stack = [];
