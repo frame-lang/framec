@@ -119,7 +119,7 @@ impl Cli {
                     .arg(Arg::new("dir").value_name("DIR").required(true))
             )
             .arg(Arg::new("FILE-PATH").help("File path").value_name("FILE").index(1))
-            .arg(Arg::new("language").value_name("LANG").long("language").short('l').help("Target language (python_3, typescript, javascript, rust, c, cpp, java, kotlin, swift, ruby, csharp, go, php, dart, gdscript, lua, erlang, graphviz)").num_args(1))
+            .arg(Arg::new("language").value_name("LANG").long("language").short('l').help("Target language (python_3, typescript, javascript, rust, c, cpp, java, kotlin, swift, ruby, csharp, go, php, dart, gdscript, lua, erlang, graphviz). Precedence: -l > @@[target(...)] pragma > FRAMEC_DEFAULT_TARGET env var > python_3 (default; warns).").num_args(1))
             .arg(Arg::new("multifile").long("multifile").short('m').help("Enable multi-file project compilation").action(clap::ArgAction::SetTrue))
             .arg(Arg::new("output-dir").long("output-dir").short('o').help("Output directory for generated files (compile/multi-file)").value_name("DIR").num_args(1).global(true))
             .arg(Arg::new("debug-output").long("debug-output").help("Generate JSON output with transpiled code and source map").action(clap::ArgAction::SetTrue).global(true))
@@ -378,7 +378,10 @@ fn handle_default_pathway(args: Cli) {
             // Module file validation (@target present)
             let is_module = content.contains("@target ");
             if is_module {
-                let lang = target_language.unwrap_or(TargetLanguage::Python3);
+                // Same precedence as the compile pathway (FRAMEC_BUGS #36):
+                // -l > pragma > FRAMEC_DEFAULT_TARGET > python_3. Previously
+                // this ignored the file's pragma when -l was absent.
+                let lang = crate::frame_c::driver::resolve_target(target_language, &content);
                 match super::compiler::validate_module_with_mode(
                     &content,
                     lang,
