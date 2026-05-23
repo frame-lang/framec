@@ -287,4 +287,65 @@ impl FrameValidator {
             }
         }
     }
+
+    /// E606: statically-typed targets require an explicit type on every
+    /// interface-method parameter. Unlike domain fields (E605), a
+    /// parameter has no initializer to infer from, so this also applies
+    /// to Kotlin/Swift (which *can* infer a field type from its init).
+    /// Frame has no type system — types pass through verbatim — so for
+    /// these targets framec cannot synthesize a parameter type; the
+    /// annotation is mandatory. (Pre-FRAMEC_BUGS-#37 this silently
+    /// defaulted to an `Any`/`object` placeholder via the per-backend
+    /// type table; with the table removed, an untyped param would leak
+    /// invalid code, so we reject it up front.)
+    pub(super) fn validate_interface_param_types(
+        &mut self,
+        system: &SystemAst,
+        target: crate::frame_c::visitors::TargetLanguage,
+    ) {
+        use crate::frame_c::visitors::TargetLanguage::*;
+        let requires_explicit_type =
+            matches!(target, C | Cpp | Java | Go | Rust | CSharp | Kotlin | Swift);
+        if !requires_explicit_type {
+            return;
+        }
+        let mut flag = |kind: &str, owner: &str, pname: &str, ptype: &Type, span: &Span, errs: &mut Vec<ValidationError>| {
+            if matches!(ptype, Type::Unknown) {
+                errs.push(
+                    ValidationError::new(
+                        "E606",
+                        format!(
+                            "{} '{}' parameter '{}' is missing a type annotation. \
+                             Frame has no type system — type names pass through \
+                             verbatim — and for the statically-typed target '{:?}' \
+                             framec cannot synthesize a parameter type. Write \
+                             `{}: <your target's type>` (e.g. `int`, `i64`, \
+                             `std::string`). See docs/frame_language.md \
+                             § Types and Expressions.",
+                            kind, owner, pname, target, pname
+                        ),
+                    )
+                    .with_span(span.clone()),
+                );
+            }
+        };
+        // Interface-declared methods.
+        for method in &system.interface {
+            for param in &method.params {
+                flag("interface method", &method.name, &param.name, &param.param_type, &param.span, &mut self.errors);
+            }
+        }
+        // Event handlers in the machine (an event need not be declared in
+        // `interface:` — the handler signature defines it, and its params
+        // become the generated public method / FrameEvent fields).
+        if let Some(machine) = &system.machine {
+            for state in &machine.states {
+                for handler in &state.handlers {
+                    for param in &handler.params {
+                        flag("event handler", &handler.event, &param.name, &param.param_type, &param.span, &mut self.errors);
+                    }
+                }
+            }
+        }
+    }
 }

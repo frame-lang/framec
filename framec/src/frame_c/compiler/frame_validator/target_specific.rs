@@ -41,6 +41,8 @@ impl FrameValidator {
     ) {
         // E605: Static targets require explicit type on domain fields
         self.validate_domain_types(system, target);
+        // E606: Static targets require explicit type on interface params
+        self.validate_interface_param_types(system, target);
 
         match target {
             crate::frame_c::visitors::TargetLanguage::GDScript => {

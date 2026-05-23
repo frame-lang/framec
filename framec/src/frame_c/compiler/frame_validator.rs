@@ -1686,6 +1686,71 @@ mod tests {
         );
     }
 
+    fn v4_codes_target(source: &str, target: VTarget) -> Vec<String> {
+        use crate::frame_c::compiler::pipeline::compile_module;
+        use crate::frame_c::compiler::pipeline::config::PipelineConfig;
+        let config = PipelineConfig::production(target);
+        let result = compile_module(source.as_bytes(), &config).expect("pipeline ran");
+        result.errors.iter().map(|e| e.code.clone()).collect()
+    }
+
+    #[test]
+    fn test_e606_untyped_handler_param_static_target() {
+        // An untyped handler param can't produce valid statically-typed
+        // code (FRAMEC_BUGS #37: no type table to default it to `Any`).
+        let source = r#"
+@@system S {
+    machine:
+        $A {
+            e(x, y) { }
+        }
+}"#;
+        let codes = v4_codes_target(source, VTarget::Rust);
+        assert!(
+            codes.iter().any(|c| c == "E606"),
+            "expected E606 for untyped handler param on a static target, got {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_e606_typed_params_pass_on_static() {
+        // Native types present → no E606.
+        let source = r#"
+@@system S {
+    interface:
+        e(x: i64, y: i64)
+    machine:
+        $A {
+            e(x: i64, y: i64) { }
+        }
+}"#;
+        let codes = v4_codes_target(source, VTarget::Rust);
+        assert!(
+            !codes.iter().any(|c| c == "E606"),
+            "false-positive E606 on typed params: {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_e606_untyped_ok_on_dynamic_target() {
+        // Python/JS/… don't need annotations — untyped is fine.
+        let source = r#"
+@@system S {
+    machine:
+        $A {
+            e(x, y) { }
+        }
+}"#;
+        let codes = v4_codes_target(source, VTarget::Python3);
+        assert!(
+            !codes.iter().any(|c| c == "E606"),
+            "false-positive E606 on a dynamic target: {:?}",
+            codes
+        );
+    }
+
     #[test]
     fn test_e416_start_params_mismatch() {
         // System declares start arg `missing`; start state $A has no params.
