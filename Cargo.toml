@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["framec"]
+members = ["framec", "framec-wasm"]
 
 [workspace.package]
 version = "4.2.1"

@@ -323,6 +323,14 @@ dependencies = [
  "tempfile",
  "toml",
  "uuid",
+]
+
+[[package]]
+name = "framec-wasm"
+version = "4.2.1"
+dependencies = [
+ "framec",
+ "uuid",
  "wasm-bindgen",
 ]
 

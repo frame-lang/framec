@@ -14,7 +14,7 @@ keywords = ["state-machine", "transpiler", "code-generation", "frame", "finite-a
 categories = ["compilers", "development-tools"]
 
 [lib]
-crate-type = ["cdylib", "rlib"]
+crate-type = ["rlib"]
 
 [[bin]]
 name = "framec"
@@ -28,7 +28,6 @@ exitcode = "1.1.2"
 serde = { version = "1.0", features = ["derive", "serde_derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
-wasm-bindgen = "0.2.92"
 indoc = "2.0"
 colored = "2.0"
 petgraph = "0.6"
@@ -36,13 +35,6 @@ regex = "1.10"
 toml = "0.9.5"
 uuid = { version = "1", features = ["v4"] }
 tempfile = "3"
-
-# wasm32 (the in-browser `run()` entry point — RFC-0028 / web playground)
-# needs a JS-backed randomness source for uuid's v4; uuid's `js` feature
-# pulls getrandom's wasm-bindgen backend. Cargo features are additive, so
-# this augments the base `["v4"]` only on wasm targets.
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-uuid = { version = "1", features = ["js"] }
 
 [dev-dependencies]
 tempfile = "3"
@@ -58,6 +50,3 @@ insta = "1"
 # satisfies Y" — which neither snapshots ("did it change?") nor
 # differential fuzz ("do all backends agree?") cover.
 proptest = "1"
-
-[package.metadata.wasm-pack.profile.release]
-wasm-opt = false

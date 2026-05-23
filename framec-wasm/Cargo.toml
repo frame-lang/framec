@@ -1,0 +1,30 @@
+[package]
+name = "framec-wasm"
+version.workspace = true
+authors = ["Mark Truluck <mark@frame-lang.org>"]
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage = "https://github.com/frame-lang/framec"
+description = "WebAssembly build of the Frame transpiler (framec) — string-in/string-out, for browser and Node"
+keywords = ["state-machine", "transpiler", "wasm", "frame", "code-generation"]
+categories = ["compilers", "wasm", "development-tools"]
+# Published to npm as @frame-lang/framec-wasm via wasm-pack, not to crates.io.
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+framec = { path = "../framec" }
+wasm-bindgen = "0.2.92"
+
+# On wasm32 the uuid v4 generator (used inside framec) needs a JS-backed
+# randomness source; uuid's `js` feature pulls getrandom's wasm-bindgen
+# backend. Cargo features are additive, so this augments framec's base
+# `["v4"]` only when this crate is built for wasm.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+uuid = { version = "1", features = ["js"] }
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false

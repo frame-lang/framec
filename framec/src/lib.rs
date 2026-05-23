@@ -62,15 +62,17 @@ pub mod frame_c;
 use crate::driver::{Exe, TargetLanguage};
 use crate::frame_c::*;
 use std::convert::TryFrom;
-use wasm_bindgen::prelude::*;
 
-/// WASM entry point for the online framepiler / web playground.
+/// String-in / string-out transpile entry point.
 ///
 /// `frame_code` is the Frame source; `format` is the target language
 /// (`"rust"`, `"python_3"`, …) — the caller chooses it, so the source
 /// need not carry an `@@[target(...)]` directive. Returns the generated
 /// code, or the compiler's error text on failure.
-#[wasm_bindgen]
+///
+/// This is the plain-Rust core that the `framec-wasm` crate wraps with
+/// `#[wasm_bindgen]` for the npm/web-playground build; keeping wasm-bindgen
+/// out of this crate leaves the library and CLI dependency-clean.
 pub fn run(frame_code: &str, format: &str) -> String {
     let _exe = Exe::new();
     match TargetLanguage::try_from(format) {
