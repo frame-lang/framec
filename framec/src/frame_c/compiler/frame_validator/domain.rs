@@ -340,9 +340,26 @@ impl FrameValidator {
         // become the generated public method / FrameEvent fields).
         if let Some(machine) = &system.machine {
             for state in &machine.states {
+                // State parameters: `$S(x: type)` — become typed compartment
+                // fields / constructor args.
+                for sp in &state.params {
+                    flag("state", &state.name, &sp.name, &sp.param_type, &sp.span, &mut self.errors);
+                }
+                // Event handler params.
                 for handler in &state.handlers {
                     for param in &handler.params {
                         flag("event handler", &handler.event, &param.name, &param.param_type, &param.span, &mut self.errors);
+                    }
+                }
+                // Enter/exit lifecycle params: `$>(name: type)` / `<$(name: type)`.
+                if let Some(enter) = &state.enter {
+                    for p in &enter.params {
+                        flag("$> enter handler in state", &state.name, &p.name, &p.param_type, &p.span, &mut self.errors);
+                    }
+                }
+                if let Some(exit) = &state.exit {
+                    for p in &exit.params {
+                        flag("<$ exit handler in state", &state.name, &p.name, &p.param_type, &p.span, &mut self.errors);
                     }
                 }
             }
