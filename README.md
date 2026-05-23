@@ -44,6 +44,22 @@ framec hello.fpy         # emits hello.py
 python3 hello.py         # prints: Hello, World!
 ```
 
+## Use from JavaScript / Node
+
+framec is also published to npm as a WebAssembly build — the full transpiler,
+string in / generated source out, with no native binary or subprocess:
+
+```bash
+npm install @frame-lang/framec-wasm
+```
+
+```js
+const { run } = require("@frame-lang/framec-wasm");
+const python = run(frameSource, "python_3"); // generated code, or error text
+```
+
+See [`framec-wasm/`](framec-wasm/) for the crate and build details.
+
 ## Supported Languages
 
 ### Core
