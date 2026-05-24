@@ -48,6 +48,7 @@ numbers are not re-used.
 | [0036](rfc-0036.md) | No-allocation dispatch for `no_std` / interrupt / hot-path use | Draft | builds on [0020](rfc-0020.md), [0021](rfc-0021.md), [0025](rfc-0025.md); lifts + prioritizes [0021](rfc-0021.md) item 1 |
 | [0037](rfc-0037.md) | Reserved identifier namespace — the `__` prefix (validator E115) | Accepted | builds on [0025](rfc-0025.md) / [0025.1](rfc-0025-1.md); resolves the #40 residual edge |
 | [0038](rfc-0038.md) | Deferred dispatch — `@@[cast]` interface methods, addressing, bring-your-own executor | Draft | builds on [0020](rfc-0020.md), [0025](rfc-0025.md); companion to [0036](rfc-0036.md), [0026](rfc-0026.md) |
+| [0039](rfc-0039.md) | Parser as composed Frame state machines (evaluation) | Draft | builds on [0035](rfc-0035.md) |
 
 ## Other documents in this directory
 
