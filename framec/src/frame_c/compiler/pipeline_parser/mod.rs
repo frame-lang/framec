@@ -82,10 +82,13 @@ impl Parser {
         self.expect_section_colon()?;
         self.parse_interface_methods()
     }
-    pub(crate) fn take_machine_section(&mut self) -> Result<MachineAst, ParseError> {
+    /// Consume a section keyword + `:` (used by the backbone before it drives a
+    /// section body inline — e.g. the machine state loop, which the backbone
+    /// walks itself rather than delegating to `parse_machine`).
+    pub(crate) fn consume_section_header(&mut self) -> Result<(), ParseError> {
         self.advance()?;
         self.expect_section_colon()?;
-        self.parse_machine()
+        Ok(())
     }
     pub(crate) fn take_actions_section(&mut self) -> Result<Vec<ActionAst>, ParseError> {
         self.advance()?;

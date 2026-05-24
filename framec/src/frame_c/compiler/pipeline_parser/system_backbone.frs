@@ -61,12 +61,14 @@
                         }
                     }
                     Ok(2) => {
-                        match self.parser.as_mut().unwrap().take_machine_section() {
-                            Ok(m) => {
-                                let s = self.system.as_mut().unwrap();
-                                s.section_order.push(SystemSectionKind::Machine);
-                                s.machine = Some(m);
-                                -> $Sections
+                        // Consume `machine:`, then drive the state loop ourselves
+                        // ($Machine) rather than delegating to parse_machine.
+                        match self.parser.as_mut().unwrap().consume_section_header() {
+                            Ok(()) => {
+                                self.system.as_mut().unwrap().section_order.push(SystemSectionKind::Machine);
+                                self.machine_start = self.parser.as_ref().unwrap().cursor();
+                                self.machine_states = Vec::new();
+                                -> $Machine
                             }
                             Err(e) => { self.error = Some(e); -> $Done }
                         }
@@ -123,6 +125,62 @@
             }
         }
 
+        // The machine state loop: one state per `$StateRef`, until a section
+        // keyword / Eof. Self-loop = a flat list of states. Each state is
+        // delegated to the existing `parse_state` oracle; the stopping token is
+        // left unconsumed for `$Sections` to handle.
+        $Machine {
+            $>() {
+                let pk: Result<u8, ParseError> = {
+                    let p = self.parser.as_mut().unwrap();
+                    match p.peek() {
+                        Ok(Token::StateRef(_)) => Ok(1),
+                        Ok(Token::Interface)
+                        | Ok(Token::Actions)
+                        | Ok(Token::Operations)
+                        | Ok(Token::Domain)
+                        | Ok(Token::Machine)
+                        | Ok(Token::Eof) => Ok(2),
+                        Ok(_) => Ok(3),
+                        Err(e) => Err(ParseError::from(e.clone())),
+                    }
+                };
+                match pk {
+                    Err(e) => { self.error = Some(e); -> $Done }
+                    Ok(1) => {
+                        match self.parser.as_mut().unwrap().parse_state() {
+                            Ok(st) => { self.machine_states.push(st); -> $Machine }
+                            Err(e) => { self.error = Some(e); -> $Done }
+                        }
+                    }
+                    Ok(2) => {
+                        // End of machine section — finalize and hand the
+                        // stopping token back to $Sections (unconsumed).
+                        let c = self.parser.as_ref().unwrap().cursor();
+                        let states = std::mem::take(&mut self.machine_states);
+                        self.system.as_mut().unwrap().machine =
+                            Some(MachineAst { states, span: Span::new(self.machine_start, c) });
+                        -> $Sections
+                    }
+                    Ok(_) => {
+                        match self.parser.as_mut().unwrap().advance() {
+                            Ok(sp) => {
+                                self.error = Some(ParseError {
+                                    message: format!(
+                                        "Expected state declaration in machine, found {:?}",
+                                        sp.token
+                                    ),
+                                    span: sp.span,
+                                });
+                            }
+                            Err(e) => { self.error = Some(ParseError::from(e)); }
+                        }
+                        -> $Done
+                    }
+                }
+            }
+        }
+
         $Done { }
 
     domain:
@@ -130,4 +188,6 @@
         system: Option<SystemAst> = None
         error: Option<ParseError> = None
         start: usize = 0
+        machine_states: Vec<StateAst> = Vec::new()
+        machine_start: usize = 0
 }

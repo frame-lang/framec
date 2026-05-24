@@ -89,6 +89,7 @@ mod _system_backbone_framec {
     enum SystemBackboneStateContext {
         Start,
         Sections,
+        Machine,
         Done,
         __NoContext,
     }
@@ -113,6 +114,7 @@ mod _system_backbone_framec {
             let state_context = match state {
                 "Start" => SystemBackboneStateContext::Start,
                 "Sections" => SystemBackboneStateContext::Sections,
+                "Machine" => SystemBackboneStateContext::Machine,
                 "Done" => SystemBackboneStateContext::Done,
                 _ => SystemBackboneStateContext::__NoContext,
             };
@@ -135,6 +137,8 @@ mod _system_backbone_framec {
         pub system: Option<SystemAst>,
         pub error: Option<ParseError>,
         pub start: usize,
+        pub machine_states: Vec<StateAst>,
+        pub machine_start: usize,
     }
 
     #[allow(non_snake_case)]
@@ -147,6 +151,8 @@ mod _system_backbone_framec {
                 system: None,
                 error: None,
                 start: 0,
+                machine_states: Vec::new(),
+                machine_start: 0,
                 __compartment: SystemBackboneCompartment::new("Start"),
                 __next_compartment: None,
             }
@@ -167,6 +173,7 @@ mod _system_backbone_framec {
             match leaf {
                 "Start" => &["Start"],
                 "Sections" => &["Sections"],
+                "Machine" => &["Machine"],
                 "Done" => &["Done"],
                 _ => &[],
             }
@@ -234,6 +241,7 @@ mod _system_backbone_framec {
             match self.__compartment.state.as_str() {
                 "Start" => self._state_Start(__ev),
                 "Sections" => self._state_Sections(__ev),
+                "Machine" => self._state_Machine(__ev),
                 "Done" => self._state_Done(__ev),
                 _ => {}
             }
@@ -261,6 +269,17 @@ mod _system_backbone_framec {
         fn _state_Sections(&mut self, __e: &SystemBackboneFrameEvent) {
             match __e {
                 SystemBackboneFrameEvent::FrameEnter { .. } => { self._s_Sections_hdl_frame_enter(__e); }
+                _ => {}
+            }
+        }
+
+        // The machine state loop: one state per `$StateRef`, until a section
+        // keyword / Eof. Self-loop = a flat list of states. Each state is
+        // delegated to the existing `parse_state` oracle; the stopping token is
+        // left unconsumed for `$Sections` to handle.
+        fn _state_Machine(&mut self, __e: &SystemBackboneFrameEvent) {
+            match __e {
+                SystemBackboneFrameEvent::FrameEnter { .. } => { self._s_Machine_hdl_frame_enter(__e); }
                 _ => {}
             }
         }
@@ -324,12 +343,14 @@ mod _system_backbone_framec {
                     }
                 }
                 Ok(2) => {
-                    match self.parser.as_mut().unwrap().take_machine_section() {
-                        Ok(m) => {
-                            let s = self.system.as_mut().unwrap();
-                            s.section_order.push(SystemSectionKind::Machine);
-                            s.machine = Some(m);
-                            let mut __compartment = self.__prepareEnter("Sections");
+                    // Consume `machine:`, then drive the state loop ourselves
+                    // ($Machine) rather than delegating to parse_machine.
+                    match self.parser.as_mut().unwrap().consume_section_header() {
+                        Ok(()) => {
+                            self.system.as_mut().unwrap().section_order.push(SystemSectionKind::Machine);
+                            self.machine_start = self.parser.as_ref().unwrap().cursor();
+                            self.machine_states = Vec::new();
+                            let mut __compartment = self.__prepareEnter("Machine");
                             self.__transition(__compartment);
                             return;
                         }
@@ -399,6 +420,69 @@ mod _system_backbone_framec {
                         Err(e) => {
                             self.error = Some(ParseError::from(e));
                         }
+                    }
+                    let mut __compartment = self.__prepareEnter("Done");
+                    self.__transition(__compartment);
+                    return;
+                }
+            }
+        }
+
+        fn _s_Machine_hdl_frame_enter(&mut self, __e: &SystemBackboneFrameEvent) {
+            let pk: Result<u8, ParseError> = {
+                let p = self.parser.as_mut().unwrap();
+                match p.peek() {
+                    Ok(Token::StateRef(_)) => Ok(1),
+                    Ok(Token::Interface)
+                    | Ok(Token::Actions)
+                    | Ok(Token::Operations)
+                    | Ok(Token::Domain)
+                    | Ok(Token::Machine)
+                    | Ok(Token::Eof) => Ok(2),
+                    Ok(_) => Ok(3),
+                    Err(e) => Err(ParseError::from(e.clone())),
+                }
+            };
+            match pk {
+                Err(e) => { self.error = Some(e);
+                let mut __compartment = self.__prepareEnter("Done");
+                self.__transition(__compartment);
+                return; }
+                Ok(1) => {
+                    match self.parser.as_mut().unwrap().parse_state() {
+                        Ok(st) => { self.machine_states.push(st);
+                        let mut __compartment = self.__prepareEnter("Machine");
+                        self.__transition(__compartment);
+                        return; }
+                        Err(e) => { self.error = Some(e);
+                        let mut __compartment = self.__prepareEnter("Done");
+                        self.__transition(__compartment);
+                        return; }
+                    }
+                }
+                Ok(2) => {
+                    // End of machine section — finalize and hand the
+                    // stopping token back to $Sections (unconsumed).
+                    let c = self.parser.as_ref().unwrap().cursor();
+                    let states = std::mem::take(&mut self.machine_states);
+                    self.system.as_mut().unwrap().machine =
+                        Some(MachineAst { states, span: Span::new(self.machine_start, c) });
+                    let mut __compartment = self.__prepareEnter("Sections");
+                    self.__transition(__compartment);
+                    return;
+                }
+                Ok(_) => {
+                    match self.parser.as_mut().unwrap().advance() {
+                        Ok(sp) => {
+                            self.error = Some(ParseError {
+                                message: format!(
+                                    "Expected state declaration in machine, found {:?}",
+                                    sp.token
+                                ),
+                                span: sp.span,
+                            });
+                        }
+                        Err(e) => { self.error = Some(ParseError::from(e)); }
                     }
                     let mut __compartment = self.__prepareEnter("Done");
                     self.__transition(__compartment);
