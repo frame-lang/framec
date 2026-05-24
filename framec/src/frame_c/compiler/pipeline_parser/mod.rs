@@ -67,6 +67,42 @@ impl Parser {
         Parser { lexer }
     }
 
+    /// Current byte cursor — used by the RFC-0039 `SystemBackbone` to finalize
+    /// the system span after the section loop.
+    pub(crate) fn cursor(&self) -> usize {
+        self.lexer.cursor()
+    }
+
+    // Per-section oracle entry points for the RFC-0039 `SystemBackbone`: each
+    // consumes the section keyword + `:` then delegates to the section parser.
+    // (Plain methods rather than inline closures so the backbone's generated
+    // handler stays closure-free.)
+    pub(crate) fn take_interface_section(&mut self) -> Result<Vec<InterfaceMethod>, ParseError> {
+        self.advance()?;
+        self.expect_section_colon()?;
+        self.parse_interface_methods()
+    }
+    pub(crate) fn take_machine_section(&mut self) -> Result<MachineAst, ParseError> {
+        self.advance()?;
+        self.expect_section_colon()?;
+        self.parse_machine()
+    }
+    pub(crate) fn take_actions_section(&mut self) -> Result<Vec<ActionAst>, ParseError> {
+        self.advance()?;
+        self.expect_section_colon()?;
+        self.parse_actions()
+    }
+    pub(crate) fn take_operations_section(&mut self) -> Result<Vec<OperationAst>, ParseError> {
+        self.advance()?;
+        self.expect_section_colon()?;
+        self.parse_operations()
+    }
+    pub(crate) fn take_domain_section(&mut self) -> Result<Vec<DomainVar>, ParseError> {
+        self.advance()?;
+        self.expect_section_colon()?;
+        self.parse_domain()
+    }
+
     /// Parse the system body into a SystemAst.
     /// `name` is the system name (extracted by the Segmenter).
     pub fn parse_system(&mut self, name: String) -> Result<SystemAst, ParseError> {
@@ -1398,15 +1434,33 @@ fn strip_context_return_wrapper(text: &str) -> String {
     }
 }
 
+// RFC-0039 Stage 0/1: the system-section loop is a dogfooded Frame backbone.
+// `SystemBackbone` owns the parser and drives it, delegating each section to the
+// existing `parse_*` methods as oracles. The recursive `Parser::parse_system`
+// is kept above as the reference until the matrix/snapshot/fuzz parity gate has
+// soaked; the entry point below is the live path.
+include!("system_backbone.gen.rs");
+
 pub fn parse_system(
     source: &[u8],
     name: String,
     body_span: Span,
     lang: TargetLanguage,
 ) -> Result<SystemAst, ParseError> {
+    let start = body_span.start;
     let lexer = Lexer::new(source, body_span, lang);
-    let mut parser = Parser::new(lexer);
-    parser.parse_system(name)
+    let parser = Parser::new(lexer);
+
+    let mut backbone = SystemBackbone::new();
+    backbone.start = start;
+    backbone.system = Some(SystemAst::new(name, Span::new(start, start)));
+    backbone.parser = Some(parser);
+    backbone.parse();
+
+    match backbone.error {
+        Some(e) => Err(e),
+        None => Ok(backbone.system.expect("SystemBackbone produced no system")),
+    }
 }
 
 /// Parse a system's header parameter list — the contents between `(` and `)`

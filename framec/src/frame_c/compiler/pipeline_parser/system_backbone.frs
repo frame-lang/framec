@@ -1,0 +1,133 @@
+@@[target("rust")]
+
+// RFC-0039 Stage 0/1 — the system-section loop as a Frame backbone.
+//
+// Replaces the hand-written `Parser::parse_system` section loop. The backbone
+// OWNS the parser (B1) and drives it live; each section is delegated to the
+// existing `take_*_section` oracle method on `Parser` (which consumes the
+// keyword + `:` and runs that section's parser). The single `$Sections` state
+// self-loops — a flat list of sections, no nesting, no push$/pop$ — the
+// constructive proof that the section grammar is regular.
+//
+// Errors thread through `error` (Frame handlers return ()). Byte-output is
+// identical to the recursive-descent loop; the snapshot/matrix/fuzz suites are
+// the parity gate.
+
+@@system SystemBackbone {
+    interface:
+        parse()
+
+    machine:
+        $Start {
+            parse() { -> $Sections }
+        }
+
+        $Sections {
+            $>() {
+                // Classify the next section; the block scopes the peek borrow.
+                let pk: Result<u8, ParseError> = {
+                    let p = self.parser.as_mut().unwrap();
+                    match p.peek() {
+                        Ok(Token::Eof) => Ok(0),
+                        Ok(Token::Interface) => Ok(1),
+                        Ok(Token::Machine) => Ok(2),
+                        Ok(Token::Actions) => Ok(3),
+                        Ok(Token::Operations) => Ok(4),
+                        Ok(Token::Domain) => Ok(5),
+                        Ok(_) => Ok(6),
+                        Err(e) => Err(ParseError::from(e.clone())),
+                    }
+                };
+                match pk {
+                    Err(e) => {
+                        self.error = Some(e);
+                        -> $Done
+                    }
+                    Ok(0) => {
+                        let c = self.parser.as_ref().unwrap().cursor();
+                        let st = self.start;
+                        self.system.as_mut().unwrap().span = Span::new(st, c);
+                        -> $Done
+                    }
+                    Ok(1) => {
+                        match self.parser.as_mut().unwrap().take_interface_section() {
+                            Ok(v) => {
+                                let s = self.system.as_mut().unwrap();
+                                s.section_order.push(SystemSectionKind::Interface);
+                                s.interface = v;
+                                -> $Sections
+                            }
+                            Err(e) => { self.error = Some(e); -> $Done }
+                        }
+                    }
+                    Ok(2) => {
+                        match self.parser.as_mut().unwrap().take_machine_section() {
+                            Ok(m) => {
+                                let s = self.system.as_mut().unwrap();
+                                s.section_order.push(SystemSectionKind::Machine);
+                                s.machine = Some(m);
+                                -> $Sections
+                            }
+                            Err(e) => { self.error = Some(e); -> $Done }
+                        }
+                    }
+                    Ok(3) => {
+                        match self.parser.as_mut().unwrap().take_actions_section() {
+                            Ok(v) => {
+                                let s = self.system.as_mut().unwrap();
+                                s.section_order.push(SystemSectionKind::Actions);
+                                s.actions = v;
+                                -> $Sections
+                            }
+                            Err(e) => { self.error = Some(e); -> $Done }
+                        }
+                    }
+                    Ok(4) => {
+                        match self.parser.as_mut().unwrap().take_operations_section() {
+                            Ok(v) => {
+                                let s = self.system.as_mut().unwrap();
+                                s.section_order.push(SystemSectionKind::Operations);
+                                s.operations = v;
+                                -> $Sections
+                            }
+                            Err(e) => { self.error = Some(e); -> $Done }
+                        }
+                    }
+                    Ok(5) => {
+                        match self.parser.as_mut().unwrap().take_domain_section() {
+                            Ok(v) => {
+                                let s = self.system.as_mut().unwrap();
+                                s.section_order.push(SystemSectionKind::Domain);
+                                s.domain = v;
+                                -> $Sections
+                            }
+                            Err(e) => { self.error = Some(e); -> $Done }
+                        }
+                    }
+                    Ok(_) => {
+                        // Unexpected token — same diagnostic as the recursive form.
+                        match self.parser.as_mut().unwrap().advance() {
+                            Ok(sp) => {
+                                self.error = Some(ParseError {
+                                    message: format!("Expected section keyword, found {:?}", sp.token),
+                                    span: sp.span,
+                                });
+                            }
+                            Err(e) => {
+                                self.error = Some(ParseError::from(e));
+                            }
+                        }
+                        -> $Done
+                    }
+                }
+            }
+        }
+
+        $Done { }
+
+    domain:
+        parser: Option<Parser> = None
+        system: Option<SystemAst> = None
+        error: Option<ParseError> = None
+        start: usize = 0
+}
