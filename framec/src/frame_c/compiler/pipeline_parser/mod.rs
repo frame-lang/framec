@@ -73,6 +73,13 @@ impl Parser {
         self.lexer.cursor()
     }
 
+    /// Reposition the lexer cursor — used by `SystemBackbone::$StateBody` to
+    /// skip past a state's closing brace once its body loop is done (the
+    /// `self.lexer.set_cursor(body_close + 1)` of the recursive `parse_state`).
+    pub(crate) fn set_cursor(&mut self, pos: usize) {
+        self.lexer.set_cursor(pos);
+    }
+
     // Per-section oracle entry points for the RFC-0039 `SystemBackbone`: each
     // consumes the section keyword + `:` then delegates to the section parser.
     // (Plain methods rather than inline closures so the backbone's generated
@@ -408,6 +415,23 @@ impl Parser {
     }
 
     fn parse_state(&mut self) -> Result<StateAst, ParseError> {
+        // Retained as the recursive-descent reference. The backbone
+        // (`SystemBackbone::$StateHeader` + `$StateBody`) now drives this
+        // flow live via the `take_state_header` oracle + the member-parser
+        // oracles below; this method keeps the equivalent flow in one place
+        // (RFC-0039) and is the parity oracle for the dogfooded path.
+        let (mut state, body_close) = self.take_state_header()?;
+        self.parse_state_body(&mut state, body_close)?;
+        self.lexer.set_cursor(body_close + 1);
+        Ok(state)
+    }
+
+    /// Parse a state's header — name, optional `=> $Parent`, optional
+    /// `(params)`, and the opening brace — returning the partially-built
+    /// `StateAst` together with the byte offset of its matching `}`.
+    /// Oracle for `SystemBackbone::$StateHeader`; the body loop is driven
+    /// separately by `$StateBody` / `parse_state_body`.
+    pub(crate) fn take_state_header(&mut self) -> Result<(StateAst, usize), ParseError> {
         // Drain section-level comments captured before the `$State`
         // token — same trivia plumbing as `parse_interface_method` /
         // `parse_action` / `parse_operation`. Codegen emits these
@@ -459,16 +483,10 @@ impl Parser {
         state.leading_comments = leading_comments;
         state.body_span = Span::new(body_start + 1, body_close);
 
-        // Parse state body contents
-        self.parse_state_body(&mut state, body_close)?;
-
-        // Skip past closing brace
-        self.lexer.set_cursor(body_close + 1);
-
-        Ok(state)
+        Ok((state, body_close))
     }
 
-    fn parse_state_body(
+    pub(crate) fn parse_state_body(
         &mut self,
         state: &mut StateAst,
         body_close: usize,
@@ -539,7 +557,7 @@ impl Parser {
         Ok(())
     }
 
-    fn parse_state_var_decl(&mut self) -> Result<StateVarAst, ParseError> {
+    pub(crate) fn parse_state_var_decl(&mut self) -> Result<StateVarAst, ParseError> {
         let spanned = self.advance()?;
         let name = match spanned.token {
             Token::StateVarRef(n) => n,
@@ -598,7 +616,10 @@ impl Parser {
     // Handler Parsing
     // ========================================================================
 
-    fn parse_enter_handler(&mut self, _state_close: usize) -> Result<EnterHandler, ParseError> {
+    pub(crate) fn parse_enter_handler(
+        &mut self,
+        _state_close: usize,
+    ) -> Result<EnterHandler, ParseError> {
         // Drain section-level comments captured before this `$>` —
         // same trivia plumbing as `parse_event_handler` /
         // `parse_interface_method` etc.
@@ -627,7 +648,10 @@ impl Parser {
         })
     }
 
-    fn parse_exit_handler(&mut self, _state_close: usize) -> Result<ExitHandler, ParseError> {
+    pub(crate) fn parse_exit_handler(
+        &mut self,
+        _state_close: usize,
+    ) -> Result<ExitHandler, ParseError> {
         let leading_comments = self.lexer.take_pending_comments();
         let start_tok = self.advance()?; // <$
         let start = start_tok.span.start;
@@ -653,7 +677,10 @@ impl Parser {
         })
     }
 
-    fn parse_event_handler(&mut self, _state_close: usize) -> Result<HandlerAst, ParseError> {
+    pub(crate) fn parse_event_handler(
+        &mut self,
+        _state_close: usize,
+    ) -> Result<HandlerAst, ParseError> {
         let leading_comments = self.lexer.take_pending_comments();
         let (event_name, name_span) = self.expect_ident()?;
         let start = name_span.start;
@@ -2113,5 +2140,91 @@ mod tests {
     fn test_param_order_reject_domain_between_state_and_enter() {
         let err = parse_header("$(x: int), name: str, $>(msg: str)").unwrap_err();
         assert!(err.message.contains("out of order"), "got: {}", err.message);
+    }
+
+    // ---- RFC-0039 Stage 2 differential parity --------------------------------
+    //
+    // The live `parse_system` (standalone fn) now drives the section / machine /
+    // state-body grammar through the `SystemBackbone` Frame FSM. The recursive
+    // `Parser::parse_system` method is retained as the reference. These tests
+    // parse the same source both ways and assert the resulting `SystemAst` is
+    // identical (by `Debug`), proving the backbone path is byte-for-byte
+    // equivalent on the state-body member kinds that the snapshot corpus does
+    // not all exercise (handler-level `@@[...]`, bare `=> $^` default-forward).
+
+    fn parse_recursive(src: &str) -> SystemAst {
+        let bytes = src.as_bytes();
+        let span = Span::new(0, bytes.len());
+        let lexer = Lexer::new(bytes, span, TargetLanguage::Python3);
+        let mut parser = Parser::new(lexer);
+        parser
+            .parse_system("TestSystem".to_string())
+            .expect("recursive parse failed")
+    }
+
+    fn assert_backbone_matches_recursive(src: &str) {
+        let backbone = format!("{:#?}", parse_py(src));
+        let recursive = format!("{:#?}", parse_recursive(src));
+        assert_eq!(
+            backbone, recursive,
+            "backbone vs recursive AST divergence for source:\n{}",
+            src
+        );
+    }
+
+    #[test]
+    fn parity_state_body_all_member_kinds() {
+        assert_backbone_matches_recursive(
+            "interface:\n  go()\n  poke()\n\n\
+             machine:\n\
+               $A {\n\
+                 $.count: i32 = 0\n\
+                 $>() { self.count = 1 }\n\
+                 <$() { self.count = 0 }\n\
+                 @@[target(\"rust\")]\n\
+                 go() { -> $B }\n\
+                 => $^\n\
+               }\n\
+               $B {\n\
+                 poke() { }\n\
+               }\n\n\
+             domain:\n  seen: i32 = 0\n",
+        );
+    }
+
+    #[test]
+    fn parity_hsm_parent_and_forward_in_body() {
+        assert_backbone_matches_recursive(
+            "interface:\n  wake()\n  signal()\n\n\
+             machine:\n\
+               $Live {\n  wake() { }\n  signal() { }\n}\n\
+               $Awake => $Live {\n\
+                 $>() { self.awakes = self.awakes + 1 }\n\
+                 signal() { self.last = 1 => $^ }\n\
+               }\n\n\
+             domain:\n  awakes: i32 = 0\n  last: i32 = 0\n",
+        );
+    }
+
+    #[test]
+    fn parity_state_params_and_multiple_attrs() {
+        assert_backbone_matches_recursive(
+            "interface:\n  ev()\n\n\
+             machine:\n\
+               $S(a: i32, b: str) {\n\
+                 @@[target(\"rust\")]\n\
+                 @@[target(\"python_3\")]\n\
+                 ev() { }\n\
+               }\n",
+        );
+    }
+
+    #[test]
+    fn parity_empty_and_lifecycle_only_states() {
+        assert_backbone_matches_recursive(
+            "machine:\n\
+               $Empty { }\n\
+               $Life {\n  $>() { }\n  <$() { }\n}\n",
+        );
     }
 }

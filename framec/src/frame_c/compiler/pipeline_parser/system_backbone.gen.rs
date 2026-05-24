@@ -1,12 +1,16 @@
 
-// RFC-0039 Stage 0/1 — the system-section loop as a Frame backbone.
+// RFC-0039 Stage 0/1/2 — the parser's outer grammar as a Frame backbone.
 //
-// Replaces the hand-written `Parser::parse_system` section loop. The backbone
-// OWNS the parser (B1) and drives it live; each section is delegated to the
-// existing `take_*_section` oracle method on `Parser` (which consumes the
-// keyword + `:` and runs that section's parser). The single `$Sections` state
-// self-loops — a flat list of sections, no nesting, no push$/pop$ — the
-// constructive proof that the section grammar is regular.
+// Replaces the hand-written `Parser::parse_system` loops. The backbone OWNS the
+// parser (B1) and drives it live. Three nesting levels, each a self-looping
+// state that proves its sub-grammar is regular:
+//   $Sections   — the flat list of system sections (interface/machine/...).
+//   $Machine    — the flat list of `$State` declarations in `machine:`.
+//   $StateHeader/$StateBody — one state's header + its unordered member list.
+// Each terminal is delegated to an existing oracle method on `Parser`
+// (`take_*_section`, `take_state_header`, `parse_state_var_decl`,
+// `parse_{enter,exit,event}_handler`); no push$/pop$ anywhere, because none of
+// these sub-grammars is recursive.
 //
 // Errors thread through `error` (Frame handlers return ()). Byte-output is
 // identical to the recursive-descent loop; the snapshot/matrix/fuzz suites are
@@ -90,6 +94,8 @@ mod _system_backbone_framec {
         Start,
         Sections,
         Machine,
+        StateHeader,
+        StateBody,
         Done,
         __NoContext,
     }
@@ -115,6 +121,8 @@ mod _system_backbone_framec {
                 "Start" => SystemBackboneStateContext::Start,
                 "Sections" => SystemBackboneStateContext::Sections,
                 "Machine" => SystemBackboneStateContext::Machine,
+                "StateHeader" => SystemBackboneStateContext::StateHeader,
+                "StateBody" => SystemBackboneStateContext::StateBody,
                 "Done" => SystemBackboneStateContext::Done,
                 _ => SystemBackboneStateContext::__NoContext,
             };
@@ -139,6 +147,9 @@ mod _system_backbone_framec {
         pub start: usize,
         pub machine_states: Vec<StateAst>,
         pub machine_start: usize,
+        pub current_state: Option<StateAst>,
+        pub pending_attrs: Vec<crate::frame_c::compiler::frame_ast::Attribute>,
+        pub state_body_close: usize,
     }
 
     #[allow(non_snake_case)]
@@ -153,6 +164,9 @@ mod _system_backbone_framec {
                 start: 0,
                 machine_states: Vec::new(),
                 machine_start: 0,
+                current_state: None,
+                pending_attrs: Vec::new(),
+                state_body_close: 0,
                 __compartment: SystemBackboneCompartment::new("Start"),
                 __next_compartment: None,
             }
@@ -174,6 +188,8 @@ mod _system_backbone_framec {
                 "Start" => &["Start"],
                 "Sections" => &["Sections"],
                 "Machine" => &["Machine"],
+                "StateHeader" => &["StateHeader"],
+                "StateBody" => &["StateBody"],
                 "Done" => &["Done"],
                 _ => &[],
             }
@@ -242,6 +258,8 @@ mod _system_backbone_framec {
                 "Start" => self._state_Start(__ev),
                 "Sections" => self._state_Sections(__ev),
                 "Machine" => self._state_Machine(__ev),
+                "StateHeader" => self._state_StateHeader(__ev),
+                "StateBody" => self._state_StateBody(__ev),
                 "Done" => self._state_Done(__ev),
                 _ => {}
             }
@@ -274,12 +292,37 @@ mod _system_backbone_framec {
         }
 
         // The machine state loop: one state per `$StateRef`, until a section
-        // keyword / Eof. Self-loop = a flat list of states. Each state is
-        // delegated to the existing `parse_state` oracle; the stopping token is
-        // left unconsumed for `$Sections` to handle.
+        // keyword / Eof. Self-loop = a flat list of states. Each `$StateRef`
+        // hands off to `$StateHeader` (the state's own parse phase); the
+        // stopping token is left unconsumed for `$Sections` to handle.
         fn _state_Machine(&mut self, __e: &SystemBackboneFrameEvent) {
             match __e {
                 SystemBackboneFrameEvent::FrameEnter { .. } => { self._s_Machine_hdl_frame_enter(__e); }
+                _ => {}
+            }
+        }
+
+        // A single state's header: name / optional `=> $Parent` / optional
+        // `(params)` / the opening brace. The whole bounded sequence is one
+        // oracle verdict (`take_state_header`) — it is regular, so it is a
+        // single state that delegates and advances to the body loop.
+        fn _state_StateHeader(&mut self, __e: &SystemBackboneFrameEvent) {
+            match __e {
+                SystemBackboneFrameEvent::FrameEnter { .. } => { self._s_StateHeader_hdl_frame_enter(__e); }
+                _ => {}
+            }
+        }
+
+        // The state-body loop: state-vars, the `$>`/`<$` lifecycle handlers,
+        // event handlers (with their accumulated `@@[...]` attributes), and the
+        // `=> $^` default forward — in any order until the closing `}`. A
+        // self-loop over an unordered member list: regular, no nesting. Each
+        // member is delegated to its existing parser oracle; attributes
+        // accumulate in `pending_attrs` until the next event handler claims
+        // them, exactly as the recursive `parse_state_body` does.
+        fn _state_StateBody(&mut self, __e: &SystemBackboneFrameEvent) {
+            match __e {
+                SystemBackboneFrameEvent::FrameEnter { .. } => { self._s_StateBody_hdl_frame_enter(__e); }
                 _ => {}
             }
         }
@@ -449,16 +492,11 @@ mod _system_backbone_framec {
                 self.__transition(__compartment);
                 return; }
                 Ok(1) => {
-                    match self.parser.as_mut().unwrap().parse_state() {
-                        Ok(st) => { self.machine_states.push(st);
-                        let mut __compartment = self.__prepareEnter("Machine");
-                        self.__transition(__compartment);
-                        return; }
-                        Err(e) => { self.error = Some(e);
-                        let mut __compartment = self.__prepareEnter("Done");
-                        self.__transition(__compartment);
-                        return; }
-                    }
+                    // A state declaration — parse its header + body as the
+                    // dedicated $StateHeader/$StateBody phases.
+                    let mut __compartment = self.__prepareEnter("StateHeader");
+                    self.__transition(__compartment);
+                    return;
                 }
                 Ok(2) => {
                     // End of machine section — finalize and hand the
@@ -487,6 +525,186 @@ mod _system_backbone_framec {
                     let mut __compartment = self.__prepareEnter("Done");
                     self.__transition(__compartment);
                     return;
+                }
+            }
+        }
+
+        fn _s_StateHeader_hdl_frame_enter(&mut self, __e: &SystemBackboneFrameEvent) {
+            match self.parser.as_mut().unwrap().take_state_header() {
+                Ok((st, bc)) => {
+                    self.current_state = Some(st);
+                    self.state_body_close = bc;
+                    self.pending_attrs = Vec::new();
+                    let mut __compartment = self.__prepareEnter("StateBody");
+                    self.__transition(__compartment);
+                    return;
+                }
+                Err(e) => { self.error = Some(e);
+                let mut __compartment = self.__prepareEnter("Done");
+                self.__transition(__compartment);
+                return; }
+            }
+        }
+
+        fn _s_StateBody_hdl_frame_enter(&mut self, __e: &SystemBackboneFrameEvent) {
+            let pk: Result<u8, ParseError> = {
+                let p = self.parser.as_mut().unwrap();
+                match p.peek() {
+                    Ok(Token::RBrace) | Ok(Token::Eof) => Ok(0),
+                    Ok(Token::Attribute { .. }) => Ok(1),
+                    Ok(Token::StateVarRef(_)) => Ok(2),
+                    Ok(Token::EnterHandler) => Ok(3),
+                    Ok(Token::ExitHandler) => Ok(4),
+                    Ok(Token::Ident(_)) => Ok(5),
+                    Ok(Token::FatArrow) => Ok(6),
+                    Ok(_) => Ok(7),
+                    Err(e) => Err(ParseError::from(e.clone())),
+                }
+            };
+            match pk {
+                Err(e) => { self.error = Some(e);
+                let mut __compartment = self.__prepareEnter("Done");
+                self.__transition(__compartment);
+                return; }
+                Ok(0) => {
+                    // End of body: skip past `}` and hand the finished
+                    // state back to the $Machine loop.
+                    let bc = self.state_body_close;
+                    self.parser.as_mut().unwrap().set_cursor(bc + 1);
+                    let st = self.current_state.take().unwrap();
+                    self.machine_states.push(st);
+                    let mut __compartment = self.__prepareEnter("Machine");
+                    self.__transition(__compartment);
+                    return;
+                }
+                Ok(1) => {
+                    // RFC-0013 attribute: accumulate for the next handler.
+                    match self.parser.as_mut().unwrap().advance() {
+                        Ok(spanned) => {
+                            if let Token::Attribute { name, args } = spanned.token {
+                                self.pending_attrs.push(
+                                    crate::frame_c::compiler::frame_ast::Attribute {
+                                        name,
+                                        args,
+                                        span: spanned.span,
+                                    },
+                                );
+                            }
+                            let mut __compartment = self.__prepareEnter("StateBody");
+                            self.__transition(__compartment);
+                            return;
+                        }
+                        Err(e) => { self.error = Some(ParseError::from(e));
+                        let mut __compartment = self.__prepareEnter("Done");
+                        self.__transition(__compartment);
+                        return; }
+                    }
+                }
+                Ok(2) => {
+                    match self.parser.as_mut().unwrap().parse_state_var_decl() {
+                        Ok(sv) => {
+                            self.current_state.as_mut().unwrap().state_vars.push(sv);
+                            let mut __compartment = self.__prepareEnter("StateBody");
+                            self.__transition(__compartment);
+                            return;
+                        }
+                        Err(e) => { self.error = Some(e);
+                        let mut __compartment = self.__prepareEnter("Done");
+                        self.__transition(__compartment);
+                        return; }
+                    }
+                }
+                Ok(3) => {
+                    let bc = self.state_body_close;
+                    match self.parser.as_mut().unwrap().parse_enter_handler(bc) {
+                        Ok(h) => {
+                            self.current_state.as_mut().unwrap().enter = Some(h);
+                            let mut __compartment = self.__prepareEnter("StateBody");
+                            self.__transition(__compartment);
+                            return;
+                        }
+                        Err(e) => { self.error = Some(e);
+                        let mut __compartment = self.__prepareEnter("Done");
+                        self.__transition(__compartment);
+                        return; }
+                    }
+                }
+                Ok(4) => {
+                    let bc = self.state_body_close;
+                    match self.parser.as_mut().unwrap().parse_exit_handler(bc) {
+                        Ok(h) => {
+                            self.current_state.as_mut().unwrap().exit = Some(h);
+                            let mut __compartment = self.__prepareEnter("StateBody");
+                            self.__transition(__compartment);
+                            return;
+                        }
+                        Err(e) => { self.error = Some(e);
+                        let mut __compartment = self.__prepareEnter("Done");
+                        self.__transition(__compartment);
+                        return; }
+                    }
+                }
+                Ok(5) => {
+                    let bc = self.state_body_close;
+                    match self.parser.as_mut().unwrap().parse_event_handler(bc) {
+                        Ok(mut h) => {
+                            h.attributes = std::mem::take(&mut self.pending_attrs);
+                            self.current_state.as_mut().unwrap().handlers.push(h);
+                            let mut __compartment = self.__prepareEnter("StateBody");
+                            self.__transition(__compartment);
+                            return;
+                        }
+                        Err(e) => { self.error = Some(e);
+                        let mut __compartment = self.__prepareEnter("Done");
+                        self.__transition(__compartment);
+                        return; }
+                    }
+                }
+                Ok(6) => {
+                    // Default forward: `=> $^`.
+                    let r: Result<bool, ParseError> = {
+                        let p = self.parser.as_mut().unwrap();
+                        match p.advance() {
+                            Ok(_) => match p.check(&Token::ParentRef) {
+                                Ok(true) => match p.advance() {
+                                    Ok(_) => Ok(true),
+                                    Err(e) => Err(ParseError::from(e)),
+                                },
+                                Ok(false) => Ok(false),
+                                Err(e) => Err(ParseError::from(e)),
+                            },
+                            Err(e) => Err(ParseError::from(e)),
+                        }
+                    };
+                    match r {
+                        Ok(true) => {
+                            self.current_state.as_mut().unwrap().default_forward = true;
+                            let mut __compartment = self.__prepareEnter("StateBody");
+                            self.__transition(__compartment);
+                            return;
+                        }
+                        Ok(false) => {
+                            let mut __compartment = self.__prepareEnter("StateBody");
+                            self.__transition(__compartment);
+                            return; }
+                        Err(e) => { self.error = Some(e);
+                        let mut __compartment = self.__prepareEnter("Done");
+                        self.__transition(__compartment);
+                        return; }
+                    }
+                }
+                Ok(_) => {
+                    // Skip unknown tokens in the state body.
+                    match self.parser.as_mut().unwrap().advance() {
+                        Ok(_) => {
+                            let mut __compartment = self.__prepareEnter("StateBody");
+                            self.__transition(__compartment);
+                            return; }
+                        Err(e) => { self.error = Some(ParseError::from(e));
+                        let mut __compartment = self.__prepareEnter("Done");
+                        self.__transition(__compartment);
+                        return; }
+                    }
                 }
             }
         }
