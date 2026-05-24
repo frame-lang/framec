@@ -6,6 +6,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [4.2.2] - 2026-05-24
+
+Type-name passthrough is now total, and statically-typed targets enforce
+typed parameters. Surface syntax is unchanged; the behavior change below
+affects only sources that relied on the old portable-alias translation.
+
+### Changed
+
+- **Type names pass through verbatim on every target (#37).** framec no
+  longer translates a portable alias to a per-backend native type
+  (`int`→`i64`, `str`→`String`, `float`→`f64`, …); it copies the type name
+  you write straight into the generated code. This honors Frame's documented
+  "no type system — type names pass through" contract
+  (`docs/frame_language.md § Types and Expressions`); the per-backend alias
+  tables were a deviation and have been removed. **Structural** transforms
+  are unaffected (Rust borrow→owned widening `&str`→`String` / `&[T]`→`Vec<T>`,
+  Kotlin `void`→`Unit`, Go empty return, C runtime containers
+  `list`→`FrameVec*` / `dict`→`FrameDict*`).
+
+  **Action required — statically-typed targets** (C, C++, Java, Go, Rust, C#,
+  Kotlin, Swift): write your target's own type names instead of portable
+  aliases — e.g. `x: i64` (Rust), `x: long` (Java), `x: std::string` (C++) —
+  since framec now passes them straight through. **Dynamic targets** (Python,
+  JS, TS, Ruby, Lua, PHP, Dart, GDScript) are unaffected.
+
+### Added
+
+- **E606 — statically-typed targets require typed parameters (#37).** On C,
+  C++, Java, Go, Rust, C#, Kotlin, and Swift, an untyped event / handler /
+  state / enter-exit lifecycle parameter is now a hard error with a fix-it
+  message — under passthrough framec can no longer synthesize a parameter
+  type. Complements the existing E605 (typed domain fields). Dynamic targets
+  are unaffected.
+- **Default-target warning + `FRAMEC_DEFAULT_TARGET` (#36).** Invoking framec
+  with no `-l` flag and no `@@[target(...)]` pragma now warns once on stderr
+  before falling back to `python_3`, and `FRAMEC_DEFAULT_TARGET` lets you pick
+  the implicit target. Precedence: `-l` > `@@[target]` >
+  `FRAMEC_DEFAULT_TARGET` > `python_3`.
+- **wasm build / `@frame-lang/framec-wasm`.** The `framec` library now builds
+  for `wasm32`; the wasm-bindgen entry point was extracted into a separate
+  `framec-wasm` crate so the core `framec` crate stays a clean `rlib` + `bin`.
+  README documents usage from Node.
+- RFC-0036 (no-alloc dispatch) and RFC-0038 (deferred dispatch) drafts.
+
 ## [4.2.1] - 2026-05-22
 
 Rust-target codegen fixes. No surface-syntax or wire-format changes; all
