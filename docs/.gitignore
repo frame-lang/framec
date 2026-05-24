@@ -1,3 +1,8 @@
+# Local-only symlink into the private frame-admin repo. Never commit it.
+# (A committed symlink would only leak its target path, not the file contents,
+# but keep it out regardless.)
+/admin
+
 # Jekyll / GitHub Pages local build artifacts
 _site/
 .jekyll-cache/

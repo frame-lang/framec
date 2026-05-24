@@ -3,11 +3,10 @@ description: >-
   Frame is a language for state machines — one specification compiles to 17
   target languages plus Graphviz state diagrams.
 
-# Served from frame-lang/framec at https://frame-lang.github.io/framec/
-# When a custom domain (e.g. docs.frame-lang.org) is configured, set
-# baseurl: "" and url: "https://docs.frame-lang.org".
-url: https://frame-lang.github.io
-baseurl: /framec
+# Served at the custom domain https://docs.frame-lang.org (CNAME file in docs/).
+# At a domain root, baseurl must be empty so asset/link paths resolve at "/".
+url: https://docs.frame-lang.org
+baseurl: ""
 
 # Theme is fetched at build time by jekyll-remote-theme (GitHub Pages runs it).
 # Pin to the latest released tag once verified, e.g. just-the-docs/just-the-docs@v0.10.1
@@ -43,6 +42,7 @@ back_to_top_text: "Back to top"
 # {{ }} sequences — needs {% raw %} wrapping to publish), and the RFC scratch file.
 exclude:
   - AGENTS_README.md
+  - admin/                  # local symlink into the private frame-admin repo
   - contributing/
   - per_language_guides/
   - Gemfile
