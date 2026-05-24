@@ -6,11 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
-## [4.2.2] - 2026-05-24
+## [4.2.3] - 2026-05-24
 
 Type-name passthrough is now total, and statically-typed targets enforce
 typed parameters. Surface syntax is unchanged; the behavior change below
 affects only sources that relied on the old portable-alias translation.
+
+> (4.2.2 was tagged but never released — its commit tripped the CI
+> formatting gate; 4.2.3 is the same content cut from a clean commit.)
 
 ### Changed
 
