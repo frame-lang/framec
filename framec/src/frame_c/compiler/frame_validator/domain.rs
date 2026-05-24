@@ -309,7 +309,12 @@ impl FrameValidator {
         if !requires_explicit_type {
             return;
         }
-        let mut flag = |kind: &str, owner: &str, pname: &str, ptype: &Type, span: &Span, errs: &mut Vec<ValidationError>| {
+        let mut flag = |kind: &str,
+                        owner: &str,
+                        pname: &str,
+                        ptype: &Type,
+                        span: &Span,
+                        errs: &mut Vec<ValidationError>| {
             if matches!(ptype, Type::Unknown) {
                 errs.push(
                     ValidationError::new(
@@ -332,7 +337,14 @@ impl FrameValidator {
         // Interface-declared methods.
         for method in &system.interface {
             for param in &method.params {
-                flag("interface method", &method.name, &param.name, &param.param_type, &param.span, &mut self.errors);
+                flag(
+                    "interface method",
+                    &method.name,
+                    &param.name,
+                    &param.param_type,
+                    &param.span,
+                    &mut self.errors,
+                );
             }
         }
         // Event handlers in the machine (an event need not be declared in
@@ -343,23 +355,51 @@ impl FrameValidator {
                 // State parameters: `$S(x: type)` — become typed compartment
                 // fields / constructor args.
                 for sp in &state.params {
-                    flag("state", &state.name, &sp.name, &sp.param_type, &sp.span, &mut self.errors);
+                    flag(
+                        "state",
+                        &state.name,
+                        &sp.name,
+                        &sp.param_type,
+                        &sp.span,
+                        &mut self.errors,
+                    );
                 }
                 // Event handler params.
                 for handler in &state.handlers {
                     for param in &handler.params {
-                        flag("event handler", &handler.event, &param.name, &param.param_type, &param.span, &mut self.errors);
+                        flag(
+                            "event handler",
+                            &handler.event,
+                            &param.name,
+                            &param.param_type,
+                            &param.span,
+                            &mut self.errors,
+                        );
                     }
                 }
                 // Enter/exit lifecycle params: `$>(name: type)` / `<$(name: type)`.
                 if let Some(enter) = &state.enter {
                     for p in &enter.params {
-                        flag("$> enter handler in state", &state.name, &p.name, &p.param_type, &p.span, &mut self.errors);
+                        flag(
+                            "$> enter handler in state",
+                            &state.name,
+                            &p.name,
+                            &p.param_type,
+                            &p.span,
+                            &mut self.errors,
+                        );
                     }
                 }
                 if let Some(exit) = &state.exit {
                     for p in &exit.params {
-                        flag("<$ exit handler in state", &state.name, &p.name, &p.param_type, &p.span, &mut self.errors);
+                        flag(
+                            "<$ exit handler in state",
+                            &state.name,
+                            &p.name,
+                            &p.param_type,
+                            &p.span,
+                            &mut self.errors,
+                        );
                     }
                 }
             }

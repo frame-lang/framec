@@ -168,7 +168,11 @@ fn resolve_target_with_diag(
         return (lang, None);
     }
     // 3. FRAMEC_DEFAULT_TARGET env var — sets the default *and* silences.
-    if let Some(v) = env_default.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(v) = env_default
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         return match TargetLanguage::try_from(v) {
             Ok(lang) => (lang, None),
             Err(_) => (
@@ -279,8 +283,7 @@ mod target_resolution_tests {
 
     #[test]
     fn explicit_flag_wins_and_is_silent() {
-        let (lang, diag) =
-            resolve_target_with_diag(Some(TargetLanguage::Rust), NO_PRAGMA, None);
+        let (lang, diag) = resolve_target_with_diag(Some(TargetLanguage::Rust), NO_PRAGMA, None);
         assert_eq!(lang, TargetLanguage::Rust);
         assert!(diag.is_none());
     }
@@ -303,24 +306,21 @@ mod target_resolution_tests {
 
     #[test]
     fn pragma_beats_env_default() {
-        let (lang, diag) =
-            resolve_target_with_diag(None, PRAGMA_RUST, Some("go".to_string()));
+        let (lang, diag) = resolve_target_with_diag(None, PRAGMA_RUST, Some("go".to_string()));
         assert_eq!(lang, TargetLanguage::Rust);
         assert!(diag.is_none());
     }
 
     #[test]
     fn valid_env_default_sets_target_and_silences() {
-        let (lang, diag) =
-            resolve_target_with_diag(None, NO_PRAGMA, Some("rust".to_string()));
+        let (lang, diag) = resolve_target_with_diag(None, NO_PRAGMA, Some("rust".to_string()));
         assert_eq!(lang, TargetLanguage::Rust);
         assert!(diag.is_none());
     }
 
     #[test]
     fn invalid_env_default_warns_and_falls_back() {
-        let (lang, diag) =
-            resolve_target_with_diag(None, NO_PRAGMA, Some("klingon".to_string()));
+        let (lang, diag) = resolve_target_with_diag(None, NO_PRAGMA, Some("klingon".to_string()));
         assert_eq!(lang, TargetLanguage::Python3);
         let msg = diag.expect("invalid env should produce a diagnostic");
         assert!(msg.contains("FRAMEC_DEFAULT_TARGET"));
@@ -339,8 +339,7 @@ mod target_resolution_tests {
     #[test]
     fn blank_env_default_is_ignored() {
         // FRAMEC_DEFAULT_TARGET="" must not count as a decision.
-        let (lang, diag) =
-            resolve_target_with_diag(None, NO_PRAGMA, Some("   ".to_string()));
+        let (lang, diag) = resolve_target_with_diag(None, NO_PRAGMA, Some("   ".to_string()));
         assert_eq!(lang, TargetLanguage::Python3);
         assert!(diag.is_some());
     }
