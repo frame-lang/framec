@@ -146,8 +146,9 @@ lands on a clean, self-describing commit.
 
 - **Migration guide** — required for any **breaking change** (any
   Major bump, and Minor bumps that change wire formats or remove
-  syntax). Add `docs/migration/<from>_to_<to>.md` following the
-  shape of [`4.1_to_4.2.md`](../migration/4.1_to_4.2.md): a
+  syntax). Add a `docs/releases/<version>-migration.md` page nested
+  under that release (see the [Release Notes style guide](../releases/style-guide.md)),
+  following the shape of [`4.2.0-migration.md`](../releases/4.2.0-migration.md): a
   break-by-break table (symptom → fix scope) plus a worked
   before/after for each. Link it from the release notes.
 
