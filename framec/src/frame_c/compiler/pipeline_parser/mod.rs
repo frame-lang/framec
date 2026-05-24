@@ -92,16 +92,6 @@ impl Parser {
         self.expect_section_colon()?;
         Ok(())
     }
-    pub(crate) fn take_actions_section(&mut self) -> Result<Vec<ActionAst>, ParseError> {
-        self.advance()?;
-        self.expect_section_colon()?;
-        self.parse_actions()
-    }
-    pub(crate) fn take_operations_section(&mut self) -> Result<Vec<OperationAst>, ParseError> {
-        self.advance()?;
-        self.expect_section_colon()?;
-        self.parse_operations()
-    }
     pub(crate) fn take_domain_section(&mut self) -> Result<Vec<DomainVar>, ParseError> {
         self.advance()?;
         self.expect_section_colon()?;
@@ -2225,6 +2215,24 @@ mod tests {
                stop()\n\
                plain(x: str, y: bool)\n\n\
              machine:\n  $S { }\n",
+        );
+    }
+
+    #[test]
+    fn parity_actions_and_operations_sections() {
+        assert_backbone_matches_recursive(
+            "interface:\n  go()\n\n\
+             machine:\n  $S { }\n\n\
+             actions:\n\
+               doThing(n: i32) { self.total = n }\n\
+               static helper(): str { return \"x\" }\n\n\
+             operations:\n\
+               @@[save]\n\
+               snapshot(): str { return \"s\" }\n\
+               @@[load]\n\
+               restore(data: str) { self.total = 0 }\n\
+               plainOp() { }\n\n\
+             domain:\n  total: i32 = 0\n",
         );
     }
 

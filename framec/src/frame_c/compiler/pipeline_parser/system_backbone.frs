@@ -3,15 +3,19 @@
 // RFC-0039 Stage 0/1/2 — the parser's outer grammar as a Frame backbone.
 //
 // Replaces the hand-written `Parser::parse_system` loops. The backbone OWNS the
-// parser (B1) and drives it live. Three nesting levels, each a self-looping
-// state that proves its sub-grammar is regular:
-//   $Sections   — the flat list of system sections (interface/machine/...).
-//   $Machine    — the flat list of `$State` declarations in `machine:`.
+// parser (B1) and drives it live. Every level is a self-looping state that
+// proves its sub-grammar is regular:
+//   $Sections    — the flat list of system sections, dispatched by keyword.
+//   $Interface   — the flat list of interface methods.
+//   $Actions     — the flat list of action declarations.
+//   $Operations  — the flat list of operation declarations.
+//   $Machine     — the flat list of `$State` declarations in `machine:`.
 //   $StateHeader/$StateBody — one state's header + its unordered member list.
+// Only the `domain:` section is still delegated whole (`take_domain_section`).
 // Each terminal is delegated to an existing oracle method on `Parser`
-// (`take_*_section`, `take_state_header`, `parse_state_var_decl`,
-// `parse_{enter,exit,event}_handler`); no push$/pop$ anywhere, because none of
-// these sub-grammars is recursive.
+// (`take_state_header`, `parse_interface_method`, `parse_action`,
+// `parse_operation`, `parse_state_var_decl`, `parse_{enter,exit,event}_handler`);
+// no push$/pop$ anywhere, because none of these sub-grammars is recursive.
 //
 // Errors thread through `error` (Frame handlers return ()). Byte-output is
 // identical to the recursive-descent loop; the snapshot/matrix/fuzz suites are
@@ -81,23 +85,22 @@
                         }
                     }
                     Ok(3) => {
-                        match self.parser.as_mut().unwrap().take_actions_section() {
-                            Ok(v) => {
-                                let s = self.system.as_mut().unwrap();
-                                s.section_order.push(SystemSectionKind::Actions);
-                                s.actions = v;
-                                -> $Sections
+                        match self.parser.as_mut().unwrap().consume_section_header() {
+                            Ok(()) => {
+                                self.system.as_mut().unwrap().section_order.push(SystemSectionKind::Actions);
+                                self.action_decls = Vec::new();
+                                -> $Actions
                             }
                             Err(e) => { self.error = Some(e); -> $Done }
                         }
                     }
                     Ok(4) => {
-                        match self.parser.as_mut().unwrap().take_operations_section() {
-                            Ok(v) => {
-                                let s = self.system.as_mut().unwrap();
-                                s.section_order.push(SystemSectionKind::Operations);
-                                s.operations = v;
-                                -> $Sections
+                        match self.parser.as_mut().unwrap().consume_section_header() {
+                            Ok(()) => {
+                                self.system.as_mut().unwrap().section_order.push(SystemSectionKind::Operations);
+                                self.ops = Vec::new();
+                                self.pending_attrs = Vec::new();
+                                -> $Operations
                             }
                             Err(e) => { self.error = Some(e); -> $Done }
                         }
@@ -204,6 +207,113 @@
                             Err(e) => { self.error = Some(ParseError::from(e)); }
                         }
                         -> $Done
+                    }
+                }
+            }
+        }
+
+        // The actions loop: one `ActionAst` per `Ident`, until a section
+        // keyword / Eof. No attributes (actions take none); unknown tokens are
+        // skipped, matching the recursive `parse_actions`.
+        $Actions {
+            $>() {
+                let pk: Result<u8, ParseError> = {
+                    let p = self.parser.as_mut().unwrap();
+                    match p.peek() {
+                        Ok(Token::Interface)
+                        | Ok(Token::Machine)
+                        | Ok(Token::Actions)
+                        | Ok(Token::Operations)
+                        | Ok(Token::Domain)
+                        | Ok(Token::Eof) => Ok(0),
+                        Ok(Token::Ident(_)) => Ok(1),
+                        Ok(_) => Ok(2),
+                        Err(e) => Err(ParseError::from(e.clone())),
+                    }
+                };
+                match pk {
+                    Err(e) => { self.error = Some(e); -> $Done }
+                    Ok(0) => {
+                        let actions = std::mem::take(&mut self.action_decls);
+                        self.system.as_mut().unwrap().actions = actions;
+                        -> $Sections
+                    }
+                    Ok(1) => {
+                        match self.parser.as_mut().unwrap().parse_action() {
+                            Ok(a) => { self.action_decls.push(a); -> $Actions }
+                            Err(e) => { self.error = Some(e); -> $Done }
+                        }
+                    }
+                    Ok(_) => {
+                        match self.parser.as_mut().unwrap().advance() {
+                            Ok(_) => { -> $Actions }
+                            Err(e) => { self.error = Some(ParseError::from(e)); -> $Done }
+                        }
+                    }
+                }
+            }
+        }
+
+        // The operations loop: one `OperationAst` per `Ident`, with `@@[...]`
+        // attributes (RFC-0012 amendment: `@@[save]`/`@@[load]`) accumulating in
+        // `pending_attrs` until the next operation claims them. Unknown tokens
+        // are skipped, matching the recursive `parse_operations`.
+        $Operations {
+            $>() {
+                let pk: Result<u8, ParseError> = {
+                    let p = self.parser.as_mut().unwrap();
+                    match p.peek() {
+                        Ok(Token::Interface)
+                        | Ok(Token::Machine)
+                        | Ok(Token::Actions)
+                        | Ok(Token::Operations)
+                        | Ok(Token::Domain)
+                        | Ok(Token::Eof) => Ok(0),
+                        Ok(Token::Attribute { .. }) => Ok(1),
+                        Ok(Token::Ident(_)) => Ok(2),
+                        Ok(_) => Ok(3),
+                        Err(e) => Err(ParseError::from(e.clone())),
+                    }
+                };
+                match pk {
+                    Err(e) => { self.error = Some(e); -> $Done }
+                    Ok(0) => {
+                        let ops = std::mem::take(&mut self.ops);
+                        self.system.as_mut().unwrap().operations = ops;
+                        -> $Sections
+                    }
+                    Ok(1) => {
+                        match self.parser.as_mut().unwrap().advance() {
+                            Ok(spanned) => {
+                                if let Token::Attribute { name, args } = spanned.token {
+                                    self.pending_attrs.push(
+                                        crate::frame_c::compiler::frame_ast::Attribute {
+                                            name,
+                                            args,
+                                            span: spanned.span,
+                                        },
+                                    );
+                                }
+                                -> $Operations
+                            }
+                            Err(e) => { self.error = Some(ParseError::from(e)); -> $Done }
+                        }
+                    }
+                    Ok(2) => {
+                        match self.parser.as_mut().unwrap().parse_operation() {
+                            Ok(mut op) => {
+                                op.attributes = std::mem::take(&mut self.pending_attrs);
+                                self.ops.push(op);
+                                -> $Operations
+                            }
+                            Err(e) => { self.error = Some(e); -> $Done }
+                        }
+                    }
+                    Ok(_) => {
+                        match self.parser.as_mut().unwrap().advance() {
+                            Ok(_) => { -> $Operations }
+                            Err(e) => { self.error = Some(ParseError::from(e)); -> $Done }
+                        }
                     }
                 }
             }
@@ -423,4 +533,6 @@
         pending_attrs: Vec<crate::frame_c::compiler::frame_ast::Attribute> = Vec::new()
         state_body_close: usize = 0
         iface_methods: Vec<InterfaceMethod> = Vec::new()
+        action_decls: Vec<ActionAst> = Vec::new()
+        ops: Vec<OperationAst> = Vec::new()
 }

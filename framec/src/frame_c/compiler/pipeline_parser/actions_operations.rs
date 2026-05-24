@@ -38,7 +38,7 @@ impl Parser {
         Ok(actions)
     }
 
-    fn parse_action(&mut self) -> Result<ActionAst, ParseError> {
+    pub(crate) fn parse_action(&mut self) -> Result<ActionAst, ParseError> {
         // Drain section-level comments captured since the last
         // significant token — same trivia plumbing as
         // `parse_interface_method` / `parse_operation`. The captured
@@ -174,7 +174,7 @@ impl Parser {
         Ok(ops)
     }
 
-    fn parse_operation(&mut self) -> Result<OperationAst, ParseError> {
+    pub(crate) fn parse_operation(&mut self) -> Result<OperationAst, ParseError> {
         // Drain section-level comments captured since the last
         // significant token — same trivia plumbing as
         // `parse_interface_method` / `parse_action`.

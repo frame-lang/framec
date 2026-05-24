@@ -2,15 +2,19 @@
 // RFC-0039 Stage 0/1/2 — the parser's outer grammar as a Frame backbone.
 //
 // Replaces the hand-written `Parser::parse_system` loops. The backbone OWNS the
-// parser (B1) and drives it live. Three nesting levels, each a self-looping
-// state that proves its sub-grammar is regular:
-//   $Sections   — the flat list of system sections (interface/machine/...).
-//   $Machine    — the flat list of `$State` declarations in `machine:`.
+// parser (B1) and drives it live. Every level is a self-looping state that
+// proves its sub-grammar is regular:
+//   $Sections    — the flat list of system sections, dispatched by keyword.
+//   $Interface   — the flat list of interface methods.
+//   $Actions     — the flat list of action declarations.
+//   $Operations  — the flat list of operation declarations.
+//   $Machine     — the flat list of `$State` declarations in `machine:`.
 //   $StateHeader/$StateBody — one state's header + its unordered member list.
+// Only the `domain:` section is still delegated whole (`take_domain_section`).
 // Each terminal is delegated to an existing oracle method on `Parser`
-// (`take_*_section`, `take_state_header`, `parse_state_var_decl`,
-// `parse_{enter,exit,event}_handler`); no push$/pop$ anywhere, because none of
-// these sub-grammars is recursive.
+// (`take_state_header`, `parse_interface_method`, `parse_action`,
+// `parse_operation`, `parse_state_var_decl`, `parse_{enter,exit,event}_handler`);
+// no push$/pop$ anywhere, because none of these sub-grammars is recursive.
 //
 // Errors thread through `error` (Frame handlers return ()). Byte-output is
 // identical to the recursive-descent loop; the snapshot/matrix/fuzz suites are
@@ -94,6 +98,8 @@ mod _system_backbone_framec {
         Start,
         Sections,
         Interface,
+        Actions,
+        Operations,
         Machine,
         StateHeader,
         StateBody,
@@ -122,6 +128,8 @@ mod _system_backbone_framec {
                 "Start" => SystemBackboneStateContext::Start,
                 "Sections" => SystemBackboneStateContext::Sections,
                 "Interface" => SystemBackboneStateContext::Interface,
+                "Actions" => SystemBackboneStateContext::Actions,
+                "Operations" => SystemBackboneStateContext::Operations,
                 "Machine" => SystemBackboneStateContext::Machine,
                 "StateHeader" => SystemBackboneStateContext::StateHeader,
                 "StateBody" => SystemBackboneStateContext::StateBody,
@@ -153,6 +161,8 @@ mod _system_backbone_framec {
         pub pending_attrs: Vec<crate::frame_c::compiler::frame_ast::Attribute>,
         pub state_body_close: usize,
         pub iface_methods: Vec<InterfaceMethod>,
+        pub action_decls: Vec<ActionAst>,
+        pub ops: Vec<OperationAst>,
     }
 
     #[allow(non_snake_case)]
@@ -171,6 +181,8 @@ mod _system_backbone_framec {
                 pending_attrs: Vec::new(),
                 state_body_close: 0,
                 iface_methods: Vec::new(),
+                action_decls: Vec::new(),
+                ops: Vec::new(),
                 __compartment: SystemBackboneCompartment::new("Start"),
                 __next_compartment: None,
             }
@@ -192,6 +204,8 @@ mod _system_backbone_framec {
                 "Start" => &["Start"],
                 "Sections" => &["Sections"],
                 "Interface" => &["Interface"],
+                "Actions" => &["Actions"],
+                "Operations" => &["Operations"],
                 "Machine" => &["Machine"],
                 "StateHeader" => &["StateHeader"],
                 "StateBody" => &["StateBody"],
@@ -263,6 +277,8 @@ mod _system_backbone_framec {
                 "Start" => self._state_Start(__ev),
                 "Sections" => self._state_Sections(__ev),
                 "Interface" => self._state_Interface(__ev),
+                "Actions" => self._state_Actions(__ev),
+                "Operations" => self._state_Operations(__ev),
                 "Machine" => self._state_Machine(__ev),
                 "StateHeader" => self._state_StateHeader(__ev),
                 "StateBody" => self._state_StateBody(__ev),
@@ -305,6 +321,27 @@ mod _system_backbone_framec {
         fn _state_Interface(&mut self, __e: &SystemBackboneFrameEvent) {
             match __e {
                 SystemBackboneFrameEvent::FrameEnter { .. } => { self._s_Interface_hdl_frame_enter(__e); }
+                _ => {}
+            }
+        }
+
+        // The actions loop: one `ActionAst` per `Ident`, until a section
+        // keyword / Eof. No attributes (actions take none); unknown tokens are
+        // skipped, matching the recursive `parse_actions`.
+        fn _state_Actions(&mut self, __e: &SystemBackboneFrameEvent) {
+            match __e {
+                SystemBackboneFrameEvent::FrameEnter { .. } => { self._s_Actions_hdl_frame_enter(__e); }
+                _ => {}
+            }
+        }
+
+        // The operations loop: one `OperationAst` per `Ident`, with `@@[...]`
+        // attributes (RFC-0012 amendment: `@@[save]`/`@@[load]`) accumulating in
+        // `pending_attrs` until the next operation claims them. Unknown tokens
+        // are skipped, matching the recursive `parse_operations`.
+        fn _state_Operations(&mut self, __e: &SystemBackboneFrameEvent) {
+            match __e {
+                SystemBackboneFrameEvent::FrameEnter { .. } => { self._s_Operations_hdl_frame_enter(__e); }
                 _ => {}
             }
         }
@@ -425,12 +462,11 @@ mod _system_backbone_framec {
                     }
                 }
                 Ok(3) => {
-                    match self.parser.as_mut().unwrap().take_actions_section() {
-                        Ok(v) => {
-                            let s = self.system.as_mut().unwrap();
-                            s.section_order.push(SystemSectionKind::Actions);
-                            s.actions = v;
-                            let mut __compartment = self.__prepareEnter("Sections");
+                    match self.parser.as_mut().unwrap().consume_section_header() {
+                        Ok(()) => {
+                            self.system.as_mut().unwrap().section_order.push(SystemSectionKind::Actions);
+                            self.action_decls = Vec::new();
+                            let mut __compartment = self.__prepareEnter("Actions");
                             self.__transition(__compartment);
                             return;
                         }
@@ -441,12 +477,12 @@ mod _system_backbone_framec {
                     }
                 }
                 Ok(4) => {
-                    match self.parser.as_mut().unwrap().take_operations_section() {
-                        Ok(v) => {
-                            let s = self.system.as_mut().unwrap();
-                            s.section_order.push(SystemSectionKind::Operations);
-                            s.operations = v;
-                            let mut __compartment = self.__prepareEnter("Sections");
+                    match self.parser.as_mut().unwrap().consume_section_header() {
+                        Ok(()) => {
+                            self.system.as_mut().unwrap().section_order.push(SystemSectionKind::Operations);
+                            self.ops = Vec::new();
+                            self.pending_attrs = Vec::new();
+                            let mut __compartment = self.__prepareEnter("Operations");
                             self.__transition(__compartment);
                             return;
                         }
@@ -575,6 +611,140 @@ mod _system_backbone_framec {
                     let mut __compartment = self.__prepareEnter("Done");
                     self.__transition(__compartment);
                     return;
+                }
+            }
+        }
+
+        fn _s_Actions_hdl_frame_enter(&mut self, __e: &SystemBackboneFrameEvent) {
+            let pk: Result<u8, ParseError> = {
+                let p = self.parser.as_mut().unwrap();
+                match p.peek() {
+                    Ok(Token::Interface)
+                    | Ok(Token::Machine)
+                    | Ok(Token::Actions)
+                    | Ok(Token::Operations)
+                    | Ok(Token::Domain)
+                    | Ok(Token::Eof) => Ok(0),
+                    Ok(Token::Ident(_)) => Ok(1),
+                    Ok(_) => Ok(2),
+                    Err(e) => Err(ParseError::from(e.clone())),
+                }
+            };
+            match pk {
+                Err(e) => { self.error = Some(e);
+                let mut __compartment = self.__prepareEnter("Done");
+                self.__transition(__compartment);
+                return; }
+                Ok(0) => {
+                    let actions = std::mem::take(&mut self.action_decls);
+                    self.system.as_mut().unwrap().actions = actions;
+                    let mut __compartment = self.__prepareEnter("Sections");
+                    self.__transition(__compartment);
+                    return;
+                }
+                Ok(1) => {
+                    match self.parser.as_mut().unwrap().parse_action() {
+                        Ok(a) => { self.action_decls.push(a);
+                        let mut __compartment = self.__prepareEnter("Actions");
+                        self.__transition(__compartment);
+                        return; }
+                        Err(e) => { self.error = Some(e);
+                        let mut __compartment = self.__prepareEnter("Done");
+                        self.__transition(__compartment);
+                        return; }
+                    }
+                }
+                Ok(_) => {
+                    match self.parser.as_mut().unwrap().advance() {
+                        Ok(_) => {
+                            let mut __compartment = self.__prepareEnter("Actions");
+                            self.__transition(__compartment);
+                            return; }
+                        Err(e) => { self.error = Some(ParseError::from(e));
+                        let mut __compartment = self.__prepareEnter("Done");
+                        self.__transition(__compartment);
+                        return; }
+                    }
+                }
+            }
+        }
+
+        fn _s_Operations_hdl_frame_enter(&mut self, __e: &SystemBackboneFrameEvent) {
+            let pk: Result<u8, ParseError> = {
+                let p = self.parser.as_mut().unwrap();
+                match p.peek() {
+                    Ok(Token::Interface)
+                    | Ok(Token::Machine)
+                    | Ok(Token::Actions)
+                    | Ok(Token::Operations)
+                    | Ok(Token::Domain)
+                    | Ok(Token::Eof) => Ok(0),
+                    Ok(Token::Attribute { .. }) => Ok(1),
+                    Ok(Token::Ident(_)) => Ok(2),
+                    Ok(_) => Ok(3),
+                    Err(e) => Err(ParseError::from(e.clone())),
+                }
+            };
+            match pk {
+                Err(e) => { self.error = Some(e);
+                let mut __compartment = self.__prepareEnter("Done");
+                self.__transition(__compartment);
+                return; }
+                Ok(0) => {
+                    let ops = std::mem::take(&mut self.ops);
+                    self.system.as_mut().unwrap().operations = ops;
+                    let mut __compartment = self.__prepareEnter("Sections");
+                    self.__transition(__compartment);
+                    return;
+                }
+                Ok(1) => {
+                    match self.parser.as_mut().unwrap().advance() {
+                        Ok(spanned) => {
+                            if let Token::Attribute { name, args } = spanned.token {
+                                self.pending_attrs.push(
+                                    crate::frame_c::compiler::frame_ast::Attribute {
+                                        name,
+                                        args,
+                                        span: spanned.span,
+                                    },
+                                );
+                            }
+                            let mut __compartment = self.__prepareEnter("Operations");
+                            self.__transition(__compartment);
+                            return;
+                        }
+                        Err(e) => { self.error = Some(ParseError::from(e));
+                        let mut __compartment = self.__prepareEnter("Done");
+                        self.__transition(__compartment);
+                        return; }
+                    }
+                }
+                Ok(2) => {
+                    match self.parser.as_mut().unwrap().parse_operation() {
+                        Ok(mut op) => {
+                            op.attributes = std::mem::take(&mut self.pending_attrs);
+                            self.ops.push(op);
+                            let mut __compartment = self.__prepareEnter("Operations");
+                            self.__transition(__compartment);
+                            return;
+                        }
+                        Err(e) => { self.error = Some(e);
+                        let mut __compartment = self.__prepareEnter("Done");
+                        self.__transition(__compartment);
+                        return; }
+                    }
+                }
+                Ok(_) => {
+                    match self.parser.as_mut().unwrap().advance() {
+                        Ok(_) => {
+                            let mut __compartment = self.__prepareEnter("Operations");
+                            self.__transition(__compartment);
+                            return; }
+                        Err(e) => { self.error = Some(ParseError::from(e));
+                        let mut __compartment = self.__prepareEnter("Done");
+                        self.__transition(__compartment);
+                        return; }
+                    }
                 }
             }
         }
