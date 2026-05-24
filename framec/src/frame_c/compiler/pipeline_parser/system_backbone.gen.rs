@@ -93,6 +93,7 @@ mod _system_backbone_framec {
     enum SystemBackboneStateContext {
         Start,
         Sections,
+        Interface,
         Machine,
         StateHeader,
         StateBody,
@@ -120,6 +121,7 @@ mod _system_backbone_framec {
             let state_context = match state {
                 "Start" => SystemBackboneStateContext::Start,
                 "Sections" => SystemBackboneStateContext::Sections,
+                "Interface" => SystemBackboneStateContext::Interface,
                 "Machine" => SystemBackboneStateContext::Machine,
                 "StateHeader" => SystemBackboneStateContext::StateHeader,
                 "StateBody" => SystemBackboneStateContext::StateBody,
@@ -150,6 +152,7 @@ mod _system_backbone_framec {
         pub current_state: Option<StateAst>,
         pub pending_attrs: Vec<crate::frame_c::compiler::frame_ast::Attribute>,
         pub state_body_close: usize,
+        pub iface_methods: Vec<InterfaceMethod>,
     }
 
     #[allow(non_snake_case)]
@@ -167,6 +170,7 @@ mod _system_backbone_framec {
                 current_state: None,
                 pending_attrs: Vec::new(),
                 state_body_close: 0,
+                iface_methods: Vec::new(),
                 __compartment: SystemBackboneCompartment::new("Start"),
                 __next_compartment: None,
             }
@@ -187,6 +191,7 @@ mod _system_backbone_framec {
             match leaf {
                 "Start" => &["Start"],
                 "Sections" => &["Sections"],
+                "Interface" => &["Interface"],
                 "Machine" => &["Machine"],
                 "StateHeader" => &["StateHeader"],
                 "StateBody" => &["StateBody"],
@@ -257,6 +262,7 @@ mod _system_backbone_framec {
             match self.__compartment.state.as_str() {
                 "Start" => self._state_Start(__ev),
                 "Sections" => self._state_Sections(__ev),
+                "Interface" => self._state_Interface(__ev),
                 "Machine" => self._state_Machine(__ev),
                 "StateHeader" => self._state_StateHeader(__ev),
                 "StateBody" => self._state_StateBody(__ev),
@@ -287,6 +293,18 @@ mod _system_backbone_framec {
         fn _state_Sections(&mut self, __e: &SystemBackboneFrameEvent) {
             match __e {
                 SystemBackboneFrameEvent::FrameEnter { .. } => { self._s_Sections_hdl_frame_enter(__e); }
+                _ => {}
+            }
+        }
+
+        // The interface method loop: one `InterfaceMethod` per `Ident`, until a
+        // section keyword / Eof. Self-loop = a flat list of methods, attributes
+        // accumulating into `pending_attrs` until the next method claims them —
+        // the same regular shape as $Machine, proving the interface grammar is
+        // regular too.
+        fn _state_Interface(&mut self, __e: &SystemBackboneFrameEvent) {
+            match __e {
+                SystemBackboneFrameEvent::FrameEnter { .. } => { self._s_Interface_hdl_frame_enter(__e); }
                 _ => {}
             }
         }
@@ -370,12 +388,15 @@ mod _system_backbone_framec {
                     return;
                 }
                 Ok(1) => {
-                    match self.parser.as_mut().unwrap().take_interface_section() {
-                        Ok(v) => {
-                            let s = self.system.as_mut().unwrap();
-                            s.section_order.push(SystemSectionKind::Interface);
-                            s.interface = v;
-                            let mut __compartment = self.__prepareEnter("Sections");
+                    // Consume `interface:`, then drive the method loop
+                    // ourselves ($Interface) rather than delegating the
+                    // whole section to parse_interface_methods.
+                    match self.parser.as_mut().unwrap().consume_section_header() {
+                        Ok(()) => {
+                            self.system.as_mut().unwrap().section_order.push(SystemSectionKind::Interface);
+                            self.iface_methods = Vec::new();
+                            self.pending_attrs = Vec::new();
+                            let mut __compartment = self.__prepareEnter("Interface");
                             self.__transition(__compartment);
                             return;
                         }
@@ -463,6 +484,93 @@ mod _system_backbone_framec {
                         Err(e) => {
                             self.error = Some(ParseError::from(e));
                         }
+                    }
+                    let mut __compartment = self.__prepareEnter("Done");
+                    self.__transition(__compartment);
+                    return;
+                }
+            }
+        }
+
+        fn _s_Interface_hdl_frame_enter(&mut self, __e: &SystemBackboneFrameEvent) {
+            let pk: Result<u8, ParseError> = {
+                let p = self.parser.as_mut().unwrap();
+                match p.peek() {
+                    Ok(Token::Interface)
+                    | Ok(Token::Machine)
+                    | Ok(Token::Actions)
+                    | Ok(Token::Operations)
+                    | Ok(Token::Domain)
+                    | Ok(Token::Eof) => Ok(0),
+                    Ok(Token::Attribute { .. }) => Ok(1),
+                    Ok(Token::Ident(_)) => Ok(2),
+                    Ok(_) => Ok(3),
+                    Err(e) => Err(ParseError::from(e.clone())),
+                }
+            };
+            match pk {
+                Err(e) => { self.error = Some(e);
+                let mut __compartment = self.__prepareEnter("Done");
+                self.__transition(__compartment);
+                return; }
+                Ok(0) => {
+                    // End of interface section — store the methods and hand
+                    // the stopping token back to $Sections (unconsumed).
+                    let methods = std::mem::take(&mut self.iface_methods);
+                    self.system.as_mut().unwrap().interface = methods;
+                    let mut __compartment = self.__prepareEnter("Sections");
+                    self.__transition(__compartment);
+                    return;
+                }
+                Ok(1) => {
+                    match self.parser.as_mut().unwrap().advance() {
+                        Ok(spanned) => {
+                            if let Token::Attribute { name, args } = spanned.token {
+                                self.pending_attrs.push(
+                                    crate::frame_c::compiler::frame_ast::Attribute {
+                                        name,
+                                        args,
+                                        span: spanned.span,
+                                    },
+                                );
+                            }
+                            let mut __compartment = self.__prepareEnter("Interface");
+                            self.__transition(__compartment);
+                            return;
+                        }
+                        Err(e) => { self.error = Some(ParseError::from(e));
+                        let mut __compartment = self.__prepareEnter("Done");
+                        self.__transition(__compartment);
+                        return; }
+                    }
+                }
+                Ok(2) => {
+                    match self.parser.as_mut().unwrap().parse_interface_method() {
+                        Ok(mut m) => {
+                            m.attributes = std::mem::take(&mut self.pending_attrs);
+                            self.iface_methods.push(m);
+                            let mut __compartment = self.__prepareEnter("Interface");
+                            self.__transition(__compartment);
+                            return;
+                        }
+                        Err(e) => { self.error = Some(e);
+                        let mut __compartment = self.__prepareEnter("Done");
+                        self.__transition(__compartment);
+                        return; }
+                    }
+                }
+                Ok(_) => {
+                    match self.parser.as_mut().unwrap().advance() {
+                        Ok(spanned) => {
+                            self.error = Some(ParseError {
+                                message: format!(
+                                    "Expected method name in interface, found {:?}",
+                                    spanned.token
+                                ),
+                                span: spanned.span,
+                            });
+                        }
+                        Err(e) => { self.error = Some(ParseError::from(e)); }
                     }
                     let mut __compartment = self.__prepareEnter("Done");
                     self.__transition(__compartment);

@@ -84,11 +84,6 @@ impl Parser {
     // consumes the section keyword + `:` then delegates to the section parser.
     // (Plain methods rather than inline closures so the backbone's generated
     // handler stays closure-free.)
-    pub(crate) fn take_interface_section(&mut self) -> Result<Vec<InterfaceMethod>, ParseError> {
-        self.advance()?;
-        self.expect_section_colon()?;
-        self.parse_interface_methods()
-    }
     /// Consume a section keyword + `:` (used by the backbone before it drives a
     /// section body inline — e.g. the machine state loop, which the backbone
     /// walks itself rather than delegating to `parse_machine`).
@@ -234,7 +229,7 @@ impl Parser {
         Ok(methods)
     }
 
-    fn parse_interface_method(&mut self) -> Result<InterfaceMethod, ParseError> {
+    pub(crate) fn parse_interface_method(&mut self) -> Result<InterfaceMethod, ParseError> {
         // Drain section-level comments captured by the lexer's
         // `skip_whitespace_and_comments` since the previous token —
         // these are the user's docstrings preceding this method
@@ -2216,6 +2211,20 @@ mod tests {
                  @@[target(\"python_3\")]\n\
                  ev() { }\n\
                }\n",
+        );
+    }
+
+    #[test]
+    fn parity_interface_attrs_and_params() {
+        assert_backbone_matches_recursive(
+            "interface:\n\
+               @@[target(\"rust\")]\n\
+               start(a: i32)\n\
+               @@[target(\"rust\")]\n\
+               @@[target(\"python_3\")]\n\
+               stop()\n\
+               plain(x: str, y: bool)\n\n\
+             machine:\n  $S { }\n",
         );
     }
 

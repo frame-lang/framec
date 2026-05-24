@@ -54,12 +54,15 @@
                         -> $Done
                     }
                     Ok(1) => {
-                        match self.parser.as_mut().unwrap().take_interface_section() {
-                            Ok(v) => {
-                                let s = self.system.as_mut().unwrap();
-                                s.section_order.push(SystemSectionKind::Interface);
-                                s.interface = v;
-                                -> $Sections
+                        // Consume `interface:`, then drive the method loop
+                        // ourselves ($Interface) rather than delegating the
+                        // whole section to parse_interface_methods.
+                        match self.parser.as_mut().unwrap().consume_section_header() {
+                            Ok(()) => {
+                                self.system.as_mut().unwrap().section_order.push(SystemSectionKind::Interface);
+                                self.iface_methods = Vec::new();
+                                self.pending_attrs = Vec::new();
+                                -> $Interface
                             }
                             Err(e) => { self.error = Some(e); -> $Done }
                         }
@@ -122,6 +125,83 @@
                             Err(e) => {
                                 self.error = Some(ParseError::from(e));
                             }
+                        }
+                        -> $Done
+                    }
+                }
+            }
+        }
+
+        // The interface method loop: one `InterfaceMethod` per `Ident`, until a
+        // section keyword / Eof. Self-loop = a flat list of methods, attributes
+        // accumulating into `pending_attrs` until the next method claims them —
+        // the same regular shape as $Machine, proving the interface grammar is
+        // regular too.
+        $Interface {
+            $>() {
+                let pk: Result<u8, ParseError> = {
+                    let p = self.parser.as_mut().unwrap();
+                    match p.peek() {
+                        Ok(Token::Interface)
+                        | Ok(Token::Machine)
+                        | Ok(Token::Actions)
+                        | Ok(Token::Operations)
+                        | Ok(Token::Domain)
+                        | Ok(Token::Eof) => Ok(0),
+                        Ok(Token::Attribute { .. }) => Ok(1),
+                        Ok(Token::Ident(_)) => Ok(2),
+                        Ok(_) => Ok(3),
+                        Err(e) => Err(ParseError::from(e.clone())),
+                    }
+                };
+                match pk {
+                    Err(e) => { self.error = Some(e); -> $Done }
+                    Ok(0) => {
+                        // End of interface section — store the methods and hand
+                        // the stopping token back to $Sections (unconsumed).
+                        let methods = std::mem::take(&mut self.iface_methods);
+                        self.system.as_mut().unwrap().interface = methods;
+                        -> $Sections
+                    }
+                    Ok(1) => {
+                        match self.parser.as_mut().unwrap().advance() {
+                            Ok(spanned) => {
+                                if let Token::Attribute { name, args } = spanned.token {
+                                    self.pending_attrs.push(
+                                        crate::frame_c::compiler::frame_ast::Attribute {
+                                            name,
+                                            args,
+                                            span: spanned.span,
+                                        },
+                                    );
+                                }
+                                -> $Interface
+                            }
+                            Err(e) => { self.error = Some(ParseError::from(e)); -> $Done }
+                        }
+                    }
+                    Ok(2) => {
+                        match self.parser.as_mut().unwrap().parse_interface_method() {
+                            Ok(mut m) => {
+                                m.attributes = std::mem::take(&mut self.pending_attrs);
+                                self.iface_methods.push(m);
+                                -> $Interface
+                            }
+                            Err(e) => { self.error = Some(e); -> $Done }
+                        }
+                    }
+                    Ok(_) => {
+                        match self.parser.as_mut().unwrap().advance() {
+                            Ok(spanned) => {
+                                self.error = Some(ParseError {
+                                    message: format!(
+                                        "Expected method name in interface, found {:?}",
+                                        spanned.token
+                                    ),
+                                    span: spanned.span,
+                                });
+                            }
+                            Err(e) => { self.error = Some(ParseError::from(e)); }
                         }
                         -> $Done
                     }
@@ -342,4 +422,5 @@
         current_state: Option<StateAst> = None
         pending_attrs: Vec<crate::frame_c::compiler::frame_ast::Attribute> = Vec::new()
         state_body_close: usize = 0
+        iface_methods: Vec<InterfaceMethod> = Vec::new()
 }
