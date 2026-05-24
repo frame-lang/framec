@@ -160,8 +160,12 @@ pub enum LexerMode {
 // Lexer
 // ============================================================================
 
-pub struct Lexer<'a> {
-    source: &'a [u8],
+pub struct Lexer {
+    // Owned (RFC-0039 B1): the parser backbone is migrating to a Frame system
+    // that holds the lexer as a domain field; a generated system can't carry a
+    // `&'a [u8]` borrow, so the lexer owns its source. One clone of the system
+    // body per parse — negligible, and behavior-identical to the borrowed form.
+    source: Vec<u8>,
     cursor: usize,
     end: usize,        // end of system body
     native_end: usize, // end of current native block (NativeAware mode only)
@@ -178,16 +182,16 @@ pub struct Lexer<'a> {
     pending_comments: Vec<String>,
 }
 
-impl<'a> Lexer<'a> {
+impl Lexer {
     /// Create a new Lexer for a system body.
     ///
     /// `source` is the full source bytes.
     /// `body_span` is the span of the system body (inside braces).
     /// `lang` determines language-specific string/comment awareness.
-    pub fn new(source: &'a [u8], body_span: Span, lang: TargetLanguage) -> Self {
+    pub fn new(source: &[u8], body_span: Span, lang: TargetLanguage) -> Self {
         let skipper = create_skipper(lang);
         Lexer {
-            source,
+            source: source.to_vec(),
             cursor: body_span.start,
             end: body_span.end,
             native_end: 0,
@@ -299,12 +303,12 @@ impl<'a> Lexer<'a> {
     /// Uses the language-specific BodyCloser to handle strings/comments.
     pub fn find_close_brace(&self, open_pos: usize) -> Option<usize> {
         let mut closer = self.skipper.body_closer();
-        closer.close_byte(self.source, open_pos).ok()
+        closer.close_byte(&self.source, open_pos).ok()
     }
 
     /// Access the source bytes (for parser to pass to BodyCloser if needed).
     pub fn source(&self) -> &[u8] {
-        self.source
+        &self.source
     }
 
     // ========================================================================
@@ -468,14 +472,14 @@ impl<'a> Lexer<'a> {
             // Skip strings and comments (language-specific FSM scanners).
             // skip_string handles multi-line constructs (template literals) —
             // it skips from opening delimiter to closing delimiter across newlines.
-            if let Some(new_pos) = self.skipper.skip_comment(self.source, self.cursor, end) {
+            if let Some(new_pos) = self.skipper.skip_comment(&self.source, self.cursor, end) {
                 self.cursor = new_pos;
                 at_sol = false;
                 indent = 0;
                 continue;
             }
 
-            if let Some(new_pos) = self.skipper.skip_string(self.source, self.cursor, end) {
+            if let Some(new_pos) = self.skipper.skip_string(&self.source, self.cursor, end) {
                 self.cursor = new_pos;
                 // After skipping a string, check if cursor is now on a new line
                 at_sol =
@@ -529,7 +533,7 @@ impl<'a> Lexer<'a> {
 
                 // Backtick template literal — skip entirely (multi-line, may contain Frame-like syntax)
                 b'`' => {
-                    if let Some(new_pos) = skip_template_literal(self.source, self.cursor, end) {
+                    if let Some(new_pos) = skip_template_literal(&self.source, self.cursor, end) {
                         self.cursor = new_pos;
                         at_sol = new_pos < end && new_pos > 0 && self.source[new_pos - 1] == b'\n';
                         indent = 0;
@@ -840,7 +844,7 @@ impl<'a> Lexer<'a> {
             // Try to skip comments via SyntaxSkipper (handles #, /* */, etc.)
             if let Some(new_pos) = self
                 .skipper
-                .skip_comment(self.source, self.cursor, self.end)
+                .skip_comment(&self.source, self.cursor, self.end)
             {
                 self.capture_section_comment(self.cursor, new_pos);
                 self.cursor = new_pos;
@@ -1037,7 +1041,7 @@ mod tests {
     }
 
     // Helper: create a lexer for Python
-    fn make_lexer(src: &[u8]) -> Lexer<'_> {
+    fn make_lexer(src: &[u8]) -> Lexer {
         Lexer::new(src, Span::new(0, src.len()), TargetLanguage::Python3)
     }
 

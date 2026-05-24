@@ -21,7 +21,7 @@ mod _expr_scanner {
 }
 use _expr_scanner::ExprScannerFsm;
 
-impl<'a> Parser<'a> {
+impl Parser {
     /// Parse the domain section.
     ///
     /// Each field uses canonical Frame syntax: `name [: type] = init`.
@@ -489,7 +489,10 @@ mod tests {
         assert!(out.contains("107: 1"), "missing first dict entry:\n{out}");
         // Closing brace + last entry present ⇒ the literal was not truncated
         // at the first newline (the #41 symptom).
-        assert!(out.contains("136: 1}"), "literal truncated / not closed:\n{out}");
+        assert!(
+            out.contains("136: 1}"),
+            "literal truncated / not closed:\n{out}"
+        );
     }
 
     #[test]
@@ -497,7 +500,10 @@ mod tests {
         let out = py("        dirs = [\"north\", \"south\",\n            \"ne\", \"nw\"]");
         assert!(out.contains("class Repro"), "did not compile:\n{out}");
         assert!(out.contains("\"north\""), "missing first element:\n{out}");
-        assert!(out.contains("\"nw\"]"), "array truncated / not closed:\n{out}");
+        assert!(
+            out.contains("\"nw\"]"),
+            "array truncated / not closed:\n{out}"
+        );
     }
 
     #[test]
@@ -507,7 +513,10 @@ mod tests {
         let out = py("        a = {1: 1,\n            2: 2}\n        b = 9");
         assert!(out.contains("class Repro"), "did not compile:\n{out}");
         assert!(out.contains("2: 2}"), "first literal truncated:\n{out}");
-        assert!(out.contains("9"), "following field 'b' was swallowed:\n{out}");
+        assert!(
+            out.contains("9"),
+            "following field 'b' was swallowed:\n{out}"
+        );
     }
 
     #[test]

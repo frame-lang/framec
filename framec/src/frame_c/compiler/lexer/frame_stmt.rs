@@ -9,7 +9,7 @@
 
 use super::{LexError, Lexer, Span, Spanned, Token};
 
-impl<'a> Lexer<'a> {
+impl Lexer {
     // ========================================================================
     // SOL Frame Statement Detection (Native-Aware Mode)
     // ========================================================================
@@ -105,7 +105,7 @@ impl<'a> Lexer<'a> {
                     span: Span::new(check_pos, self.cursor),
                 }];
                 // Capture the expression after return as native code
-                let line_end = self.skipper.find_line_end(self.source, self.cursor, end);
+                let line_end = self.skipper.find_line_end(&self.source, self.cursor, end);
                 if self.cursor < line_end {
                     let expr =
                         String::from_utf8_lossy(&self.source[self.cursor..line_end]).to_string();
@@ -159,7 +159,7 @@ impl<'a> Lexer<'a> {
         }
         // -> (args) ...  — skip balanced parens, then look for $
         if self.source[k] == b'(' {
-            if let Some(k2) = self.skipper.balanced_paren_end(self.source, k, end) {
+            if let Some(k2) = self.skipper.balanced_paren_end(&self.source, k, end) {
                 k = k2;
                 while k < end && (self.source[k] == b' ' || self.source[k] == b'\t') {
                     k += 1;
@@ -241,7 +241,7 @@ impl<'a> Lexer<'a> {
         if self.cursor < end && self.source[self.cursor] == b'(' {
             if let Some(paren_end) = self
                 .skipper
-                .balanced_paren_end(self.source, self.cursor, end)
+                .balanced_paren_end(&self.source, self.cursor, end)
             {
                 let args_text =
                     String::from_utf8_lossy(&self.source[self.cursor..paren_end]).to_string();
@@ -321,7 +321,7 @@ impl<'a> Lexer<'a> {
                 let paren_start = self.cursor;
                 if let Some(paren_end) =
                     self.skipper
-                        .balanced_paren_end(self.source, self.cursor, end)
+                        .balanced_paren_end(&self.source, self.cursor, end)
                 {
                     let args_text =
                         String::from_utf8_lossy(&self.source[paren_start..paren_end]).to_string();
@@ -393,7 +393,10 @@ impl<'a> Lexer<'a> {
         paren_pos: usize,
         end: usize,
     ) -> Result<Option<Vec<Spanned>>, LexError> {
-        if let Some(paren_end) = self.skipper.balanced_paren_end(self.source, paren_pos, end) {
+        if let Some(paren_end) = self
+            .skipper
+            .balanced_paren_end(&self.source, paren_pos, end)
+        {
             let mut k = paren_end;
             while k < end && (self.source[k] == b' ' || self.source[k] == b'\t') {
                 k += 1;
@@ -420,7 +423,7 @@ impl<'a> Lexer<'a> {
                 if self.cursor < end && self.source[self.cursor] == b'(' {
                     if let Some(pe2) =
                         self.skipper
-                            .balanced_paren_end(self.source, self.cursor, end)
+                            .balanced_paren_end(&self.source, self.cursor, end)
                     {
                         let enter_args =
                             String::from_utf8_lossy(&self.source[self.cursor..pe2]).to_string();

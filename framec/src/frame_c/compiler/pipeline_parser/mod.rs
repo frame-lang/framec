@@ -57,13 +57,13 @@ impl From<LexError> for ParseError {
 // Parser
 // ============================================================================
 
-pub struct Parser<'a> {
-    lexer: Lexer<'a>,
+pub struct Parser {
+    lexer: Lexer,
 }
 
-impl<'a> Parser<'a> {
+impl Parser {
     /// Create a new Parser wrapping a Lexer.
-    pub fn new(lexer: Lexer<'a>) -> Self {
+    pub fn new(lexer: Lexer) -> Self {
         Parser { lexer }
     }
 

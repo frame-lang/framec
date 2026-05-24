@@ -10,7 +10,7 @@ use super::{ParseError, Parser};
 use crate::frame_c::compiler::frame_ast::*;
 use crate::frame_c::compiler::lexer::Token;
 
-impl<'a> Parser<'a> {
+impl Parser {
     // ========================================================================
     // Actions Section
     // ========================================================================
