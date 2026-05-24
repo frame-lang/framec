@@ -1,0 +1,55 @@
+<script>
+// Light/dark toggle. Dark is the default; first visit follows the OS
+// prefers-color-scheme, and an explicit stored choice always wins. The server
+// renders the dark scheme (color_scheme: frame-dark), and this runs
+// synchronously in <head> — before the body paints — so switching to light
+// happens with no flash on navigation.
+(function () {
+  var LIGHT = "frame-light", DARK = "frame-dark", KEY = "frame-theme";
+
+  function stored() {
+    try { return localStorage.getItem(KEY); } catch (e) { return null; }
+  }
+
+  function swap(scheme) {
+    if (window.jtd && typeof jtd.setTheme === "function") {
+      jtd.setTheme(scheme);
+      return;
+    }
+    // Fallback mirrors jtd.setTheme: first stylesheet link is the scheme sheet.
+    var link = document.querySelector('[rel="stylesheet"]');
+    if (link) link.setAttribute("href", link.getAttribute("href").replace(/just-the-docs-[a-z-]+\.css/, "just-the-docs-" + scheme + ".css"));
+  }
+
+  // Stored choice wins; otherwise honor the OS preference. Dark stays the
+  // default for OS-dark and no-preference visitors.
+  var s = stored();
+  var scheme = (s === LIGHT || s === DARK) ? s
+    : (window.matchMedia && matchMedia("(prefers-color-scheme: light)").matches ? LIGHT : DARK);
+  // Server already rendered dark, so only swap when light is needed. Runs now
+  // (head parse, pre-paint) via the manual fallback since jtd loads later.
+  if (scheme === LIGHT) swap(LIGHT);
+
+  function setLabel(btn) {
+    btn.textContent = scheme === DARK ? "☀" : "☾"; // sun when dark, moon when light
+    btn.setAttribute("aria-label", scheme === DARK ? "Switch to light mode" : "Switch to dark mode");
+  }
+
+  function ready() {
+    var btn = document.createElement("button");
+    btn.id = "frame-theme-toggle";
+    btn.type = "button";
+    setLabel(btn);
+    btn.addEventListener("click", function () {
+      scheme = (scheme === DARK) ? LIGHT : DARK;
+      swap(scheme);
+      setLabel(btn);
+      try { localStorage.setItem(KEY, scheme); } catch (e) {}
+    });
+    document.body.appendChild(btn);
+  }
+
+  if (document.readyState !== "loading") ready();
+  else document.addEventListener("DOMContentLoaded", ready);
+})();
+</script>

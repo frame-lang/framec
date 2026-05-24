@@ -1,3 +1,9 @@
+---
+title: "Frame and Hardware: The Parallel That Points Somewhere"
+parent: Articles
+nav_order: 4
+---
+
 # Frame and Hardware: The Parallel That Points Somewhere
 
 *Prompt Engineer: Mark Truluck <mark@frame-lang.org>*

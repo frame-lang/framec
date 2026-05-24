@@ -1,4 +1,7 @@
-
+---
+title: "Future RFC notes (scratch)"
+nav_exclude: true
+---
 
 # RFCSystem Context
 

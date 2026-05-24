@@ -1,3 +1,8 @@
+---
+title: "framec Codegen Pipeline"
+nav_order: 12
+---
+
 # framec Codegen Pipeline
 
 This document maps the codegen pipeline at

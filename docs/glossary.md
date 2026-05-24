@@ -1,3 +1,8 @@
+---
+title: Glossary
+nav_order: 7
+---
+
 # Frame Glossary
 
 Plain-English definitions of the terms used across the Frame documentation —

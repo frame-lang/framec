@@ -1,3 +1,8 @@
+---
+title: Runtime
+nav_order: 6
+---
+
 # The Frame Runtime, by example
 
 *Prompt Engineer: Mark Truluck <mark@frame-lang.org>*
@@ -87,7 +92,7 @@ Now the lamp has a state:
         turn_on()
 
     machine:
-        **$Operating {}**
+        $Operating {}  // new
 }
 ```
 
@@ -156,9 +161,10 @@ state dispatcher → dispatcher does nothing → everything unwinds.
 
     machine:
         $Operating {
-            **turn_on() {
+            // new in this step
+            turn_on() {
                 print("lamp is on")
-            }**
+            }
         }
 }
 ```
@@ -221,7 +227,7 @@ dispatcher. Stack traces land on the specific handler that ran.
             }
         }
 
-        **$On {}**
+        $On {}  // new
 }
 ```
 
@@ -245,8 +251,9 @@ def __router(self, __e):
     state_name = self.__compartment.state
     if state_name == "Off":
         self._state_Off(__e, self.__compartment)
-    **elif state_name == "On":
-        self._state_On(__e, self.__compartment)**
+    # new in this step
+    elif state_name == "On":
+        self._state_On(__e, self.__compartment)
 ```
 
 One branch per state — the router checks the current state's name
@@ -254,8 +261,9 @@ and calls its dispatcher. `$On` gets its own dispatcher, empty for
 now since the state has no handlers:
 
 ```python
-**def _state_On(self, __e, compartment):
-    pass**
+# new in this step
+def _state_On(self, __e, compartment):
+    pass
 ```
 
 The runtime is set up to dispatch to `$On` if the system ever gets
@@ -273,7 +281,7 @@ there. It just never does.
     machine:
         $Off {
             turn_on() {
-                **-> $On**
+                -> $On  // new
             }
         }
 
@@ -291,7 +299,7 @@ constructor gains a field:
 def __init__(self):
     self._context_stack = []
     self.__compartment = LampCompartment("Off")
-    **self.__next_compartment = None**
+    self.__next_compartment = None  # new
 ```
 
 `__next_compartment` holds the destination of a transition that's
@@ -302,9 +310,10 @@ The handler doesn't switch states directly — it queues the switch:
 
 ```python
 def _s_Off_hdl_user_turn_on(self, __e, compartment):
-    **next_comp = LampCompartment("On")
+    # new in this step
+    next_comp = LampCompartment("On")
     self.__transition(next_comp)
-    return**
+    return
 ```
 
 It builds a compartment for the destination, hands it to
@@ -312,8 +321,9 @@ It builds a compartment for the destination, hands it to
 `__transition` is small — it just caches the destination:
 
 ```python
-**def __transition(self, next_compartment):
-    self.__next_compartment = next_compartment**
+# new in this step
+def __transition(self, next_compartment):
+    self.__next_compartment = next_compartment
 ```
 
 The actual state switch happens in the kernel, which now checks
@@ -323,12 +333,13 @@ for a pending transition after the router returns:
 def __kernel(self, __e):
     self.__router(__e)
 
-    **# __next_compartment is set if a transition occurred
+    # new in this step
+    # __next_compartment is set if a transition occurred
     # during the router call.
     if self.__next_compartment is not None:
         next_compartment = self.__next_compartment
         self.__next_compartment = None
-        self.__compartment = next_compartment**
+        self.__compartment = next_compartment
 ```
 
 If a transition was queued during the router call, the kernel
@@ -364,18 +375,20 @@ nothing — `$On` has no handler for it.
 
     machine:
         $Off {
-            **<$() {
+            // new in this step
+            <$() {
                 print("lamp going on")
-            }**
+            }
             turn_on() {
-                **-> "switch flipped" $On**
+                -> "switch flipped" $On  // new
             }
         }
 
         $On {
-            **$>() {
+            // new in this step
+            $>() {
                 print("lamp is on")
-            }**
+            }
         }
 }
 ```
@@ -408,15 +421,17 @@ def __kernel(self, __e):
         next_compartment = self.__next_compartment
         self.__next_compartment = None
 
-        **# Fire <$ on the current state
+        # new in this step
+        # Fire <$ on the current state
         exit_event = LampFrameEvent("<$", [])
-        self.__router(exit_event)**
+        self.__router(exit_event)
 
         self.__compartment = next_compartment
 
-        **# Fire $> on the new state
+        # new in this step
+        # Fire $> on the new state
         enter_event = LampFrameEvent("$>", [])
-        self.__router(enter_event)**
+        self.__router(enter_event)
 ```
 
 The kernel synthesizes two FrameEvents during a transition. First
@@ -435,14 +450,16 @@ its state declares:
 
 ```python
 def _state_Off(self, __e, compartment):
-    **if __e._message == "<$":
-        self._s_Off_hdl_frame_exit(__e, compartment); return**
+    # new in this step
+    if __e._message == "<$":
+        self._s_Off_hdl_frame_exit(__e, compartment); return
     if __e._message == "turn_on":
         self._s_Off_hdl_user_turn_on(__e, compartment); return
 
 def _state_On(self, __e, compartment):
-    **if __e._message == "$>":
-        self._s_On_hdl_frame_enter(__e, compartment); return**
+    # new in this step
+    if __e._message == "$>":
+        self._s_On_hdl_frame_enter(__e, compartment); return
 ```
 
 Each state's dispatcher matches the lifecycle messages and routes
@@ -450,11 +467,12 @@ to the right handler. The handler methods themselves are
 straightforward:
 
 ```python
-**def _s_Off_hdl_frame_exit(self, __e, compartment):
+# new in this step
+def _s_Off_hdl_frame_exit(self, __e, compartment):
     print("lamp going on")
 
 def _s_On_hdl_frame_enter(self, __e, compartment):
-    print("lamp is on")**
+    print("lamp is on")
 ```
 
 The `frame` part of the name is what we deferred explaining in
@@ -492,13 +510,14 @@ def __init__(self):
     self.__next_compartment = None
 
 def _frame_init(self):
-    **# Fire $> on the start state
+    # new in this step
+    # Fire $> on the start state
     enter_event = LampFrameEvent("$>", self.__compartment.enter_args)
     enter_ctx = LampFrameContext(enter_event, None)
     self._context_stack.append(enter_ctx)
     self.__router(enter_event)
     self.__process_transition_loop()
-    self._context_stack.pop()**
+    self._context_stack.pop()
 
 @classmethod
 def _create(cls):
@@ -569,13 +588,15 @@ transition.
 
         $On {
             $>() {
-                **self.cycles = self.cycles + 1
-                print(f"lamp is on (cycle {self.cycles})")**
+                // new in this step
+                self.cycles = self.cycles + 1
+                print(f"lamp is on (cycle {self.cycles})")
             }
         }
 
-    **domain:
-        cycles: int = 0**
+    // new in this step
+    domain:
+        cycles: int = 0
 }
 ```
 
@@ -590,7 +611,7 @@ constructor gains a line to initialize the field:
 
 ```python
 def __init__(self):
-    **self.cycles = 0**
+    self.cycles = 0  # new
     self._context_stack = []
     self.__compartment = LampCompartment("Off")
     self.__next_compartment = None
@@ -630,7 +651,7 @@ For now, the lamp tracks its on-count across all calls to
 @@system Lamp {
     interface:
         turn_on()
-        **is_on(): bool**
+        is_on(): bool  // new
 
     machine:
         $Off {
@@ -640,9 +661,10 @@ For now, the lamp tracks its on-count across all calls to
             turn_on() {
                 -> "switch flipped" $On
             }
-            **is_on(): bool {
+            // new in this step
+            is_on(): bool {
                 @@:(false)
-            }**
+            }
         }
 
         $On {
@@ -650,9 +672,10 @@ For now, the lamp tracks its on-count across all calls to
                 self.cycles = self.cycles + 1
                 print(f"lamp is on (cycle {self.cycles})")
             }
-            **is_on(): bool {
+            // new in this step
+            is_on(): bool {
                 @@:(true)
-            }**
+            }
         }
 
     domain:
@@ -675,7 +698,7 @@ FrameContext gains a slot for it:
 class LampFrameContext:
     def __init__(self, event):
         self.event = event
-        **self._return = None**
+        self._return = None  # new
 ```
 
 `_return` is where the return value lives during an interface
@@ -683,12 +706,13 @@ call. The wrapper reads it after the kernel returns. The wrapper
 for `is_on` declares a return type and reads the slot at the end:
 
 ```python
-**def is_on(self) -> bool:
+# new in this step
+def is_on(self) -> bool:
     __e = LampFrameEvent("is_on", [])
     __ctx = LampFrameContext(__e)
     self._context_stack.append(__ctx)
     self.__kernel(__e)
-    return self._context_stack.pop()._return**
+    return self._context_stack.pop()._return
 ```
 
 It's the same shape as `turn_on`'s wrapper, plus a final line that
@@ -703,24 +727,27 @@ def _state_Off(self, __e, compartment):
         self._s_Off_hdl_frame_exit(__e, compartment); return
     if __e._message == "turn_on":
         self._s_Off_hdl_user_turn_on(__e, compartment); return
-    **if __e._message == "is_on":
-        self._s_Off_hdl_user_is_on(__e, compartment); return**
+    # new in this step
+    if __e._message == "is_on":
+        self._s_Off_hdl_user_is_on(__e, compartment); return
 
 def _state_On(self, __e, compartment):
     if __e._message == "$>":
         self._s_On_hdl_frame_enter(__e, compartment); return
-    **if __e._message == "is_on":
-        self._s_On_hdl_user_is_on(__e, compartment); return**
+    # new in this step
+    if __e._message == "is_on":
+        self._s_On_hdl_user_is_on(__e, compartment); return
 ```
 
 And each state has its own `is_on` handler:
 
 ```python
-**def _s_Off_hdl_user_is_on(self, __e, compartment):
+# new in this step
+def _s_Off_hdl_user_is_on(self, __e, compartment):
     self._context_stack[-1]._return = False
 
 def _s_On_hdl_user_is_on(self, __e, compartment):
-    self._context_stack[-1]._return = True**
+    self._context_stack[-1]._return = True
 ```
 
 `@@:(false)` compiles to `self._context_stack[-1]._return = False`.
@@ -781,7 +808,7 @@ declaration:
 ```frame
 interface:
     turn_on()
-    **is_on(): bool = false**
+    is_on(): bool = false  // new
 ```
 
 The `= false` after the return type is the default. If no handler
@@ -791,9 +818,9 @@ rather than `None`:
 
 ```python
 class LampFrameContext:
-    def __init__(self, event**, return_default**):
+    def __init__(self, event, return_default):
         self.event = event
-        self._return = **return_default**
+        self._return = return_default
 ```
 
 The wrapper for each method passes its declared default in:
@@ -801,7 +828,7 @@ The wrapper for each method passes its declared default in:
 ```python
 def is_on(self) -> bool:
     __e = LampFrameEvent("is_on", [])
-    __ctx = LampFrameContext(__e**, False**)
+    __ctx = LampFrameContext(__e, False)
     self._context_stack.append(__ctx)
     self.__kernel(__e)
     return self._context_stack.pop()._return
@@ -857,7 +884,7 @@ layers work the same. For target-specific async behavior, see the
 ```frame
 @@system Lamp {
     interface:
-        **turn_on(brightness: int)**
+        turn_on(brightness: int)  // new
         is_on(): bool
 
     machine:
@@ -865,10 +892,11 @@ layers work the same. For target-specific async behavior, see the
             <$() {
                 print("lamp going on")
             }
-            **turn_on(brightness: int) {
+            // new in this step
+            turn_on(brightness: int) {
                 print(f"requested brightness: {brightness}")
                 -> "switch flipped" $On
-            }**
+            }
             is_on(): bool {
                 @@:(false)
             }
@@ -896,8 +924,8 @@ The wrapper accepts the parameter and packs it into the
 FrameEvent:
 
 ```python
-def turn_on(self, **brightness: int**):
-    __e = LampFrameEvent("turn_on", **[brightness]**)
+def turn_on(self, brightness: int):
+    __e = LampFrameEvent("turn_on", [brightness])
     __ctx = LampFrameContext(__e)
     self._context_stack.append(__ctx)
     self.__kernel(__e)
@@ -910,7 +938,7 @@ handler binds the parameter to a local at the top of its body:
 
 ```python
 def _s_Off_hdl_user_turn_on(self, __e, compartment):
-    **brightness = __e._parameters[0]**
+    brightness = __e._parameters[0]  # new
     print(f"requested brightness: {brightness}")
     next_comp = LampCompartment("On")
     self.__transition(next_comp)
@@ -975,7 +1003,7 @@ Step 13.
     interface:
         turn_on(brightness: int)
         is_on(): bool
-        **get_brightness(): int**
+        get_brightness(): int  // new
 
     machine:
         $Off {
@@ -983,27 +1011,29 @@ Step 13.
                 print("lamp going on")
             }
             turn_on(brightness: int) {
-                **-> "switch flipped" $On(brightness)**
+                -> "switch flipped" $On(brightness)  // new
             }
             is_on(): bool {
                 @@:(false)
             }
-            **get_brightness(): int {
+            // new in this step
+            get_brightness(): int {
                 @@:(0)
-            }**
+            }
         }
 
-        **$On(brightness: int) {**
+        $On(brightness: int) {  // new
             $>() {
                 self.cycles = self.cycles + 1
-                **print(f"lamp is on at brightness {brightness} (cycle {self.cycles})")**
+                print(f"lamp is on at brightness {brightness} (cycle {self.cycles})")  // new
             }
             is_on(): bool {
                 @@:(true)
             }
-            **get_brightness(): int {
+            // new in this step
+            get_brightness(): int {
                 @@:(brightness)
-            }**
+            }
         }
 
     domain:
@@ -1026,7 +1056,7 @@ gains a field:
 class LampCompartment:
     def __init__(self, state):
         self.state = state
-        **self.state_args = []**
+        self.state_args = []  # new
 ```
 
 `state_args` is a positional list, same shape as
@@ -1038,7 +1068,7 @@ new compartment before queueing it:
 def _s_Off_hdl_user_turn_on(self, __e, compartment):
     brightness = __e._parameters[0]
     next_comp = LampCompartment("On")
-    **next_comp.state_args = [brightness]**
+    next_comp.state_args = [brightness]  # new
     self.__transition(next_comp)
     return
 ```
@@ -1053,12 +1083,12 @@ bind event parameters:
 
 ```python
 def _s_On_hdl_frame_enter(self, __e, compartment):
-    **brightness = compartment.state_args[0]**
+    brightness = compartment.state_args[0]  # new
     self.cycles = self.cycles + 1
     print(f"lamp is on at brightness {brightness} (cycle {self.cycles})")
 
 def _s_On_hdl_user_get_brightness(self, __e, compartment):
-    **brightness = compartment.state_args[0]**
+    brightness = compartment.state_args[0]  # new
     self._context_stack[-1]._return = brightness
 ```
 
@@ -1098,7 +1128,7 @@ of the state's identity until the lamp transitions away.
                 print("lamp going on")
             }
             turn_on(brightness: int) {
-                **-> "switch flipped" ("hello") $On(brightness)**
+                -> "switch flipped" ("hello") $On(brightness)  // new
             }
             is_on(): bool {
                 @@:(false)
@@ -1109,9 +1139,9 @@ of the state's identity until the lamp transitions away.
         }
 
         $On(brightness: int) {
-            **$>(greeting: str) {**
+            $>(greeting: str) {  // new
                 self.cycles = self.cycles + 1
-                **print(f"{greeting} — lamp is on at brightness {brightness} (cycle {self.cycles})")**
+                print(f"{greeting} — lamp is on at brightness {brightness} (cycle {self.cycles})")  // new
             }
             is_on(): bool {
                 @@:(true)
@@ -1151,7 +1181,7 @@ class LampCompartment:
     def __init__(self, state):
         self.state = state
         self.state_args = []
-        **self.enter_args = []**
+        self.enter_args = []  # new
 ```
 
 The handler populates `enter_args` alongside `state_args` before
@@ -1162,7 +1192,7 @@ def _s_Off_hdl_user_turn_on(self, __e, compartment):
     brightness = __e._parameters[0]
     next_comp = LampCompartment("On")
     next_comp.state_args = [brightness]
-    **next_comp.enter_args = ["hello"]**
+    next_comp.enter_args = ["hello"]  # new
     self.__transition(next_comp)
     return
 ```
@@ -1185,7 +1215,7 @@ def __kernel(self, __e):
 
         self.__compartment = next_compartment
 
-        **enter_event = LampFrameEvent("$>", next_compartment.enter_args)**
+        enter_event = LampFrameEvent("$>", next_compartment.enter_args)  # new
         self.__router(enter_event)
 ```
 
@@ -1194,7 +1224,7 @@ ordinary event parameters. The handler binds them at the top:
 
 ```python
 def _s_On_hdl_frame_enter(self, __e, compartment):
-    **greeting = __e._parameters[0]**
+    greeting = __e._parameters[0]  # new
     brightness = compartment.state_args[0]
     self.cycles = self.cycles + 1
     print(f"{greeting} — lamp is on at brightness {brightness} (cycle {self.cycles})")
@@ -1217,15 +1247,16 @@ doesn't care which is which.
 @@system Lamp {
     interface:
         turn_on(brightness: int)
-        **turn_off(reason: str)**
+        turn_off(reason: str)  // new
         is_on(): bool
         get_brightness(): int
 
     machine:
         $Off {
-            **$>(last_reason: str) {
+            // new in this step
+            $>(last_reason: str) {
                 print(f"lamp went dark: {last_reason}")
-            }**
+            }
             <$() {
                 print("lamp going on")
             }
@@ -1245,12 +1276,14 @@ doesn't care which is which.
                 self.cycles = self.cycles + 1
                 print(f"{greeting} — lamp is on at brightness {brightness} (cycle {self.cycles})")
             }
-            **<$(reason: str) {
+            // new in this step
+            <$(reason: str) {
                 print(f"turning off: {reason}")
-            }**
-            **turn_off(reason: str) {
+            }
+            // new in this step
+            turn_off(reason: str) {
                 (reason) -> "switch flipped" (reason) $Off
-            }**
+            }
             is_on(): bool {
                 @@:(true)
             }
@@ -1281,7 +1314,7 @@ class LampCompartment:
         self.state = state
         self.state_args = []
         self.enter_args = []
-        **self.exit_args = []**
+        self.exit_args = []  # new
 ```
 
 The transition populates `exit_args` on the *current*
@@ -1291,7 +1324,7 @@ source state's, so its compartment is where the args belong:
 ```python
 def _s_On_hdl_user_turn_off(self, __e, compartment):
     reason = __e._parameters[0]
-    **compartment.exit_args = [reason]**
+    compartment.exit_args = [reason]  # new
     next_comp = LampCompartment("Off")
     next_comp.enter_args = [reason]
     self.__transition(next_comp)
@@ -1315,7 +1348,7 @@ def __kernel(self, __e):
         next_compartment = self.__next_compartment
         self.__next_compartment = None
 
-        **exit_event = LampFrameEvent("<$", self.__compartment.exit_args)**
+        exit_event = LampFrameEvent("<$", self.__compartment.exit_args)  # new
         self.__router(exit_event)
 
         self.__compartment = next_compartment
@@ -1329,7 +1362,7 @@ same prologue pattern user handlers and `$>` handlers both use:
 
 ```python
 def _s_On_hdl_frame_exit(self, __e, compartment):
-    **reason = __e._parameters[0]**
+    reason = __e._parameters[0]  # new
     print(f"turning off: {reason}")
 ```
 
@@ -1390,10 +1423,10 @@ not "if the receiver exists, the caller must provide".
     machine:
         $Off {
             $>(last_reason: str) {
-                **self.log_event(f"off: {last_reason}")**
+                self.log_event(f"off: {last_reason}")  // new
             }
             <$() {
-                **self.log_event("turning on")**
+                self.log_event("turning on")  // new
             }
             turn_on(brightness: int) {
                 -> "switch flipped" ("hello") $On(brightness)
@@ -1409,10 +1442,10 @@ not "if the receiver exists, the caller must provide".
         $On(brightness: int) {
             $>(greeting: str) {
                 self.cycles = self.cycles + 1
-                **self.log_event(f"on at {brightness}: {greeting}")**
+                self.log_event(f"on at {brightness}: {greeting}")  // new
             }
             <$(reason: str) {
-                **self.log_event(f"turning off: {reason}")**
+                self.log_event(f"turning off: {reason}")  // new
             }
             turn_off(reason: str) {
                 (reason) -> "switch flipped" (reason) $Off
@@ -1425,15 +1458,16 @@ not "if the receiver exists, the caller must provide".
             }
         }
 
-    **actions:
+    // new in this step
+    actions:
         log_event(msg: str) {
             print(f"[event] {msg}")
             self.event_count = self.event_count + 1
-        }**
+        }
 
     domain:
         cycles: int = 0
-        **event_count: int = 0**
+        event_count: int = 0  // new
 }
 ```
 
@@ -1445,9 +1479,10 @@ lamp now logs through `log_event` rather than printing inline.
 The action becomes a regular method on the system class:
 
 ```python
-**def log_event(self, msg: str):
+# new in this step
+def log_event(self, msg: str):
     print(f"[event] {msg}")
-    self.event_count = self.event_count + 1**
+    self.event_count = self.event_count + 1
 ```
 
 No special wrapping, no context stack, no kernel involvement —
@@ -1458,7 +1493,7 @@ def _s_On_hdl_frame_enter(self, __e, compartment):
     greeting = __e._parameters[0]
     brightness = compartment.state_args[0]
     self.cycles = self.cycles + 1
-    **self.log_event(f"on at {brightness}: {greeting}")**
+    self.log_event(f"on at {brightness}: {greeting}")  # new
 ```
 
 `log_event(...)` in Frame source compiles to `self.log_event(...)`
@@ -1519,14 +1554,15 @@ it — for diagnostic logging, conditional behavior, etc.
 
 ```frame
 @@system Lamp {
-    **operations:
+    // new in this step
+    operations:
         static version(): str {
             return "1.0.0"
         }
 
         get_event_count(): int {
             return self.event_count
-        }**
+        }
 
     interface:
         turn_on(brightness: int)
@@ -1564,12 +1600,13 @@ The lamp adds two operations:
 The operations compile straight to methods on the system class:
 
 ```python
-**@staticmethod
+# new in this step
+@staticmethod
 def version() -> str:
     return "1.0.0"
 
 def get_event_count(self) -> int:
-    return self.event_count**
+    return self.event_count
 ```
 
 Static operations get `@staticmethod` (or the target's equivalent)
@@ -1618,11 +1655,12 @@ state machine should react to.
     machine:
         $Off {
             $>(last_reason: str) {
-                **@@:data.timestamp = self.timestamp_now()
-                self.log_event(f"off: {last_reason}")**
+                // new in this step
+                @@:data.timestamp = self.timestamp_now()
+                self.log_event(f"off: {last_reason}")
             }
             <$() {
-                **@@:data.timestamp = self.timestamp_now()**
+                @@:data.timestamp = self.timestamp_now()  // new
                 self.log_event("turning on")
             }
             turn_on(brightness: int) {
@@ -1639,11 +1677,11 @@ state machine should react to.
         $On(brightness: int) {
             $>(greeting: str) {
                 self.cycles = self.cycles + 1
-                **@@:data.timestamp = self.timestamp_now()**
+                @@:data.timestamp = self.timestamp_now()  // new
                 self.log_event(f"on at {brightness}: {greeting}")
             }
             <$(reason: str) {
-                **@@:data.timestamp = self.timestamp_now()**
+                @@:data.timestamp = self.timestamp_now()  // new
                 self.log_event(f"turning off: {reason}")
             }
             turn_off(reason: str) {
@@ -1659,13 +1697,14 @@ state machine should react to.
 
     actions:
         log_event(msg: str) {
-            **print(f"[{@@:data.timestamp}] [event] {msg}")**
+            print(f"[{@@:data.timestamp}] [event] {msg}")  // new
             self.event_count = self.event_count + 1
         }
-        **timestamp_now(): str {
+        // new in this step
+        timestamp_now(): str {
             import datetime
             return datetime.datetime.now().isoformat()
-        }**
+        }
 
     domain:
         cycles: int = 0
@@ -1701,7 +1740,7 @@ class LampFrameContext:
     def __init__(self, event):
         self.event = event
         self._return = None
-        **self._data = {}**
+        self._data = {}  # new
 ```
 
 `_data` is a string-keyed dict, empty when the context is
@@ -1714,11 +1753,11 @@ def _s_On_hdl_frame_enter(self, __e, compartment):
     greeting = __e._parameters[0]
     brightness = compartment.state_args[0]
     self.cycles = self.cycles + 1
-    **self._context_stack[-1]._data["timestamp"] = self.timestamp_now()**
+    self._context_stack[-1]._data["timestamp"] = self.timestamp_now()  # new
     self.log_event(f"on at {brightness}: {greeting}")
 
 def log_event(self, msg: str):
-    **print(f"[{self._context_stack[-1]._data['timestamp']}] [event] {msg}")**
+    print(f"[{self._context_stack[-1]._data['timestamp']}] [event] {msg}")  # new
     self.event_count = self.event_count + 1
 ```
 
@@ -1789,7 +1828,7 @@ variables will be the central feature.
 ## Step 16 — System parameters
 
 ```frame
-**@@system Lamp(name: str = "Lamp") {**
+@@system Lamp(name: str = "Lamp") {  // new
     operations:
         static version(): str {
             return "1.0.0"
@@ -1803,7 +1842,7 @@ variables will be the central feature.
         turn_off(reason: str)
         is_on(): bool
         get_brightness(): int
-        **get_name(): str**
+        get_name(): str  // new
 
     machine:
         $Off {
@@ -1824,16 +1863,17 @@ variables will be the central feature.
             get_brightness(): int {
                 @@:(0)
             }
-            **get_name(): str {
+            // new in this step
+            get_name(): str {
                 @@:(self.name)
-            }**
+            }
         }
 
         $On(brightness: int) {
             $>(greeting: str) {
                 self.cycles = self.cycles + 1
                 @@:data.timestamp = self.timestamp_now()
-                **self.log_event(f"{self.name} on at {brightness}: {greeting}")**
+                self.log_event(f"{self.name} on at {brightness}: {greeting}")  // new
             }
             <$(reason: str) {
                 @@:data.timestamp = self.timestamp_now()
@@ -1848,9 +1888,10 @@ variables will be the central feature.
             get_brightness(): int {
                 @@:(brightness)
             }
-            **get_name(): str {
+            // new in this step
+            get_name(): str {
                 @@:(self.name)
-            }**
+            }
         }
 
     actions:
@@ -1859,7 +1900,7 @@ variables will be the central feature.
     domain:
         cycles: int = 0
         event_count: int = 0
-        **name: str = name**
+        name: str = name  // new
 }
 ```
 
@@ -1878,10 +1919,10 @@ right, field on the left. The constructor signature picks up the
 parameter:
 
 ```python
-def __init__(self**, name: str = "Lamp"**):
+def __init__(self, name: str = "Lamp"):
     self.cycles = 0
     self.event_count = 0
-    **self.name = name**
+    self.name = name  # new
     self._context_stack = []
     self.__compartment = LampCompartment("Off")
     self.__next_compartment = None
@@ -1932,7 +1973,7 @@ to wire up.
 ## Step 17 — `const` domain fields and `@@:system.state`
 
 ```frame
-@@system Lamp(name: str = "Lamp"**, max_brightness: int = 100**) {
+@@system Lamp(name: str = "Lamp", max_brightness: int = 100) {
     operations:
         static version(): str {
             return "1.0.0"
@@ -1940,9 +1981,10 @@ to wire up.
         get_event_count(): int {
             return self.event_count
         }
-        **get_state(): str {
+        // new in this step
+        get_state(): str {
             return @@:system.state
-        }**
+        }
 
     interface:
         turn_on(brightness: int)
@@ -1962,10 +2004,11 @@ to wire up.
                 self.log_event("turning on")
             }
             turn_on(brightness: int) {
-                **actual = brightness
+                // new in this step
+                actual = brightness
                 if actual > self.max_brightness:
                     actual = self.max_brightness
-                -> "switch flipped" ("hello") $On(actual)**
+                -> "switch flipped" ("hello") $On(actual)
             }
             // ... (rest unchanged)
         }
@@ -1979,7 +2022,7 @@ to wire up.
         cycles: int = 0
         event_count: int = 0
         name: str = name
-        **const max_brightness: int = max_brightness**
+        const max_brightness: int = max_brightness  // new
 }
 ```
 
@@ -1995,12 +2038,13 @@ The constructor emits the const field with a marker for its
 immutability:
 
 ```python
-def __init__(self, name: str = "Lamp"**, max_brightness: int = 100**):
+def __init__(self, name: str = "Lamp", max_brightness: int = 100):
     self.cycles = 0
     self.event_count = 0
     self.name = name
-    **# const: max_brightness
-    self.max_brightness = max_brightness**
+    # new in this step
+    # const: max_brightness
+    self.max_brightness = max_brightness
     # ... rest of constructor
 ```
 
@@ -2028,7 +2072,7 @@ compartment:
 
 ```python
 def get_state(self) -> str:
-    **return self.__compartment.state**
+    return self.__compartment.state  # new
 ```
 
 The state name string is just `self.__compartment.state`.
@@ -2084,31 +2128,33 @@ period, then probes whether the downstream service has recovered.
 
     machine:
         $Closed {
-            **$.failures: int = 0**
+            $.failures: int = 0  // new
 
             call(): str { @@:("allowed") }
-            success() { **$.failures = 0** }
+            success() { $.failures = 0 }
             failure() {
-                **$.failures = $.failures + 1
-                if $.failures >= self.threshold:**
+                // new in this step
+                $.failures = $.failures + 1
+                if $.failures >= self.threshold:
                     -> "tripped" $Open
             }
-            status(): str { @@:(f"closed (**{$.failures}** failures)") }
+            status(): str { @@:(f"closed ({$.failures} failures)") }
         }
         $Open {
-            **$.cooldown_remaining: int = 0**
+            $.cooldown_remaining: int = 0  // new
 
             $>() {
-                **$.cooldown_remaining = self.cooldown**
+                $.cooldown_remaining = self.cooldown  // new
                 print(f"Circuit OPEN — cooling down for {self.cooldown} ticks")
             }
             call(): str { @@:("blocked") }
             tick() {
-                **$.cooldown_remaining = $.cooldown_remaining - 1
-                if $.cooldown_remaining <= 0:**
+                // new in this step
+                $.cooldown_remaining = $.cooldown_remaining - 1
+                if $.cooldown_remaining <= 0:
                     -> "cooled down" $HalfOpen
             }
-            status(): str { @@:(f"open (**{$.cooldown_remaining}** ticks left)") }
+            status(): str { @@:(f"open ({$.cooldown_remaining} ticks left)") }
         }
         $HalfOpen {
             call(): str { @@:("testing") }
@@ -2150,7 +2196,7 @@ class CircuitBreakerCompartment:
         self.state_args = []
         self.enter_args = []
         self.exit_args = []
-        **self.state_vars = {}**
+        self.state_vars = {}  # new
 ```
 
 `state_vars` is a string-keyed dict, empty when the compartment is
@@ -2187,8 +2233,9 @@ constructed and populated by the state's `$>` handler.
 
 ```python
 def _s_Open_hdl_frame_enter(self, __e, compartment):
-    **if "cooldown_remaining" not in compartment.state_vars:
-        compartment.state_vars["cooldown_remaining"] = 0**
+    # new in this step
+    if "cooldown_remaining" not in compartment.state_vars:
+        compartment.state_vars["cooldown_remaining"] = 0
     compartment.state_vars["cooldown_remaining"] = self.cooldown
     print(f"Circuit OPEN — cooling down for {self.cooldown} ticks")
 ```
@@ -2212,8 +2259,9 @@ a state variable to initialize. The framepiler emits one anyway:
 
 ```python
 def _s_Closed_hdl_frame_enter(self, __e, compartment):
-    **if "failures" not in compartment.state_vars:
-        compartment.state_vars["failures"] = 0**
+    # new in this step
+    if "failures" not in compartment.state_vars:
+        compartment.state_vars["failures"] = 0
 ```
 
 When a state declares state variables, it gets a `$>` handler even
@@ -2225,15 +2273,17 @@ parameter:
 
 ```python
 def _s_Closed_hdl_user_failure(self, __e, compartment):
-    **compartment.state_vars["failures"] = compartment.state_vars["failures"] + 1
-    if compartment.state_vars["failures"] >= self.threshold:**
+    # new in this step
+    compartment.state_vars["failures"] = compartment.state_vars["failures"] + 1
+    if compartment.state_vars["failures"] >= self.threshold:
         next_comp = CircuitBreakerCompartment("Open")
         self.__transition(next_comp)
         return
 
 def _s_Open_hdl_user_tick(self, __e, compartment):
-    **compartment.state_vars["cooldown_remaining"] = compartment.state_vars["cooldown_remaining"] - 1
-    if compartment.state_vars["cooldown_remaining"] <= 0:**
+    # new in this step
+    compartment.state_vars["cooldown_remaining"] = compartment.state_vars["cooldown_remaining"] - 1
+    if compartment.state_vars["cooldown_remaining"] <= 0:
         next_comp = CircuitBreakerCompartment("HalfOpen")
         self.__transition(next_comp)
         return
@@ -2322,7 +2372,7 @@ value through its own interface method.
     machine:
         $Active {
             calibrate(): bool {
-                **baseline = @@:self.reading()**
+                baseline = @@:self.reading()  // new
                 self.offset = baseline * -1
                 @@:(true)
             }
@@ -2330,8 +2380,9 @@ value through its own interface method.
                 @@:(self.sensor_value + self.offset)
             }
             attempt_post_shutdown() {
-                **@@:self.trigger_shutdown()
-                self.trace = self.trace + "after-call;"**
+                // new in this step
+                @@:self.trigger_shutdown()
+                self.trace = self.trace + "after-call;"
             }
             trigger_shutdown() {
                 self.trace = self.trace + "shutdown-handler;"
@@ -2374,7 +2425,7 @@ method call:
 
 ```python
 def _s_Active_hdl_user_calibrate(self, __e, compartment):
-    **baseline = self.reading()**
+    baseline = self.reading()  # new
     self.offset = baseline * -1
     self._context_stack[-1]._return = True
 ```
@@ -2391,7 +2442,7 @@ caller would invoke:
 def reading(self) -> int:
     __e = SensorFrameEvent("reading", [])
     __ctx = SensorFrameContext(__e, 0)
-    **self._context_stack.append(__ctx)**
+    self._context_stack.append(__ctx)  # new
     self.__kernel(__e)
     return self._context_stack.pop()._return
 ```
@@ -2464,7 +2515,7 @@ self-call it makes triggers a transition:
 
 ```python
 def _s_Active_hdl_user_attempt_post_shutdown(self, __e, compartment):
-    **self.trigger_shutdown()**
+    self.trigger_shutdown()  # new
     self.trace = self.trace + "after-call;"
 ```
 
@@ -2493,10 +2544,10 @@ sequence visible:
 11.         __next_compartment is set → kernel processes the transition
 12.         (no <$ or $> declared, but the compartment switch happens)
 13.         __compartment is now $Shutdown's compartment
-14.         **kernel marks every stacked context as transitioned**
+14.         kernel marks every stacked context as transitioned
 15.       pop ctx_trigger
 16.     trigger_shutdown returns
-17.     **transition guard fires → return** (`self.trace += "after-call;"` is skipped)
+17.     transition guard fires → return (`self.trace += "after-call;"` is skipped)
 18.   pop ctx_attempt
 ```
 
@@ -2529,18 +2580,19 @@ class SensorFrameContext:
         self.event = event
         self._return = return_default
         self._data = {}
-        **self._transitioned = False**
+        self._transitioned = False  # new
 
 def __kernel(self, __e):
     self.__router(__e)
     if self.__next_compartment is not None:
         # ...transition processing (leaf <$, switch, leaf $>; see Step 21)...
-        **for ctx in self._context_stack:
-            ctx._transitioned = True**
+        # new in this step
+        for ctx in self._context_stack:
+            ctx._transitioned = True
 
 def _s_Active_hdl_user_attempt_post_shutdown(self, __e, compartment):
     self.trigger_shutdown()
-    **if self._context_stack[-1]._transitioned: return**
+    if self._context_stack[-1]._transitioned: return  # new
     self.trace = self.trace + "after-call;"
 ```
 
@@ -2673,8 +2725,9 @@ return to it when the dialog closes.
             }
 
             interrupt(reason: str) {
-                **push$
-                -> $Interrupted(reason)**
+                // new in this step
+                push$
+                -> $Interrupted(reason)
             }
 
             complete() {
@@ -2696,7 +2749,7 @@ return to it when the dialog closes.
             }
 
             resume() {
-                **-> pop$**
+                -> pop$  // new
             }
 
             status(): str { @@:(f"interrupted: {reason}") }
@@ -2723,7 +2776,7 @@ gains a state stack:
 ```python
 def __init__(self):
     self._context_stack = []
-    **self._state_stack = []**
+    self._state_stack = []  # new
     self.__compartment = WorkflowCompartment("Idle")
     self.__next_compartment = None
     enter_event = WorkflowFrameEvent("$>", [])
@@ -2741,7 +2794,7 @@ references, not copies. Empty when the system starts.
 ```python
 def _s_Working_hdl_user_interrupt(self, __e, compartment):
     reason = __e._parameters[0]
-    **self._state_stack.append(self.__compartment)**
+    self._state_stack.append(self.__compartment)  # new
     next_comp = WorkflowCompartment("Interrupted")
     next_comp.state_args = [reason]
     self.__transition(next_comp)
@@ -2763,7 +2816,7 @@ stack still has a reference to it.
 
 ```python
 def _s_Interrupted_hdl_user_resume(self, __e, compartment):
-    **next_comp = self._state_stack.pop()**
+    next_comp = self._state_stack.pop()  # new
     self.__transition(next_comp)
     return
 ```
@@ -2779,8 +2832,9 @@ This is where the initialization guard from Step 18 matters.
 
 ```python
 def _s_Working_hdl_frame_enter(self, __e, compartment):
-    **if "progress" not in compartment.state_vars:
-        compartment.state_vars["progress"] = 0**
+    # new in this step
+    if "progress" not in compartment.state_vars:
+        compartment.state_vars["progress"] = 0
     print("started working")
 ```
 
@@ -2883,7 +2937,7 @@ them.
             }
         }
 
-        **$Heating => $Active {**
+        $Heating => $Active {  // new
             $>() {
                 => $^              // RFC-0019: forward to $Active.$> first
                 print("heating mode")
@@ -2894,7 +2948,7 @@ them.
             }
         }
 
-        **$Cooling => $Active {**
+        $Cooling => $Active {  // new
             $>() {
                 => $^              // RFC-0019: forward to $Active.$> first
                 print("cooling mode")
@@ -2951,7 +3005,7 @@ class ThermostatCompartment:
         self.enter_args = []
         self.exit_args = []
         self.state_vars = {}
-        **self.parent_compartment = None**
+        self.parent_compartment = None  # new
 ```
 
 `parent_compartment` is `None` for states without an HSM parent
@@ -2962,12 +3016,13 @@ The framepiler emits a static topology table that knows which
 states have parents:
 
 ```python
-**_HSM_CHAIN = {
+# new in this step
+_HSM_CHAIN = {
     "Active":  ["Active"],
     "Heating": ["Active", "Heating"],
     "Cooling": ["Active", "Cooling"],
     "Off":     ["Off"],
-}**
+}
 ```
 
 Each entry maps a leaf state name to the chain from root to leaf.
@@ -2979,7 +3034,8 @@ The transition into an HSM state needs to build the whole chain,
 not just the leaf compartment. A new helper does this:
 
 ```python
-**def __prepareEnter(self, leaf, state_args, enter_args):
+# new in this step
+def __prepareEnter(self, leaf, state_args, enter_args):
     previous = None
     for name in _HSM_CHAIN[leaf]:
         comp = ThermostatCompartment(name)
@@ -2987,7 +3043,7 @@ not just the leaf compartment. A new helper does this:
         comp.enter_args = list(enter_args)
         comp.parent_compartment = previous
         previous = comp
-    return comp**
+    return comp
 ```
 
 For a transition to `$Heating`, the loop runs twice: builds an
@@ -3001,7 +3057,7 @@ instead of building the compartment directly:
 ```python
 def _s_Off_hdl_user_adjust(self, __e, compartment):
     setpoint = __e._parameters[0]
-    **next_comp = self.__prepareEnter("Heating", [], [])**
+    next_comp = self.__prepareEnter("Heating", [], [])  # new
     self.__transition(next_comp)
     return
 ```
@@ -3054,7 +3110,8 @@ calling a specific state's dispatcher with that state's compartment.
 The `=> $^` lowering uses it to route to the parent.
 
 ```python
-**def __route_to_state(self, state_name, __e, compartment):
+# new in this step
+def __route_to_state(self, state_name, __e, compartment):
     if state_name == "Active":
         self._state_Active(__e, compartment)
     elif state_name == "Heating":
@@ -3062,7 +3119,7 @@ The `=> $^` lowering uses it to route to the parent.
     elif state_name == "Cooling":
         self._state_Cooling(__e, compartment)
     elif state_name == "Off":
-        self._state_Off(__e, compartment)**
+        self._state_Off(__e, compartment)
 ```
 
 ### How `=> $^` is lowered
@@ -3226,53 +3283,53 @@ fact.
     machine:
         $Off {
             switch_to_heating(setpoint: int, reason: str) {
-                **(reason) -> ("starting up") $Heating(setpoint)**
+                (reason) -> ("starting up") $Heating(setpoint)  // new
             }
             switch_to_cooling(setpoint: int, reason: str) {
-                **(reason) -> ("starting up") $Cooling(setpoint)**
+                (reason) -> ("starting up") $Cooling(setpoint)  // new
             }
         }
 
-        **$Active(setpoint: int) {**
-            **$>(message: str) {**
+        $Active(setpoint: int) {  // new
+            $>(message: str) {  // new
                 print(f"thermostat active: {message}")
                 self.last_setpoint = setpoint
             }
 
-            **<$(reason: str) {**
+            <$(reason: str) {  // new
                 print(f"powering down: {reason}")
             }
 
             power_off(reason: str) {
-                **(reason) -> $Off**
+                (reason) -> $Off  // new
             }
 
             get_setpoint(): int {
-                **@@:(setpoint)**
+                @@:(setpoint)  // new
             }
         }
 
-        **$Heating(setpoint: int) => $Active {**
-            **$>(message: str) {**
-                **=> $^                  // RFC-0019: run $Active.$> first**
+        $Heating(setpoint: int) => $Active {  // new
+            $>(message: str) {  // new
+                => $^                  // RFC-0019: run $Active.$> first  // new
                 print(f"heating mode: {message}, target {setpoint}")
             }
 
-            **<$(reason: str) {**
+            <$(reason: str) {  // new
                 print(f"heating off: {reason}")
-                **=> $^                  // RFC-0019: run $Active.<$ after**
+                => $^                  // RFC-0019: run $Active.<$ after  // new
             }
         }
 
-        **$Cooling(setpoint: int) => $Active {**
-            **$>(message: str) {**
-                **=> $^                  // RFC-0019: run $Active.$> first**
+        $Cooling(setpoint: int) => $Active {  // new
+            $>(message: str) {  // new
+                => $^                  // RFC-0019: run $Active.$> first  // new
                 print(f"cooling mode: {message}, target {setpoint}")
             }
 
-            **<$(reason: str) {**
+            <$(reason: str) {  // new
                 print(f"cooling off: {reason}")
-                **=> $^                  // RFC-0019: run $Active.<$ after**
+                => $^                  // RFC-0019: run $Active.<$ after  // new
             }
         }
 
@@ -3354,8 +3411,8 @@ def __prepareEnter(self, leaf, state_args, enter_args):
     previous = None
     for name in _HSM_CHAIN[leaf]:
         comp = ThermostatCompartment(name)
-        **comp.state_args = list(state_args)**
-        **comp.enter_args = list(enter_args)**
+        comp.state_args = list(state_args)  # new
+        comp.enter_args = list(enter_args)  # new
         comp.parent_compartment = previous
         previous = comp
     return comp
@@ -3377,11 +3434,12 @@ helper `__prepareExit` walks up from the current leaf and
 populates `exit_args` on every compartment in the chain:
 
 ```python
-**def __prepareExit(self, exit_args):
+# new in this step
+def __prepareExit(self, exit_args):
     comp = self.__compartment
     while comp is not None:
         comp.exit_args = list(exit_args)
-        comp = comp.parent_compartment**
+        comp = comp.parent_compartment
 ```
 
 Handlers that pass exit args call this helper before
@@ -3390,7 +3448,7 @@ transitioning:
 ```python
 def _s_Active_hdl_user_power_off(self, __e, compartment):
     reason = __e._parameters[0]
-    **self.__prepareExit([reason])**
+    self.__prepareExit([reason])  # new
     next_comp = self.__prepareEnter("Off", [], [])
     self.__transition(next_comp)
     return
@@ -3412,14 +3470,16 @@ the compartment's args. The handler at each layer binds `message`
 
 ```python
 def _s_Active_hdl_frame_enter(self, __e, compartment):
-    **message = __e._parameters[0]
-    setpoint = compartment.state_args[0]**
+    # new in this step
+    message = __e._parameters[0]
+    setpoint = compartment.state_args[0]
     print(f"thermostat active: {message}")
     self.last_setpoint = setpoint
 
 def _s_Heating_hdl_frame_enter(self, __e, compartment):
-    **message = __e._parameters[0]
-    setpoint = compartment.state_args[0]**
+    # new in this step
+    message = __e._parameters[0]
+    setpoint = compartment.state_args[0]
     print(f"heating mode: {message}, target {setpoint}")
 ```
 
@@ -3438,7 +3498,7 @@ compartment too:
 
 ```python
 def _s_Active_hdl_user_get_setpoint(self, __e, compartment):
-    **setpoint = compartment.state_args[0]**
+    setpoint = compartment.state_args[0]  # new
     self._context_stack[-1]._return = setpoint
 ```
 
@@ -3590,7 +3650,7 @@ Add a single line to each child to find out:
 
 ```frame
 $Heating(setpoint: int) => $Active {
-    **=> $^**
+    => $^  // new
 
     $>(message: str) {
         print(f"heating mode: {message}, target {setpoint}")
@@ -3602,7 +3662,7 @@ $Heating(setpoint: int) => $Active {
 }
 
 $Cooling(setpoint: int) => $Active {
-    **=> $^**
+    => $^  // new
 
     $>(message: str) {
         print(f"cooling mode: {message}, target {setpoint}")
@@ -3639,8 +3699,9 @@ def _state_Heating(self, __e, compartment):
         self._s_Heating_hdl_frame_enter(__e, compartment); return
     if __e._message == "<$":
         self._s_Heating_hdl_frame_exit(__e, compartment); return
-    **# => $^ — fall through to parent
-    self._state_Active(__e, compartment.parent_compartment)**
+    # new in this step
+    # => $^ — fall through to parent
+    self._state_Active(__e, compartment.parent_compartment)
 ```
 
 The fall-through line at the bottom calls the parent's dispatcher
@@ -3666,7 +3727,7 @@ def _state_Cooling(self, __e, compartment):
         self._s_Cooling_hdl_frame_enter(__e, compartment); return
     if __e._message == "<$":
         self._s_Cooling_hdl_frame_exit(__e, compartment); return
-    **self._state_Active(__e, compartment.parent_compartment)**
+    self._state_Active(__e, compartment.parent_compartment)  # new
 ```
 
 `$Active`'s dispatcher doesn't change. It already has handlers for
@@ -3786,9 +3847,9 @@ handler.
         $Triage {
             submit(doc_type: str, content: str) {
                 if doc_type == "expense":
-                    **-> => $ExpenseReview**
+                    -> => $ExpenseReview  // new
                 elif doc_type == "policy":
-                    **-> => $PolicyReview**
+                    -> => $PolicyReview  // new
                 else:
                     -> $Rejected("unknown type")
             }
@@ -3869,7 +3930,7 @@ class ApprovalCompartment:
         self.exit_args = []
         self.state_vars = {}
         self.parent_compartment = None
-        **self.forward_event = None**
+        self.forward_event = None  # new
 ```
 
 `forward_event` holds a FrameEvent that the kernel should
@@ -3885,12 +3946,12 @@ def _s_Triage_hdl_user_submit(self, __e, compartment):
     content = __e._parameters[1]
     if doc_type == "expense":
         next_comp = self.__prepareEnter("ExpenseReview", [], [])
-        **next_comp.forward_event = __e**
+        next_comp.forward_event = __e  # new
         self.__transition(next_comp)
         return
     elif doc_type == "policy":
         next_comp = self.__prepareEnter("PolicyReview", [], [])
-        **next_comp.forward_event = __e**
+        next_comp.forward_event = __e  # new
         self.__transition(next_comp)
         return
     else:
@@ -3929,10 +3990,11 @@ def __kernel(self, __e):
             self.__compartment.state, enter_event, self.__compartment
         )
 
-        **if next_compartment.forward_event is not None:
+        # new in this step
+        if next_compartment.forward_event is not None:
             forward_event = next_compartment.forward_event
             next_compartment.forward_event = None
-            self.__router(forward_event)**
+            self.__router(forward_event)
 ```
 
 If `forward_event` is `None`, the kernel does nothing extra after
@@ -4012,7 +4074,7 @@ keeps counting from where it left off.
 ```frame
 @@[target("python_3")]
 
-**@@[persist]**
+@@[persist]  // new
 @@system Counter {
     interface:
         tick()
@@ -4155,7 +4217,8 @@ the format is Frame's contract, not any backend's.
 `save_state()` walks the system and produces the blob:
 
 ```python
-**def save_state(self) -> str:
+# new in this step
+def save_state(self) -> str:
     chain = []
     comp = self.__compartment
     while comp is not None:
@@ -4199,7 +4262,7 @@ the format is Frame's contract, not any backend's.
         "state_stack": state_stack,
         "domain": {"total": self.total},
     }
-    return json.dumps(blob)**
+    return json.dumps(blob)
 ```
 
 The method walks `__compartment` and its `parent_compartment`
@@ -4219,7 +4282,8 @@ reading order and matches what `_HSM_CHAIN` uses.
 `restore_state(blob)` rebuilds the system from a blob:
 
 ```python
-**def restore_state(self, blob_str: str):
+# new in this step
+def restore_state(self, blob_str: str):
     blob = json.loads(blob_str)
 
     # Rebuild domain
@@ -4266,7 +4330,7 @@ reading order and matches what `_HSM_CHAIN` uses.
             previous = comp
         self._state_stack.append(previous)
 
-    self.__next_compartment = None**
+    self.__next_compartment = None
 ```
 
 The method parses the blob, validates that each saved chain

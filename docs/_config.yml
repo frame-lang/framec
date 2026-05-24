@@ -1,0 +1,53 @@
+title: Frame
+description: >-
+  Frame is a language for state machines — one specification compiles to 17
+  target languages plus Graphviz state diagrams.
+
+# Served from frame-lang/framec at https://frame-lang.github.io/framec/
+# When a custom domain (e.g. docs.frame-lang.org) is configured, set
+# baseurl: "" and url: "https://docs.frame-lang.org".
+url: https://frame-lang.github.io
+baseurl: /framec
+
+# Theme is fetched at build time by jekyll-remote-theme (GitHub Pages runs it).
+# Pin to the latest released tag once verified, e.g. just-the-docs/just-the-docs@v0.10.1
+remote_theme: just-the-docs/just-the-docs
+
+plugins:
+  - jekyll-remote-theme
+  - jekyll-relative-links      # rewrites foo.md -> foo.html, preserves #anchors
+  - jekyll-seo-tag
+
+# jekyll-relative-links
+relative_links:
+  enabled: true
+  collections: false
+
+# just-the-docs
+color_scheme: frame-dark       # dark by default; toggle swaps to frame-light
+search_enabled: true
+search:
+  heading_level: 3
+  previews: 2
+heading_anchors: true
+aux_links:
+  framec on GitHub:
+    - https://github.com/frame-lang/framec
+aux_links_new_tab: true
+back_to_top: true
+back_to_top_text: "Back to top"
+
+# Published: guides, cookbook, glossary, migration guide, RFCs (index + linked
+# pages), articles, and the design/internals docs. Still excluded: contributor
+# process docs, the per-language guides (target-language code with Liquid-breaking
+# {{ }} sequences — needs {% raw %} wrapping to publish), and the RFC scratch file.
+exclude:
+  - AGENTS_README.md
+  - contributing/
+  - per_language_guides/
+  - Gemfile
+  - Gemfile.lock
+  - vendor/
+  - .bundle/
+  - .jekyll-cache/
+  - _site/

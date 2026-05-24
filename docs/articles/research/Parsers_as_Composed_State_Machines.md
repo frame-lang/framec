@@ -1,3 +1,9 @@
+---
+title: "Parsers as Composed State Machines: A Frame Architecture"
+parent: Articles
+nav_order: 7
+---
+
 # Parsers as Composed State Machines: A Frame Architecture
 
 Parsers are among the oldest well-understood problems in computer science. The tools for building them — lex and yacc, flex and bison, ANTLR, Ragel, parser combinator libraries, hand-rolled recursive descent, and more recently tree-sitter — have been refined over more than five decades. A new parsing tool has to justify itself against that inheritance. Any claim that state machines deserve a role in parsing runs immediately into the observation that state machines have always had a role in parsing, in the form of finite automata for lexing. The question is whether there is anything left to say above the lexical layer, where the work of recognizing structure has traditionally been the domain of pushdown automata implemented as either recursive descent procedures or as tables driven by a bottom-up algorithm.

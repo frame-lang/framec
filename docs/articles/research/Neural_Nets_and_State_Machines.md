@@ -1,3 +1,9 @@
+---
+title: "Neural Networks and State Machines: The Bidirectional Relationship"
+parent: Articles
+nav_order: 6
+---
+
 # Neural Networks and State Machines: The Bidirectional Relationship
 
 *Prompt Engineer: Mark Truluck <mark@frame-lang.org>*

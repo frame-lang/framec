@@ -1,3 +1,8 @@
+---
+title: Language Reference
+nav_order: 4
+---
+
 # Frame Language Reference
 
 *Prompt Engineer: Mark Truluck <mark@frame-lang.org>*

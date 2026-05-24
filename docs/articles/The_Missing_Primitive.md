@@ -1,3 +1,9 @@
+---
+title: "The Missing Primitive: Why Programming Languages Don't Have State"
+parent: Articles
+nav_order: 3
+---
+
 # The Missing Primitive: Why Programming Languages Don't Have State
 
 *Prompt Engineer: Mark Truluck <mark@frame-lang.org>*

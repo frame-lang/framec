@@ -1,3 +1,9 @@
+---
+title: "A Brief History of State Machine Languages — And Why Frame Is Different"
+parent: Articles
+nav_order: 1
+---
+
 # A Brief History of State Machine Languages — And Why Frame Is Different
 
 *Prompt Engineer: Mark Truluck <mark@frame-lang.org>*

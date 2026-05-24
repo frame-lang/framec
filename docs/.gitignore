@@ -1,0 +1,7 @@
+# Jekyll / GitHub Pages local build artifacts
+_site/
+.jekyll-cache/
+.jekyll-metadata
+.bundle/
+vendor/
+Gemfile.lock

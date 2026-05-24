@@ -1,3 +1,8 @@
+---
+title: "Framepiler Design"
+nav_order: 11
+---
+
 # Framepiler Design
 
 *Prompt Engineer: Mark Truluck <mark@frame-lang.org>*

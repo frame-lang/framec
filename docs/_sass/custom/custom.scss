@@ -1,0 +1,82 @@
+// ---- Typography ---------------------------------------------------------
+// Self-hosted Jost (SIL OFL 1.1, see assets/fonts/OFL.txt) for consistent
+// typography on every platform with no third-party request. Jost is a variable
+// font, so one file per subset covers weights 400-700. URLs are relative to the
+// compiled stylesheet (assets/css/), so they're baseurl-independent.
+@font-face {
+  font-family: "Jost";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("../fonts/jost-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Jost";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("../fonts/jost-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+// Prose/headings in Jost, falling back to Futura/system sans if it fails to
+// load. Code stays monospace (theme's $mono-font-family).
+$frame-sans: "Jost", "Futura", "Futura PT", "Avenir Next", "Century Gothic",
+  -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+
+body { font-family: $frame-sans; }
+.site-title,
+h1, h2, h3, h4, h5, h6 { font-family: $frame-sans; }
+
+// ---- Code blocks --------------------------------------------------------
+// ```frame fences have no Rouge lexer, so Kramdown emits a bare <pre><code>
+// without the .highlighter-rouge/.highlight wrapper the theme styles, and a
+// late `pre { padding:0; border:0 }` reset strips them. Give every code block
+// one cohesive box. Colors come from the active scheme so they adapt in dark
+// mode; $code-block-border-color is defined in the frame-* schemes (fallback
+// here keeps the built-in scheme builds from erroring on an undefined var).
+$code-block-border-color: #e1e4e8 !default;
+
+.main-content {
+  pre:not(.highlight),
+  div.highlighter-rouge div.highlight {
+    padding: 0.8rem 1rem;
+    margin: 0 0 0.75rem;
+    overflow-x: auto;
+    background-color: $code-background-color;
+    border: 1px solid $code-block-border-color;
+    border-radius: 4px;
+  }
+
+  pre:not(.highlight) > code {
+    padding: 0;
+    margin: 0;
+    background-color: transparent;
+    border: 0;
+  }
+}
+
+// ---- Dark-mode toggle button -------------------------------------------
+// Floating, above the mobile search button so they don't collide. Colors
+// track the active scheme.
+#frame-theme-toggle {
+  position: fixed;
+  right: 1rem;
+  bottom: 4.5rem;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  padding: 0;
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  color: $body-text-color;
+  background-color: $body-background-color;
+  border: 1px solid $border-color;
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+}

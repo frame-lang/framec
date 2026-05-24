@@ -1,3 +1,8 @@
+---
+title: QuickStart
+nav_order: 3
+---
+
 # Frame QuickStart
 
 *A dense syntax reference. For a tutorial walkthrough see [Getting Started](frame_getting_started.md). For full semantics see the [Language Reference](frame_language.md). For runnable examples see the [Cookbook](frame_cookbook.md).*
