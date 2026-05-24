@@ -9,6 +9,18 @@ use super::{ParseError, Parser};
 use crate::frame_c::compiler::frame_ast::*;
 use crate::frame_c::compiler::lexer::Token;
 
+// Reuse the dogfooded balanced-expression scanner (`ExprScannerFsm`) — the same
+// FSM `state_var_parser.frs` composes for `$.var: type = init`. A `domain:`
+// default that spans multiple physical lines (a multi-line dict/array literal)
+// is then captured as one balanced expression instead of being split at the
+// first newline (FRAMEC_BUGS #41). Brought in via `include!` exactly as the
+// other 5 consumers do; the `.frs` is the single source of truth.
+#[allow(dead_code)]
+mod _expr_scanner {
+    include!("../native_region_scanner/expr_scanner.gen.rs");
+}
+use _expr_scanner::ExprScannerFsm;
+
 impl<'a> Parser<'a> {
     /// Parse the domain section.
     ///
@@ -386,15 +398,25 @@ impl<'a> Parser<'a> {
                     init
                 }
             } else {
-                // Single-line init — capture to EOL
-                let init_start = pos;
-                while pos < src.len() && src[pos] != b'\n' {
-                    pos += 1;
-                }
-                std::str::from_utf8(&src[init_start..pos])
+                // Init expr — may span multiple physical lines (a multi-line
+                // dict/array literal). `ExprScannerFsm` walks `()[]{}` depth +
+                // string/char literals and stops at the depth-0 newline, so a
+                // single-line scalar still ends at the first newline (as
+                // before) while a bracketed literal is consumed whole
+                // (FRAMEC_BUGS #41 — previously this captured to EOL and split
+                // multi-line literals into stray field declarations).
+                let mut expr = ExprScannerFsm::new();
+                expr.bytes = src.to_vec();
+                expr.pos = pos;
+                expr.end = src.len();
+                expr.do_scan();
+                let init_end = expr.result_end;
+                let init = std::str::from_utf8(&src[pos..init_end])
                     .unwrap_or("")
                     .trim_end()
-                    .to_string()
+                    .to_string();
+                pos = init_end;
+                init
             };
 
             let init_opt = if init_text.is_empty() {
@@ -432,5 +454,66 @@ impl<'a> Parser<'a> {
             }
         }
         Ok(vars)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // FRAMEC_BUGS #41: a `domain:` default that is a dict/array literal
+    // spanning multiple physical lines must be captured as one balanced
+    // expression (via ExprScannerFsm), not split at the first newline into
+    // stray field declarations. Driven through the public `run` entry so the
+    // whole parse→codegen path is exercised; python_3 (dynamic) emits the
+    // initializer verbatim, so the literal showing up intact proves capture.
+    use crate::run;
+
+    fn py(domain_body: &str) -> String {
+        let src = format!(
+            "@@[target(\"python_3\")]\n\
+             @@system Repro {{\n\
+             \x20   interface:\n\
+             \x20       n()\n\
+             \x20   machine:\n\
+             \x20       $S {{ n() {{}} }}\n\
+             \x20   domain:\n\
+             {domain_body}\n\
+             }}\n"
+        );
+        run(&src, "python_3")
+    }
+
+    #[test]
+    fn multiline_dict_default_captured_whole() {
+        let out = py("        target = {107: 1, 112: 1,\n            133: 1, 136: 1}");
+        assert!(out.contains("class Repro"), "did not compile:\n{out}");
+        assert!(out.contains("107: 1"), "missing first dict entry:\n{out}");
+        // Closing brace + last entry present ⇒ the literal was not truncated
+        // at the first newline (the #41 symptom).
+        assert!(out.contains("136: 1}"), "literal truncated / not closed:\n{out}");
+    }
+
+    #[test]
+    fn multiline_array_default_captured_whole() {
+        let out = py("        dirs = [\"north\", \"south\",\n            \"ne\", \"nw\"]");
+        assert!(out.contains("class Repro"), "did not compile:\n{out}");
+        assert!(out.contains("\"north\""), "missing first element:\n{out}");
+        assert!(out.contains("\"nw\"]"), "array truncated / not closed:\n{out}");
+    }
+
+    #[test]
+    fn multiline_dict_does_not_swallow_following_field() {
+        // The field AFTER a multi-line default must still parse (scanning stops
+        // at the depth-0 newline, not at EOF).
+        let out = py("        a = {1: 1,\n            2: 2}\n        b = 9");
+        assert!(out.contains("class Repro"), "did not compile:\n{out}");
+        assert!(out.contains("2: 2}"), "first literal truncated:\n{out}");
+        assert!(out.contains("9"), "following field 'b' was swallowed:\n{out}");
+    }
+
+    #[test]
+    fn single_line_scalar_default_unchanged() {
+        let out = py("        count = 42");
+        assert!(out.contains("class Repro"), "did not compile:\n{out}");
+        assert!(out.contains("42"), "scalar default lost:\n{out}");
     }
 }
