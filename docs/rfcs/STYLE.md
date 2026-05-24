@@ -1,3 +1,8 @@
+---
+title: "Writing Frame RFCs — Style Guide"
+nav_exclude: true
+---
+
 # Writing Frame RFCs — Style Guide
 
 This guide defines how RFC documents in `docs/rfcs/` are written. It exists

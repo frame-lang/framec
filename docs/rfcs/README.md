@@ -1,3 +1,8 @@
+---
+title: "RFCs"
+nav_order: 9
+---
+
 # Frame RFCs
 
 Index of Frame RFCs. The RFC process is documented in

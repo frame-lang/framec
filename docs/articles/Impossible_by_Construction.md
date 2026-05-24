@@ -1,3 +1,9 @@
+---
+title: "Impossible by Construction: Frame and Agent Security"
+parent: Articles
+nav_order: 2
+---
+
 # Impossible by Construction: Frame and Agent Security
 
 *Prompt Engineer: Mark Truluck <mark@frame-lang.org>*
@@ -838,4 +844,4 @@ Key concepts: `$Idle` and `$Running` are **states**. `start()` and `stop()` are 
 
 For the full language, see [Getting Started with Frame](../frame_getting_started.md).
 For complete syntax, see the [Frame Language Reference](../frame_language.md).
-For agent workflow patterns, see [Frame for AI Agents](../AGENTS_README.md).
+For agent workflow patterns, see [Frame for AI Agents](https://github.com/frame-lang/framec/blob/main/docs/AGENTS_README.md).

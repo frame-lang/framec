@@ -1,3 +1,9 @@
+---
+title: "Reinforcement Learning and State Machines: The Foundation Hiding in Plain Sight"
+parent: Articles
+nav_order: 8
+---
+
 # Reinforcement Learning and State Machines: The Foundation Hiding in Plain Sight
 
 *Prompt Engineer: Mark Truluck <mark@frame-lang.org>*

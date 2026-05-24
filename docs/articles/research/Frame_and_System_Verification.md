@@ -1,3 +1,9 @@
+---
+title: "Frame and Formal Verification: Closing the Spec-Code Gap"
+parent: Articles
+nav_order: 5
+---
+
 # Frame and Formal Verification: Closing the Spec-Code Gap
 
 *Prompt Engineer: Mark Truluck <mark@frame-lang.org>*

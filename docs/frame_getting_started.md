@@ -1,3 +1,8 @@
+---
+title: Getting Started
+nav_order: 2
+---
+
 # Getting Started with Frame
 
 *Prompt Engineer: Mark Truluck <mark@frame-lang.org>*
@@ -1884,6 +1889,6 @@ For multi-system files, each system generates its own diagram.
 You now know the full Frame language. Here are some directions to explore:
 
 - Browse the [Cookbook](frame_cookbook.md) for 110 complete, runnable examples
-- Browse the [supported languages](../README.md#supported-languages) and try a different target
-- Read the [CONTRIBUTING guide](../CONTRIBUTING.md) if you want to help improve the framepiler
+- Browse the [supported languages](https://github.com/frame-lang/framec#supported-languages) and try a different target
+- Read the [CONTRIBUTING guide](https://github.com/frame-lang/framec/blob/main/CONTRIBUTING.md) if you want to help improve the framepiler
 - Check the [GitHub issues](https://github.com/frame-lang/framec/issues) for feature requests and discussions

@@ -1,3 +1,8 @@
+---
+title: Cookbook
+nav_order: 5
+---
+
 # Frame Cookbook
 
 *Prompt Engineer: Mark Truluck <mark@frame-lang.org>*

@@ -1,0 +1,7 @@
+source "https://rubygems.org"
+
+# Matches the GitHub Pages build environment for local preview:
+#   bundle install
+#   bundle exec jekyll serve --baseurl ""
+gem "github-pages", group: :jekyll_plugins
+gem "jekyll-remote-theme"
