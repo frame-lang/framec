@@ -42,6 +42,7 @@ back_to_top_text: "Back to top"
 # {{ }} sequences — needs {% raw %} wrapping to publish), and the RFC scratch file.
 exclude:
   - AGENTS_README.md
+  - admin/                  # local symlink into the private frame-admin repo
   - contributing/
   - per_language_guides/
   - Gemfile
