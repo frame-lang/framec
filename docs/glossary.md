@@ -33,6 +33,16 @@ host language's asynchronous form (`async`/`await`, `CompletableFuture`,
 by an `async` modifier on interface methods. See
 [language reference § Async](frame_language.md#async).
 
+### backbone
+
+The top-level coordinating [system](#system) of a parser written in Frame: its
+[states](#state) correspond to the grammar's major nonterminals (a section, a
+state, a handler), and it drives the parse forward, handing focused sub-problems
+to [oracles](#oracle). Named for being the structural spine the specialists
+attach to. framec's own parser is organized this way — one `SystemBackbone`
+system whose flat self-looping states cover the entire token-level outer grammar.
+See [RFC-0039](rfcs/rfc-0039.md#terminology).
+
 ### compartment
 
 The runtime object holding everything specific to one *occupancy* of a
@@ -208,6 +218,17 @@ A non-[handler](#event-handler) method declared in a [system](#system)'s
 [dispatched](#dispatch) to a state — they run directly. Non-static operations
 may read [domain](#domain) variables and `@@:return`. See
 [language reference § Operations Section](frame_language.md#operations-section).
+
+### oracle
+
+A small, focused machine that a [backbone](#backbone) *consults* to answer one
+bounded question or parse one sub-structure (e.g. "capture this balanced
+expression"); it returns a result and the backbone transitions on it without
+needing to know how it was reached. The name is borrowed from the
+computer-science *oracle machine* — a sub-machine treated as a black box.
+Concretely, an oracle is another Frame system (or scanner) the backbone calls,
+as framec's parser does with the dogfooded attribute / expression scanners. See
+[RFC-0039](rfcs/rfc-0039.md#terminology).
 
 ### parameterized system
 
