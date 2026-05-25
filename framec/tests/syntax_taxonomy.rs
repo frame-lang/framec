@@ -158,3 +158,170 @@ fn instantiation_is_a_call_expression() {
         "@@Child() must produce a factory call usable in value position (RHS):\n{g}"
     );
 }
+
+// =====================================================================
+// Exhaustiveness guard.
+//
+// The taxonomy must account for EVERY variant of the lexer `Token` enum
+// and the parser `Statement` enum. The two functions below are
+// compile-time exhaustive matches (no `_` wildcard): adding a variant to
+// either enum is a COMPILE ERROR here until it is assigned a category,
+// so the Frame Syntax Taxonomy appendix in docs/frame_language.md cannot
+// silently fall behind the grammar.
+// =====================================================================
+
+use framec::frame_c::compiler::frame_ast::Statement;
+use framec::frame_c::compiler::lexer::Token;
+
+/// Taxonomy category for a parser `Statement` (see the appendix).
+#[derive(Debug, PartialEq, Eq)]
+enum StmtCategory {
+    /// Control-flow statement: effect, no value.
+    ControlStatement,
+    /// Property setter (a statement that stores).
+    Mutation,
+    /// Setter + exit (`@@:return(e)`).
+    ExitReturn,
+    /// Property getter (an expression that yields a value).
+    Reference,
+    /// Call expression (self-call / instantiation).
+    CallExpr,
+    /// Native passthrough (incl. the recognized native `return`).
+    NativePassthrough,
+    /// Internal/legacy AST node — NOT produced by the pipeline parser
+    /// from `.frm` source (no `if`/`while`/`for`/`loop`/`continue` lexer
+    /// keywords; no operator grammar). Built only by the model/graphviz
+    /// builders.
+    NotSurface,
+}
+
+/// Every `Statement` variant → its taxonomy category. Exhaustive.
+fn statement_category(s: &Statement) -> StmtCategory {
+    match s {
+        Statement::Transition(_)
+        | Statement::Forward(_)
+        | Statement::StackPush(_)
+        | Statement::StackPop(_) => StmtCategory::ControlStatement,
+
+        // Native `return e` — recognized, emitted verbatim (passthrough).
+        Statement::Return(_) | Statement::NativeCode(_) => StmtCategory::NativePassthrough,
+
+        // Property setters (mutations).
+        Statement::StateVarAssign { .. }
+        | Statement::ContextDataAssign { .. }
+        // `@@:(e)` — sugar for the `@@:return = e` setter.
+        | Statement::ContextReturnExpr { .. } => StmtCategory::Mutation,
+        // `@@:return` — bare read (getter) OR `= e` (setter), per `assign_expr`.
+        Statement::ContextReturn { assign_expr, .. } => {
+            if assign_expr.is_some() {
+                StmtCategory::Mutation
+            } else {
+                StmtCategory::Reference
+            }
+        }
+        // `@@:return(e)` — setter + exit.
+        Statement::ReturnCall { .. } => StmtCategory::ExitReturn,
+
+        // Property getters (references; the read-only ones have no setter).
+        Statement::StateVarRead { .. }
+        | Statement::ContextEvent { .. }
+        | Statement::ContextData { .. }
+        | Statement::ContextParams { .. }
+        | Statement::ContextSelf { .. }
+        | Statement::ContextSystemState { .. } => StmtCategory::Reference,
+
+        // Calls (usable in value position).
+        Statement::ContextSelfCall { .. } | Statement::SystemInstantiation { .. } => {
+            StmtCategory::CallExpr
+        }
+
+        // Not Frame surface syntax (verified: no if/while/for/loop/continue
+        // keywords in the lexer; no operator grammar).
+        Statement::If(_)
+        | Statement::Loop(_)
+        | Statement::Expression(_)
+        | Statement::Continue(_) => StmtCategory::NotSurface,
+    }
+}
+
+/// Lexical role for a `Token` (the surface alphabet behind the constructs).
+#[derive(Debug, PartialEq, Eq)]
+enum TokenRole {
+    SectionKeyword,
+    /// Native `return` keyword (recognized passthrough).
+    NativeKeyword,
+    /// `$Name`, `$>`, `<$`, `$.x`, `$^`.
+    StateSigil,
+    /// `->`, `=>`, `push$`, `pop$`.
+    ControlOperator,
+    /// `@@:return`, `@@:event`, `@@:data`, `@@:params`.
+    ContextSigil,
+    /// `@@[...]` attribute.
+    Attribute,
+    /// Structural punctuation.
+    Delimiter,
+    /// Identifiers and literals (native leaves).
+    NativeLeaf,
+    /// Native code chunk.
+    Native,
+    /// Newline / Eof.
+    Meta,
+}
+
+/// Every `Token` variant → its lexical role. Exhaustive.
+fn token_role(t: &Token) -> TokenRole {
+    match t {
+        Token::Interface | Token::Machine | Token::Actions | Token::Operations | Token::Domain => {
+            TokenRole::SectionKeyword
+        }
+        Token::Return => TokenRole::NativeKeyword,
+        Token::StateRef(_)
+        | Token::EnterHandler
+        | Token::ExitHandler
+        | Token::StateVarRef(_)
+        | Token::ParentRef => TokenRole::StateSigil,
+        Token::Arrow | Token::FatArrow | Token::PushState | Token::PopState => {
+            TokenRole::ControlOperator
+        }
+        Token::ContextReturn
+        | Token::ContextEvent
+        | Token::ContextData(_)
+        | Token::ContextParams(_) => TokenRole::ContextSigil,
+        Token::Attribute { .. } => TokenRole::Attribute,
+        Token::LBrace
+        | Token::RBrace
+        | Token::LParen
+        | Token::RParen
+        | Token::LBracket
+        | Token::RBracket
+        | Token::Comma
+        | Token::Colon
+        | Token::SectionColon
+        | Token::Equals
+        | Token::Dot
+        | Token::Semicolon
+        | Token::Star
+        | Token::Ampersand => TokenRole::Delimiter,
+        Token::Ident(_)
+        | Token::IntLit(_)
+        | Token::FloatLit(_)
+        | Token::StringLit(_)
+        | Token::BoolLit(_) => TokenRole::NativeLeaf,
+        Token::NativeCode(_) => TokenRole::Native,
+        Token::Newline | Token::Eof => TokenRole::Meta,
+    }
+}
+
+/// The two exhaustive matches above are the guard; their compilation is
+/// the assertion. This test references them (so they are not dead code)
+/// and spot-checks a few unit-variant mappings.
+#[test]
+fn taxonomy_covers_every_token_and_statement_variant() {
+    let _ = statement_category as fn(&Statement) -> StmtCategory;
+    assert_eq!(token_role(&Token::Interface), TokenRole::SectionKeyword);
+    assert_eq!(token_role(&Token::Return), TokenRole::NativeKeyword);
+    assert_eq!(token_role(&Token::Arrow), TokenRole::ControlOperator);
+    assert_eq!(token_role(&Token::PushState), TokenRole::ControlOperator);
+    assert_eq!(token_role(&Token::ParentRef), TokenRole::StateSigil);
+    assert_eq!(token_role(&Token::Eof), TokenRole::Meta);
+}
