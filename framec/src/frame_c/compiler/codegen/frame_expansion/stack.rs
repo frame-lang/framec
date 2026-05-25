@@ -69,9 +69,14 @@ pub(super) fn expand_stack_push(
         TargetLanguage::TypeScript | TargetLanguage::JavaScript => {
             let push_code = format!("{}this._state_stack.push(this.__compartment);", indent_str);
             if !target.is_empty() {
+                // Transition the same way a normal transition does (compartment
+                // model: __prepareEnter + __transition + return). The JS/TS
+                // runtime has no `_transition(name, …)` method — only
+                // `__transition(compartment)` — so the old form threw at
+                // runtime. See FRAMEC_BUGS Issue #42.
                 format!(
-                    "{}\n{}this._transition(\"{}\", null, null);",
-                    push_code, indent_str, target
+                    "{}\n{}const __compartment = this.__prepareEnter(\"{}\", [], []);\n{}this.__transition(__compartment);\n{}return;",
+                    push_code, indent_str, target, indent_str, indent_str
                 )
             } else {
                 push_code
