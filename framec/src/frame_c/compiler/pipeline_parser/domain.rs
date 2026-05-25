@@ -86,44 +86,24 @@ impl Parser {
                 && src[pos + 1] == b'@'
                 && src[pos + 2] == b'['
             {
+                // RFC-0039 A-half: delegate the `@@[name(args?)]` surface
+                // scan to the dogfooded `AttributeScannerFsm` (via the
+                // `scan_attribute` wrapper) instead of re-walking the bytes by
+                // hand. The FSM is the same one the segmenter's pragma path
+                // uses; this removes the parser's duplicate of the paren-depth
+                // delimiter scan (task #373). `name`/`args` map exactly:
+                // `args` is the inner text (parens stripped), and `end_pos` is
+                // the byte just past the closing `]`.
                 let attr_start = pos;
-                pos += 3; // skip @@[
-                let name_start = pos;
-                while pos < src.len() {
-                    let c = src[pos];
-                    if c.is_ascii_alphanumeric() || c == b'_' || c == b'-' {
-                        pos += 1;
-                    } else {
-                        break;
-                    }
-                }
-                let name = std::str::from_utf8(&src[name_start..pos])
+                let span =
+                    crate::frame_c::compiler::attribute_scanner::scan_attribute(src, attr_start);
+                let name = std::str::from_utf8(span.name(src))
                     .unwrap_or("")
                     .to_string();
-                let mut args: Option<String> = None;
-                if pos < src.len() && src[pos] == b'(' {
-                    let args_inner_start = pos + 1;
-                    pos += 1;
-                    let mut depth: i32 = 1;
-                    while pos < src.len() && depth > 0 {
-                        match src[pos] {
-                            b'(' => depth += 1,
-                            b')' => depth -= 1,
-                            _ => {}
-                        }
-                        pos += 1;
-                    }
-                    if depth == 0 {
-                        args = Some(
-                            std::str::from_utf8(&src[args_inner_start..pos - 1])
-                                .unwrap_or("")
-                                .to_string(),
-                        );
-                    }
-                }
-                if pos < src.len() && src[pos] == b']' {
-                    pos += 1;
-                }
+                let args = span
+                    .args_inner(src)
+                    .map(|b| std::str::from_utf8(b).unwrap_or("").to_string());
+                pos = span.end_pos;
                 pending_attrs.push(crate::frame_c::compiler::frame_ast::Attribute {
                     name,
                     args,

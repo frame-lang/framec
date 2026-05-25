@@ -2236,6 +2236,42 @@ mod tests {
         );
     }
 
+    // RFC-0039 A-half: `parse_domain`'s `@@[...]` surface scan now delegates to
+    // the dogfooded `AttributeScannerFsm` (`scan_attribute`). This is an
+    // absolute assertion on the captured attribute name/args — including the
+    // nested-paren args case, the one spot where the removed hand-rolled
+    // paren-depth walk could have diverged from the FSM.
+    #[test]
+    fn domain_attribute_scan_via_fsm() {
+        let sys = parse_py(
+            "domain:\n\
+               @@[persist]\n\
+               a: i32 = 0\n\
+               @@[target(\"python_3\")]\n\
+               b: str = \"x\"\n\
+               @@[migrate(from=foo(1), to=bar(2))]\n\
+               c: i32 = 1\n",
+        );
+        assert_eq!(sys.domain.len(), 3, "three domain fields");
+
+        assert_eq!(sys.domain[0].attributes.len(), 1);
+        assert_eq!(sys.domain[0].attributes[0].name, "persist");
+        assert_eq!(sys.domain[0].attributes[0].args, None);
+
+        assert_eq!(sys.domain[1].attributes[0].name, "target");
+        assert_eq!(
+            sys.domain[1].attributes[0].args.as_deref(),
+            Some("\"python_3\"")
+        );
+
+        // Nested parens inside the args must be preserved intact.
+        assert_eq!(sys.domain[2].attributes[0].name, "migrate");
+        assert_eq!(
+            sys.domain[2].attributes[0].args.as_deref(),
+            Some("from=foo(1), to=bar(2)")
+        );
+    }
+
     #[test]
     fn parity_empty_and_lifecycle_only_states() {
         assert_backbone_matches_recursive(
