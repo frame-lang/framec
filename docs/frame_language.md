@@ -1280,13 +1280,13 @@ Frame reference (`$.x` → `self.x`) spliced in.
 3. **Statements** — executed for effect; yield no value:
    - *Control flow*: transition `->`, forward `=>` / `=> $^`, push `push$`,
      pop `-> pop$`.
-   - *Mutations* (property **setters**): `$.x = e`, `@@:data["k"] = e`,
+   - *Mutations* (property **setters**): `$.x = e`, `@@:data.key = e`,
      `@@:return = e`, and `@@:(e)` (sugar for `@@:return = e`).
    - *Exit-return*: `@@:return(e)` — a setter **plus** an exit.
 
 4. **Expressions** — yield a value. Frame has exactly two kinds:
-   - *Property references* (**getters**): `$.x`, `@@:return`, `@@:data["k"]`,
-     `@@:event`, `@@:params["k"]`, `@@:system.state`, `@@:self`.
+   - *Property references* (**getters**): `$.x`, `@@:return`, `@@:data.key`,
+     `@@:event`, `@@:params.x`, `@@:system.state`, `@@:self`.
    - *Call expressions*: `@@:self.method(args)` (re-entrant self-dispatch) and
      `@@Sys(args)` / `@@!Sys()` (system instantiation). Both are usable in value
      position (assignment RHS) and, standalone, as expression-statements.
@@ -1310,10 +1310,10 @@ Frame-managed place value. A property exposes up to two **accessors**:
 | Property | Getter (Reference) | Setter (Mutation) |
 |----------|--------------------|-------------------|
 | `$.x` | yes | yes |
-| `@@:data["k"]` | yes | yes |
+| `@@:data.key` | yes | yes |
 | `@@:return` | yes | yes (`= e`, `@@:(e)`; `@@:return(e)` also exits) |
 | `@@:event` | yes | — (read-only) |
-| `@@:params["k"]` | yes | — (read-only) |
+| `@@:params.x` | yes | — (read-only) |
 | `@@:system.state` | yes | — (read-only) |
 | `@@:self` | yes | — (read-only) |
 

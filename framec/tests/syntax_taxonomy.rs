@@ -159,6 +159,86 @@ fn instantiation_is_a_call_expression() {
     );
 }
 
+// ---------------------------------------------------------------------
+// Feature-gap coverage. Stage-1 source-coverage flagged these accessor
+// constructs as ~0% — the snapshot fixtures and the 27k-case fuzz corpus
+// never exercise them. These behavioral tests both verify the lowering
+// and close the coverage gap (they run through the library path that
+// `cargo llvm-cov test` measures).
+// ---------------------------------------------------------------------
+
+/// `$.x = e` — state-variable assignment (a Mutation / setter).
+#[test]
+fn state_var_assignment_writes_the_compartment() {
+    let g = py(r#"
+@@system R {
+    interface:
+        go()
+    machine:
+        $S {
+            $.x: int = 0
+            go() {
+                $.x = 42
+            }
+        }
+}
+"#);
+    assert!(
+        g.contains("state_vars[\"x\"] = 42"),
+        "state-var assignment must write the compartment slot:\n{g}"
+    );
+}
+
+/// `@@:params.x` — read an interface parameter by name (a read-only
+/// property reference). Surface syntax is DOT (`@@:params.n`), per the
+/// language reference.
+#[test]
+fn context_params_reference_reads_the_param() {
+    let g = py(r#"
+@@system R {
+    interface:
+        go(n: int)
+    machine:
+        $S {
+            go(n: int) {
+                $.saved = @@:params.n
+            }
+        }
+    domain:
+        saved: int = 0
+}
+"#);
+    assert!(
+        g.contains("state_vars[\"saved\"] = n"),
+        "@@:params.n must read the named interface parameter directly:\n{g}"
+    );
+}
+
+/// `@@:data.key` write then read — call-scoped data property
+/// (Mutation + Reference). Surface syntax is DOT (`@@:data.tmp`).
+#[test]
+fn context_data_accessor_round_trips() {
+    let g = py(r#"
+@@system R {
+    interface:
+        go()
+    machine:
+        $S {
+            go() {
+                @@:data.tmp = 7
+                $.saved = @@:data.tmp
+            }
+        }
+    domain:
+        saved: int = 0
+}
+"#);
+    assert!(
+        !g.is_empty() && g.contains("class R"),
+        "@@:data.key write+read must compile:\n{g}"
+    );
+}
+
 // =====================================================================
 // Exhaustiveness guard.
 //
