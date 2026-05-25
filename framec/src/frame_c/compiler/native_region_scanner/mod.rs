@@ -219,9 +219,16 @@ pub fn regions_to_statements(
                         }));
                     }
                     FrameSegmentKind::StackPush => {
+                        let transition_target = match metadata {
+                            SegmentMetadata::StackPush { transition_target } => {
+                                transition_target.clone()
+                            }
+                            _ => None,
+                        };
                         stmts.push(Statement::StackPush(StackPushAst {
                             span: seg_span,
                             indent: *indent,
+                            transition_target,
                         }));
                     }
                     FrameSegmentKind::StackPop => {
@@ -501,6 +508,34 @@ pub fn enrich_handler_body_metadata(
                 }
             }
             scanner_idx += 1;
+        }
+    }
+
+    // Patch push-with-transition targets onto StackPush statements, in source
+    // order (parallel to the Transition arg patching above). The parser leaves
+    // `transition_target` None; the scanner computes it. This surfaces the
+    // `push$ -> $State` edge to AST passes (e.g. the W414 reachability walker).
+    let scanner_pushes: Vec<&SegmentMetadata> = scan_result
+        .regions
+        .iter()
+        .filter_map(|r| match r {
+            Region::FrameSegment {
+                kind: FrameSegmentKind::StackPush,
+                metadata,
+                ..
+            } => Some(metadata),
+            _ => None,
+        })
+        .collect();
+    let mut push_idx = 0usize;
+    for stmt in body.statements.iter_mut() {
+        if let Statement::StackPush(p) = stmt {
+            if let Some(SegmentMetadata::StackPush { transition_target }) =
+                scanner_pushes.get(push_idx).copied()
+            {
+                p.transition_target = transition_target.clone();
+            }
+            push_idx += 1;
         }
     }
 }

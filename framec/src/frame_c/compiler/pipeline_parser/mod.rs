@@ -931,6 +931,7 @@ impl<'a> Parser<'a> {
                     statements.push(Statement::StackPush(StackPushAst {
                         span: tok.span,
                         indent: 0,
+                        transition_target: None,
                     }));
                 }
 
