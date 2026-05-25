@@ -585,56 +585,29 @@ fn is_system_pragma(bytes: &[u8], pos: usize) -> bool {
 /// - **Attribute form (RFC-0013):** `@@[name]`, `@@[name(args)]`. Wave 1
 ///   ships `@@[persist]`; later waves migrate `@@target`, etc.
 fn identify_pragma(bytes: &[u8], start: usize) -> (PragmaKind, Option<String>) {
-    let n = bytes.len();
-    let mut i = start + 2; // Skip @@
+    // RFC-0039 A-half / #373: the surface scan of `@@[name(args?)]` and bare
+    // `@@name value` is delegated to the dogfooded `AttributeScannerFsm` (via
+    // `scan_attribute`) — the same FSM the parser already uses. This function
+    // keeps only the name → `PragmaKind` classification table and the per-kind
+    // value shaping; the byte walk (name char-class, paren-depth args, bare-value
+    // trim) now lives in one place, the `.frs`. This finally retires the
+    // hand-written scanner the `AttributeScannerFsm` was built to replace.
+    let span = crate::frame_c::compiler::attribute_scanner::scan_attribute(bytes, start);
+    let name = span.name(bytes);
 
-    // Attribute form: @@[name(args?)]
-    if i < n && bytes[i] == b'[' {
-        i += 1;
-        let kw_start = i;
-        while i < n && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_' || bytes[i] == b'-') {
-            i += 1;
-        }
-        let name = &bytes[kw_start..i];
-
-        // Capture the args, if any: `(domain=[...])`. The pragma's
-        // `value` field still drives existing parsers (`@@persist
-        // (domain=[a, b])` → value = "(domain=[a, b])"). We pass the
-        // function-call slice through verbatim so downstream consumers
-        // see the same argument syntax they already understand.
-        let mut value: Option<String> = None;
-        if i < n && bytes[i] == b'(' {
-            let args_start = i;
-            let mut depth: i32 = 1;
-            i += 1;
-            while i < n && depth > 0 {
-                match bytes[i] {
-                    b'(' => depth += 1,
-                    b')' => depth -= 1,
-                    _ => {}
-                }
-                i += 1;
-            }
-            value = Some(String::from_utf8_lossy(&bytes[args_start..i]).to_string());
-        }
-
-        // Expect the closing `]`.
-        while i < n && (bytes[i] == b' ' || bytes[i] == b'\t') {
-            i += 1;
-        }
-        if i < n && bytes[i] == b']' {
-            // Consume newline so existing line-end logic continues to
-            // place the pragma on its own segment.
-        }
+    if span.is_bracket_form {
+        // Bracket value is the `(args)` slice verbatim (parens included) — e.g.
+        // `@@[persist(domain=[a, b])]` → "(domain=[a, b])" — so downstream
+        // consumers see the same argument syntax they already understand.
+        let value: Option<String> = span
+            .args_with_parens(bytes)
+            .map(|b| String::from_utf8_lossy(b).to_string());
 
         let kind = match name {
             b"persist" => PragmaKind::Persist,
             b"target" => PragmaKind::Target,
             b"main" => PragmaKind::Main,
-            // RFC-0015: lifecycle attributes recognized at module
-            // level. Currently parsed-only — downstream consumers
-            // (validator, AST, codegen) land in subsequent commits
-            // as Phase 1.1 of the RFC-0015 arc proceeds.
+            // RFC-0015 lifecycle attributes recognized at module level.
             b"create" => PragmaKind::Create,
             b"save" => PragmaKind::Save,
             b"load" => PragmaKind::Load,
@@ -656,43 +629,13 @@ fn identify_pragma(bytes: &[u8], start: usize) -> (PragmaKind, Option<String>) {
         return (kind, value);
     }
 
-    // Bare-keyword form: @@<keyword>
-    let kw_start = i;
-    while i < n && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_' || bytes[i] == b'-') {
-        i += 1;
-    }
-    let keyword = &bytes[kw_start..i];
+    // Bare-keyword form: @@<keyword> <value?> — value is the trimmed rest of
+    // line (FSM strips leading ws after the keyword and trailing ws/`\r`).
+    let value = span
+        .value(bytes)
+        .map(|b| String::from_utf8_lossy(b).to_string());
 
-    // Skip whitespace after keyword
-    while i < n && (bytes[i] == b' ' || bytes[i] == b'\t') {
-        i += 1;
-    }
-
-    // Extract value (rest of line, trimmed)
-    let value_start = i;
-    let line_end = {
-        let mut j = i;
-        while j < n && bytes[j] != b'\n' {
-            j += 1;
-        }
-        j
-    };
-    // Trim trailing whitespace from value
-    let mut value_end = line_end;
-    while value_end > value_start
-        && (bytes[value_end - 1] == b' '
-            || bytes[value_end - 1] == b'\t'
-            || bytes[value_end - 1] == b'\r')
-    {
-        value_end -= 1;
-    }
-    let value = if value_start < value_end {
-        Some(String::from_utf8_lossy(&bytes[value_start..value_end]).to_string())
-    } else {
-        None
-    };
-
-    let kind = match keyword {
+    let kind = match name {
         // RFC-0013 wave 2: bare `@@target lang` migrated to
         // `@@[target("lang")]`. Bare form falls through to Other;
         // pipeline E804 check surfaces a migration error.
@@ -1034,6 +977,60 @@ mod tests {
         let (kind, value) = identify_pragma(b"@@[load(unpickle)]", 0);
         assert_eq!(kind, PragmaKind::Load);
         assert_eq!(value.as_deref(), Some("(unpickle)"));
+    }
+
+    // RFC-0039 A-half / #373: `identify_pragma` now delegates its surface scan
+    // to the dogfooded `AttributeScannerFsm` (`scan_attribute`). These lock the
+    // (PragmaKind, value) parity points the bare/bracket forms must preserve.
+    #[test]
+    fn identify_pragma_fsm_parity() {
+        // Bracket, no args.
+        assert_eq!(
+            identify_pragma(b"@@[persist]", 0),
+            (PragmaKind::Persist, None)
+        );
+        assert_eq!(identify_pragma(b"@@[main]", 0), (PragmaKind::Main, None));
+
+        // Bracket args verbatim WITH parens, including nested brackets/parens.
+        let (k, v) = identify_pragma(b"@@[persist(domain=[a, b])]", 0);
+        assert_eq!(k, PragmaKind::Persist);
+        assert_eq!(v.as_deref(), Some("(domain=[a, b])"));
+
+        // Target bracket form strips `("...")` → bare inner value.
+        let (k, v) = identify_pragma(b"@@[target(\"python_3\")]", 0);
+        assert_eq!(k, PragmaKind::Target);
+        assert_eq!(v.as_deref(), Some("python_3"));
+
+        // Unknown bracket name → Other, args preserved.
+        let (k, v) = identify_pragma(b"@@[whatever(x)]", 0);
+        assert_eq!(k, PragmaKind::Other);
+        assert_eq!(v.as_deref(), Some("(x)"));
+
+        // Bare forms: classification + trimmed rest-of-line value.
+        assert_eq!(
+            identify_pragma(b"@@import \"a/b.frm\"\n", 0),
+            (PragmaKind::Import, Some("\"a/b.frm\"".to_string()))
+        );
+        assert_eq!(
+            identify_pragma(b"@@run-expect 42  \n", 0),
+            (PragmaKind::RunExpect, Some("42".to_string()))
+        );
+        // Bare value trailing CRLF is trimmed.
+        assert_eq!(
+            identify_pragma(b"@@timeout 30\r\n", 0),
+            (PragmaKind::Timeout, Some("30".to_string()))
+        );
+        // Bare with no value → None.
+        assert_eq!(
+            identify_pragma(b"@@codegen\n", 0),
+            (PragmaKind::Codegen, None)
+        );
+        // RFC-0013 migrated bare forms fall through to Other.
+        assert_eq!(identify_pragma(b"@@persist\n", 0).0, PragmaKind::Other);
+        assert_eq!(
+            identify_pragma(b"@@target python_3\n", 0).0,
+            PragmaKind::Other
+        );
     }
 
     #[test]
