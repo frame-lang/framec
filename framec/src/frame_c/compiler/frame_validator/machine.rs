@@ -104,10 +104,18 @@ impl FrameValidator {
         let mut edges: HashMap<String, Vec<String>> = HashMap::new();
         let collect_body = |body: &HandlerBody, out: &mut Vec<String>| {
             for stmt in &body.statements {
-                if let Statement::Transition(trans) = stmt {
-                    if trans.target != "pop$" {
+                match stmt {
+                    Statement::Transition(trans) if trans.target != "pop$" => {
                         out.push(trans.target.clone());
                     }
+                    // `push$ -> $State` reaches $State just like a normal
+                    // transition (the push only saves the current compartment).
+                    Statement::StackPush(push) => {
+                        if let Some(target) = &push.transition_target {
+                            out.push(target.clone());
+                        }
+                    }
+                    _ => {}
                 }
             }
         };
