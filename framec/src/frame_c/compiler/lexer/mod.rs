@@ -34,7 +34,12 @@ pub enum Token {
     // `var` is lexed as Ident("var") if encountered.
 
     // ===== Frame Statements =====
-    Return, // "return" (Frame return sugar)
+    // "return" — recognized native return statement. Lifted to
+    // `Statement::Return` so the parser/validator can reason about
+    // control flow (fall-through / does-this-path-return); emitted
+    // verbatim as the target language's own `return`. NOT sugar — it
+    // does not expand to `@@:(...)` or any other form.
+    Return,
 
     // ===== State Syntax =====
     /// "$StateName" — state reference in transitions (-> $Foo)
