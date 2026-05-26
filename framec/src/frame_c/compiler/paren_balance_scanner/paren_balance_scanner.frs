@@ -1,0 +1,128 @@
+@@[target("rust")]
+
+// RFC-0035 Round 12 — the Erlang smart-join emitter's paren-balance check as
+// a Frame FSM.
+//
+// `lexical.rs::paren_balance_unclosed` answers "does this line have more open
+// brackets than closes?" while respecting Erlang's lexical modes — string
+// (`"..."`), quoted-atom (`'...'`), backslash escapes inside both, and `%`
+// line comments. That quote/escape tracking IS a lexical state machine, so it
+// becomes one literally: the FSM's STATE is the current lexical mode.
+//
+//   $Normal      — counting brackets; `"`→$InString, `'`→$InAtom, `%`→done
+//   $InString    — inside "..."; `\`→$StringEscape, `"`→$Normal
+//   $InAtom      — inside '...'; `\`→$AtomEscape, `'`→$Normal
+//   $StringEscape / $AtomEscape — consume one escaped byte, return to the
+//                  enclosing literal (so `\"` / `\'` don't close it)
+//
+// Brackets only ever change `depth` in $Normal — exactly the original's
+// `if in_string || in_atom { continue }` guard, here expressed as the mode
+// states themselves. The wrapper returns `depth > 0`. Bracket/quote/escape/
+// comment are all ASCII, so a byte walk is identical to the original's char
+// walk for the boolean result. Rest of `lexical.rs` is stateless string
+// utilities (not scanners); `body_processor.rs` is a line-transform pipeline,
+// not a clean FSM — neither is forced (RFC-0035 Round 8's lesson).
+
+@@system ParenBalanceFsm {
+    interface:
+        scan()
+
+    machine:
+        $Start {
+            scan() { -> $Normal }
+        }
+
+        $Normal {
+            $>() {
+                if self.pos >= self.end {
+                    -> $Done
+                }
+                let c = self.bytes[self.pos];
+                if c == b'"' {
+                    self.pos += 1;
+                    -> $InString
+                }
+                if c == b'\'' {
+                    self.pos += 1;
+                    -> $InAtom
+                }
+                if c == b'%' {
+                    // Line comment — the rest of the line is ignored.
+                    -> $Done
+                }
+                if c == b'(' || c == b'[' || c == b'{' {
+                    self.depth += 1;
+                } else if c == b')' || c == b']' || c == b'}' {
+                    self.depth -= 1;
+                }
+                self.pos += 1;
+                -> $Normal
+            }
+        }
+
+        $InString {
+            $>() {
+                if self.pos >= self.end {
+                    -> $Done
+                }
+                let c = self.bytes[self.pos];
+                if c == b'\\' {
+                    self.pos += 1;
+                    -> $StringEscape
+                }
+                if c == b'"' {
+                    self.pos += 1;
+                    -> $Normal
+                }
+                self.pos += 1;
+                -> $InString
+            }
+        }
+
+        $StringEscape {
+            $>() {
+                if self.pos >= self.end {
+                    -> $Done
+                }
+                self.pos += 1;
+                -> $InString
+            }
+        }
+
+        $InAtom {
+            $>() {
+                if self.pos >= self.end {
+                    -> $Done
+                }
+                let c = self.bytes[self.pos];
+                if c == b'\\' {
+                    self.pos += 1;
+                    -> $AtomEscape
+                }
+                if c == b'\'' {
+                    self.pos += 1;
+                    -> $Normal
+                }
+                self.pos += 1;
+                -> $InAtom
+            }
+        }
+
+        $AtomEscape {
+            $>() {
+                if self.pos >= self.end {
+                    -> $Done
+                }
+                self.pos += 1;
+                -> $InAtom
+            }
+        }
+
+        $Done { }
+
+    domain:
+        bytes: Vec<u8> = Vec::new()
+        pos: usize = 0
+        end: usize = 0
+        depth: i32 = 0
+}
