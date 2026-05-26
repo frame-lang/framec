@@ -5,6 +5,7 @@ pub use crate::frame_c::visitors::TargetLanguage;
 pub mod arcanum;
 pub mod ast;
 pub mod body_closer;
+pub mod call_site_scanner;
 pub mod domain_scanner;
 pub mod mir;
 pub mod native_region_scanner;

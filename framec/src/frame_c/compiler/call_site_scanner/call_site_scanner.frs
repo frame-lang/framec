@@ -1,0 +1,118 @@
+@@[target("rust")]
+
+// RFC-0035 Round 10 — the assembler's `@@SystemName(args)` call-site scanner
+// as a Frame FSM.
+//
+// Replaces the hand-rolled byte-walk in `assembler/mod.rs`
+// (`expand_system_instantiations`). A native code region is a flat stream of
+// {comment, string, `@@[!]Name(args)` call-site, plain text}; this scanner
+// lexes it into a `CallToken` stream (`Literal` runs verbatim, `Call` for each
+// instantiation). The FSM OWNS the scan (RFC-0039 B1: `bytes`/`pos`/`end`/
+// `cur_literal`/`tokens` are domain fields) and delegates comment/string/
+// balanced-paren detection to the language's `SyntaxSkipper` (no duplicated
+// lexing). The actual *expansion* of a `Call` token — constructor rendering,
+// arg resolution, the cross-file vs defined-system decision, and error
+// reporting — stays native in the assembler wrapper, which has the (borrowed)
+// system-params maps. So the FSM is a pure lexer; the maps never enter it.
+//
+// Byte-output identical to the recursive form — the assembler unit tests, the
+// snapshot suites, and the matrix are the parity gate.
+
+@@system CallSiteScannerFsm {
+    interface:
+        scan()
+
+    machine:
+        $Start {
+            scan() { -> $Scan }
+        }
+
+        // One unit per entry (a comment span, a string span, a call-site, an
+        // unmatched `@@` run, or one plain byte). Self-loops to $Done at EOF.
+        $Scan {
+            $>() {
+                let n = self.end;
+
+                // EOF — flush the trailing literal run and finish.
+                if self.pos >= n {
+                    if !self.cur_literal.is_empty() {
+                        self.tokens
+                            .push(CallToken::Literal(std::mem::take(&mut self.cur_literal)));
+                    }
+                    -> $Done
+                }
+
+                // Comments and strings pass through verbatim (delegated to the
+                // language's SyntaxSkipper — no duplicated comment/string logic).
+                if let Some(after) = self.skipper.skip_comment(&self.bytes, self.pos, n) {
+                    self.cur_literal
+                        .push_str(&String::from_utf8_lossy(&self.bytes[self.pos..after]));
+                    self.pos = after;
+                    -> $Scan
+                }
+                if let Some(after) = self.skipper.skip_string(&self.bytes, self.pos, n) {
+                    self.cur_literal
+                        .push_str(&String::from_utf8_lossy(&self.bytes[self.pos..after]));
+                    self.pos = after;
+                    -> $Scan
+                }
+
+                // `@@Name(args)` / `@@!Name(args)` call-site. Needs at least
+                // three bytes (`@@X`); a trailing `@@` is treated as plain text.
+                if self.pos + 2 < n && self.bytes[self.pos] == b'@' && self.bytes[self.pos + 1] == b'@' {
+                    let start = self.pos;
+                    let mut j = self.pos + 2;
+                    let no_init = j < n && self.bytes[j] == b'!';
+                    if no_init {
+                        j += 1;
+                    }
+                    if j < n && self.bytes[j].is_ascii_uppercase() {
+                        let name_start = j;
+                        while j < n && (self.bytes[j].is_ascii_alphanumeric() || self.bytes[j] == b'_') {
+                            j += 1;
+                        }
+                        let name = std::str::from_utf8(&self.bytes[name_start..j])
+                            .unwrap_or("")
+                            .to_string();
+                        if j < n && self.bytes[j] == b'(' {
+                            if let Some(close) = self.skipper.balanced_paren_end(&self.bytes, j, n) {
+                                let args = std::str::from_utf8(&self.bytes[j + 1..close - 1])
+                                    .unwrap_or("")
+                                    .to_string();
+                                if !self.cur_literal.is_empty() {
+                                    self.tokens.push(CallToken::Literal(std::mem::take(
+                                        &mut self.cur_literal,
+                                    )));
+                                }
+                                self.tokens.push(CallToken::Call { name, args, no_init });
+                                self.pos = close;
+                                -> $Scan
+                            }
+                        }
+                    }
+                    // Not a valid instantiation: emit the consumed `@@`/`@@!`/
+                    // `@@Name` bytes verbatim and resume just past them.
+                    let stop = if j > start + 2 { j } else { start + 2 };
+                    self.cur_literal
+                        .push_str(&String::from_utf8_lossy(&self.bytes[start..stop]));
+                    self.pos = stop;
+                    -> $Scan
+                }
+
+                // Plain byte.
+                self.cur_literal.push(self.bytes[self.pos] as char);
+                self.pos += 1;
+                -> $Scan
+            }
+        }
+
+        $Done { }
+
+    domain:
+        bytes: Vec<u8> = Vec::new()
+        pos: usize = 0
+        end: usize = 0
+        skipper: Box<dyn SyntaxSkipper> = create_skipper(TargetLanguage::Python3)
+        cur_literal: String = String::new()
+        tokens: Vec<CallToken> = Vec::new()
+}
