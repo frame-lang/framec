@@ -448,6 +448,13 @@ pub struct StackPushAst {
     pub span: Span,
     /// Source indentation level (for proper code generation)
     pub indent: usize,
+    /// Target state of a `push$ -> $State` (push-with-transition), or `None`
+    /// for a bare `push$`. The parser leaves this `None`; it's filled by
+    /// `enrich_handler_body_metadata` from the scanner segment (like a
+    /// Transition's args). Exposes the edge to AST-based passes such as the
+    /// W414 reachability walker. (Codegen reads the target from the scanner
+    /// metadata directly.)
+    pub transition_target: Option<String>,
 }
 
 /// Stack pop (pop$)

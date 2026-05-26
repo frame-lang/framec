@@ -1325,6 +1325,77 @@ mod tests {
         // In this case both are terminals so only the last matters
     }
 
+    /// W414: a `push$ -> $State` reaches its target — the push-with-transition
+    /// edge must be followed by the reachability walker (regression for the
+    /// false positive that flagged `$Paused`/`$Hyperspace` etc.). A genuinely
+    /// orphaned state is still flagged.
+    #[test]
+    fn test_w414_push_transition_target_reachable() {
+        use std::collections::HashMap;
+        let sp = || Span::new(0, 0);
+        let handler = |event: &str, stmts: Vec<Statement>| HandlerAst {
+            event: event.to_string(),
+            params: vec![],
+            return_type: None,
+            return_init: None,
+            body: HandlerBody {
+                statements: stmts,
+                span: sp(),
+            },
+            leading_comments: vec![],
+            attributes: vec![],
+            span: sp(),
+        };
+        let state = |name: &str, handlers: Vec<HandlerAst>| StateAst {
+            name: name.to_string(),
+            params: vec![],
+            parent: None,
+            state_vars: vec![],
+            handlers,
+            enter: None,
+            exit: None,
+            default_forward: false,
+            leading_comments: vec![],
+            span: sp(),
+            body_span: sp(),
+        };
+
+        // $Active { pause() { push$ -> $Paused } }  $Paused { ... }  $Orphan { }
+        let active = state(
+            "Active",
+            vec![handler(
+                "pause",
+                vec![Statement::StackPush(StackPushAst {
+                    span: sp(),
+                    indent: 0,
+                    transition_target: Some("Paused".to_string()),
+                })],
+            )],
+        );
+        let paused = state("Paused", vec![]);
+        let orphan = state("Orphan", vec![]);
+
+        let machine = MachineAst {
+            states: vec![active, paused, orphan],
+            span: sp(),
+        };
+        let state_map: HashMap<String, &StateAst> =
+            machine.states.iter().map(|s| (s.name.clone(), s)).collect();
+
+        let mut v = FrameValidator::new();
+        v.validate_reachable_states("Sys", &machine, &state_map);
+        let warned: Vec<String> = v.warnings.iter().map(|w| w.message.clone()).collect();
+
+        assert!(
+            !warned.iter().any(|m| m.contains("'Paused'")),
+            "push$ -> $Paused target must be reachable, not W414: {warned:?}"
+        );
+        assert!(
+            warned.iter().any(|m| m.contains("'Orphan'")),
+            "a genuinely unreachable state must still be W414: {warned:?}"
+        );
+    }
+
     #[test]
     fn test_validate_with_arcanum() {
         // Happy-path arcanum-backed validation: a system with valid

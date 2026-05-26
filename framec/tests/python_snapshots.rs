@@ -19,6 +19,37 @@ mod common;
 use common::{compile_check_all, compile_fixture, compile_source, find_tool};
 use std::process::Command;
 
+/// Regression for the `push$ -> $State` codegen bug (Issue #42): the
+/// with-transition form must use the compartment model (`__prepareEnter` +
+/// `__transition`), not the removed `_transition()`. The `05_pushpop` fixture
+/// only covers bare `push$` + a separate transition.
+#[test]
+fn push_transition() {
+    let src = r#"
+@@system PushTransition {
+    interface:
+        go()
+        back()
+    machine:
+        $A { go() { push$ -> $B } }
+        $B { back() { -> pop$ } }
+}
+"#;
+    let out = compile_source(src, "python_3");
+    assert!(
+        out.contains("self._state_stack.append(self.__compartment)"),
+        "push$ -> $State must push the current compartment:\n{out}"
+    );
+    assert!(
+        out.contains("self.__transition(__compartment)"),
+        "push$ -> $State must transition via the compartment model:\n{out}"
+    );
+    assert!(
+        !out.contains("self._transition("),
+        "push$ -> $State must not call the non-existent _transition():\n{out}"
+    );
+}
+
 #[test]
 fn linear_fsm() {
     insta::assert_snapshot!(compile_fixture("01_linear_fsm", "python_3"));
