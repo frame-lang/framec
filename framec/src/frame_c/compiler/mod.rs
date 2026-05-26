@@ -33,6 +33,7 @@ pub mod reachable_validator;
 pub mod section_order_validator;
 pub mod segmenter;
 pub mod target_query;
+pub mod transition_meta_scanner;
 pub mod type_map;
 
 pub use codegen::{generate_system, get_backend, CodegenNode, LanguageBackend};
