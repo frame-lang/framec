@@ -6,6 +6,56 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [4.2.4] - 2026-05-26
+
+A maintenance release. Two user-visible codegen fixes; the bulk is internal —
+framec's own parser and several scanners are now Frame state machines
+(dogfooding), and the compile pipeline is FSM-driven. **Generated output is
+byte-identical to 4.2.3 except for the two fixes below** — every internal
+refactor was verified against the code it replaced (17-backend matrix +
+full structural fuzz, both green).
+
+### Fixed
+
+- **`push$ -> $State` codegen (#42).** Inline push-with-transition emitted a
+  call to a non-existent `_transition()` on Python, GDScript, JavaScript, and
+  TypeScript, and the W414 reachability check didn't count `push$ -> $State`
+  edges. It now lowers through the compartment model (`__prepareEnter` +
+  `__transition`) like every other transition, and reachability counts the edge.
+- **Multi-line `domain:` default literals (#41).** A dict/array default that
+  spanned multiple physical lines was split at the first newline into stray
+  field declarations; it is now captured whole (via the dogfooded
+  `ExprScannerFsm`).
+
+### Changed
+
+Internal architecture — no change to generated code:
+
+- **The parser is now a Frame state machine (RFC-0039).** A `SystemBackbone`
+  Frame system owns and drives parsing, calling the recursive-descent
+  `parse_*` methods as native oracles; the lexer was made lifetime-free so the
+  backbone can hold it. framec's own front-end grammar is now expressed in Frame.
+- **The compile pipeline is FSM-driven (RFC-0035 Round 8).** `compile_ast_based`
+  was carved into phase functions sequenced by a `PipelineFsm` (one state per
+  phase: segment → parse → module-gates → graphviz → validate+codegen →
+  assemble); the previous observational supervisor was replaced by one that
+  actually controls the flow.
+- **Scanners converted to Frame FSMs (RFC-0035 Rounds 9–12):** the `domain:`
+  line scanner, the assembler's `@@SystemName(args)` call-site lexer, the
+  transition-string metadata parser, and the Erlang paren-balance lexical
+  scanner. Several inline delimiter scans now reuse the existing dogfooded
+  `ExprScannerFsm` / `AttributeScannerFsm` (#372/#373).
+
+### Added
+
+- **Frame Syntax Taxonomy** — a standard-compiler-terminology appendix in the
+  language guide, anchored by behavioral tests, a compile-time exhaustiveness
+  guard over the token + statement enums, and a horizontal-whitespace
+  invariance generator.
+- **RFC-0039** (parser as composed Frame state machines), Accepted; **RFC-0035**
+  dogfooding roadmap Rounds 8–13; glossary "backbone" / "oracle" terms; a
+  Release Notes section + style guide.
+
 ## [4.2.3] - 2026-05-24
 
 Type-name passthrough is now total, and statically-typed targets enforce
