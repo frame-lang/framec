@@ -1,10 +1,21 @@
 
-// ExprScanner — PDA (pushdown automaton) for scanning assignment RHS expressions.
+// ExprScanner — PDA (pushdown automaton) for scanning a balanced region.
 //
-// Scans from `pos` (after the `=`) to a terminator (`;` or `\n`) at depth 0,
-// respecting nested `()[]{}` and string literals with escape handling.
+// Scans from `pos` to a terminator at depth 0, respecting nested `()[]{}` and
+// string literals with escape handling. The terminator set is configurable via
+// the `stop_*` flags (defaults preserve the original RHS-expression behavior:
+// `;` inclusive / `\n` exclusive):
 //
-// This replaces 3 duplicated inline expression scanners in unified.rs.
+//   stop_semicolon (default true)  — `;` at depth 0 terminates, included.
+//   stop_newline   (default true)  — `\n` at depth 0 terminates, excluded.
+//   stop_comma     (default false) — `,` at depth 0 terminates, excluded.
+//   stop_close_paren (default false) — `)` at depth 0 terminates, excluded.
+//
+// This is the single balanced-delimiter scan primitive: the assignment-RHS
+// consumers (domain `= init`, `@@:return = expr`, `$.var = expr`) take the
+// default `;`/`\n` terminators; `call_args` takes the `,` (arg split) and `)`
+// (matching-close) terminators. Replaces 3 inline scanners in unified.rs plus
+// the two hand-rolled paren/comma scanners in pipeline_parser/call_args.rs.
 
 #[allow(dead_code)]
 #[allow(non_camel_case_types)]
@@ -127,6 +138,12 @@ mod _expr_scanner_fsm_framec {
         pub pos: usize,
         pub end: usize,
         pub result_end: usize,
+        // Configurable terminators. Defaults preserve the original
+        // assignment-RHS behavior (`;` inclusive / `\n` exclusive).
+        pub stop_semicolon: bool,
+        pub stop_newline: bool,
+        pub stop_comma: bool,
+        pub stop_close_paren: bool,
     }
 
     #[allow(non_snake_case)]
@@ -139,6 +156,10 @@ mod _expr_scanner_fsm_framec {
                 pos: 0,
                 end: 0,
                 result_end: 0,
+                stop_semicolon: true,
+                stop_newline: true,
+                stop_comma: false,
+                stop_close_paren: false,
                 __compartment: ExprScannerFsmCompartment::new("Init"),
                 __next_compartment: None,
             }
@@ -291,15 +312,25 @@ mod _expr_scanner_fsm_framec {
                     continue;
                 }
             
-                // Track nesting depth (PDA stack via counter)
+                // Track nesting depth (PDA stack via counter). The
+                // configurable terminators are checked at depth 0 *before*
+                // the generic closer/decrement arm so a depth-0 `)` can act
+                // as a terminator (call_args matching-close) rather than
+                // decrementing.
                 match b {
                     b'(' | b'[' | b'{' => { depth += 1; }
+                    b')' if depth == 0 && self.stop_close_paren => {
+                        break; // matching close — excluded
+                    }
                     b')' | b']' | b'}' => { depth = (depth - 1).max(0); }
-                    b';' if depth == 0 => {
+                    b',' if depth == 0 && self.stop_comma => {
+                        break; // arg separator — excluded
+                    }
+                    b';' if depth == 0 && self.stop_semicolon => {
                         i += 1; // Include the semicolon
                         break;
                     }
-                    b'\n' if depth == 0 => {
+                    b'\n' if depth == 0 && self.stop_newline => {
                         break; // Don't include the newline
                     }
                     _ => {}
@@ -312,4 +343,3 @@ mod _expr_scanner_fsm_framec {
     }
 }
 pub use _expr_scanner_fsm_framec::*;
-

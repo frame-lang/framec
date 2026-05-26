@@ -10,7 +10,7 @@ use super::{ParseError, Parser};
 use crate::frame_c::compiler::frame_ast::*;
 use crate::frame_c::compiler::lexer::Token;
 
-impl<'a> Parser<'a> {
+impl Parser {
     // ========================================================================
     // Actions Section
     // ========================================================================
@@ -38,7 +38,7 @@ impl<'a> Parser<'a> {
         Ok(actions)
     }
 
-    fn parse_action(&mut self) -> Result<ActionAst, ParseError> {
+    pub(crate) fn parse_action(&mut self) -> Result<ActionAst, ParseError> {
         // Drain section-level comments captured since the last
         // significant token — same trivia plumbing as
         // `parse_interface_method` / `parse_operation`. The captured
@@ -174,7 +174,7 @@ impl<'a> Parser<'a> {
         Ok(ops)
     }
 
-    fn parse_operation(&mut self) -> Result<OperationAst, ParseError> {
+    pub(crate) fn parse_operation(&mut self) -> Result<OperationAst, ParseError> {
         // Drain section-level comments captured since the last
         // significant token — same trivia plumbing as
         // `parse_interface_method` / `parse_action`.

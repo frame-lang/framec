@@ -49,6 +49,17 @@
 
 use crate::frame_c::compiler::frame_ast::{ParamKind, SystemParam};
 
+// RFC-0039 A-half (#372): the balanced-delimiter scans below (matching close
+// paren, top-level comma split) are the same primitive as the assignment-RHS
+// scanner. Reuse the dogfooded `ExprScannerFsm` with its configurable
+// terminator flags rather than re-walking the bytes by hand — same `include!`
+// convention as `domain.rs` and the `native_region_scanner` consumers.
+#[allow(dead_code)]
+mod _expr_scanner {
+    include!("../native_region_scanner/expr_scanner.gen.rs");
+}
+use _expr_scanner::ExprScannerFsm;
+
 // ============================================================================
 // Parsed call-site arguments
 // ============================================================================
@@ -263,90 +274,48 @@ fn split_named_or_positional(body: &str) -> (Option<String>, String) {
 }
 
 /// Find the byte index of the matching close paren for an open paren
-/// that has already been consumed. Tracks nested parens, brackets,
-/// braces, and string literals so it doesn't fool itself.
+/// that has already been consumed. Delegates the balanced scan to the
+/// dogfooded `ExprScannerFsm` with the `)`-terminator flag: it tracks
+/// nested `()[]{}` + string literals and stops at the depth-0 `)`. If
+/// the scan runs to `end` without finding it, the parens are unbalanced.
 fn find_matching_close_paren(
     bytes: &[u8],
     start: usize,
     end: usize,
 ) -> Result<usize, CallArgsError> {
-    let mut depth: i32 = 1;
-    let mut i = start;
-    while i < end {
-        match bytes[i] {
-            b'(' | b'[' | b'{' => depth += 1,
-            b')' | b']' | b'}' => {
-                if depth == 1 && bytes[i] == b')' {
-                    return Ok(i);
-                }
-                depth -= 1;
-            }
-            b'"' => {
-                i += 1;
-                while i < end && bytes[i] != b'"' {
-                    if bytes[i] == b'\\' && i + 1 < end {
-                        i += 2;
-                        continue;
-                    }
-                    i += 1;
-                }
-            }
-            b'\'' => {
-                i += 1;
-                while i < end && bytes[i] != b'\'' {
-                    if bytes[i] == b'\\' && i + 1 < end {
-                        i += 2;
-                        continue;
-                    }
-                    i += 1;
-                }
-            }
-            _ => {}
-        }
-        i += 1;
+    let mut fsm = ExprScannerFsm::new();
+    fsm.bytes = bytes.to_vec();
+    fsm.pos = start;
+    fsm.end = end;
+    fsm.stop_semicolon = false;
+    fsm.stop_newline = false;
+    fsm.stop_close_paren = true;
+    fsm.do_scan();
+    let r = fsm.result_end;
+    if r < end && bytes[r] == b')' {
+        Ok(r)
+    } else {
+        Err(CallArgsError::ParseError {
+            message: "unbalanced parentheses in call args".to_string(),
+            position: start,
+        })
     }
-    Err(CallArgsError::ParseError {
-        message: "unbalanced parentheses in call args".to_string(),
-        position: start,
-    })
 }
 
 /// Find the byte index of a top-level comma (depth zero outside of
 /// brackets and string literals) or the end of input. Returns the
-/// position of the comma, or `end` if no comma found.
+/// position of the comma, or `end` if no comma found. Delegates to the
+/// dogfooded `ExprScannerFsm` with the `,`-terminator flag.
 fn find_top_level_comma_or_end(bytes: &[u8], start: usize, end: usize) -> usize {
-    let mut depth: i32 = 0;
-    let mut i = start;
-    while i < end {
-        match bytes[i] {
-            b'(' | b'[' | b'{' => depth += 1,
-            b')' | b']' | b'}' => depth -= 1,
-            b',' if depth == 0 => return i,
-            b'"' => {
-                i += 1;
-                while i < end && bytes[i] != b'"' {
-                    if bytes[i] == b'\\' && i + 1 < end {
-                        i += 2;
-                        continue;
-                    }
-                    i += 1;
-                }
-            }
-            b'\'' => {
-                i += 1;
-                while i < end && bytes[i] != b'\'' {
-                    if bytes[i] == b'\\' && i + 1 < end {
-                        i += 2;
-                        continue;
-                    }
-                    i += 1;
-                }
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    end
+    let mut fsm = ExprScannerFsm::new();
+    fsm.bytes = bytes.to_vec();
+    fsm.pos = start;
+    fsm.end = end;
+    fsm.stop_semicolon = false;
+    fsm.stop_newline = false;
+    fsm.stop_comma = true;
+    fsm.do_scan();
+    fsm.result_end
 }
 
 // ============================================================================
@@ -732,6 +701,26 @@ mod tests {
             CallArgsError::ParseError { .. } => {}
             _ => panic!("expected ParseError"),
         }
+    }
+
+    // RFC-0039 #372: the scans delegate to ExprScannerFsm, which is
+    // string-aware — a `)` or `,` inside a string literal must not be
+    // mistaken for the sigil close / arg separator.
+    #[test]
+    fn close_paren_inside_string_does_not_terminate_sigil() {
+        let parsed = parse_call_args("$(\"a)b\"), tail").unwrap();
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].group, CallArgGroup::State);
+        assert_eq!(parsed[0].value, "\"a)b\"");
+        assert_eq!(parsed[1].value, "tail");
+    }
+
+    #[test]
+    fn nested_brackets_in_bare_value_survive_comma_split() {
+        let parsed = parse_call_args("[1, 2, 3], {k: v}").unwrap();
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].value, "[1, 2, 3]");
+        assert_eq!(parsed[1].value, "{k: v}");
     }
 
     // ----- Resolver tests -----

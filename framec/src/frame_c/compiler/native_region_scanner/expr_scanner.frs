@@ -1,11 +1,22 @@
 @@[target("rust")]
 
-// ExprScanner — PDA (pushdown automaton) for scanning assignment RHS expressions.
+// ExprScanner — PDA (pushdown automaton) for scanning a balanced region.
 //
-// Scans from `pos` (after the `=`) to a terminator (`;` or `\n`) at depth 0,
-// respecting nested `()[]{}` and string literals with escape handling.
+// Scans from `pos` to a terminator at depth 0, respecting nested `()[]{}` and
+// string literals with escape handling. The terminator set is configurable via
+// the `stop_*` flags (defaults preserve the original RHS-expression behavior:
+// `;` inclusive / `\n` exclusive):
 //
-// This replaces 3 duplicated inline expression scanners in unified.rs.
+//   stop_semicolon (default true)  — `;` at depth 0 terminates, included.
+//   stop_newline   (default true)  — `\n` at depth 0 terminates, excluded.
+//   stop_comma     (default false) — `,` at depth 0 terminates, excluded.
+//   stop_close_paren (default false) — `)` at depth 0 terminates, excluded.
+//
+// This is the single balanced-delimiter scan primitive: the assignment-RHS
+// consumers (domain `= init`, `@@:return = expr`, `$.var = expr`) take the
+// default `;`/`\n` terminators; `call_args` takes the `,` (arg split) and `)`
+// (matching-close) terminators. Replaces 3 inline scanners in unified.rs plus
+// the two hand-rolled paren/comma scanners in pipeline_parser/call_args.rs.
 
 @@system ExprScannerFsm {
     interface:
@@ -47,15 +58,25 @@
                         continue;
                     }
 
-                    // Track nesting depth (PDA stack via counter)
+                    // Track nesting depth (PDA stack via counter). The
+                    // configurable terminators are checked at depth 0 *before*
+                    // the generic closer/decrement arm so a depth-0 `)` can act
+                    // as a terminator (call_args matching-close) rather than
+                    // decrementing.
                     match b {
                         b'(' | b'[' | b'{' => { depth += 1; }
+                        b')' if depth == 0 && self.stop_close_paren => {
+                            break; // matching close — excluded
+                        }
                         b')' | b']' | b'}' => { depth = (depth - 1).max(0); }
-                        b';' if depth == 0 => {
+                        b',' if depth == 0 && self.stop_comma => {
+                            break; // arg separator — excluded
+                        }
+                        b';' if depth == 0 && self.stop_semicolon => {
                             i += 1; // Include the semicolon
                             break;
                         }
-                        b'\n' if depth == 0 => {
+                        b'\n' if depth == 0 && self.stop_newline => {
                             break; // Don't include the newline
                         }
                         _ => {}
@@ -72,4 +93,10 @@
         pos: usize = 0
         end: usize = 0
         result_end: usize = 0
+        // Configurable terminators. Defaults preserve the original
+        // assignment-RHS behavior (`;` inclusive / `\n` exclusive).
+        stop_semicolon: bool = true
+        stop_newline: bool = true
+        stop_comma: bool = false
+        stop_close_paren: bool = false
 }

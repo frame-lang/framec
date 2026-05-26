@@ -9,7 +9,7 @@ use super::{ParseError, Parser};
 use crate::frame_c::compiler::frame_ast::DomainVar;
 use crate::frame_c::compiler::lexer::Token;
 
-impl<'a> Parser<'a> {
+impl Parser {
     /// Parse the domain section.
     ///
     /// Each field uses canonical Frame syntax: `name [: type] = init`.
