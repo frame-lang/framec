@@ -201,40 +201,10 @@ pub(super) fn erlang_safe_capitalize(name: &str) -> String {
 /// on subsequent lines. String/atom-quote and comment regions are
 /// excluded from the count.
 pub(super) fn paren_balance_unclosed(line: &str) -> bool {
-    let mut depth: i32 = 0;
-    let mut in_string = false;
-    let mut in_atom = false;
-    let mut escape = false;
-    for c in line.chars() {
-        if escape {
-            escape = false;
-            continue;
-        }
-        if c == '\\' && (in_string || in_atom) {
-            escape = true;
-            continue;
-        }
-        if c == '"' && !in_atom {
-            in_string = !in_string;
-            continue;
-        }
-        if c == '\'' && !in_string {
-            in_atom = !in_atom;
-            continue;
-        }
-        if in_string || in_atom {
-            continue;
-        }
-        if c == '%' {
-            break;
-        }
-        match c {
-            '(' | '[' | '{' => depth += 1,
-            ')' | ']' | '}' => depth -= 1,
-            _ => {}
-        }
-    }
-    depth > 0
+    // RFC-0035 Round 12: the string/atom/escape-aware bracket scan is a
+    // Frame FSM (compiler/paren_balance_scanner/) — its lexical modes
+    // ($Normal / $InString / $InAtom / escape) are the states.
+    crate::frame_c::compiler::paren_balance_scanner::is_unclosed(line)
 }
 
 /// True if `line` ends with an Erlang binary operator that requires a

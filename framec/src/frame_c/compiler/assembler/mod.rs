@@ -596,136 +596,65 @@ fn expand_system_instantiations(
     params_by_name: &HashMap<&str, &[SystemParam]>,
     lang: TargetLanguage,
 ) -> Result<String, AssemblyError> {
-    let bytes = text.as_bytes();
-    let end = bytes.len();
+    // RFC-0035 Round 10: lexing the native region into Literal/Call tokens is
+    // a Frame FSM (`compiler/call_site_scanner/`). Expansion stays here — it
+    // needs the (borrowed) system-params maps, which never enter the FSM.
+    use crate::frame_c::compiler::call_site_scanner::{scan_call_sites, CallToken};
     let mut result = String::new();
-    let mut i = 0;
-
-    // Use the language's SyntaxSkipper for comment/string detection —
-    // no duplicated logic, proper handling of triple-quotes, raw strings, etc.
-    let skipper = create_skipper(lang);
-
-    while i < end {
-        // Delegate comment skipping to the language's SyntaxSkipper
-        if let Some(after) = skipper.skip_comment(bytes, i, end) {
-            result.push_str(&String::from_utf8_lossy(&bytes[i..after]));
-            i = after;
-            continue;
-        }
-
-        // Delegate string skipping to the language's SyntaxSkipper
-        if let Some(after) = skipper.skip_string(bytes, i, end) {
-            result.push_str(&String::from_utf8_lossy(&bytes[i..after]));
-            i = after;
-            continue;
-        }
-
-        // Look for @@ pattern
-        if i + 2 < end && bytes[i] == b'@' && bytes[i + 1] == b'@' {
-            let start = i;
-            i += 2;
-
-            // RFC-0015 D7: `@@!SystemName()` — no-initialization allocation in native code.
-            // (Phase 5 will migrate this entire post-pass into AST-driven
-            // codegen; for now, recognize and rewrite.)
-            let is_no_init = i < end && bytes[i] == b'!';
-            if is_no_init {
-                i += 1;
+    for tok in scan_call_sites(text, lang) {
+        match tok {
+            CallToken::Literal(s) => result.push_str(&s),
+            CallToken::Call {
+                name,
+                args,
+                no_init,
+            } => {
+                let rendered =
+                    expand_one(&name, &args, no_init, defined_systems, params_by_name, lang)?;
+                result.push_str(&rendered);
             }
-
-            // Check for uppercase letter (system name start)
-            if i < end && bytes[i].is_ascii_uppercase() {
-                let name_start = i;
-                while i < end && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
-                    i += 1;
-                }
-                let name = std::str::from_utf8(&bytes[name_start..i]).unwrap_or("");
-
-                // Use SyntaxSkipper's balanced_paren_end for argument extraction
-                if i < end && bytes[i] == b'(' {
-                    if let Some(close) = skipper.balanced_paren_end(bytes, i, end) {
-                        let args_text = std::str::from_utf8(&bytes[i + 1..close - 1]).unwrap_or("");
-
-                        if defined_systems.contains(name) {
-                            if is_no_init {
-                                // E820 already enforced by the validator phase.
-                                // Reuse the per-backend rendering from frame_expansion
-                                // so handler-body and native-code paths stay in sync.
-                                let no_init = crate::frame_c::compiler::codegen::frame_expansion::generate_no_initialization(name, lang);
-                                result.push_str(&no_init);
-                                i = close;
-                                continue;
-                            }
-                            let resolved_args = match params_by_name.get(name) {
-                                Some(params) if !params.is_empty() => {
-                                    let parsed =
-                                        parse_call_args(args_text).map_err(|e| AssemblyError {
-                                            message: format!(
-                                                "@@{}({}): {}",
-                                                name,
-                                                args_text,
-                                                format_call_args_error(&e)
-                                            ),
-                                        })?;
-                                    let values = resolve_call(&parsed, params).map_err(|e| {
-                                        AssemblyError {
-                                            message: format!(
-                                                "@@{}({}): {}",
-                                                name,
-                                                args_text,
-                                                format_call_args_error(&e)
-                                            ),
-                                        }
-                                    })?;
-                                    values.join(", ")
-                                }
-                                _ => args_text.to_string(),
-                            };
-                            let constructor = generate_constructor(name, &resolved_args, lang);
-                            result.push_str(&constructor);
-                            i = close;
-                            continue;
-                        } else {
-                            // RFC-0024: `@@SystemName(args)` referring to a system
-                            // NOT declared in this compile unit lowers using only
-                            // the literal name. framec MUST NOT verify that the
-                            // name resolves anywhere in the project — host name
-                            // resolution (rustc / javac / etc.) reports any miss
-                            // at host-compile time. See issue #29 in
-                            // _scratch/FRAMEC_BUGS.md.
-                            if is_no_init {
-                                let no_init = crate::frame_c::compiler::codegen::frame_expansion::generate_no_initialization(name, lang);
-                                result.push_str(&no_init);
-                                i = close;
-                                continue;
-                            }
-                            // No params metadata available for cross-file systems;
-                            // pass the user's args text through verbatim. Matching
-                            // the cross-file system's signature is the user's
-                            // responsibility — same contract Rust uses for any
-                            // cross-crate / cross-module call.
-                            let constructor = generate_constructor(name, args_text, lang);
-                            result.push_str(&constructor);
-                            i = close;
-                            continue;
-                        }
-                    }
-                }
-            }
-
-            // Not a valid system instantiation — copy original @@ (and ! if present) chars
-            for b in &bytes[start..i] {
-                result.push(*b as char);
-            }
-            continue;
         }
-
-        // Regular character — copy through
-        result.push(bytes[i] as char);
-        i += 1;
     }
-
     Ok(result)
+}
+
+/// Render one `@@[!]Name(args)` call-site to its target-language constructor.
+/// `defined` systems resolve their args against the declared param shape;
+/// cross-file systems pass args through verbatim (RFC-0024 — framec does not
+/// verify cross-unit name resolution). `@@!Name()` is the no-init form.
+fn expand_one(
+    name: &str,
+    args_text: &str,
+    is_no_init: bool,
+    defined_systems: &HashSet<String>,
+    params_by_name: &HashMap<&str, &[SystemParam]>,
+    lang: TargetLanguage,
+) -> Result<String, AssemblyError> {
+    if is_no_init {
+        return Ok(
+            crate::frame_c::compiler::codegen::frame_expansion::generate_no_initialization(
+                name, lang,
+            ),
+        );
+    }
+    if defined_systems.contains(name) {
+        let resolved_args = match params_by_name.get(name) {
+            Some(params) if !params.is_empty() => {
+                let parsed = parse_call_args(args_text).map_err(|e| AssemblyError {
+                    message: format!("@@{}({}): {}", name, args_text, format_call_args_error(&e)),
+                })?;
+                let values = resolve_call(&parsed, params).map_err(|e| AssemblyError {
+                    message: format!("@@{}({}): {}", name, args_text, format_call_args_error(&e)),
+                })?;
+                values.join(", ")
+            }
+            _ => args_text.to_string(),
+        };
+        Ok(generate_constructor(name, &resolved_args, lang))
+    } else {
+        // Cross-file system: no params metadata; pass args through verbatim.
+        Ok(generate_constructor(name, args_text, lang))
+    }
 }
 
 /// Generate the language-appropriate constructor call for a system.

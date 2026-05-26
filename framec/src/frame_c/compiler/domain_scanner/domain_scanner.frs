@@ -1,0 +1,305 @@
+@@[target("rust")]
+
+// RFC-0035 Round 9 — the `domain:` section line-scanner as a Frame FSM.
+//
+// Replaces the hand-rolled outer byte-walk in `pipeline_parser/domain.rs`
+// (`parse_domain`). The `domain:` section is a line-oriented scanner: each
+// physical line is one of {blank, `}` close, `@@[...]` attribute, a section
+// keyword that ends the section, a comment, or a `[const] name [: type]
+// [= init]` field}. That classification is the state machine; the `$Scan`
+// state self-loops over lines, accumulating `DomainVar`s.
+//
+// The FSM OWNS the scan (RFC-0039 B1): `bytes` / `pos` / `vars` / the
+// pending comment + attribute buffers live in domain fields. It delegates the
+// two genuinely-structured sub-scans to the existing dogfooded FSMs:
+//   - `@@[name(args?)]`           → `scan_attribute` (AttributeScannerFsm)
+//   - a field's `= init` RHS      → `ExprScannerFsm`
+// The caller (`Parser::parse_domain`) builds this system, runs `scan()`, lifts
+// `vars` out, sets the lexer cursor to `result_cursor`, then drains the lexer's
+// buffered tokens (token-level bookkeeping that needs the lexer, not bytes).
+//
+// Errors thread through `error` (Frame handlers return ()); the caller returns
+// it. Byte-output identical to the recursive form — snapshot + matrix + fuzz
+// are the parity gate.
+
+@@system DomainScannerFsm {
+    interface:
+        scan()
+
+    machine:
+        $Start {
+            scan() { -> $Scan }
+        }
+
+        // One physical line per entry. Self-loops until the section ends.
+        $Scan {
+            $>() {
+                let src = &self.bytes;
+                let n = src.len();
+                let mut pos = self.pos;
+
+                // Skip blank lines / leading newlines.
+                while pos < n && (src[pos] == b'\n' || src[pos] == b'\r') {
+                    pos += 1;
+                }
+                if pos >= n {
+                    self.pos = pos;
+                    self.result_cursor = pos;
+                    -> $Done
+                }
+
+                // Indentation → start of content.
+                let line_start = pos;
+                while pos < n && (src[pos] == b' ' || src[pos] == b'\t') {
+                    pos += 1;
+                }
+                if pos >= n {
+                    self.pos = pos;
+                    self.result_cursor = pos;
+                    -> $Done
+                }
+
+                // `}` closes the @@system block — hand it back unconsumed.
+                if src[pos] == b'}' {
+                    self.pos = line_start;
+                    self.result_cursor = line_start;
+                    -> $Done
+                }
+
+                // `@@[name(args?)]` attributes — accumulate for the next field.
+                // Back-to-back same-line attrs loop; an attr ending the line
+                // restarts the scan.
+                while pos + 2 < n && src[pos] == b'@' && src[pos + 1] == b'@' && src[pos + 2] == b'[' {
+                    let attr_start = pos;
+                    let span = crate::frame_c::compiler::attribute_scanner::scan_attribute(src, attr_start);
+                    let name = std::str::from_utf8(span.name(src)).unwrap_or("").to_string();
+                    let args = span
+                        .args_inner(src)
+                        .map(|b| std::str::from_utf8(b).unwrap_or("").to_string());
+                    pos = span.end_pos;
+                    self.pending_attrs.push(crate::frame_c::compiler::frame_ast::Attribute {
+                        name,
+                        args,
+                        span: Span::new(attr_start, pos),
+                    });
+                    while pos < n && (src[pos] == b' ' || src[pos] == b'\t') {
+                        pos += 1;
+                    }
+                    if pos < n && (src[pos] == b'\n' || src[pos] == b'\r') {
+                        break;
+                    }
+                }
+                if !self.pending_attrs.is_empty() && pos < n && (src[pos] == b'\n' || src[pos] == b'\r') {
+                    self.pos = pos;
+                    -> $Scan
+                }
+
+                // Peek the leading word; a section keyword + `:` ends `domain:`.
+                let word_start = pos;
+                while pos < n && (src[pos].is_ascii_alphanumeric() || src[pos] == b'_') {
+                    pos += 1;
+                }
+                let word = std::str::from_utf8(&src[word_start..pos]).unwrap_or("");
+                let mut check_pos = pos;
+                while check_pos < n && (src[check_pos] == b' ' || src[check_pos] == b'\t') {
+                    check_pos += 1;
+                }
+                let followed_by_colon = check_pos < n && src[check_pos] == b':';
+                if followed_by_colon
+                    && matches!(word, "interface" | "machine" | "actions" | "operations" | "domain")
+                {
+                    self.pos = line_start;
+                    self.result_cursor = line_start;
+                    -> $Done
+                }
+
+                // Canonical field: [const] name [: type] [= init].
+                let field_start = word_start;
+                let (is_const, name) = if word == "const" {
+                    while pos < n && (src[pos] == b' ' || src[pos] == b'\t') {
+                        pos += 1;
+                    }
+                    let name_start = pos;
+                    while pos < n && (src[pos].is_ascii_alphanumeric() || src[pos] == b'_') {
+                        pos += 1;
+                    }
+                    (true, std::str::from_utf8(&src[name_start..pos]).unwrap_or("").to_string())
+                } else {
+                    (false, word.to_string())
+                };
+
+                // Empty name ⇒ comment-only / unparseable line: capture trivia.
+                if name.is_empty() {
+                    let line_text_start = word_start;
+                    while pos < n && src[pos] != b'\n' {
+                        pos += 1;
+                    }
+                    let raw = std::str::from_utf8(&src[line_text_start..pos])
+                        .unwrap_or("")
+                        .trim_end_matches('\r')
+                        .trim_end();
+                    if !raw.is_empty() {
+                        self.pending_doc.push(raw.to_string());
+                    }
+                    self.pos = pos;
+                    -> $Scan
+                }
+
+                // Optional `: type` — scan the type slot to a top-level `=`
+                // (bracket-aware for generics).
+                while pos < n && (src[pos] == b' ' || src[pos] == b'\t') {
+                    pos += 1;
+                }
+                let var_type = if pos < n && src[pos] == b':' {
+                    pos += 1;
+                    while pos < n && (src[pos] == b' ' || src[pos] == b'\t') {
+                        pos += 1;
+                    }
+                    let type_start = pos;
+                    let mut bracket_depth: i32 = 0;
+                    while pos < n && src[pos] != b'\n' {
+                        match src[pos] {
+                            b'<' | b'(' | b'[' | b'{' => { bracket_depth += 1; pos += 1; }
+                            b'>' | b')' | b']' | b'}' => { bracket_depth -= 1; pos += 1; }
+                            b'=' if bracket_depth == 0 => break,
+                            _ => { pos += 1; }
+                        }
+                    }
+                    let type_text = std::str::from_utf8(&src[type_start..pos]).unwrap_or("").trim().to_string();
+                    if type_text.is_empty() { Type::Unknown } else { Type::Custom(type_text) }
+                } else {
+                    Type::Unknown
+                };
+
+                while pos < n && (src[pos] == b' ' || src[pos] == b'\t') {
+                    pos += 1;
+                }
+
+                // Optional `= init`.
+                if pos >= n || src[pos] == b'\n' || src[pos] != b'=' {
+                    while pos < n && src[pos] != b'\n' {
+                        pos += 1;
+                    }
+                    self.vars.push(DomainVar {
+                        name,
+                        var_type,
+                        initializer_text: None,
+                        is_const,
+                        leading_comments: std::mem::take(&mut self.pending_doc),
+                        attributes: std::mem::take(&mut self.pending_attrs),
+                        span: Span::new(field_start, pos),
+                    });
+                    self.pos = pos;
+                    -> $Scan
+                }
+                pos += 1; // consume '='
+                while pos < n && (src[pos] == b' ' || src[pos] == b'\t') {
+                    pos += 1;
+                }
+
+                // Init capture. A `(` with no same-line matching `)` is a
+                // multi-line wrapper; otherwise the dogfooded ExprScannerFsm
+                // captures the balanced RHS (stops at the depth-0 newline).
+                let init_text = if pos < n && src[pos] == b'(' {
+                    let paren_pos = pos;
+                    let mut check = pos + 1;
+                    let mut depth = 1i32;
+                    let mut same_line = false;
+                    while check < n && src[check] != b'\n' {
+                        match src[check] {
+                            b'(' => depth += 1,
+                            b')' => { depth -= 1; if depth == 0 { same_line = true; break; } }
+                            _ => {}
+                        }
+                        check += 1;
+                    }
+                    if same_line {
+                        let init_start = pos;
+                        while pos < n && src[pos] != b'\n' { pos += 1; }
+                        std::str::from_utf8(&src[init_start..pos]).unwrap_or("").trim_end().to_string()
+                    } else {
+                        pos = paren_pos + 1;
+                        let wrapper_content_start = pos;
+                        let mut depth = 1i32;
+                        while pos < n && depth > 0 {
+                            match src[pos] {
+                                b'(' | b'[' | b'{' => depth += 1,
+                                b')' | b']' | b'}' => { depth -= 1; if depth == 0 { break; } }
+                                b'"' => {
+                                    pos += 1;
+                                    while pos < n && src[pos] != b'"' {
+                                        if src[pos] == b'\\' && pos + 1 < n { pos += 1; }
+                                        pos += 1;
+                                    }
+                                }
+                                b'\'' => {
+                                    pos += 1;
+                                    while pos < n && src[pos] != b'\'' {
+                                        if src[pos] == b'\\' && pos + 1 < n { pos += 1; }
+                                        pos += 1;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            pos += 1;
+                        }
+                        if depth != 0 {
+                            self.error = Some(ParseError {
+                                message: format!("domain field '{}': unterminated multi-line initializer '('", name),
+                                span: Span::new(paren_pos, pos),
+                            });
+                            -> $Done
+                        }
+                        let wrapper_content_end = pos - 1;
+                        let init = std::str::from_utf8(&src[wrapper_content_start..wrapper_content_end])
+                            .unwrap_or("").trim().to_string();
+                        while pos < n && src[pos] != b'\n' {
+                            if src[pos] != b' ' && src[pos] != b'\t' {
+                                self.error = Some(ParseError {
+                                    message: format!("domain field '{}': unexpected tokens after closing ')'", name),
+                                    span: Span::new(pos, pos + 1),
+                                });
+                                -> $Done
+                            }
+                            pos += 1;
+                        }
+                        init
+                    }
+                } else {
+                    let mut expr = _ds_expr::ExprScannerFsm::new();
+                    expr.bytes = src.to_vec();
+                    expr.pos = pos;
+                    expr.end = n;
+                    expr.do_scan();
+                    let init_end = expr.result_end;
+                    let init = std::str::from_utf8(&src[pos..init_end]).unwrap_or("").trim_end().to_string();
+                    pos = init_end;
+                    init
+                };
+
+                let init_opt = if init_text.is_empty() { None } else { Some(init_text) };
+                self.vars.push(DomainVar {
+                    name,
+                    var_type,
+                    initializer_text: init_opt,
+                    is_const,
+                    leading_comments: std::mem::take(&mut self.pending_doc),
+                    attributes: std::mem::take(&mut self.pending_attrs),
+                    span: Span::new(field_start, pos),
+                });
+                self.pos = pos;
+                -> $Scan
+            }
+        }
+
+        $Done { }
+
+    domain:
+        bytes: Vec<u8> = Vec::new()
+        pos: usize = 0
+        vars: Vec<DomainVar> = Vec::new()
+        pending_doc: Vec<String> = Vec::new()
+        pending_attrs: Vec<crate::frame_c::compiler::frame_ast::Attribute> = Vec::new()
+        result_cursor: usize = 0
+        error: Option<ParseError> = None
+}

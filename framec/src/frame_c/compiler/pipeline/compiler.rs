@@ -105,39 +105,76 @@ fn validate_only(source: &[u8], config: &PipelineConfig) -> Result<CompileResult
     })
 }
 
-/// Compile using the V4 pipeline stages
+/// RFC-0035 Round 8: the compile pipeline's threaded state.
 ///
-/// Pipeline: Segmenter → Parser → Arcanum → Validator → Codegen → Emit → Assembler
-///
-/// 1. Segment source into Native/Pragma/System regions (Segmenter)
-/// 2. For each System segment: parse → build Arcanum → validate → generate code
-/// 3. Assemble final output: native pass-through + generated systems + system instantiations
-pub fn compile_ast_based(
-    source: &[u8],
-    config: &PipelineConfig,
-) -> Result<CompileResult, RunError> {
-    if config.debug {
+/// `compile_ast_based` used to be one ~1000-line function holding every
+/// intermediate as a local. Round 8 carves it into phase functions
+/// (`do_segment`, `do_parse`, …) so the pipeline supervisor FSM can *drive*
+/// the phase sequence (Step 2) instead of merely observing it. Each phase
+/// reads/writes this context and signals continue/abort by returning
+/// `Option<CompileResult>` (`Some` ⇒ stop now and hand that result back;
+/// `None` ⇒ continue to the next phase).
+pub(crate) struct PipelineCtx {
+    source: Vec<u8>,
+    config: PipelineConfig,
+    /// Stage 0 output.
+    source_map: Option<segmenter::SourceMap>,
+    /// `@@persist` module pragma present.
+    has_persist: bool,
+    /// Pass 1 output: parsed systems (mutated later by per-target filtering).
+    system_asts: Vec<crate::frame_c::compiler::frame_ast::SystemAst>,
+    /// RFC-0022 module-scope `@@import` directives.
+    module_imports: Vec<crate::frame_c::compiler::frame_ast::Import>,
+    /// Imported `@@system` names carrying the new persist contract (bug #8).
+    imported_new_contract_names: Vec<String>,
+    /// RFC-0022 strict-mode import errors, surfaced at the end of the run.
+    strict_import_errors: Vec<CompileError>,
+    /// Shared arcanum (all systems visible to each other), built once after parse.
+    arcanum: Option<crate::frame_c::compiler::arcanum::Arcanum>,
+    /// Pass 2 output: per-system `(name, generated_code)`.
+    generated_systems: Vec<(String, String)>,
+    /// Soft warnings harvested across all systems (W-codes), surfaced at the end.
+    module_warnings: Vec<CompileError>,
+}
+
+impl PipelineCtx {
+    pub(crate) fn new(source: &[u8], config: &PipelineConfig) -> Self {
+        PipelineCtx {
+            source: source.to_vec(),
+            config: config.clone(),
+            source_map: None,
+            has_persist: false,
+            system_asts: Vec::new(),
+            module_imports: Vec::new(),
+            imported_new_contract_names: Vec::new(),
+            strict_import_errors: Vec::new(),
+            arcanum: None,
+            generated_systems: Vec::new(),
+            module_warnings: Vec::new(),
+        }
+    }
+
+    /// Placeholder context for the FSM domain initializer; `compile_ast_based`
+    /// overwrites `fsm.ctx` with the real one before running.
+    pub(crate) fn empty() -> Self {
+        PipelineCtx::new(&[], &PipelineConfig::default())
+    }
+}
+
+/// Stage 0 + RFC-0013 hard-cut gates. Segments the source, records the
+/// `@@persist` flag, and rejects the retired bare directives
+/// (`@@persist` / `@@target` / `@@codegen` / `@@import`). Returns `Some` with
+/// the error result on any rejection or segmentation failure.
+pub(crate) fn do_segment(c: &mut PipelineCtx) -> Option<CompileResult> {
+    if c.config.debug {
         eprintln!("[compile_ast_based] Starting pipeline-based compilation");
     }
 
-    // RFC-0035 round 7: the pipeline supervisor is a Frame FSM that
-    // observes phase transitions and tracks error severity. It does
-    // not drive control flow — the orchestrator stays in native Rust
-    // — so wrong supervisor state cannot change compilation
-    // correctness, only the `--debug` summary. See
-    // `compiler/pipeline_supervisor/` for the .frs source.
-    let mut supervisor = crate::frame_c::compiler::pipeline_supervisor::PipelineSupervisor::new();
-
     // Stage 0: Segment source
-    supervisor.begin_phase("segment");
-    let source_map = match segmenter::segment_source(source, config.target) {
+    let source_map = match segmenter::segment_source(&c.source, c.config.target) {
         Ok(sm) => sm,
         Err(e) => {
-            supervisor.abort("E001", &format!("Segmentation error: {}", e));
-            if config.debug {
-                eprintln!("[supervisor] {:?}", supervisor.summary());
-            }
-            return Ok(CompileResult {
+            return Some(CompileResult {
                 code: String::new(),
                 errors: vec![CompileError::new(
                     "E001",
@@ -149,7 +186,7 @@ pub fn compile_ast_based(
         }
     };
 
-    if config.debug {
+    if c.config.debug {
         let system_count = source_map
             .segments
             .iter()
@@ -163,7 +200,7 @@ pub fn compile_ast_based(
     }
 
     // Check for @@persist pragma
-    let has_persist = source_map.persist_pragma().is_some();
+    c.has_persist = source_map.persist_pragma().is_some();
 
     // RFC-0013 hard-cut migrations: bare `@@persist` and `@@target`
     // are no longer accepted. Catch legacy usages with a clear error
@@ -181,7 +218,7 @@ pub fn compile_ast_based(
                     Some(c) => !c.is_ascii_alphanumeric() && c != '_' && c != '-',
                 };
                 if is_bare {
-                    return Ok(CompileResult {
+                    return Some(CompileResult {
                         code: String::new(),
                         errors: vec![CompileError::new(
                             "E803",
@@ -204,7 +241,7 @@ pub fn compile_ast_based(
                     Some(c) => !c.is_ascii_alphanumeric() && c != '_' && c != '-',
                 };
                 if is_bare {
-                    return Ok(CompileResult {
+                    return Some(CompileResult {
                         code: String::new(),
                         errors: vec![CompileError::new(
                             "E804",
@@ -233,7 +270,7 @@ pub fn compile_ast_based(
                     Some(c) => c.is_whitespace() || c == '{',
                 };
                 if is_codegen_directive {
-                    return Ok(CompileResult {
+                    return Some(CompileResult {
                         code: String::new(),
                         errors: vec![CompileError::new(
                             "E824",
@@ -263,7 +300,7 @@ pub fn compile_ast_based(
                     Some(c) => c.is_whitespace() || c == '"',
                 };
                 if is_import_directive {
-                    return Ok(CompileResult {
+                    return Some(CompileResult {
                         code: String::new(),
                         errors: vec![CompileError::new(
                             "E823",
@@ -284,8 +321,20 @@ pub fn compile_ast_based(
         }
     }
 
+    c.source_map = Some(source_map);
+    None
+}
+
+/// Pass 1: parse each `@@system` segment into a `SystemAst`, attaching
+/// lifecycle pragmas/attributes and collecting module `@@import` metadata.
+/// Populates `system_asts` / `module_imports` / `imported_new_contract_names`
+/// / `strict_import_errors`. Returns `Some` on the first parse/structure error.
+pub(crate) fn do_parse(c: &mut PipelineCtx) -> Option<CompileResult> {
+    let source_map = c.source_map.as_ref().unwrap();
+    let has_persist = c.has_persist;
+    let config = &c.config;
+
     // Pass 1: Parse all systems into ASTs.
-    supervisor.begin_phase("parse");
     //
     // Walk segments in source order so module-level lifecycle pragmas
     // (RFC-0014 `@@[main]` and RFC-0015 `@@[create]` / `@@[save]` /
@@ -473,7 +522,7 @@ pub fn compile_ast_based(
             ) {
                 Ok(ast) => ast,
                 Err(e) => {
-                    return Ok(CompileResult {
+                    return Some(CompileResult {
                         code: String::new(),
                         errors: vec![CompileError::new(
                             "E002",
@@ -494,7 +543,7 @@ pub fn compile_ast_based(
                 match pipeline_parser::parse_system_header_params(&source_map.source, ast_hp_span) {
                     Ok(params) => system_ast.params = params,
                     Err(e) => {
-                        return Ok(CompileResult {
+                        return Some(CompileResult {
                             code: String::new(),
                             errors: vec![CompileError::new(
                                 "E002",
@@ -511,7 +560,7 @@ pub fn compile_ast_based(
             system_ast.bases = bases.clone();
             // Validate and attach visibility from `@@system private Foo` syntax
             if visibility.as_deref() == Some("public") {
-                return Ok(CompileResult {
+                return Some(CompileResult {
                     code: String::new(),
                     errors: vec![CompileError::new(
                         "E408",
@@ -536,7 +585,7 @@ pub fn compile_ast_based(
                         | TargetLanguage::Erlang
                 );
                 if unsupported {
-                    return Ok(CompileResult {
+                    return Some(CompileResult {
                         code: String::new(),
                         errors: vec![CompileError::new(
                             "E409",
@@ -635,7 +684,7 @@ pub fn compile_ast_based(
                     .into_iter()
                     .map(|e| CompileError::new(&e.code, &e.message))
                     .collect();
-                return Ok(CompileResult {
+                return Some(CompileResult {
                     code: String::new(),
                     errors,
                     warnings: vec![],
@@ -663,6 +712,22 @@ pub fn compile_ast_based(
         }
     }
 
+    c.system_asts = system_asts;
+    c.module_imports = module_imports;
+    c.imported_new_contract_names = imported_new_contract_names;
+    c.strict_import_errors = strict_import_errors;
+    None
+}
+
+/// Module-level structure gates + shared arcanum construction. Rejects
+/// multi-system Erlang files (E431) and multi-public-class Java files
+/// (E430), builds the cross-system `arcanum`, and enforces the single
+/// `@@[main]` rule (E805/E806). Returns `Some` on any module-level error.
+pub(crate) fn do_module_gates(c: &mut PipelineCtx) -> Option<CompileResult> {
+    let config = &c.config;
+    let system_asts = &c.system_asts;
+    let module_imports = &c.module_imports;
+
     // Erlang: one module per file — reject multi-system files.
     // E431, distinct from validator's E406 ("Interface handler parameter
     // count mismatch") which lives in `frame_validator.rs`. Both are
@@ -670,7 +735,7 @@ pub fn compile_ast_based(
     // paths, so they need distinct codes.
     if matches!(config.target, TargetLanguage::Erlang) && system_asts.len() > 1 {
         let names: Vec<&str> = system_asts.iter().map(|s| s.name.as_str()).collect();
-        return Ok(CompileResult {
+        return Some(CompileResult {
             code: String::new(),
             errors: vec![CompileError::new(
                 "E431",
@@ -701,7 +766,7 @@ pub fn compile_ast_based(
             .map(|s| s.name.as_str())
             .collect();
         if public_systems.len() > 1 {
-            return Ok(CompileResult {
+            return Some(CompileResult {
                 code: String::new(),
                 errors: vec![CompileError::new(
                     "E430",
@@ -738,7 +803,7 @@ pub fn compile_ast_based(
                 .iter()
                 .map(|e| CompileError::new(&e.code, &e.message))
                 .collect();
-            return Ok(CompileResult {
+            return Some(CompileResult {
                 code: String::new(),
                 errors,
                 warnings: vec![],
@@ -747,104 +812,126 @@ pub fn compile_ast_based(
         }
     }
 
-    // GraphViz target: bypass CodegenNode pipeline, use graph IR → DOT emitter
-    if matches!(config.target, TargetLanguage::Graphviz) {
-        use crate::frame_c::compiler::graphviz;
+    c.arcanum = Some(arcanum);
+    None
+}
 
-        let mut dot_systems: Vec<(String, String)> = Vec::new();
+/// GraphViz target bypass: validate each system, build the graph IR, and
+/// emit DOT. Returns `Some(dot_result)` for GraphViz (terminal), `None` to
+/// fall through to the normal codegen path.
+pub(crate) fn do_graphviz(c: &mut PipelineCtx) -> Option<CompileResult> {
+    let config = &c.config;
+    if !matches!(config.target, TargetLanguage::Graphviz) {
+        return None;
+    }
+    let source = c.source.as_slice();
+    let arcanum = c.arcanum.as_ref().unwrap();
+    let mut system_asts = std::mem::take(&mut c.system_asts);
+    use crate::frame_c::compiler::graphviz;
 
-        for system_ast in &mut system_asts {
-            // Validate with shared arcanum
-            let frame_ast = FrameAst::System(system_ast.clone());
-            let mut validator = FrameValidator::new();
-            if let Err(errs) = validator.validate_with_arcanum(&frame_ast, &arcanum) {
-                let errors = errs
-                    .iter()
-                    .map(|e| CompileError::new(&e.code, &e.message))
-                    .collect();
-                return Ok(CompileResult {
-                    code: String::new(),
-                    errors,
-                    warnings: vec![],
-                    source_map: None,
-                });
-            }
-            // @@:self.method() validation against interface
-            if let Err(errs) = validator.validate_self_calls(&frame_ast, source, config.target) {
-                let errors = errs
-                    .iter()
-                    .map(|e| CompileError::new(&e.code, &e.message))
-                    .collect();
-                return Ok(CompileResult {
-                    code: String::new(),
-                    errors,
-                    warnings: vec![],
-                    source_map: None,
-                });
-            }
-            // RFC-0015 D7: validate `@@SystemName(args)` and `@@!SystemName()`
-            // call sites — only E820 (no-init zero-arg). E821 (undefined
-            // system) was removed per RFC-0024 / bug #30: framec MUST NOT
-            // verify cross-system name resolution; host language reports
-            // any miss at host-compile time.
-            if let Err(errs) =
-                validator.validate_system_instantiations(&frame_ast, source, config.target)
-            {
-                let errors = errs
-                    .iter()
-                    .map(|e| CompileError::new(&e.code, &e.message))
-                    .collect();
-                return Ok(CompileResult {
-                    code: String::new(),
-                    errors,
-                    warnings: vec![],
-                    source_map: None,
-                });
-            }
-            // Target-specific checks
-            if let Err(errs) = validator.validate_target_specific(&frame_ast, config.target) {
-                let errors = errs
-                    .iter()
-                    .map(|e| CompileError::new(&e.code, &e.message))
-                    .collect();
-                return Ok(CompileResult {
-                    code: String::new(),
-                    errors,
-                    warnings: vec![],
-                    source_map: None,
-                });
-            }
+    let mut dot_systems: Vec<(String, String)> = Vec::new();
 
-            // Filter per `@@[target("X")]` (after validation)
-            filter_by_target_attribute(system_ast, config.target);
-
-            // Build graph IR and emit DOT
-            let graph = graphviz::build_system_graph(system_ast, &arcanum);
-            let dot = graphviz::emit_dot(&graph);
-            dot_systems.push((system_ast.name.clone(), dot));
+    for system_ast in &mut system_asts {
+        // Validate with shared arcanum
+        let frame_ast = FrameAst::System(system_ast.clone());
+        let mut validator = FrameValidator::new();
+        if let Err(errs) = validator.validate_with_arcanum(&frame_ast, &arcanum) {
+            let errors = errs
+                .iter()
+                .map(|e| CompileError::new(&e.code, &e.message))
+                .collect();
+            return Some(CompileResult {
+                code: String::new(),
+                errors,
+                warnings: vec![],
+                source_map: None,
+            });
+        }
+        // @@:self.method() validation against interface
+        if let Err(errs) = validator.validate_self_calls(&frame_ast, source, config.target) {
+            let errors = errs
+                .iter()
+                .map(|e| CompileError::new(&e.code, &e.message))
+                .collect();
+            return Some(CompileResult {
+                code: String::new(),
+                errors,
+                warnings: vec![],
+                source_map: None,
+            });
+        }
+        // RFC-0015 D7: validate `@@SystemName(args)` and `@@!SystemName()`
+        // call sites — only E820 (no-init zero-arg). E821 (undefined
+        // system) was removed per RFC-0024 / bug #30: framec MUST NOT
+        // verify cross-system name resolution; host language reports
+        // any miss at host-compile time.
+        if let Err(errs) =
+            validator.validate_system_instantiations(&frame_ast, source, config.target)
+        {
+            let errors = errs
+                .iter()
+                .map(|e| CompileError::new(&e.code, &e.message))
+                .collect();
+            return Some(CompileResult {
+                code: String::new(),
+                errors,
+                warnings: vec![],
+                source_map: None,
+            });
+        }
+        // Target-specific checks
+        if let Err(errs) = validator.validate_target_specific(&frame_ast, config.target) {
+            let errors = errs
+                .iter()
+                .map(|e| CompileError::new(&e.code, &e.message))
+                .collect();
+            return Some(CompileResult {
+                code: String::new(),
+                errors,
+                warnings: vec![],
+                source_map: None,
+            });
         }
 
-        // Assemble: concatenate DOT blocks with // System: Name headers
-        let code = graphviz::emit_multi_system(&dot_systems);
+        // Filter per `@@[target("X")]` (after validation)
+        filter_by_target_attribute(system_ast, config.target);
 
-        if config.debug {
-            eprintln!(
-                "[compile_ast_based] GraphViz: generated {} bytes of DOT for {} systems",
-                code.len(),
-                dot_systems.len()
-            );
-        }
-
-        return Ok(CompileResult {
-            code,
-            errors: vec![],
-            warnings: vec![],
-            source_map: None,
-        });
+        // Build graph IR and emit DOT
+        let graph = graphviz::build_system_graph(system_ast, &arcanum);
+        let dot = graphviz::emit_dot(&graph);
+        dot_systems.push((system_ast.name.clone(), dot));
     }
 
+    // Assemble: concatenate DOT blocks with // System: Name headers
+    let code = graphviz::emit_multi_system(&dot_systems);
+
+    if config.debug {
+        eprintln!(
+            "[compile_ast_based] GraphViz: generated {} bytes of DOT for {} systems",
+            code.len(),
+            dot_systems.len()
+        );
+    }
+
+    return Some(CompileResult {
+        code,
+        errors: vec![],
+        warnings: vec![],
+        source_map: None,
+    });
+}
+
+/// Pass 2: validate every system against the shared arcanum and emit its
+/// code (runtime classes + system class). Populates `generated_systems`
+/// and `module_warnings`. Returns `Some` on the first validation error.
+pub(crate) fn do_validate_codegen(c: &mut PipelineCtx) -> Option<CompileResult> {
+    let config = &c.config;
+    let source = c.source.as_slice();
+    let arcanum = c.arcanum.as_ref().unwrap();
+    let mut system_asts = std::mem::take(&mut c.system_asts);
+    let imported_new_contract_names = std::mem::take(&mut c.imported_new_contract_names);
+
     // Pass 2: Validate + codegen each system with the shared arcanum
-    supervisor.begin_phase("validate+codegen");
     let backend = get_backend(config.target);
     let mut ctx = EmitContext::new();
     // Make the names of every defined system available to the
@@ -854,9 +941,6 @@ pub fn compile_ast_based(
     // use the bare name.
     ctx.defined_systems = arcanum.systems.keys().cloned().collect();
     let mut generated_systems: Vec<(String, String)> = Vec::new();
-
-    // Collect runtime imports once (will be emitted at the start by assembler)
-    let runtime_imports = backend.runtime_imports();
 
     // Warnings accumulated across all systems in the module. Harvested
     // from each per-system validator and attached to the final result.
@@ -933,7 +1017,7 @@ pub fn compile_ast_based(
                 .iter()
                 .map(|e| CompileError::new(&e.code, &e.message))
                 .collect();
-            return Ok(CompileResult {
+            return Some(CompileResult {
                 code: String::new(),
                 errors,
                 warnings: module_warnings,
@@ -946,7 +1030,7 @@ pub fn compile_ast_based(
                 .iter()
                 .map(|e| CompileError::new(&e.code, &e.message))
                 .collect();
-            return Ok(CompileResult {
+            return Some(CompileResult {
                 code: String::new(),
                 errors,
                 warnings: module_warnings,
@@ -961,7 +1045,7 @@ pub fn compile_ast_based(
                 .iter()
                 .map(|e| CompileError::new(&e.code, &e.message))
                 .collect();
-            return Ok(CompileResult {
+            return Some(CompileResult {
                 code: String::new(),
                 errors,
                 warnings: module_warnings,
@@ -1062,8 +1146,27 @@ pub fn compile_ast_based(
         generated_systems.push((system_ast.name.clone(), system_code));
     }
 
+    c.system_asts = system_asts;
+    c.generated_systems = generated_systems;
+    c.module_warnings = module_warnings;
+    None
+}
+
+/// Stage 7: assemble the final output (native pass-through + generated
+/// systems + system instantiations). Re-derives the backend (cheap,
+/// deterministic). Terminal phase — always returns the final result.
+pub(crate) fn do_assemble(c: &mut PipelineCtx) -> CompileResult {
+    let config = &c.config;
+    let source_map = c.source_map.as_ref().unwrap();
+    let system_asts = &c.system_asts;
+    let module_imports = &c.module_imports;
+    let generated_systems = &c.generated_systems;
+    let strict_import_errors = std::mem::take(&mut c.strict_import_errors);
+    let module_warnings = std::mem::take(&mut c.module_warnings);
+    let backend = get_backend(config.target);
+    let runtime_imports = backend.runtime_imports();
+
     // Stage 7: Assemble final output (native pass-through + system substitution + system instantiations)
-    supervisor.begin_phase("assemble");
     // Runtime imports are emitted first (before any native prolog) to fix import ordering.
     // Pass each system's declared params so the assembler can resolve sigil-tagged
     // call sites (`@@Robot($(10), $>(80), "R2D2")`) and substitute Frame defaults.
@@ -1108,12 +1211,12 @@ pub fn compile_ast_based(
     ) {
         Ok(output) => output,
         Err(e) => {
-            return Ok(CompileResult {
+            return CompileResult {
                 code: String::new(),
                 errors: vec![CompileError::new("E003", &format!("Assembly error: {}", e))],
                 warnings: vec![],
                 source_map: None,
-            });
+            };
         }
     };
 
@@ -1125,14 +1228,7 @@ pub fn compile_ast_based(
     // surface here. They don't abort earlier passes (the rest of the
     // module still compiles), so the user sees both the missing-import
     // error AND any downstream issues in one shot.
-    for err in &strict_import_errors {
-        supervisor.record_nonfatal(&err.code, &err.message);
-    }
-    supervisor.finish();
-    if config.debug {
-        eprintln!("[supervisor] {:?}", supervisor.summary());
-    }
-    Ok(CompileResult {
+    CompileResult {
         code: if strict_import_errors.is_empty() {
             code
         } else {
@@ -1141,7 +1237,26 @@ pub fn compile_ast_based(
         errors: strict_import_errors,
         warnings: module_warnings,
         source_map: None,
-    })
+    }
+}
+
+/// Compile using the V4 pipeline stages
+///
+/// Pipeline: Segmenter → Parser → Arcanum → Validator → Codegen → Emit → Assembler
+///
+/// 1. Segment source into Native/Pragma/System regions (Segmenter)
+/// 2. For each System segment: parse → build Arcanum → validate → generate code
+/// 3. Assemble final output: native pass-through + generated systems + system instantiations
+pub fn compile_ast_based(
+    source: &[u8],
+    config: &PipelineConfig,
+) -> Result<CompileResult, RunError> {
+    // RFC-0035 Round 8: the phase sequence is driven by the `PipelineFsm`
+    // Frame state machine — each phase is a state whose enter handler runs
+    // one `do_*` phase and transitions. See `compiler/pipeline_supervisor/`.
+    Ok(crate::frame_c::compiler::pipeline_supervisor::run_pipeline(
+        source, config,
+    ))
 }
 
 /// RFC-0013 wave 2: prune AST items whose `@@[target("X")]` attributes

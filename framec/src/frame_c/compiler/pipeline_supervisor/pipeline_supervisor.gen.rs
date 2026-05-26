@@ -1,55 +1,24 @@
 
-// Pipeline supervisor — the framec compile pipeline expressed as
-// a Frame state machine.
+// RFC-0035 Round 8 — the framec compile pipeline AS a Frame state machine
+// that DRIVES the orchestrator (it no longer merely observes it).
 //
-// RFC-0035 round 7. Earlier rounds dogfooded Frame on framec's
-// utilities, classifiers, validators, and graph algorithms.
-// Round 7 puts Frame at the META level: it describes the
-// compiler's own pipeline as a state machine.
+// Each compile phase is a STATE. The state's `$>` enter handler runs that
+// phase (a `do_*` function over the shared `PipelineCtx`) and then transitions
+// to the next phase — or, on an early exit (validation error, GraphViz DOT
+// output, segmentation failure), stashes the finished `CompileResult` in
+// `early` and jumps straight to `$Done`. The machine self-drives: `run()`
+// kicks it from `$Idle`, and the enter-handler chain runs synchronously to a
+// terminal state. The transition graph IS the pipeline control flow — delete
+// `$ValidateCodegen`'s `-> $Assemble` and codegen genuinely stops feeding
+// assembly. `framec compile -l graphviz` on this file renders the real
+// pipeline, not a hand-maintained cartoon of it.
 //
-// This FSM is OBSERVATIONAL — it does not drive the
-// orchestrator's control flow. The orchestrator in
-// `pipeline/compiler.rs` stays in native Rust and calls into
-// this FSM at each phase boundary. Wrong supervisor logic
-// produces wrong `--debug` output but cannot change compilation
-// correctness. That bounded-risk profile is what makes Round 7
-// tractable: the pipeline orchestrator is 1500 lines of
-// intertwined linear logic with many bookkeeping side effects;
-// rewriting it as an FSM-driven controller would be a multi-day
-// arc with high regression risk. The supervisor-as-observer
-// shape gives us the dogfood demo (Frame describing the meta-
-// compiler) without rewriting the pipeline.
-//
-// Bonus deliverable: `framec compile -l graphviz
-// pipeline_supervisor.frs > docs/pipeline.svg` renders the
-// compiler's own pipeline diagram. The .frs source IS the
-// pipeline spec; the SVG is the documentation. Self-describing
-// meta-compiler.
-//
-// States:
-//
-//   $Idle    — initial; no phase has begun
-//   $Running — actively executing a phase; non-fatal errors
-//              may be collected and the pipeline continues
-//   $Aborted — fatal error (e.g. segmentation failure); the
-//              pipeline cannot continue. Terminal.
-//   $Failed  — pipeline ran to completion but non-fatal errors
-//              were collected (per-system parse failures,
-//              validator E-codes that don't prevent codegen).
-//              Terminal.
-//   $Done    — clean exit, zero errors. Terminal.
-//
-// Error severity distinction:
-//
-//   abort(code, msg)        — fatal; transitions $Running → $Aborted
-//   record_nonfatal(code, msg) — collected; stays in $Running
-//   finish()                — completes; → $Done if no errors,
-//                             → $Failed if record_nonfatal was called
-//
-// Phase tracking: each begin_phase(name) records the phase name
-// in the `phase_log` domain field (CSV-encoded). The summary()
-// event returns the log + error/warning counts as a tagged
-// string the caller can parse for debug output.
+// The phase bodies stay native (in `pipeline/compiler.rs::do_*`) — Frame owns
+// the *control structure*, the native fns are opaque pass-through, exactly as
+// the dogfooding thesis intends. `PipelineCtx` (owned: source, config, and
+// every intermediate) is the single domain field threaded through the phases;
+// `early` carries the result out. The caller (`compile_ast_based`) builds the
+// system, assigns the real `ctx`, calls `run()`, and returns `early`.
 
 #[allow(dead_code)]
 #[allow(non_camel_case_types)]
@@ -64,54 +33,38 @@
 #[allow(clippy::needless_return)]
 #[allow(clippy::new_without_default)]
 #[allow(clippy::single_match)]
-mod _pipeline_supervisor_framec {
+mod _pipeline_fsm_framec {
     use super::*;
     extern crate alloc;
     use alloc::{vec, format};
     #[derive(Clone, Debug)]
     #[allow(dead_code, non_camel_case_types)]
-    enum PipelineSupervisorFrameEvent {
-        BeginPhase { name: String },
-        CompletePhase {  },
-        RecordNonfatal { code: String, msg: String },
-        Abort { code: String, msg: String },
-        Finish {  },
-        Summary {  },
+    enum PipelineFsmFrameEvent {
+        Run {  },
         FrameEnter {},
         FrameExit {},
     }
 
     #[derive(Clone)]
     #[allow(dead_code, non_camel_case_types)]
-    enum PipelineSupervisorFrameReturn {
-        Abort(String),
-        BeginPhase(String),
-        CompletePhase(String),
-        Finish(String),
-        RecordNonfatal(String),
-        Summary(String),
+    enum PipelineFsmFrameReturn {
         _Lifecycle(alloc::rc::Rc<dyn core::any::Any>),
     }
 
     #[allow(dead_code)]
-    impl PipelineSupervisorFrameEvent {
+    impl PipelineFsmFrameEvent {
         fn name(&self) -> &'static str {
             match self {
-                PipelineSupervisorFrameEvent::BeginPhase { .. } => "begin_phase",
-                PipelineSupervisorFrameEvent::CompletePhase { .. } => "complete_phase",
-                PipelineSupervisorFrameEvent::RecordNonfatal { .. } => "record_nonfatal",
-                PipelineSupervisorFrameEvent::Abort { .. } => "abort",
-                PipelineSupervisorFrameEvent::Finish { .. } => "finish",
-                PipelineSupervisorFrameEvent::Summary { .. } => "summary",
-                PipelineSupervisorFrameEvent::FrameEnter { .. } => "$>",
-                PipelineSupervisorFrameEvent::FrameExit { .. } => "<$",
+                PipelineFsmFrameEvent::Run { .. } => "run",
+                PipelineFsmFrameEvent::FrameEnter { .. } => "$>",
+                PipelineFsmFrameEvent::FrameExit { .. } => "<$",
             }
         }
     }
 
     #[derive(Clone, Debug)]
     #[allow(dead_code, non_camel_case_types)]
-    enum PipelineSupervisorFrameValue {
+    enum PipelineFsmFrameValue {
         Int(i64),
         Float(f64),
         Bool(bool),
@@ -121,15 +74,15 @@ mod _pipeline_supervisor_framec {
     }
 
     #[allow(dead_code, non_camel_case_types)]
-    struct PipelineSupervisorFrameContext {
-        event: alloc::rc::Rc<PipelineSupervisorFrameEvent>,
-        _return: Option<PipelineSupervisorFrameReturn>,
-        _data: alloc::collections::BTreeMap<String, PipelineSupervisorFrameValue>,
+    struct PipelineFsmFrameContext {
+        event: alloc::rc::Rc<PipelineFsmFrameEvent>,
+        _return: Option<PipelineFsmFrameReturn>,
+        _data: alloc::collections::BTreeMap<String, PipelineFsmFrameValue>,
         _transitioned: bool,
     }
 
-    impl PipelineSupervisorFrameContext {
-        fn new(event: alloc::rc::Rc<PipelineSupervisorFrameEvent>, default_return: Option<PipelineSupervisorFrameReturn>) -> Self {
+    impl PipelineFsmFrameContext {
+        fn new(event: alloc::rc::Rc<PipelineFsmFrameEvent>, default_return: Option<PipelineFsmFrameReturn>) -> Self {
             Self {
                 event,
                 _return: default_return,
@@ -141,39 +94,45 @@ mod _pipeline_supervisor_framec {
 
     #[allow(dead_code, non_camel_case_types)]
     #[derive(Clone)]
-    enum PipelineSupervisorStateContext {
+    enum PipelineFsmStateContext {
         Idle,
-        Running,
-        Aborted,
-        Failed,
+        Segment,
+        Parse,
+        ModuleGates,
+        Graphviz,
+        ValidateCodegen,
+        Assemble,
         Done,
         __NoContext,
     }
 
-    impl Default for PipelineSupervisorStateContext {
+    impl Default for PipelineFsmStateContext {
         fn default() -> Self {
-            PipelineSupervisorStateContext::Idle
+            PipelineFsmStateContext::Idle
         }
     }
 
     #[allow(dead_code, non_camel_case_types)]
     #[derive(Clone)]
-    struct PipelineSupervisorCompartment {
+    struct PipelineFsmCompartment {
         state: String,
-        state_context: PipelineSupervisorStateContext,
-        forward_event: Option<PipelineSupervisorFrameEvent>,
-        parent_compartment: Option<Box<PipelineSupervisorCompartment>>,
+        state_context: PipelineFsmStateContext,
+        forward_event: Option<PipelineFsmFrameEvent>,
+        parent_compartment: Option<Box<PipelineFsmCompartment>>,
     }
 
-    impl PipelineSupervisorCompartment {
+    impl PipelineFsmCompartment {
         fn new(state: &str) -> Self {
             let state_context = match state {
-                "Idle" => PipelineSupervisorStateContext::Idle,
-                "Running" => PipelineSupervisorStateContext::Running,
-                "Aborted" => PipelineSupervisorStateContext::Aborted,
-                "Failed" => PipelineSupervisorStateContext::Failed,
-                "Done" => PipelineSupervisorStateContext::Done,
-                _ => PipelineSupervisorStateContext::__NoContext,
+                "Idle" => PipelineFsmStateContext::Idle,
+                "Segment" => PipelineFsmStateContext::Segment,
+                "Parse" => PipelineFsmStateContext::Parse,
+                "ModuleGates" => PipelineFsmStateContext::ModuleGates,
+                "Graphviz" => PipelineFsmStateContext::Graphviz,
+                "ValidateCodegen" => PipelineFsmStateContext::ValidateCodegen,
+                "Assemble" => PipelineFsmStateContext::Assemble,
+                "Done" => PipelineFsmStateContext::Done,
+                _ => PipelineFsmStateContext::__NoContext,
             };
             Self {
                 state: state.to_string(),
@@ -185,30 +144,24 @@ mod _pipeline_supervisor_framec {
     }
 
     #[allow(dead_code)]
-    pub struct PipelineSupervisor {
-        _state_stack: Vec<PipelineSupervisorCompartment>,
-        __compartment: PipelineSupervisorCompartment,
-        __next_compartment: Option<PipelineSupervisorCompartment>,
-        _context_stack: Vec<PipelineSupervisorFrameContext>,
-        pub current_phase: String,
-        pub phase_log: String,
-        pub error_count: i32,
-        pub abort_code: String,
-        pub abort_msg: String,
+    pub struct PipelineFsm {
+        _state_stack: Vec<PipelineFsmCompartment>,
+        __compartment: PipelineFsmCompartment,
+        __next_compartment: Option<PipelineFsmCompartment>,
+        _context_stack: Vec<PipelineFsmFrameContext>,
+        pub ctx: PipelineCtx,
+        pub early: Option<CompileResult>,
     }
 
     #[allow(non_snake_case)]
-    impl PipelineSupervisor {
+    impl PipelineFsm {
         pub fn new() -> Self {
             Self {
                 _state_stack: Vec::new(),
                 _context_stack: Vec::new(),
-                current_phase: String::new(),
-                phase_log: String::new(),
-                error_count: 0,
-                abort_code: String::new(),
-                abort_msg: String::new(),
-                __compartment: PipelineSupervisorCompartment::new("Idle"),
+                ctx: PipelineCtx::empty(),
+                early: None,
+                __compartment: PipelineFsmCompartment::new("Idle"),
                 __next_compartment: None,
             }
         }
@@ -216,8 +169,8 @@ mod _pipeline_supervisor_framec {
         pub fn __create() -> Self {
             let mut c = Self::new();
             c.__compartment = c.__prepareEnter("Idle");
-            let __e = alloc::rc::Rc::new(PipelineSupervisorFrameEvent::FrameEnter {});
-            let __ctx = PipelineSupervisorFrameContext::new(alloc::rc::Rc::clone(&__e), None);
+            let __e = alloc::rc::Rc::new(PipelineFsmFrameEvent::FrameEnter {});
+            let __ctx = PipelineFsmFrameContext::new(alloc::rc::Rc::clone(&__e), None);
             c._context_stack.push(__ctx);
             c.__kernel(&__e);
             c._context_stack.pop();
@@ -227,19 +180,22 @@ mod _pipeline_supervisor_framec {
         fn __hsm_chain(&mut self, leaf: &str) -> &'static [&'static str] {
             match leaf {
                 "Idle" => &["Idle"],
-                "Running" => &["Running"],
-                "Aborted" => &["Aborted"],
-                "Failed" => &["Failed"],
+                "Segment" => &["Segment"],
+                "Parse" => &["Parse"],
+                "ModuleGates" => &["ModuleGates"],
+                "Graphviz" => &["Graphviz"],
+                "ValidateCodegen" => &["ValidateCodegen"],
+                "Assemble" => &["Assemble"],
                 "Done" => &["Done"],
                 _ => &[],
             }
         }
 
-        fn __prepareEnter(&mut self, leaf: &str) -> PipelineSupervisorCompartment {
+        fn __prepareEnter(&mut self, leaf: &str) -> PipelineFsmCompartment {
             let chain = self.__hsm_chain(leaf);
-            let mut comp: Option<PipelineSupervisorCompartment> = None;
+            let mut comp: Option<PipelineFsmCompartment> = None;
             for name in chain.iter() {
-                let mut new_comp = PipelineSupervisorCompartment::new(name);
+                let mut new_comp = PipelineFsmCompartment::new(name);
                 if let Some(parent) = comp.take() {
                     new_comp.parent_compartment = Some(Box::new(parent));
                 }
@@ -248,7 +204,7 @@ mod _pipeline_supervisor_framec {
             comp.expect("chain must contain at least the leaf state")
         }
 
-        fn __kernel(&mut self, __e: &alloc::rc::Rc<PipelineSupervisorFrameEvent>) {
+        fn __kernel(&mut self, __e: &alloc::rc::Rc<PipelineFsmFrameEvent>) {
             // Route event to current state.
             self.__router(__e);
             // Drain any transitions queued by the handler.
@@ -257,7 +213,7 @@ mod _pipeline_supervisor_framec {
                 // Exit the current (leaf) state. RFC-0025.1: exit args live in the
                 // source state's typed ctx (written at the transition site), so the
                 // synthesized `<$` event carries no payload.
-                let exit_event = alloc::rc::Rc::new(PipelineSupervisorFrameEvent::FrameExit {});
+                let exit_event = alloc::rc::Rc::new(PipelineFsmFrameEvent::FrameExit {});
                 self.__router(&exit_event);
                 // Switch to the new compartment.
                 self.__compartment = next_compartment;
@@ -268,10 +224,10 @@ mod _pipeline_supervisor_framec {
                     None => {
                         // No forwarded event — synthesize a fresh $>. RFC-0025.1:
                         // enter args live in the destination's typed ctx.
-                        let enter_event = alloc::rc::Rc::new(PipelineSupervisorFrameEvent::FrameEnter {});
+                        let enter_event = alloc::rc::Rc::new(PipelineFsmFrameEvent::FrameEnter {});
                         self.__router(&enter_event);
                     }
-                    Some(fwd) if matches!(fwd, PipelineSupervisorFrameEvent::FrameEnter { .. }) => {
+                    Some(fwd) if matches!(fwd, PipelineFsmFrameEvent::FrameEnter { .. }) => {
                         // Forwarded event IS $> — dispatch directly so the
                         // destination's $> handler receives the caller's payload.
                         let fwd_rc = alloc::rc::Rc::new(fwd);
@@ -280,7 +236,7 @@ mod _pipeline_supervisor_framec {
                     Some(fwd) => {
                         // Forwarded event is not $> — initialize the destination
                         // with a fresh $>, then dispatch the forward.
-                        let enter_event = alloc::rc::Rc::new(PipelineSupervisorFrameEvent::FrameEnter {});
+                        let enter_event = alloc::rc::Rc::new(PipelineFsmFrameEvent::FrameEnter {});
                         self.__router(&enter_event);
                         let fwd_rc = alloc::rc::Rc::new(fwd);
                         self.__router(&fwd_rc);
@@ -292,369 +248,160 @@ mod _pipeline_supervisor_framec {
             }
         }
 
-        fn __router(&mut self, __e: &alloc::rc::Rc<PipelineSupervisorFrameEvent>) {
-            let __ev: &PipelineSupervisorFrameEvent = __e;
+        fn __router(&mut self, __e: &alloc::rc::Rc<PipelineFsmFrameEvent>) {
+            let __ev: &PipelineFsmFrameEvent = __e;
             match self.__compartment.state.as_str() {
                 "Idle" => self._state_Idle(__ev),
-                "Running" => self._state_Running(__ev),
-                "Aborted" => self._state_Aborted(__ev),
-                "Failed" => self._state_Failed(__ev),
+                "Segment" => self._state_Segment(__ev),
+                "Parse" => self._state_Parse(__ev),
+                "ModuleGates" => self._state_ModuleGates(__ev),
+                "Graphviz" => self._state_Graphviz(__ev),
+                "ValidateCodegen" => self._state_ValidateCodegen(__ev),
+                "Assemble" => self._state_Assemble(__ev),
                 "Done" => self._state_Done(__ev),
                 _ => {}
             }
         }
 
-        fn __transition(&mut self, next_compartment: PipelineSupervisorCompartment) {
+        fn __transition(&mut self, next_compartment: PipelineFsmCompartment) {
             self.__next_compartment = Some(next_compartment);
         }
 
-        pub fn begin_phase(&mut self, name: String) -> String {
-            let __e = alloc::rc::Rc::new(PipelineSupervisorFrameEvent::BeginPhase { name: name.clone() });
-            let mut __ctx = PipelineSupervisorFrameContext::new(alloc::rc::Rc::clone(&__e), None);
+        pub fn run(&mut self) {
+            let __e = alloc::rc::Rc::new(PipelineFsmFrameEvent::Run {});
+            let mut __ctx = PipelineFsmFrameContext::new(alloc::rc::Rc::clone(&__e), None);
             self._context_stack.push(__ctx);
             self.__kernel(&__e);
-            let __ctx = self._context_stack.pop().expect("invariant: handler must have pushed a context before reading return");
-            match __ctx._return {
-                Some(PipelineSupervisorFrameReturn::BeginPhase(v)) => v,
-                Some(PipelineSupervisorFrameReturn::_Lifecycle(v)) => v.downcast_ref::<String>().cloned().unwrap_or_default(),
-                _ => Default::default(),
-            }
+            self._context_stack.pop();
         }
 
-        pub fn complete_phase(&mut self) -> String {
-            let __e = alloc::rc::Rc::new(PipelineSupervisorFrameEvent::CompletePhase {});
-            let mut __ctx = PipelineSupervisorFrameContext::new(alloc::rc::Rc::clone(&__e), None);
-            self._context_stack.push(__ctx);
-            self.__kernel(&__e);
-            let __ctx = self._context_stack.pop().expect("invariant: handler must have pushed a context before reading return");
-            match __ctx._return {
-                Some(PipelineSupervisorFrameReturn::CompletePhase(v)) => v,
-                Some(PipelineSupervisorFrameReturn::_Lifecycle(v)) => v.downcast_ref::<String>().cloned().unwrap_or_default(),
-                _ => Default::default(),
-            }
-        }
-
-        pub fn record_nonfatal(&mut self, code: String, msg: String) -> String {
-            let __e = alloc::rc::Rc::new(PipelineSupervisorFrameEvent::RecordNonfatal { code: code.clone(), msg: msg.clone() });
-            let mut __ctx = PipelineSupervisorFrameContext::new(alloc::rc::Rc::clone(&__e), None);
-            self._context_stack.push(__ctx);
-            self.__kernel(&__e);
-            let __ctx = self._context_stack.pop().expect("invariant: handler must have pushed a context before reading return");
-            match __ctx._return {
-                Some(PipelineSupervisorFrameReturn::RecordNonfatal(v)) => v,
-                Some(PipelineSupervisorFrameReturn::_Lifecycle(v)) => v.downcast_ref::<String>().cloned().unwrap_or_default(),
-                _ => Default::default(),
-            }
-        }
-
-        pub fn abort(&mut self, code: String, msg: String) -> String {
-            let __e = alloc::rc::Rc::new(PipelineSupervisorFrameEvent::Abort { code: code.clone(), msg: msg.clone() });
-            let mut __ctx = PipelineSupervisorFrameContext::new(alloc::rc::Rc::clone(&__e), None);
-            self._context_stack.push(__ctx);
-            self.__kernel(&__e);
-            let __ctx = self._context_stack.pop().expect("invariant: handler must have pushed a context before reading return");
-            match __ctx._return {
-                Some(PipelineSupervisorFrameReturn::Abort(v)) => v,
-                Some(PipelineSupervisorFrameReturn::_Lifecycle(v)) => v.downcast_ref::<String>().cloned().unwrap_or_default(),
-                _ => Default::default(),
-            }
-        }
-
-        pub fn finish(&mut self) -> String {
-            let __e = alloc::rc::Rc::new(PipelineSupervisorFrameEvent::Finish {});
-            let mut __ctx = PipelineSupervisorFrameContext::new(alloc::rc::Rc::clone(&__e), None);
-            self._context_stack.push(__ctx);
-            self.__kernel(&__e);
-            let __ctx = self._context_stack.pop().expect("invariant: handler must have pushed a context before reading return");
-            match __ctx._return {
-                Some(PipelineSupervisorFrameReturn::Finish(v)) => v,
-                Some(PipelineSupervisorFrameReturn::_Lifecycle(v)) => v.downcast_ref::<String>().cloned().unwrap_or_default(),
-                _ => Default::default(),
-            }
-        }
-
-        pub fn summary(&mut self) -> String {
-            let __e = alloc::rc::Rc::new(PipelineSupervisorFrameEvent::Summary {});
-            let mut __ctx = PipelineSupervisorFrameContext::new(alloc::rc::Rc::clone(&__e), None);
-            self._context_stack.push(__ctx);
-            self.__kernel(&__e);
-            let __ctx = self._context_stack.pop().expect("invariant: handler must have pushed a context before reading return");
-            match __ctx._return {
-                Some(PipelineSupervisorFrameReturn::Summary(v)) => v,
-                Some(PipelineSupervisorFrameReturn::_Lifecycle(v)) => v.downcast_ref::<String>().cloned().unwrap_or_default(),
-                _ => Default::default(),
-            }
-        }
-
-        fn _state_Idle(&mut self, __e: &PipelineSupervisorFrameEvent) {
+        fn _state_Idle(&mut self, __e: &PipelineFsmFrameEvent) {
             match __e {
-                PipelineSupervisorFrameEvent::BeginPhase { name, .. } => {
-                    self._s_Idle_hdl_user_begin_phase(__e, name.clone());
-                }
-                PipelineSupervisorFrameEvent::Summary { .. } => { self._s_Idle_hdl_user_summary(__e); }
+                PipelineFsmFrameEvent::Run { .. } => { self._s_Idle_hdl_user_run(__e); }
                 _ => {}
             }
         }
 
-        fn _state_Running(&mut self, __e: &PipelineSupervisorFrameEvent) {
+        fn _state_Segment(&mut self, __e: &PipelineFsmFrameEvent) {
             match __e {
-                PipelineSupervisorFrameEvent::Abort { code, msg, .. } => {
-                    self._s_Running_hdl_user_abort(__e, code.clone(), msg.clone());
-                }
-                PipelineSupervisorFrameEvent::BeginPhase { name, .. } => {
-                    self._s_Running_hdl_user_begin_phase(__e, name.clone());
-                }
-                PipelineSupervisorFrameEvent::CompletePhase { .. } => { self._s_Running_hdl_user_complete_phase(__e); }
-                PipelineSupervisorFrameEvent::Finish { .. } => { self._s_Running_hdl_user_finish(__e); }
-                PipelineSupervisorFrameEvent::RecordNonfatal { code, msg, .. } => {
-                    self._s_Running_hdl_user_record_nonfatal(__e, code.clone(), msg.clone());
-                }
-                PipelineSupervisorFrameEvent::Summary { .. } => { self._s_Running_hdl_user_summary(__e); }
+                PipelineFsmFrameEvent::FrameEnter { .. } => { self._s_Segment_hdl_frame_enter(__e); }
                 _ => {}
             }
         }
 
-        fn _state_Aborted(&mut self, __e: &PipelineSupervisorFrameEvent) {
+        fn _state_Parse(&mut self, __e: &PipelineFsmFrameEvent) {
             match __e {
-                PipelineSupervisorFrameEvent::Abort { code, msg, .. } => {
-                    self._s_Aborted_hdl_user_abort(__e, code.clone(), msg.clone());
-                }
-                PipelineSupervisorFrameEvent::BeginPhase { name, .. } => {
-                    self._s_Aborted_hdl_user_begin_phase(__e, name.clone());
-                }
-                PipelineSupervisorFrameEvent::CompletePhase { .. } => { self._s_Aborted_hdl_user_complete_phase(__e); }
-                PipelineSupervisorFrameEvent::Finish { .. } => { self._s_Aborted_hdl_user_finish(__e); }
-                PipelineSupervisorFrameEvent::RecordNonfatal { code, msg, .. } => {
-                    self._s_Aborted_hdl_user_record_nonfatal(__e, code.clone(), msg.clone());
-                }
-                PipelineSupervisorFrameEvent::Summary { .. } => { self._s_Aborted_hdl_user_summary(__e); }
+                PipelineFsmFrameEvent::FrameEnter { .. } => { self._s_Parse_hdl_frame_enter(__e); }
                 _ => {}
             }
         }
 
-        fn _state_Failed(&mut self, __e: &PipelineSupervisorFrameEvent) {
+        fn _state_ModuleGates(&mut self, __e: &PipelineFsmFrameEvent) {
             match __e {
-                PipelineSupervisorFrameEvent::Abort { code, msg, .. } => {
-                    self._s_Failed_hdl_user_abort(__e, code.clone(), msg.clone());
-                }
-                PipelineSupervisorFrameEvent::BeginPhase { name, .. } => {
-                    self._s_Failed_hdl_user_begin_phase(__e, name.clone());
-                }
-                PipelineSupervisorFrameEvent::CompletePhase { .. } => { self._s_Failed_hdl_user_complete_phase(__e); }
-                PipelineSupervisorFrameEvent::Finish { .. } => { self._s_Failed_hdl_user_finish(__e); }
-                PipelineSupervisorFrameEvent::RecordNonfatal { code, msg, .. } => {
-                    self._s_Failed_hdl_user_record_nonfatal(__e, code.clone(), msg.clone());
-                }
-                PipelineSupervisorFrameEvent::Summary { .. } => { self._s_Failed_hdl_user_summary(__e); }
+                PipelineFsmFrameEvent::FrameEnter { .. } => { self._s_ModuleGates_hdl_frame_enter(__e); }
                 _ => {}
             }
         }
 
-        fn _state_Done(&mut self, __e: &PipelineSupervisorFrameEvent) {
+        fn _state_Graphviz(&mut self, __e: &PipelineFsmFrameEvent) {
             match __e {
-                PipelineSupervisorFrameEvent::Abort { code, msg, .. } => {
-                    self._s_Done_hdl_user_abort(__e, code.clone(), msg.clone());
-                }
-                PipelineSupervisorFrameEvent::BeginPhase { name, .. } => {
-                    self._s_Done_hdl_user_begin_phase(__e, name.clone());
-                }
-                PipelineSupervisorFrameEvent::CompletePhase { .. } => { self._s_Done_hdl_user_complete_phase(__e); }
-                PipelineSupervisorFrameEvent::Finish { .. } => { self._s_Done_hdl_user_finish(__e); }
-                PipelineSupervisorFrameEvent::RecordNonfatal { code, msg, .. } => {
-                    self._s_Done_hdl_user_record_nonfatal(__e, code.clone(), msg.clone());
-                }
-                PipelineSupervisorFrameEvent::Summary { .. } => { self._s_Done_hdl_user_summary(__e); }
+                PipelineFsmFrameEvent::FrameEnter { .. } => { self._s_Graphviz_hdl_frame_enter(__e); }
                 _ => {}
             }
         }
 
-        fn _s_Idle_hdl_user_begin_phase(&mut self, __e: &PipelineSupervisorFrameEvent, name: String) {
-                            self.current_phase = name.clone();
-                            let mut __compartment = self.__prepareEnter("Running");
-                            self.__transition(__compartment);
-            let __return_val = PipelineSupervisorFrameReturn::BeginPhase(format!("BEGIN|{}", name));
-                            if let Some(ctx) = self._context_stack.last_mut() { ctx._return = Some(__return_val); }
-                            return;
+        fn _state_ValidateCodegen(&mut self, __e: &PipelineFsmFrameEvent) {
+            match __e {
+                PipelineFsmFrameEvent::FrameEnter { .. } => { self._s_ValidateCodegen_hdl_frame_enter(__e); }
+                _ => {}
+            }
         }
 
-        fn _s_Idle_hdl_user_summary(&mut self, __e: &PipelineSupervisorFrameEvent) {
-            let __return_val = PipelineSupervisorFrameReturn::Summary("IDLE|phases=|errors=0|warnings=0".to_string());
-                            if let Some(ctx) = self._context_stack.last_mut() { ctx._return = Some(__return_val); }
+        fn _state_Assemble(&mut self, __e: &PipelineFsmFrameEvent) {
+            match __e {
+                PipelineFsmFrameEvent::FrameEnter { .. } => { self._s_Assemble_hdl_frame_enter(__e); }
+                _ => {}
+            }
         }
 
-        fn _s_Running_hdl_user_abort(&mut self, __e: &PipelineSupervisorFrameEvent, code: String, msg: String) {
-                            self.abort_code = code.clone();
-                            self.abort_msg = msg.clone();
-                            let mut __compartment = self.__prepareEnter("Aborted");
-                            self.__transition(__compartment);
-            let __return_val = PipelineSupervisorFrameReturn::Abort(format!("ABORT|{}|{}", code, msg));
-                            if let Some(ctx) = self._context_stack.last_mut() { ctx._return = Some(__return_val); }
-                            return;
+        fn _state_Done(&mut self, __e: &PipelineFsmFrameEvent) {
+            match __e {
+                _ => {}
+            }
         }
 
-        fn _s_Running_hdl_user_begin_phase(&mut self, __e: &PipelineSupervisorFrameEvent, name: String) {
-                            // Closing the prior phase implicitly when caller
-                            // begins a new one without calling complete_phase()
-                            // first — defensive shape, matches how the existing
-                            // orchestrator flows from segment → parse → ...
-                            // without explicit "done" markers. If complete_phase()
-                            // already ran, current_phase is empty and we skip the
-                            // implicit close.
-                            if !self.current_phase.is_empty() {
-                                if !self.phase_log.is_empty() {
-                                    self.phase_log.push(',');
-                                }
-                                self.phase_log.push_str(&self.current_phase);
-                            }
-                            self.current_phase = name.clone();
-            let __return_val = PipelineSupervisorFrameReturn::BeginPhase(format!("BEGIN|{}", name));
-                            if let Some(ctx) = self._context_stack.last_mut() { ctx._return = Some(__return_val); }
+        fn _s_Idle_hdl_user_run(&mut self, __e: &PipelineFsmFrameEvent) {
+            let mut __compartment = self.__prepareEnter("Segment");
+            self.__transition(__compartment);
+            return;
         }
 
-        fn _s_Running_hdl_user_complete_phase(&mut self, __e: &PipelineSupervisorFrameEvent) {
-                            if !self.phase_log.is_empty() {
-                                self.phase_log.push(',');
-                            }
-                            self.phase_log.push_str(&self.current_phase);
-                            let done_phase = self.current_phase.clone();
-                            self.current_phase = String::new();
-            let __return_val = PipelineSupervisorFrameReturn::CompletePhase(format!("COMPLETE|{}", done_phase));
-                            if let Some(ctx) = self._context_stack.last_mut() { ctx._return = Some(__return_val); }
+        fn _s_Segment_hdl_frame_enter(&mut self, __e: &PipelineFsmFrameEvent) {
+            if let Some(r) = do_segment(&mut self.ctx) {
+                self.early = Some(r);
+                let mut __compartment = self.__prepareEnter("Done");
+                self.__transition(__compartment);
+                return;
+            }
+            let mut __compartment = self.__prepareEnter("Parse");
+            self.__transition(__compartment);
+            return;
         }
 
-        fn _s_Running_hdl_user_finish(&mut self, __e: &PipelineSupervisorFrameEvent) {
-                            if !self.current_phase.is_empty() {
-                                if !self.phase_log.is_empty() {
-                                    self.phase_log.push(',');
-                                }
-                                self.phase_log.push_str(&self.current_phase);
-                                self.current_phase = String::new();
-                            }
-                            if self.error_count > 0 {
-                                let mut __compartment = self.__prepareEnter("Failed");
-                                self.__transition(__compartment);
-            let __return_val = PipelineSupervisorFrameReturn::Finish(format!("FAILED|errors={}", self.error_count));
-                                if let Some(ctx) = self._context_stack.last_mut() { ctx._return = Some(__return_val); }
-                                return;
-            
-                            }
-                            let mut __compartment = self.__prepareEnter("Done");
-                            self.__transition(__compartment);
-            let __return_val = PipelineSupervisorFrameReturn::Finish("DONE".to_string());
-                            if let Some(ctx) = self._context_stack.last_mut() { ctx._return = Some(__return_val); }
-                            return;
+        fn _s_Parse_hdl_frame_enter(&mut self, __e: &PipelineFsmFrameEvent) {
+            if let Some(r) = do_parse(&mut self.ctx) {
+                self.early = Some(r);
+                let mut __compartment = self.__prepareEnter("Done");
+                self.__transition(__compartment);
+                return;
+            }
+            let mut __compartment = self.__prepareEnter("ModuleGates");
+            self.__transition(__compartment);
+            return;
         }
 
-        fn _s_Running_hdl_user_record_nonfatal(&mut self, __e: &PipelineSupervisorFrameEvent, code: String, msg: String) {
-                            self.error_count += 1;
-            let __return_val = PipelineSupervisorFrameReturn::RecordNonfatal(format!("NONFATAL|{}|{}", code, msg));
-                            if let Some(ctx) = self._context_stack.last_mut() { ctx._return = Some(__return_val); }
+        fn _s_ModuleGates_hdl_frame_enter(&mut self, __e: &PipelineFsmFrameEvent) {
+            if let Some(r) = do_module_gates(&mut self.ctx) {
+                self.early = Some(r);
+                let mut __compartment = self.__prepareEnter("Done");
+                self.__transition(__compartment);
+                return;
+            }
+            let mut __compartment = self.__prepareEnter("Graphviz");
+            self.__transition(__compartment);
+            return;
         }
 
-        fn _s_Running_hdl_user_summary(&mut self, __e: &PipelineSupervisorFrameEvent) {
-            let __return_val = PipelineSupervisorFrameReturn::Summary(format!(
-                                "RUNNING|phases={}|current={}|errors={}|warnings=0",
-                                self.phase_log, self.current_phase, self.error_count
-                            ));
-                            if let Some(ctx) = self._context_stack.last_mut() { ctx._return = Some(__return_val); }
+        fn _s_Graphviz_hdl_frame_enter(&mut self, __e: &PipelineFsmFrameEvent) {
+            if let Some(r) = do_graphviz(&mut self.ctx) {
+                self.early = Some(r);
+                let mut __compartment = self.__prepareEnter("Done");
+                self.__transition(__compartment);
+                return;
+            }
+            let mut __compartment = self.__prepareEnter("ValidateCodegen");
+            self.__transition(__compartment);
+            return;
         }
 
-        fn _s_Aborted_hdl_user_abort(&mut self, __e: &PipelineSupervisorFrameEvent, code: String, msg: String) {
-            let __return_val = PipelineSupervisorFrameReturn::Abort("ABSORBED".to_string());
-                            if let Some(ctx) = self._context_stack.last_mut() { ctx._return = Some(__return_val); }
+        fn _s_ValidateCodegen_hdl_frame_enter(&mut self, __e: &PipelineFsmFrameEvent) {
+            if let Some(r) = do_validate_codegen(&mut self.ctx) {
+                self.early = Some(r);
+                let mut __compartment = self.__prepareEnter("Done");
+                self.__transition(__compartment);
+                return;
+            }
+            let mut __compartment = self.__prepareEnter("Assemble");
+            self.__transition(__compartment);
+            return;
         }
 
-        fn _s_Aborted_hdl_user_begin_phase(&mut self, __e: &PipelineSupervisorFrameEvent, name: String) {
-            let __return_val = PipelineSupervisorFrameReturn::BeginPhase("ABSORBED".to_string());
-                            if let Some(ctx) = self._context_stack.last_mut() { ctx._return = Some(__return_val); }
-        }
-
-        fn _s_Aborted_hdl_user_complete_phase(&mut self, __e: &PipelineSupervisorFrameEvent) {
-            let __return_val = PipelineSupervisorFrameReturn::CompletePhase("ABSORBED".to_string());
-                            if let Some(ctx) = self._context_stack.last_mut() { ctx._return = Some(__return_val); }
-        }
-
-        fn _s_Aborted_hdl_user_finish(&mut self, __e: &PipelineSupervisorFrameEvent) {
-            let __return_val = PipelineSupervisorFrameReturn::Finish(format!("ABORTED|{}|{}", self.abort_code, self.abort_msg));
-                            if let Some(ctx) = self._context_stack.last_mut() { ctx._return = Some(__return_val); }
-        }
-
-        fn _s_Aborted_hdl_user_record_nonfatal(&mut self, __e: &PipelineSupervisorFrameEvent, code: String, msg: String) {
-            let __return_val = PipelineSupervisorFrameReturn::RecordNonfatal("ABSORBED".to_string());
-                            if let Some(ctx) = self._context_stack.last_mut() { ctx._return = Some(__return_val); }
-        }
-
-        fn _s_Aborted_hdl_user_summary(&mut self, __e: &PipelineSupervisorFrameEvent) {
-            let __return_val = PipelineSupervisorFrameReturn::Summary(format!(
-                                "ABORTED|phases={}|code={}|msg={}|errors={}",
-                                self.phase_log, self.abort_code, self.abort_msg, self.error_count
-                            ));
-                            if let Some(ctx) = self._context_stack.last_mut() { ctx._return = Some(__return_val); }
-        }
-
-        fn _s_Failed_hdl_user_abort(&mut self, __e: &PipelineSupervisorFrameEvent, code: String, msg: String) {
-            let __return_val = PipelineSupervisorFrameReturn::Abort("ABSORBED".to_string());
-                            if let Some(ctx) = self._context_stack.last_mut() { ctx._return = Some(__return_val); }
-        }
-
-        fn _s_Failed_hdl_user_begin_phase(&mut self, __e: &PipelineSupervisorFrameEvent, name: String) {
-            let __return_val = PipelineSupervisorFrameReturn::BeginPhase("ABSORBED".to_string());
-                            if let Some(ctx) = self._context_stack.last_mut() { ctx._return = Some(__return_val); }
-        }
-
-        fn _s_Failed_hdl_user_complete_phase(&mut self, __e: &PipelineSupervisorFrameEvent) {
-            let __return_val = PipelineSupervisorFrameReturn::CompletePhase("ABSORBED".to_string());
-                            if let Some(ctx) = self._context_stack.last_mut() { ctx._return = Some(__return_val); }
-        }
-
-        fn _s_Failed_hdl_user_finish(&mut self, __e: &PipelineSupervisorFrameEvent) {
-            let __return_val = PipelineSupervisorFrameReturn::Finish(format!("FAILED|errors={}", self.error_count));
-                            if let Some(ctx) = self._context_stack.last_mut() { ctx._return = Some(__return_val); }
-        }
-
-        fn _s_Failed_hdl_user_record_nonfatal(&mut self, __e: &PipelineSupervisorFrameEvent, code: String, msg: String) {
-            let __return_val = PipelineSupervisorFrameReturn::RecordNonfatal("ABSORBED".to_string());
-                            if let Some(ctx) = self._context_stack.last_mut() { ctx._return = Some(__return_val); }
-        }
-
-        fn _s_Failed_hdl_user_summary(&mut self, __e: &PipelineSupervisorFrameEvent) {
-            let __return_val = PipelineSupervisorFrameReturn::Summary(format!(
-                                "FAILED|phases={}|errors={}|warnings=0",
-                                self.phase_log, self.error_count
-                            ));
-                            if let Some(ctx) = self._context_stack.last_mut() { ctx._return = Some(__return_val); }
-        }
-
-        fn _s_Done_hdl_user_abort(&mut self, __e: &PipelineSupervisorFrameEvent, code: String, msg: String) {
-            let __return_val = PipelineSupervisorFrameReturn::Abort("ABSORBED".to_string());
-                            if let Some(ctx) = self._context_stack.last_mut() { ctx._return = Some(__return_val); }
-        }
-
-        fn _s_Done_hdl_user_begin_phase(&mut self, __e: &PipelineSupervisorFrameEvent, name: String) {
-            let __return_val = PipelineSupervisorFrameReturn::BeginPhase("ABSORBED".to_string());
-                            if let Some(ctx) = self._context_stack.last_mut() { ctx._return = Some(__return_val); }
-        }
-
-        fn _s_Done_hdl_user_complete_phase(&mut self, __e: &PipelineSupervisorFrameEvent) {
-            let __return_val = PipelineSupervisorFrameReturn::CompletePhase("ABSORBED".to_string());
-                            if let Some(ctx) = self._context_stack.last_mut() { ctx._return = Some(__return_val); }
-        }
-
-        fn _s_Done_hdl_user_finish(&mut self, __e: &PipelineSupervisorFrameEvent) {
-            let __return_val = PipelineSupervisorFrameReturn::Finish("DONE".to_string());
-                            if let Some(ctx) = self._context_stack.last_mut() { ctx._return = Some(__return_val); }
-        }
-
-        fn _s_Done_hdl_user_record_nonfatal(&mut self, __e: &PipelineSupervisorFrameEvent, code: String, msg: String) {
-            let __return_val = PipelineSupervisorFrameReturn::RecordNonfatal("ABSORBED".to_string());
-                            if let Some(ctx) = self._context_stack.last_mut() { ctx._return = Some(__return_val); }
-        }
-
-        fn _s_Done_hdl_user_summary(&mut self, __e: &PipelineSupervisorFrameEvent) {
-            let __return_val = PipelineSupervisorFrameReturn::Summary(format!("DONE|phases={}|errors=0|warnings=0", self.phase_log));
-                            if let Some(ctx) = self._context_stack.last_mut() { ctx._return = Some(__return_val); }
+        fn _s_Assemble_hdl_frame_enter(&mut self, __e: &PipelineFsmFrameEvent) {
+            self.early = Some(do_assemble(&mut self.ctx));
+            let mut __compartment = self.__prepareEnter("Done");
+            self.__transition(__compartment);
+            return;
         }
     }
 }
-pub use _pipeline_supervisor_framec::*;
-
+pub use _pipeline_fsm_framec::*;

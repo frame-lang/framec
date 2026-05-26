@@ -30,6 +30,7 @@ Complete reference for the Frame language. For a tutorial introduction, see [Get
 - [Token Summary](#token-summary)
 - [Error Codes](#error-codes)
 - [Complete Example](#complete-example)
+- [Appendix: Frame Syntax Taxonomy](#appendix-frame-syntax-taxonomy)
 
 ---
 
@@ -1246,3 +1247,105 @@ if __name__ == '__main__':
     proc = @@OrderProcessor(5)
     proc.submit({"item": "widget", "qty": 3})
 ```
+
+---
+
+## Appendix: Frame Syntax Taxonomy
+
+Frame's surface syntax divides into a small, closed set of categories. This
+appendix names each with standard compiler terminology and is the source of the
+vocabulary used throughout this guide. Every classification here is verified
+against *emitted code* by `framec/tests/syntax_taxonomy.rs` — it states what the
+compiler does, not what the syntax looks like.
+
+The central fact: **Frame has almost no expression grammar of its own.** There
+are no operators, literals, precedence, or control-flow keywords (`if`/`while`/
+`for` are not Frame tokens). The value-bearing parts of a handler line are
+**native** code; Frame contributes only *references* (which splice a value into
+that native expression) and *calls* (which produce one). So in
+`self.total = $.x + n * 2`, the whole line is a native expression with a single
+Frame reference (`$.x` → `self.x`) spliced in.
+
+### Categories
+
+1. **Sections** — the five block headers that partition a system:
+   `interface:`, `machine:`, `actions:`, `operations:`, `domain:`.
+
+2. **Declarations** — introduce a named entity: the system; a state
+   (`$State(params) => $Parent`); a handler (`event(params): ret`, plus the
+   `$>` enter and `<$` exit lifecycle handlers); interface / action / operation
+   methods; a state variable (`$.x: T = init`); a domain field
+   (`[const] x: T = init`).
+
+3. **Statements** — executed for effect; yield no value:
+   - *Control flow*: transition `->`, forward `=>` / `=> $^`, push `push$`,
+     pop `-> pop$`.
+   - *Mutations* (property **setters**): `$.x = e`, `@@:data.key = e`,
+     `@@:return = e`, and `@@:(e)` (sugar for `@@:return = e`).
+   - *Exit-return*: `@@:return(e)` — a setter **plus** an exit.
+
+4. **Expressions** — yield a value. Frame has exactly two kinds:
+   - *Property references* (**getters**): `$.x`, `@@:return`, `@@:data.key`,
+     `@@:event`, `@@:params.x`, `@@:system.state`, `@@:self`.
+   - *Call expressions*: `@@:self.method(args)` (re-entrant self-dispatch) and
+     `@@Sys(args)` / `@@!Sys()` (system instantiation). Both are usable in value
+     position (assignment RHS) and, standalone, as expression-statements.
+
+5. **Attributes / Pragmas** — compile-time metadata, never runtime:
+   `@@[target(...)]`, `@@[persist]`, `@@[main]`, `@@[create/save/load/no_persist]`,
+   and the bare directives `@@import`, `@@codegen`, `@@run-expect`, `@@skip-if`,
+   `@@timeout`.
+
+6. **Native code** — opaque target-language passthrough. The only place where
+   whitespace belongs to the user rather than to Frame.
+
+### Properties and accessors
+
+The organizing concept beneath categories 3–4 is the **property**: a named,
+Frame-managed place value. A property exposes up to two **accessors**:
+
+- a **getter** (read) — a *Reference*; it is an **expression** (yields a value);
+- a **setter** (write) — a *Mutation*; it is a **statement** (a store).
+
+| Property | Getter (Reference) | Setter (Mutation) |
+|----------|--------------------|-------------------|
+| `$.x` | yes | yes |
+| `@@:data.key` | yes | yes |
+| `@@:return` | yes | yes (`= e`, `@@:(e)`; `@@:return(e)` also exits) |
+| `@@:event` | yes | — (read-only) |
+| `@@:params.x` | yes | — (read-only) |
+| `@@:system.state` | yes | — (read-only) |
+| `@@:self` | yes | — (read-only) |
+
+"Two kinds of accessor" = getter and setter. A read-only property has only a
+getter.
+
+### The word "return" names two unrelated things
+
+- **Native `return e`** — the host language's own keyword. *Passthrough*:
+  emitted verbatim. It is **not** a Frame construct; the parser only recognizes
+  it so it can reason about control flow (does this path return?).
+- **Frame return** — the `@@:` family that writes the Frame-managed return slot
+  on the event context: `@@:return = e` (setter), `@@:(e)` (sugar for it),
+  `@@:return(e)` (setter + exit), and `@@:return` (getter). These are **not**
+  passthrough — each lowers to a read/write of the runtime return slot.
+
+### Whitespace sensitivity
+
+- **Tier A — whitespace-invariant.** All structural Frame tokens (every
+  statement, reference, call, and the `@@:` / `$.` families). Whitespace
+  *between* Frame tokens — including line breaks, tabs, and `\r\n`/`\r` — is
+  insignificant: any permutation must produce byte-identical output.
+- **Tier B — whitespace-significant.** The `domain:` section (indentation marks
+  the section's end) and section ordering.
+- **Tier C — native passthrough.** Whitespace is the user's and is preserved
+  verbatim.
+
+### Authority
+
+The construct list is derived from the lexer's `Token` set and the parser's
+`Statement` variants; the category each construct belongs to is pinned by
+`framec/tests/syntax_taxonomy.rs`, which asserts the lowered form (statement vs
+reference vs mutation vs passthrough) against emitted code. When this guide uses
+a term — *statement*, *expression*, *property*, *accessor*, *reference*,
+*mutation* — it means it in the sense defined here.
