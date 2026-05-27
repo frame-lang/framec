@@ -14,10 +14,12 @@
 //   2. Bare form (legacy + still-supported keywords): `@@<name> <value?>`
 //      Examples: `@@run-expect 42`, `@@skip-if windows`
 //      RFC-0013 hard-cut: bare `@@persist` and `@@target` now error
-//      (E803 / E804). RFC-0024 hard-cut: `@@import` now errors (E823).
-//      RFC-0032 hard-cut: `@@codegen { ... }` now errors (E824).
-//      All four pass through this scanner as Other and the pipeline
-//      reports the migration error downstream.
+//      (E803 / E804). RFC-0032 hard-cut: `@@codegen { ... }` now errors
+//      (E824). (`@@import` was removed by RFC-0024 but reinstated by
+//      RFC-0040 as an analysis-only directive — it is accepted again and
+//      handled in `do_parse`, not an error here.)
+//      The bare error-forms pass through this scanner as Other and the
+//      pipeline reports the migration error downstream.
 //
 // The scanner returns: name span (`name_start`/`name_end`), optional
 // args span (bracket form only — `args_start`/`args_end`), optional
@@ -501,4 +503,3 @@ mod _attribute_scanner_fsm_framec {
     }
 }
 pub use _attribute_scanner_fsm_framec::*;
-
