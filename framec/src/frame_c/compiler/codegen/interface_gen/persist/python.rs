@@ -18,7 +18,7 @@
 use crate::frame_c::compiler::codegen::ast::{CodegenNode, Param, Visibility};
 use crate::frame_c::compiler::frame_ast::SystemAst;
 
-use super::super::{extract_tagged_system_name, nested_uses_new_contract};
+use super::super::{child_persist_names, extract_tagged_system_name, nested_uses_new_contract};
 
 pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     system: &SystemAst,
@@ -60,12 +60,14 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
             continue;
         }
         let init = var.initializer_text.as_deref().unwrap_or("");
-        if extract_tagged_system_name(init).is_some() {
+        if let Some(child_sys) = extract_tagged_system_name(init) {
             // Nested @@SystemName(): round-trip via the child's
-            // save_state (which itself returns UTF-8 JSON bytes).
+            // save op (which itself returns UTF-8 JSON bytes) —
+            // by the child's DECLARED name (FRAMEC_BUGS #44).
+            let (child_save, _) = child_persist_names(child_sys, "save_state", "restore_state");
             save_body.push_str(&format!(
-                "state_data[\"{0}\"] = json.loads(self.{0}.save_state()) if self.{0} is not None else None\n",
-                var.name
+                "state_data[\"{0}\"] = json.loads(self.{0}.{1}()) if self.{0} is not None else None\n",
+                var.name, child_save
             ));
         } else {
             save_body.push_str(&format!("state_data[\"{0}\"] = self.{0}\n", var.name));
@@ -132,15 +134,16 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         }
         let init = var.initializer_text.as_deref().unwrap_or("");
         if let Some(child_sys) = extract_tagged_system_name(init) {
+            let (_, child_load) = child_persist_names(child_sys, "save_state", "restore_state");
             if nested_uses_new_contract(child_sys) {
                 restore_body.push_str(&format!(
-                    "if _parsed.get(\"{1}\") is not None:\n    {0}.{1} = {2}()\n    {0}.{1}.restore_state(json.dumps(_parsed[\"{1}\"]).encode(\"utf-8\"))\nelse:\n    {0}.{1} = None\n",
-                    target, var.name, child_sys
+                    "if _parsed.get(\"{1}\") is not None:\n    {0}.{1} = {2}()\n    {0}.{1}.{3}(json.dumps(_parsed[\"{1}\"]).encode(\"utf-8\"))\nelse:\n    {0}.{1} = None\n",
+                    target, var.name, child_sys, child_load
                 ));
             } else {
                 restore_body.push_str(&format!(
-                    "{0}.{1} = {2}.restore_state(json.dumps(_parsed[\"{1}\"]).encode(\"utf-8\")) if _parsed.get(\"{1}\") is not None else None\n",
-                    target, var.name, child_sys
+                    "{0}.{1} = {2}.{3}(json.dumps(_parsed[\"{1}\"]).encode(\"utf-8\")) if _parsed.get(\"{1}\") is not None else None\n",
+                    target, var.name, child_sys, child_load
                 ));
             }
         } else {

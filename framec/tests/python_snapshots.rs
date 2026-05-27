@@ -50,6 +50,55 @@ fn push_transition() {
     );
 }
 
+/// Regression for FRAMEC_BUGS Issue #44: when a parent composes a child
+/// system that renamed its persist ops via `@@[save(name)]` /
+/// `@@[load(name)]`, the parent's save/restore must call the child by its
+/// DECLARED name — not the hardcoded language default (`save_state` /
+/// `restore_state`), which doesn't exist on the renamed child and crashed
+/// at runtime.
+#[test]
+fn nested_child_custom_persist_name() {
+    let src = r#"
+@@[persist(str)]
+@@[save(persist_me)]
+@@[load(unpersist_me)]
+@@system Child {
+    interface:
+        ping()
+    machine:
+        $Idle { ping() { self.hits = self.hits + 1 } }
+    domain:
+        hits = 0
+}
+
+@@[main]
+@@[persist(str)]
+@@[save(save_state)]
+@@[load(restore_state)]
+@@system Parent {
+    interface:
+        poke()
+    machine:
+        $Run { poke() { self.child.ping() } }
+    domain:
+        child = @@Child()
+}
+"#;
+    let out = compile_source(src, "python_3");
+    assert!(
+        out.contains("self.child.persist_me()"),
+        "parent save must call the child's declared @@[save] name:\n{out}"
+    );
+    assert!(
+        out.contains("self.child.unpersist_me("),
+        "parent restore must call the child's declared @@[load] name:\n{out}"
+    );
+    assert!(
+        !out.contains("self.child.save_state()") && !out.contains("self.child.restore_state("),
+        "parent must not call the language-default persist names on the renamed child:\n{out}"
+    );
+}
+
 #[test]
 fn linear_fsm() {
     insta::assert_snapshot!(compile_fixture("01_linear_fsm", "python_3"));

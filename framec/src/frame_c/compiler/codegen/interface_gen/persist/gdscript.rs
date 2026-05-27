@@ -20,7 +20,7 @@
 use crate::frame_c::compiler::codegen::ast::{CodegenNode, Param, Visibility};
 use crate::frame_c::compiler::frame_ast::SystemAst;
 
-use super::super::{extract_tagged_system_name, nested_uses_new_contract};
+use super::super::{child_persist_names, extract_tagged_system_name, nested_uses_new_contract};
 
 pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     system: &SystemAst,
@@ -78,12 +78,13 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
             continue;
         }
         let init = var.initializer_text.as_deref().unwrap_or("");
-        if extract_tagged_system_name(init).is_some() {
+        if let Some(child_sys) = extract_tagged_system_name(init) {
             // Nested child returns Godot-binary PackedByteArray
             // (var_to_bytes shape). Decode to Variant before embedding.
+            let (child_save, _) = child_persist_names(child_sys, "save_state", "restore_state");
             save_body.push_str(&format!(
-                "state_data[\"{0}\"] = bytes_to_var(self.{0}.save_state()) if self.{0} != null else null\n",
-                var.name
+                "state_data[\"{0}\"] = bytes_to_var(self.{0}.{1}()) if self.{0} != null else null\n",
+                var.name, child_save
             ));
         } else {
             save_body.push_str(&format!(
@@ -167,15 +168,16 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
                 "var __raw_{0} = state_data.get(\"{0}\", null)\n",
                 var.name
             ));
+            let (_, child_load) = child_persist_names(child_sys, "save_state", "restore_state");
             if nested_uses_new_contract(child_sys) {
                 restore_body.push_str(&format!(
-                    "if __raw_{1} != null:\n    {0}.{1} = {2}.new()\n    {0}.{1}.restore_state(var_to_bytes(__raw_{1}))\nelse:\n    {0}.{1} = null\n",
-                    target, var.name, child_sys
+                    "if __raw_{1} != null:\n    {0}.{1} = {2}.new()\n    {0}.{1}.{3}(var_to_bytes(__raw_{1}))\nelse:\n    {0}.{1} = null\n",
+                    target, var.name, child_sys, child_load
                 ));
             } else {
                 restore_body.push_str(&format!(
-                    "{0}.{1} = {2}.restore_state(var_to_bytes(__raw_{1})) if __raw_{1} != null else null\n",
-                    target, var.name, child_sys
+                    "{0}.{1} = {2}.{3}(var_to_bytes(__raw_{1})) if __raw_{1} != null else null\n",
+                    target, var.name, child_sys, child_load
                 ));
             }
         } else {

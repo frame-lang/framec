@@ -11,7 +11,7 @@
 use crate::frame_c::compiler::codegen::ast::{CodegenNode, Param, Visibility};
 use crate::frame_c::compiler::frame_ast::SystemAst;
 
-use super::super::{extract_tagged_system_name, nested_uses_new_contract};
+use super::super::{child_persist_names, extract_tagged_system_name, nested_uses_new_contract};
 
 pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     system: &SystemAst,
@@ -100,10 +100,11 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
             continue;
         }
         let init = var.initializer_text.as_deref().unwrap_or("");
-        if extract_tagged_system_name(init).is_some() {
+        if let Some(child_sys) = extract_tagged_system_name(init) {
+            let (child_save, _) = child_persist_names(child_sys, "save_state", "restore_state");
             save_body.push_str(&format!(
-                "$j['{0}'] = $this->{0} !== null ? json_decode($this->{0}->save_state(), true) : null;\n",
-                var.name
+                "$j['{0}'] = $this->{0} !== null ? json_decode($this->{0}->{1}(), true) : null;\n",
+                var.name, child_save
             ));
         } else {
             save_body.push_str(&format!("$j['{}'] = $this->{};\n", var.name, var.name));
@@ -159,15 +160,16 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         }
         let init = var.initializer_text.as_deref().unwrap_or("");
         if let Some(child_sys) = extract_tagged_system_name(init) {
+            let (_, child_load) = child_persist_names(child_sys, "save_state", "restore_state");
             if nested_uses_new_contract(child_sys) {
                 restore_body.push_str(&format!(
-                    "if (isset($_parsed['{1}']) && $_parsed['{1}'] !== null) {{ {0}->{1} = new {2}(); {0}->{1}->restore_state(json_encode($_parsed['{1}'])); }}\n",
-                    target, var.name, child_sys
+                    "if (isset($_parsed['{1}']) && $_parsed['{1}'] !== null) {{ {0}->{1} = new {2}(); {0}->{1}->{3}(json_encode($_parsed['{1}'])); }}\n",
+                    target, var.name, child_sys, child_load
                 ));
             } else {
                 restore_body.push_str(&format!(
-                    "if (isset($_parsed['{1}']) && $_parsed['{1}'] !== null) {0}->{1} = {2}::restore_state(json_encode($_parsed['{1}']));\n",
-                    target, var.name, child_sys
+                    "if (isset($_parsed['{1}']) && $_parsed['{1}'] !== null) {0}->{1} = {2}::{3}(json_encode($_parsed['{1}']));\n",
+                    target, var.name, child_sys, child_load
                 ));
             }
         } else {

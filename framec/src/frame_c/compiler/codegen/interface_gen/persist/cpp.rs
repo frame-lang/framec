@@ -17,7 +17,7 @@ use crate::frame_c::compiler::codegen::ast::{CodegenNode, Param, Visibility};
 use crate::frame_c::compiler::codegen::codegen_utils::cpp_map_type;
 use crate::frame_c::compiler::frame_ast::SystemAst;
 
-use super::super::{extract_tagged_system_name, nested_uses_new_contract};
+use super::super::{child_persist_names, extract_tagged_system_name, nested_uses_new_contract};
 
 pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     system: &SystemAst,
@@ -204,10 +204,11 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
             continue;
         }
         let init = var.initializer_text.as_deref().unwrap_or("");
-        if extract_tagged_system_name(init).is_some() {
+        if let Some(child_sys) = extract_tagged_system_name(init) {
+            let (child_save, _) = child_persist_names(child_sys, "save_state", "restore_state");
             save_body.push_str(&format!(
-                "__j[\"{0}\"] = {0} ? nlohmann::json::parse({0}->save_state()) : nlohmann::json(nullptr);\n",
-                var.name
+                "__j[\"{0}\"] = {0} ? nlohmann::json::parse({0}->{1}()) : nlohmann::json(nullptr);\n",
+                var.name, child_save
             ));
         } else {
             save_body.push_str(&format!("__j[\"{}\"] = {};\n", var.name, var.name));
@@ -338,15 +339,16 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         }
         let init = var.initializer_text.as_deref().unwrap_or("");
         if let Some(child_sys) = extract_tagged_system_name(init) {
+            let (_, child_load) = child_persist_names(child_sys, "save_state", "restore_state");
             if nested_uses_new_contract(child_sys) {
                 restore_body.push_str(&format!(
-                    "if (__j.contains(\"{0}\") && !__j[\"{0}\"].is_null()) {{ {tgt}.{0} = std::make_shared<{1}>(); {tgt}.{0}->restore_state(__j[\"{0}\"].dump()); }}\n",
-                    var.name, child_sys, tgt = target
+                    "if (__j.contains(\"{0}\") && !__j[\"{0}\"].is_null()) {{ {tgt}.{0} = std::make_shared<{1}>(); {tgt}.{0}->{load}(__j[\"{0}\"].dump()); }}\n",
+                    var.name, child_sys, tgt = target, load = child_load
                 ));
             } else {
                 restore_body.push_str(&format!(
-                    "if (__j.contains(\"{0}\") && !__j[\"{0}\"].is_null()) {{ {tgt}.{0} = std::make_shared<{1}>({1}::restore_state(__j[\"{0}\"].dump())); }}\n",
-                    var.name, child_sys, tgt = target
+                    "if (__j.contains(\"{0}\") && !__j[\"{0}\"].is_null()) {{ {tgt}.{0} = std::make_shared<{1}>({1}::{load}(__j[\"{0}\"].dump())); }}\n",
+                    var.name, child_sys, tgt = target, load = child_load
                 ));
             }
         } else {

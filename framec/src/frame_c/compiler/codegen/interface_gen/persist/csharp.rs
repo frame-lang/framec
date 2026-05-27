@@ -15,7 +15,7 @@ use crate::frame_c::compiler::codegen::ast::{CodegenNode, Param, Visibility};
 use crate::frame_c::compiler::codegen::codegen_utils::csharp_map_type;
 use crate::frame_c::compiler::frame_ast::SystemAst;
 
-use super::super::{extract_tagged_system_name, nested_uses_new_contract};
+use super::super::{child_persist_names, extract_tagged_system_name, nested_uses_new_contract};
 
 pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     system: &SystemAst,
@@ -266,10 +266,11 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
             continue;
         }
         let init = var.initializer_text.as_deref().unwrap_or("");
-        if extract_tagged_system_name(init).is_some() {
+        if let Some(child_sys) = extract_tagged_system_name(init) {
+            let (child_save, _) = child_persist_names(child_sys, "SaveState", "RestoreState");
             save_body.push_str(&format!(
-                "__j[\"{0}\"] = {0} != null ? System.Text.Json.JsonDocument.Parse({0}.SaveState()).RootElement.Clone() : (object)null;\n",
-                var.name
+                "__j[\"{0}\"] = {0} != null ? System.Text.Json.JsonDocument.Parse({0}.{1}()).RootElement.Clone() : (object)null;\n",
+                var.name, child_save
             ));
         } else {
             save_body.push_str(&format!("__j[\"{}\"] = {};\n", var.name, var.name));
@@ -334,19 +335,22 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         }
         let init = var.initializer_text.as_deref().unwrap_or("");
         if let Some(child_sys) = extract_tagged_system_name(init) {
+            let (_, child_load) = child_persist_names(child_sys, "SaveState", "RestoreState");
             let body = if nested_uses_new_contract(child_sys) {
                 format!(
-                    "if (__root.TryGetProperty(\"{name}\", out var __{name})) {{ if (__{name}.ValueKind != System.Text.Json.JsonValueKind.Null) {{ {tgt}.{name} = new {child}(); {tgt}.{name}.RestoreState(__{name}.GetRawText()); }} }}\n",
+                    "if (__root.TryGetProperty(\"{name}\", out var __{name})) {{ if (__{name}.ValueKind != System.Text.Json.JsonValueKind.Null) {{ {tgt}.{name} = new {child}(); {tgt}.{name}.{load}(__{name}.GetRawText()); }} }}\n",
                     tgt = target,
                     name = var.name,
-                    child = child_sys
+                    child = child_sys,
+                    load = child_load
                 )
             } else {
                 format!(
-                    "if (__root.TryGetProperty(\"{name}\", out var __{name})) {{ if (__{name}.ValueKind != System.Text.Json.JsonValueKind.Null) {{ {tgt}.{name} = {child}.RestoreState(__{name}.GetRawText()); }} }}\n",
+                    "if (__root.TryGetProperty(\"{name}\", out var __{name})) {{ if (__{name}.ValueKind != System.Text.Json.JsonValueKind.Null) {{ {tgt}.{name} = {child}.{load}(__{name}.GetRawText()); }} }}\n",
                     tgt = target,
                     name = var.name,
-                    child = child_sys
+                    child = child_sys,
+                    load = child_load
                 )
             };
             restore_body.push_str(&body);

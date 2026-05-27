@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [4.2.5] - 2026-05-26
+
+A maintenance release. One user-visible codegen fix; **generated output is
+byte-identical to 4.2.4 except for composing systems that rename their persist
+ops** (the case the fix targets).
+
+### Fixed
+
+- **Composed-child persist method names (#44).** When a parent system composes a
+  child via `domain: child = @@Child()` and the child renamed its persist ops
+  with `@@[save(name)]` / `@@[load(name)]`, the parent's generated
+  `save_state` / `restore_state` called the child by the hardcoded
+  target-default name instead of the child's declared name — a `TypeError` at
+  runtime, silent at compile time. The parent now resolves the child's declared
+  names (mirroring how a system's own persist methods are already resolved),
+  across all 14 backends. Also corrects a latent Go case where the new-contract
+  nested-restore branch called a non-existent `LoadState`.
+
 ## [4.2.4] - 2026-05-26
 
 A maintenance release. Two user-visible codegen fixes; the bulk is internal —

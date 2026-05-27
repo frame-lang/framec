@@ -18,7 +18,7 @@
 use crate::frame_c::compiler::codegen::ast::{CodegenNode, Param, Visibility};
 use crate::frame_c::compiler::frame_ast::SystemAst;
 
-use super::super::{extract_tagged_system_name, nested_uses_new_contract};
+use super::super::{child_persist_names, extract_tagged_system_name, nested_uses_new_contract};
 
 pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     system: &SystemAst,
@@ -83,10 +83,11 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
             continue;
         }
         let init = var.initializer_text.as_deref().unwrap_or("");
-        if extract_tagged_system_name(init).is_some() {
+        if let Some(child_sys) = extract_tagged_system_name(init) {
+            let (child_save, _) = child_persist_names(child_sys, "saveState", "restoreState");
             save_body.push_str(&format!(
-                "    {0}: this.{0} ? JSON.parse(this.{0}.saveState()) : null,\n",
-                var.name
+                "    {0}: this.{0} ? JSON.parse(this.{0}.{1}()) : null,\n",
+                var.name, child_save
             ));
         } else {
             save_body.push_str(&format!("    {}: this.{},\n", var.name, var.name));
@@ -173,15 +174,16 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         }
         let init = var.initializer_text.as_deref().unwrap_or("");
         if let Some(child_sys) = extract_tagged_system_name(init) {
+            let (_, child_load) = child_persist_names(child_sys, "saveState", "restoreState");
             if nested_uses_new_contract(child_sys) {
                 restore_body.push_str(&format!(
-                    "if (_parsed.{1} != null) {{ {0}.{1} = new {2}(); {0}.{1}.restoreState(JSON.stringify(_parsed.{1})); }} else {{ {0}.{1} = null; }}\n",
-                    target, var.name, child_sys
+                    "if (_parsed.{1} != null) {{ {0}.{1} = new {2}(); {0}.{1}.{3}(JSON.stringify(_parsed.{1})); }} else {{ {0}.{1} = null; }}\n",
+                    target, var.name, child_sys, child_load
                 ));
             } else {
                 restore_body.push_str(&format!(
-                    "{0}.{1} = _parsed.{1} != null ? {2}.restoreState(JSON.stringify(_parsed.{1})) : null;\n",
-                    target, var.name, child_sys
+                    "{0}.{1} = _parsed.{1} != null ? {2}.{3}(JSON.stringify(_parsed.{1})) : null;\n",
+                    target, var.name, child_sys, child_load
                 ));
             }
         } else {

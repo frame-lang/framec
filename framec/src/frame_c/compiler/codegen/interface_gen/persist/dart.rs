@@ -17,7 +17,8 @@ use crate::frame_c::compiler::codegen::ast::{CodegenNode, Param, Visibility};
 use crate::frame_c::compiler::frame_ast::SystemAst;
 
 use super::super::{
-    dart_conv_expr, extract_tagged_system_name, nested_uses_new_contract, parse_dart_type,
+    child_persist_names, dart_conv_expr, extract_tagged_system_name, nested_uses_new_contract,
+    parse_dart_type,
 };
 
 pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
@@ -74,10 +75,11 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
             continue;
         }
         let init = var.initializer_text.as_deref().unwrap_or("");
-        if extract_tagged_system_name(init).is_some() {
+        if let Some(child_sys) = extract_tagged_system_name(init) {
+            let (child_save, _) = child_persist_names(child_sys, "saveState", "restoreState");
             save_body.push_str(&format!(
-                "    '{0}': this.{0} != null ? jsonDecode(this.{0}.saveState()) : null,\n",
-                var.name
+                "    '{0}': this.{0} != null ? jsonDecode(this.{0}.{1}()) : null,\n",
+                var.name, child_save
             ));
         } else {
             save_body.push_str(&format!("    '{}': this.{},\n", var.name, var.name));
@@ -208,16 +210,17 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         }
         let init = var.initializer_text.as_deref().unwrap_or("");
         if let Some(child_sys) = extract_tagged_system_name(init) {
+            let (_, child_load) = child_persist_names(child_sys, "saveState", "restoreState");
             if nested_uses_new_contract(child_sys) {
                 restore_body.push_str(&format!(
-                    "{0}.{1} = {2}(); if (_parsed['{1}'] != null) {0}.{1}.restoreState(jsonEncode(_parsed['{1}']));\n",
-                    target, var.name, child_sys
+                    "{0}.{1} = {2}(); if (_parsed['{1}'] != null) {0}.{1}.{3}(jsonEncode(_parsed['{1}']));\n",
+                    target, var.name, child_sys, child_load
                 ));
                 continue;
             }
             restore_body.push_str(&format!(
-                "{0}.{1} = _parsed['{1}'] != null ? {2}.restoreState(jsonEncode(_parsed['{1}'])) : {2}();\n",
-                target, var.name, child_sys
+                "{0}.{1} = _parsed['{1}'] != null ? {2}.{3}(jsonEncode(_parsed['{1}'])) : {2}();\n",
+                target, var.name, child_sys, child_load
             ));
         } else {
             let ty = match &var.var_type {

@@ -1005,6 +1005,28 @@ pub(crate) fn do_validate_codegen(c: &mut PipelineCtx) -> Option<CompileResult> 
         crate::frame_c::compiler::codegen::interface_gen::set_nested_system_domain_params(map);
     }
 
+    // FRAMEC_BUGS.md Issue #44: register each system's DECLARED
+    // `@@[save]` / `@@[load]` method names (`None` where the system
+    // used the language default). A *composing* parent's persist
+    // codegen reads this so it calls a child's save/load by the
+    // child's declared name instead of hardcoding the target default
+    // (which broke when the child renamed its persist ops).
+    {
+        let map: std::collections::HashMap<String, (Option<String>, Option<String>)> = system_asts
+            .iter()
+            .map(|s| {
+                (
+                    s.name.clone(),
+                    (
+                        s.save_op_name().map(str::to_string),
+                        s.load_op_name().map(str::to_string),
+                    ),
+                )
+            })
+            .collect();
+        crate::frame_c::compiler::codegen::interface_gen::set_nested_system_persist_names(map);
+    }
+
     for system_ast in &mut system_asts {
         // Validate with shared arcanum (all sibling systems visible).
         // Validation runs on the *unfiltered* AST so attribute-shape
