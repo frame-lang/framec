@@ -13,7 +13,7 @@
 use crate::frame_c::compiler::codegen::ast::{CodegenNode, Param, Visibility};
 use crate::frame_c::compiler::frame_ast::SystemAst;
 
-use super::super::{extract_tagged_system_name, nested_uses_new_contract};
+use super::super::{child_persist_names, extract_tagged_system_name, nested_uses_new_contract};
 
 pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     system: &SystemAst,
@@ -104,10 +104,11 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
             continue;
         }
         let init = var.initializer_text.as_deref().unwrap_or("");
-        if extract_tagged_system_name(init).is_some() {
+        if let Some(child_sys) = extract_tagged_system_name(init) {
+            let (child_save, _) = child_persist_names(child_sys, "save_state", "restore_state");
             save_body.push_str(&format!(
-                "j[\"{0}\"] = @{0}.nil? ? nil : JSON.parse(@{0}.save_state)\n",
-                var.name
+                "j[\"{0}\"] = @{0}.nil? ? nil : JSON.parse(@{0}.{1})\n",
+                var.name, child_save
             ));
         } else {
             save_body.push_str(&format!("j[\"{}\"] = @{}\n", var.name, var.name));
@@ -148,15 +149,16 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
             }
             let init = var.initializer_text.as_deref().unwrap_or("");
             if let Some(child_sys) = extract_tagged_system_name(init) {
+                let (_, child_load) = child_persist_names(child_sys, "save_state", "restore_state");
                 if nested_uses_new_contract(child_sys) {
                     restore_body.push_str(&format!(
-                        "if _parsed.key?(\"{0}\") && !_parsed[\"{0}\"].nil? then @{0} = {1}.new; @{0}.restore_state(JSON.generate(_parsed[\"{0}\"])) end\n",
-                        var.name, child_sys
+                        "if _parsed.key?(\"{0}\") && !_parsed[\"{0}\"].nil? then @{0} = {1}.new; @{0}.{2}(JSON.generate(_parsed[\"{0}\"])) end\n",
+                        var.name, child_sys, child_load
                     ));
                 } else {
                     restore_body.push_str(&format!(
-                        "if _parsed.key?(\"{0}\") then @{0} = _parsed[\"{0}\"].nil? ? nil : {1}.restore_state(JSON.generate(_parsed[\"{0}\"])) end\n",
-                        var.name, child_sys
+                        "if _parsed.key?(\"{0}\") then @{0} = _parsed[\"{0}\"].nil? ? nil : {1}.{2}(JSON.generate(_parsed[\"{0}\"])) end\n",
+                        var.name, child_sys, child_load
                     ));
                 }
             } else {
@@ -182,9 +184,10 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
             }
             let init = var.initializer_text.as_deref().unwrap_or("");
             if let Some(child_sys) = extract_tagged_system_name(init) {
+                let (_, child_load) = child_persist_names(child_sys, "save_state", "restore_state");
                 restore_body.push_str(&format!(
-                    "if _parsed.key?(\"{0}\") then instance.{0} = _parsed[\"{0}\"].nil? ? nil : {1}.restore_state(JSON.generate(_parsed[\"{0}\"])) end\n",
-                    var.name, child_sys
+                    "if _parsed.key?(\"{0}\") then instance.{0} = _parsed[\"{0}\"].nil? ? nil : {1}.{2}(JSON.generate(_parsed[\"{0}\"])) end\n",
+                    var.name, child_sys, child_load
                 ));
             } else {
                 restore_body.push_str(&format!(

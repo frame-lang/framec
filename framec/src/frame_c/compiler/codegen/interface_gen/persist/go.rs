@@ -16,7 +16,7 @@ use crate::frame_c::compiler::codegen::ast::{CodegenNode, Param, Visibility};
 use crate::frame_c::compiler::codegen::codegen_utils::go_map_type;
 use crate::frame_c::compiler::frame_ast::SystemAst;
 
-use super::super::{extract_tagged_system_name, nested_uses_new_contract};
+use super::super::{child_persist_names, extract_tagged_system_name, nested_uses_new_contract};
 
 pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     system: &SystemAst,
@@ -74,10 +74,12 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
             continue;
         }
         let init = var.initializer_text.as_deref().unwrap_or("");
-        if extract_tagged_system_name(init).is_some() {
+        if let Some(child_sys) = extract_tagged_system_name(init) {
+            let (child_save, _) =
+                child_persist_names(child_sys, "SaveState", &format!("Restore{}", child_sys));
             save_body.push_str(&format!(
-                "    \"{0}\": func() interface{{}} {{ var __raw interface{{}}; _ = json.Unmarshal([]byte(s.{0}.SaveState()), &__raw); return __raw }}(),\n",
-                var.name
+                "    \"{0}\": func() interface{{}} {{ var __raw interface{{}}; _ = json.Unmarshal([]byte(s.{0}.{1}()), &__raw); return __raw }}(),\n",
+                var.name, child_save
             ));
         } else {
             save_body.push_str(&format!("    \"{}\": s.{},\n", var.name, var.name));
@@ -257,15 +259,19 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         }
         let init = var.initializer_text.as_deref().unwrap_or("");
         if let Some(child_sys) = extract_tagged_system_name(init) {
+            let (_, child_load) =
+                child_persist_names(child_sys, "SaveState", &format!("Restore{}", child_sys));
             if nested_uses_new_contract(child_sys) {
+                // New-contract child: construct, then call the child's
+                // declared (instance) load op — `Restore<Child>` by default.
                 restore_body.push_str(&format!(
-                    "if __raw_{1}, err_{1} := json.Marshal(_parsed[\"{1}\"]); err_{1} == nil {{ {0}.{1} = New{2}(); {0}.{1}.LoadState(string(__raw_{1})) }}\n",
-                    target, var.name, child_sys
+                    "if __raw_{1}, err_{1} := json.Marshal(_parsed[\"{1}\"]); err_{1} == nil {{ {0}.{1} = New{2}(); {0}.{1}.{3}(string(__raw_{1})) }}\n",
+                    target, var.name, child_sys, child_load
                 ));
             } else {
                 restore_body.push_str(&format!(
-                    "if __raw_{1}, err_{1} := json.Marshal(_parsed[\"{1}\"]); err_{1} == nil {{ {0}.{1} = Restore{2}(string(__raw_{1})) }}\n",
-                    target, var.name, child_sys
+                    "if __raw_{1}, err_{1} := json.Marshal(_parsed[\"{1}\"]); err_{1} == nil {{ {0}.{1} = {2}(string(__raw_{1})) }}\n",
+                    target, var.name, child_load
                 ));
             }
         } else {

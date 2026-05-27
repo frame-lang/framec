@@ -23,7 +23,7 @@
 use crate::frame_c::compiler::codegen::ast::{CodegenNode, Param, Visibility};
 use crate::frame_c::compiler::frame_ast::SystemAst;
 
-use super::super::{extract_tagged_system_name, nested_uses_new_contract};
+use super::super::{child_persist_names, extract_tagged_system_name, nested_uses_new_contract};
 
 pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     system: &SystemAst,
@@ -314,9 +314,10 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         }
         let init = var.initializer_text.as_deref().unwrap_or("");
         if let Some(child_sys) = extract_tagged_system_name(init) {
+            let (child_save, _) = child_persist_names(child_sys, "save_state", "restore_state");
             save_body.push_str(&format!(
                 "if (self->{name}) {{\n\
-                 \x20   char* __child_json_{name} = {child}_save_state(self->{name});\n\
+                 \x20   char* __child_json_{name} = {child}_{save}(self->{name});\n\
                  \x20   cJSON* __child_obj_{name} = cJSON_Parse(__child_json_{name});\n\
                  \x20   cJSON_AddItemToObject(root, \"{name}\", __child_obj_{name});\n\
                  \x20   free(__child_json_{name});\n\
@@ -324,7 +325,8 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
                  \x20   cJSON_AddNullToObject(root, \"{name}\");\n\
                  }}\n",
                 name = var.name,
-                child = child_sys
+                child = child_sys,
+                save = child_save
             ));
             continue;
         }
@@ -412,6 +414,7 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         }
         let init = var.initializer_text.as_deref().unwrap_or("");
         if let Some(child_sys) = extract_tagged_system_name(init) {
+            let (_, child_load) = child_persist_names(child_sys, "save_state", "restore_state");
             let body = if nested_uses_new_contract(child_sys) {
                 format!(
                     "{{\n\
@@ -419,7 +422,7 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
                      \x20   if (__child_obj_{name} && !cJSON_IsNull(__child_obj_{name})) {{\n\
                      \x20       char* __child_json_{name} = cJSON_PrintUnformatted(__child_obj_{name});\n\
                      \x20       {tgt}->{name} = {child}_new();\n\
-                     \x20       {child}_restore_state({tgt}->{name}, __child_json_{name});\n\
+                     \x20       {child}_{load}({tgt}->{name}, __child_json_{name});\n\
                      \x20       free(__child_json_{name});\n\
                      \x20   }} else {{\n\
                      \x20       {tgt}->{name} = NULL;\n\
@@ -427,7 +430,8 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
                      }}\n",
                     tgt = target,
                     name = var.name,
-                    child = child_sys
+                    child = child_sys,
+                    load = child_load
                 )
             } else {
                 format!(
@@ -435,7 +439,7 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
                      \x20   cJSON* __child_obj_{name} = cJSON_GetObjectItem(root, \"{name}\");\n\
                      \x20   if (__child_obj_{name} && !cJSON_IsNull(__child_obj_{name})) {{\n\
                      \x20       char* __child_json_{name} = cJSON_PrintUnformatted(__child_obj_{name});\n\
-                     \x20       {tgt}->{name} = {child}_restore_state(__child_json_{name});\n\
+                     \x20       {tgt}->{name} = {child}_{load}(__child_json_{name});\n\
                      \x20       free(__child_json_{name});\n\
                      \x20   }} else {{\n\
                      \x20       {tgt}->{name} = NULL;\n\
@@ -443,7 +447,8 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
                      }}\n",
                     tgt = target,
                     name = var.name,
-                    child = child_sys
+                    child = child_sys,
+                    load = child_load
                 )
             };
             restore_body.push_str(&body);

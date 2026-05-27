@@ -6,6 +6,48 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [4.3.0] - 2026-05-27
+
+Re-introduces the `@@import` directive (removed in 4.2.0 by RFC-0024) in a
+strictly narrower, **analysis-only** form per RFC-0040, and fixes the
+composed-child persist-naming bug in both its same-file and cross-file forms.
+
+### Added
+
+- **`@@import "<path>"` as an analysis directive (RFC-0040).** framec reads the
+  referenced Frame source *while compiling the current file* to resolve and
+  check cross-file references — but emits **nothing** for it (no import line, no
+  target code for the imported system). Native host imports remain the user's
+  own Oceans Model pass-through. The directive changes what framec *knows*,
+  never what it *writes*. Imported systems are **analysis-visible but
+  emission-excluded** — present in the symbol table and the cross-system
+  codegen registries, never generated into the importer's output.
+
+### Fixed
+
+- **Composed-child persist method names — same-file (#44).** When a parent
+  composes a child via `domain: child = @@Child()` and the child renamed its
+  persist ops with `@@[save(name)]` / `@@[load(name)]`, the parent's generated
+  `save_state` / `restore_state` called the child by the hardcoded
+  target-default name instead of the child's declared name — a `TypeError` at
+  runtime, silent at compile time. The parent now resolves the child's declared
+  names across all 14 backends. Also corrects a latent Go case where the
+  new-contract nested-restore branch called a non-existent `LoadState`.
+- **Composed-child persist method names — cross-file.** With `@@import`, the
+  same resolution now works when the child lives in another file: the parent
+  reads the imported source and calls the child's declared names instead of the
+  target default.
+- **Imported `@@[main]` no longer trips E806 (#45).** A file that `@@import`s
+  another Frame source whose primary system carries `@@[main]` no longer fails
+  the importer's single-`@@[main]` check — that rule is scoped to locally
+  declared systems, as it should be.
+
+### Notes
+
+- Output for files without `@@import` is byte-identical to 4.2.x.
+- Cross-file *argument/type* validation (surfacing imported-call mismatches) is
+  a planned follow-up under RFC-0040; it does not yet fire.
+
 ## [4.2.4] - 2026-05-26
 
 A maintenance release. Two user-visible codegen fixes; the bulk is internal —

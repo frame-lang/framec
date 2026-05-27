@@ -42,6 +42,15 @@ thread_local! {
 
     static NESTED_SYSTEM_DOMAIN_PARAMS: RefCell<HashMap<String, Vec<(String, String)>>> =
         RefCell::new(HashMap::new());
+
+    /// `system_name → (declared @@[save] name, declared @@[load] name)`.
+    /// `None` where the system didn't declare a custom name. Lets a
+    /// *composing* parent's persist codegen call a child's save/load by
+    /// the child's DECLARED name rather than the language default
+    /// (FRAMEC_BUGS Issue #44 — the parent hardcoded `saveState` etc.,
+    /// breaking when the child declared a non-default name).
+    static NESTED_SYSTEM_PERSIST_NAMES: RefCell<HashMap<String, (Option<String>, Option<String>)>> =
+        RefCell::new(HashMap::new());
 }
 
 /// Set the names of systems using the new persist contract. Called
@@ -96,4 +105,32 @@ pub fn nested_uses_new_contract(name: &str) -> bool {
 /// empty Vec if the system isn't registered or has no Domain params.
 pub fn get_nested_system_domain_params(name: &str) -> Vec<(String, String)> {
     NESTED_SYSTEM_DOMAIN_PARAMS.with(|s| s.borrow().get(name).cloned().unwrap_or_default())
+}
+
+/// Set each system's declared `@@[save]` / `@@[load]` method names
+/// (`None` where not declared). Called once per compilation, before
+/// per-system codegen runs. FRAMEC_BUGS Issue #44.
+pub fn set_nested_system_persist_names(map: HashMap<String, (Option<String>, Option<String>)>) {
+    NESTED_SYSTEM_PERSIST_NAMES.with(|s| *s.borrow_mut() = map);
+}
+
+/// Resolve the save/load method names to use when a *parent* serializes
+/// a composed child of type `child_type`. Returns the child's declared
+/// `@@[save]` / `@@[load]` names, falling back to the caller's language
+/// defaults when the child declared none (or isn't a local system —
+/// cross-file children are assumed to use the target's default). This is
+/// the composition counterpart to a system's own `save_op_name()` /
+/// `load_op_name()` resolution. FRAMEC_BUGS Issue #44.
+pub fn child_persist_names(
+    child_type: &str,
+    default_save: &str,
+    default_load: &str,
+) -> (String, String) {
+    NESTED_SYSTEM_PERSIST_NAMES.with(|s| {
+        let (save, load) = s.borrow().get(child_type).cloned().unwrap_or((None, None));
+        (
+            save.unwrap_or_else(|| default_save.to_string()),
+            load.unwrap_or_else(|| default_load.to_string()),
+        )
+    })
 }

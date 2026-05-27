@@ -10,7 +10,7 @@ use crate::frame_c::compiler::codegen::ast::{CodegenNode, Param, Visibility};
 use crate::frame_c::compiler::codegen::codegen_utils::swift_map_type;
 use crate::frame_c::compiler::frame_ast::SystemAst;
 
-use super::super::{extract_tagged_system_name, nested_uses_new_contract};
+use super::super::{child_persist_names, extract_tagged_system_name, nested_uses_new_contract};
 
 pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     system: &SystemAst,
@@ -109,10 +109,11 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
             continue;
         }
         let init = var.initializer_text.as_deref().unwrap_or("");
-        if extract_tagged_system_name(init).is_some() {
+        if let Some(child_sys) = extract_tagged_system_name(init) {
+            let (child_save, _) = child_persist_names(child_sys, "saveState", "restoreState");
             save_body.push_str(&format!(
-                "if let __raw_{0} = {0}.saveState().data(using: .utf8), let __nested_{0} = try? JSONSerialization.jsonObject(with: __raw_{0}) {{ j[\"{0}\"] = __nested_{0} }}\n",
-                var.name
+                "if let __raw_{0} = {0}.{1}().data(using: .utf8), let __nested_{0} = try? JSONSerialization.jsonObject(with: __raw_{0}) {{ j[\"{0}\"] = __nested_{0} }}\n",
+                var.name, child_save
             ));
         } else {
             save_body.push_str(&format!("j[\"{}\"] = {}\n", var.name, var.name));
@@ -161,15 +162,16 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         }
         let init = var.initializer_text.as_deref().unwrap_or("");
         if let Some(child_sys) = extract_tagged_system_name(init) {
+            let (_, child_load) = child_persist_names(child_sys, "saveState", "restoreState");
             if nested_uses_new_contract(child_sys) {
                 restore_body.push_str(&format!(
-                    "if let __raw_{1} = _parsed[\"{1}\"], let __data_{1} = try? JSONSerialization.data(withJSONObject: __raw_{1}), let __json_{1} = String(data: __data_{1}, encoding: .utf8) {{ {0}.{1} = {2}(); {0}.{1}.restoreState(__json_{1}) }}\n",
-                    target, var.name, child_sys
+                    "if let __raw_{1} = _parsed[\"{1}\"], let __data_{1} = try? JSONSerialization.data(withJSONObject: __raw_{1}), let __json_{1} = String(data: __data_{1}, encoding: .utf8) {{ {0}.{1} = {2}(); {0}.{1}.{3}(__json_{1}) }}\n",
+                    target, var.name, child_sys, child_load
                 ));
             } else {
                 restore_body.push_str(&format!(
-                    "if let __raw_{1} = _parsed[\"{1}\"], let __data_{1} = try? JSONSerialization.data(withJSONObject: __raw_{1}), let __json_{1} = String(data: __data_{1}, encoding: .utf8) {{ {0}.{1} = {2}.restoreState(__json_{1}) }}\n",
-                    target, var.name, child_sys
+                    "if let __raw_{1} = _parsed[\"{1}\"], let __data_{1} = try? JSONSerialization.data(withJSONObject: __raw_{1}), let __json_{1} = String(data: __data_{1}, encoding: .utf8) {{ {0}.{1} = {2}.{3}(__json_{1}) }}\n",
+                    target, var.name, child_sys, child_load
                 ));
             }
         } else {

@@ -11,7 +11,7 @@ use crate::frame_c::compiler::codegen::ast::{CodegenNode, Param, Visibility};
 use crate::frame_c::compiler::codegen::codegen_utils::java_map_type;
 use crate::frame_c::compiler::frame_ast::SystemAst;
 
-use super::super::{extract_tagged_system_name, nested_uses_new_contract};
+use super::super::{child_persist_names, extract_tagged_system_name, nested_uses_new_contract};
 
 pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     system: &SystemAst,
@@ -183,10 +183,11 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
             continue;
         }
         let init = var.initializer_text.as_deref().unwrap_or("");
-        if extract_tagged_system_name(init).is_some() {
+        if let Some(child_sys) = extract_tagged_system_name(init) {
+            let (child_save, _) = child_persist_names(child_sys, "save_state", "restore_state");
             save_body.push_str(&format!(
-                "try {{ __j.put(\"{0}\", {0} != null ? mapper.readTree({0}.save_state()) : null); }} catch (Exception e) {{ throw new RuntimeException(e); }}\n",
-                var.name
+                "try {{ __j.put(\"{0}\", {0} != null ? mapper.readTree({0}.{1}()) : null); }} catch (Exception e) {{ throw new RuntimeException(e); }}\n",
+                var.name, child_save
             ));
         } else {
             save_body.push_str(&format!("__j.put(\"{}\", {});\n", var.name, var.name));
@@ -236,19 +237,22 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         }
         let init = var.initializer_text.as_deref().unwrap_or("");
         if let Some(child_sys) = extract_tagged_system_name(init) {
+            let (_, child_load) = child_persist_names(child_sys, "save_state", "restore_state");
             if nested_uses_new_contract(child_sys) {
                 restore_body.push_str(&format!(
-                    "if (__j.has(\"{name}\") && !__j.get(\"{name}\").isNull()) {{ {tgt}.{name} = new {child}(); {tgt}.{name}.restore_state(__j.get(\"{name}\").toString()); }}\n",
+                    "if (__j.has(\"{name}\") && !__j.get(\"{name}\").isNull()) {{ {tgt}.{name} = new {child}(); {tgt}.{name}.{load}(__j.get(\"{name}\").toString()); }}\n",
                     tgt = target,
                     name = var.name,
-                    child = child_sys
+                    child = child_sys,
+                    load = child_load
                 ));
             } else {
                 restore_body.push_str(&format!(
-                    "if (__j.has(\"{name}\") && !__j.get(\"{name}\").isNull()) {tgt}.{name} = {child}.restore_state(__j.get(\"{name}\").toString());\n",
+                    "if (__j.has(\"{name}\") && !__j.get(\"{name}\").isNull()) {tgt}.{name} = {child}.{load}(__j.get(\"{name}\").toString());\n",
                     tgt = target,
                     name = var.name,
-                    child = child_sys
+                    child = child_sys,
+                    load = child_load
                 ));
             }
             continue;

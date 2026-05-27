@@ -127,6 +127,15 @@ pub(crate) struct PipelineCtx {
     module_imports: Vec<crate::frame_c::compiler::frame_ast::Import>,
     /// Imported `@@system` names carrying the new persist contract (bug #8).
     imported_new_contract_names: Vec<String>,
+    /// RFC-0040: systems parsed from `@@import`ed files, present for analysis
+    /// (validation + cross-file metadata resolution) only. They are merged into
+    /// the arcanum and the codegen registries but **never emitted** — see
+    /// `imported_systems` for the emission exclusion set.
+    imported_system_asts: Vec<crate::frame_c::compiler::frame_ast::SystemAst>,
+    /// RFC-0040: names of the systems in `imported_system_asts`. Codegen emits
+    /// only local systems; a name in this set is analysis-visible but
+    /// emission-excluded, and references to it lower as cross-file.
+    imported_systems: std::collections::HashSet<String>,
     /// RFC-0022 strict-mode import errors, surfaced at the end of the run.
     strict_import_errors: Vec<CompileError>,
     /// Shared arcanum (all systems visible to each other), built once after parse.
@@ -147,6 +156,8 @@ impl PipelineCtx {
             system_asts: Vec::new(),
             module_imports: Vec::new(),
             imported_new_contract_names: Vec::new(),
+            imported_system_asts: Vec::new(),
+            imported_systems: std::collections::HashSet::new(),
             strict_import_errors: Vec::new(),
             arcanum: None,
             generated_systems: Vec::new(),
@@ -287,37 +298,15 @@ pub(crate) fn do_segment(c: &mut PipelineCtx) -> Option<CompileResult> {
                     });
                 }
             }
-            // RFC-0024: @@import removed entirely. Cross-file
-            // dependencies are expressed in the target language's
-            // native syntax (`from .x import Y` for Python, `use
-            // crate::x::Y;` for Rust, `const Y = preload(...)` for
-            // GDScript, etc.) written as Oceans Model pass-through.
-            if trimmed.starts_with("@@import") {
-                let after = &trimmed[8..];
-                let next = after.chars().next();
-                let is_import_directive = match next {
-                    None => true,
-                    Some(c) => c.is_whitespace() || c == '"',
-                };
-                if is_import_directive {
-                    return Some(CompileResult {
-                        code: String::new(),
-                        errors: vec![CompileError::new(
-                            "E823",
-                            "`@@import \"<path>\"` is no longer accepted (RFC-0024). \
-                             Write the target language's native import syntax outside \
-                             any `@@system` block instead — `from .other import X` for \
-                             Python, `use crate::other::X;` for Rust, `const X = \
-                             preload(\"res://other.gd\")` for GDScript, `#include \
-                             \"other.h\"` for C/C++, etc. framec passes the line \
-                             through unchanged (Oceans Model). See RFC-0024 for the \
-                             full per-target migration table.",
-                        )],
-                        warnings: vec![],
-                        source_map: None,
-                    });
-                }
-            }
+            // RFC-0040: `@@import "<path>"` is accepted again as an
+            // *analysis-only* directive (RFC-0024 removed the
+            // analysis-and-emission form; RFC-0040 revives analysis
+            // alone). framec reads the referenced Frame source to
+            // resolve and check cross-file references but emits nothing
+            // for it — native host imports stay Oceans Model
+            // pass-through. The directive is handled in `do_parse`
+            // (collected into `module_imports`, then resolved into
+            // analysis-only systems); no rejection here.
         }
     }
 
@@ -325,15 +314,25 @@ pub(crate) fn do_segment(c: &mut PipelineCtx) -> Option<CompileResult> {
     None
 }
 
-/// Pass 1: parse each `@@system` segment into a `SystemAst`, attaching
-/// lifecycle pragmas/attributes and collecting module `@@import` metadata.
-/// Populates `system_asts` / `module_imports` / `imported_new_contract_names`
-/// / `strict_import_errors`. Returns `Some` on the first parse/structure error.
-pub(crate) fn do_parse(c: &mut PipelineCtx) -> Option<CompileResult> {
-    let source_map = c.source_map.as_ref().unwrap();
-    let has_persist = c.has_persist;
-    let config = &c.config;
+/// One module's parse output — the systems it declares plus its `@@import`
+/// metadata. Produced by [`parse_module_segments`] for the primary source and,
+/// under RFC-0040, for each imported file.
+struct ParsedModule {
+    system_asts: Vec<crate::frame_c::compiler::frame_ast::SystemAst>,
+    module_imports: Vec<crate::frame_c::compiler::frame_ast::Import>,
+    imported_new_contract_names: Vec<String>,
+    strict_import_errors: Vec<CompileError>,
+}
 
+/// Parse one module's segments into systems + import metadata, attaching
+/// lifecycle pragmas/attributes to the systems they precede. Shared by
+/// `do_parse` (primary source) and RFC-0040 import resolution (each imported
+/// file). Returns `Err(result)` on the first parse/structure error.
+fn parse_module_segments(
+    source_map: &segmenter::SourceMap,
+    config: &PipelineConfig,
+    has_persist: bool,
+) -> Result<ParsedModule, CompileResult> {
     // Pass 1: Parse all systems into ASTs.
     //
     // Walk segments in source order so module-level lifecycle pragmas
@@ -522,7 +521,7 @@ pub(crate) fn do_parse(c: &mut PipelineCtx) -> Option<CompileResult> {
             ) {
                 Ok(ast) => ast,
                 Err(e) => {
-                    return Some(CompileResult {
+                    return Err(CompileResult {
                         code: String::new(),
                         errors: vec![CompileError::new(
                             "E002",
@@ -543,7 +542,7 @@ pub(crate) fn do_parse(c: &mut PipelineCtx) -> Option<CompileResult> {
                 match pipeline_parser::parse_system_header_params(&source_map.source, ast_hp_span) {
                     Ok(params) => system_ast.params = params,
                     Err(e) => {
-                        return Some(CompileResult {
+                        return Err(CompileResult {
                             code: String::new(),
                             errors: vec![CompileError::new(
                                 "E002",
@@ -560,7 +559,7 @@ pub(crate) fn do_parse(c: &mut PipelineCtx) -> Option<CompileResult> {
             system_ast.bases = bases.clone();
             // Validate and attach visibility from `@@system private Foo` syntax
             if visibility.as_deref() == Some("public") {
-                return Some(CompileResult {
+                return Err(CompileResult {
                     code: String::new(),
                     errors: vec![CompileError::new(
                         "E408",
@@ -585,7 +584,7 @@ pub(crate) fn do_parse(c: &mut PipelineCtx) -> Option<CompileResult> {
                         | TargetLanguage::Erlang
                 );
                 if unsupported {
-                    return Some(CompileResult {
+                    return Err(CompileResult {
                         code: String::new(),
                         errors: vec![CompileError::new(
                             "E409",
@@ -684,7 +683,7 @@ pub(crate) fn do_parse(c: &mut PipelineCtx) -> Option<CompileResult> {
                     .into_iter()
                     .map(|e| CompileError::new(&e.code, &e.message))
                     .collect();
-                return Some(CompileResult {
+                return Err(CompileResult {
                     code: String::new(),
                     errors,
                     warnings: vec![],
@@ -712,11 +711,84 @@ pub(crate) fn do_parse(c: &mut PipelineCtx) -> Option<CompileResult> {
         }
     }
 
-    c.system_asts = system_asts;
-    c.module_imports = module_imports;
-    c.imported_new_contract_names = imported_new_contract_names;
-    c.strict_import_errors = strict_import_errors;
+    Ok(ParsedModule {
+        system_asts,
+        module_imports,
+        imported_new_contract_names,
+        strict_import_errors,
+    })
+}
+
+/// Pass 1 driver: parse the primary source, then (RFC-0040) resolve any
+/// `@@import`ed files into analysis-only systems. Returns `Some` on the first
+/// parse/structure error.
+pub(crate) fn do_parse(c: &mut PipelineCtx) -> Option<CompileResult> {
+    let parsed = {
+        let source_map = c.source_map.as_ref().unwrap();
+        match parse_module_segments(source_map, &c.config, c.has_persist) {
+            Ok(p) => p,
+            Err(res) => return Some(res),
+        }
+    };
+    c.system_asts = parsed.system_asts;
+    c.module_imports = parsed.module_imports;
+    c.imported_new_contract_names = parsed.imported_new_contract_names;
+    c.strict_import_errors = parsed.strict_import_errors;
+
+    // RFC-0040: `@@import "<path>"` is an analysis directive. For each import,
+    // parse the referenced file's systems into analysis-only `SystemAst`s —
+    // visible to validation and the cross-system codegen registries, but never
+    // emitted (see `imported_systems` and the codegen emit loop). Unreadable
+    // imports are skipped silently here (open-world fallback); strict-mode
+    // readability errors are still collected by the peek during parsing.
+    let local_names: std::collections::HashSet<String> =
+        c.system_asts.iter().map(|s| s.name.clone()).collect();
+    let mut imported_asts: Vec<crate::frame_c::compiler::frame_ast::SystemAst> = Vec::new();
+    let mut imported_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let import_paths: Vec<String> = c.module_imports.iter().map(|i| i.module.clone()).collect();
+    for path in import_paths {
+        let resolved = resolve_import_path(&path, c.config.source_path.as_deref());
+        let content = match std::fs::read_to_string(&resolved) {
+            Ok(s) => s,
+            Err(_) => continue, // open-world: not a readable Frame source — skip.
+        };
+        let imported_map = match segmenter::segment_source(content.as_bytes(), c.config.target) {
+            Ok(sm) => sm,
+            Err(_) => continue,
+        };
+        let imported_has_persist = imported_map.persist_pragma().is_some();
+        // Parse the imported file's systems. Discard its own imports
+        // (transitive resolution is out of scope) and any structure error
+        // (the imported file is validated by its own compilation, not here).
+        if let Ok(pm) = parse_module_segments(&imported_map, &c.config, imported_has_persist) {
+            for ast in pm.system_asts {
+                if local_names.contains(&ast.name) || !imported_names.insert(ast.name.clone()) {
+                    continue; // local systems win; dedup repeated imports.
+                }
+                imported_asts.push(ast);
+            }
+        }
+    }
+    c.imported_system_asts = imported_asts;
+    c.imported_systems = imported_names;
     None
+}
+
+/// Resolve an `@@import` path relative to the importing file's directory (or
+/// the current directory when the importer's path is unknown). Mirrors the
+/// resolution the import peek performs.
+fn resolve_import_path(
+    import_path: &str,
+    importer_path: Option<&std::path::Path>,
+) -> std::path::PathBuf {
+    let buf = std::path::PathBuf::from(import_path);
+    if buf.is_absolute() {
+        buf
+    } else if let Some(dir) = importer_path.and_then(|p| p.parent()) {
+        dir.join(buf)
+    } else {
+        buf
+    }
 }
 
 /// Module-level structure gates + shared arcanum construction. Rejects
@@ -783,10 +855,16 @@ pub(crate) fn do_module_gates(c: &mut PipelineCtx) -> Option<CompileResult> {
         }
     }
 
-    // Build a shared arcanum containing ALL systems so they can reference each other
+    // Build a shared arcanum containing ALL systems so they can reference
+    // each other. RFC-0040: this includes `@@import`-resolved systems —
+    // present so the validator and the cross-system codegen registries can
+    // resolve and check cross-file references. They are analysis-only;
+    // codegen emits the local systems alone (see `do_validate_codegen`).
+    let mut arcanum_systems = system_asts.clone();
+    arcanum_systems.extend(c.imported_system_asts.iter().cloned());
     let module_ast = FrameAst::Module(ModuleAst {
         name: String::new(),
-        systems: system_asts.clone(),
+        systems: arcanum_systems,
         imports: module_imports.clone(),
         span: AstSpan::new(0, 0),
     });
@@ -796,9 +874,22 @@ pub(crate) fn do_module_gates(c: &mut PipelineCtx) -> Option<CompileResult> {
     // multi-system files (E805 zero, E806 multiple). Runs once per
     // module, before either codegen path forks. Single-system files
     // are exempt.
+    //
+    // RFC-0040: `@@[main]` is a module-primary / emission concern, so it is
+    // checked against the **locally-declared** systems only. An
+    // `@@import`ed system carries its own `@@[main]` for its own
+    // compilation; counting it here would spuriously trip E806 in the
+    // importer. (The arcanum above keeps the imported systems for
+    // cross-file resolution; only this main-attr scope is local.)
     {
+        let local_module_ast = FrameAst::Module(ModuleAst {
+            name: String::new(),
+            systems: system_asts.clone(),
+            imports: module_imports.clone(),
+            span: AstSpan::new(0, 0),
+        });
         let mut module_validator = FrameValidator::new();
-        if let Err(errs) = module_validator.validate_module_main_attr(&module_ast) {
+        if let Err(errs) = module_validator.validate_module_main_attr(&local_module_ast) {
             let errors = errs
                 .iter()
                 .map(|e| CompileError::new(&e.code, &e.message))
@@ -930,6 +1021,13 @@ pub(crate) fn do_validate_codegen(c: &mut PipelineCtx) -> Option<CompileResult> 
     let arcanum = c.arcanum.as_ref().unwrap();
     let mut system_asts = std::mem::take(&mut c.system_asts);
     let imported_new_contract_names = std::mem::take(&mut c.imported_new_contract_names);
+    // RFC-0040: `@@import`-resolved systems. They feed the cross-system
+    // registries below (so cross-file persist names, domain params, and
+    // contract shape resolve) and the arcanum (already merged in
+    // `do_module_gates`), but they are NOT in `system_asts` and so are
+    // never reached by the per-system emit loop — analysis-visible,
+    // emission-excluded.
+    let imported_system_asts = std::mem::take(&mut c.imported_system_asts);
 
     // Pass 2: Validate + codegen each system with the shared arcanum
     let backend = get_backend(config.target);
@@ -956,6 +1054,7 @@ pub(crate) fn do_validate_codegen(c: &mut PipelineCtx) -> Option<CompileResult> 
     {
         let mut new_contract: std::collections::HashSet<String> = system_asts
             .iter()
+            .chain(imported_system_asts.iter())
             .filter(|s| s.uses_new_persist_contract())
             .map(|s| s.name.clone())
             .collect();
@@ -970,8 +1069,16 @@ pub(crate) fn do_validate_codegen(c: &mut PipelineCtx) -> Option<CompileResult> 
         // reference" when a name misses the new-contract set.
         // Cross-file references default to new contract; local
         // legacy references default to the legacy emit.
-        let local: std::collections::HashSet<String> =
-            system_asts.iter().map(|s| s.name.clone()).collect();
+        // RFC-0040: imported systems are resolved (their contract is known
+        // from the parsed AST), so register them here too — a legacy
+        // imported system then resolves as legacy rather than defaulting to
+        // the cross-file new-contract assumption. Truly unknown (open-world,
+        // un-imported) names still fall through to that default.
+        let local: std::collections::HashSet<String> = system_asts
+            .iter()
+            .chain(imported_system_asts.iter())
+            .map(|s| s.name.clone())
+            .collect();
         crate::frame_c::compiler::codegen::interface_gen::set_local_systems(local);
     }
 
@@ -985,7 +1092,7 @@ pub(crate) fn do_validate_codegen(c: &mut PipelineCtx) -> Option<CompileResult> 
         use crate::frame_c::compiler::frame_ast::ParamKind;
         let mut map: std::collections::HashMap<String, Vec<(String, String)>> =
             std::collections::HashMap::new();
-        for s in &system_asts {
+        for s in system_asts.iter().chain(imported_system_asts.iter()) {
             let domain_params: Vec<(String, String)> = s
                 .params
                 .iter()
@@ -1003,6 +1110,29 @@ pub(crate) fn do_validate_codegen(c: &mut PipelineCtx) -> Option<CompileResult> 
             }
         }
         crate::frame_c::compiler::codegen::interface_gen::set_nested_system_domain_params(map);
+    }
+
+    // FRAMEC_BUGS.md Issue #44: register each system's DECLARED
+    // `@@[save]` / `@@[load]` method names (`None` where the system
+    // used the language default). A *composing* parent's persist
+    // codegen reads this so it calls a child's save/load by the
+    // child's declared name instead of hardcoding the target default
+    // (which broke when the child renamed its persist ops).
+    {
+        let map: std::collections::HashMap<String, (Option<String>, Option<String>)> = system_asts
+            .iter()
+            .chain(imported_system_asts.iter())
+            .map(|s| {
+                (
+                    s.name.clone(),
+                    (
+                        s.save_op_name().map(str::to_string),
+                        s.load_op_name().map(str::to_string),
+                    ),
+                )
+            })
+            .collect();
+        crate::frame_c::compiler::codegen::interface_gen::set_nested_system_persist_names(map);
     }
 
     for system_ast in &mut system_asts {
@@ -1191,10 +1321,18 @@ pub(crate) fn do_assemble(c: &mut PipelineCtx) -> CompileResult {
     // RFC-0022: ask the backend to translate `@@import` directives into
     // its native form. Default impl returns empty (no emission); per-
     // backend overrides translate per target.
-    let module_imports_emitted = backend.emit_module_imports(&module_imports);
-    // Imported `@@system` names — surfaced by the Phase 1 peek. The
-    // assembler accepts these as resolvable targets for `@@SystemName()`
-    // call sites in handler bodies and module-scope native code.
+    //
+    // RFC-0040: `@@import` is analysis-only and emits NOTHING — native
+    // host imports are the user's own Oceans Model pass-through. So the
+    // emitted-imports list is always empty regardless of backend; the
+    // directive's effect is confined to analysis/resolution. (The peeked
+    // names are still surfaced below so cross-file `@@SystemName()` call
+    // sites lower as external references rather than erroring.)
+    let module_imports_emitted: Vec<String> = Vec::new();
+    let _ = &module_imports; // analysis metadata only; never emitted (RFC-0040).
+                             // Imported `@@system` names — surfaced by the Phase 1 peek. The
+                             // assembler accepts these as resolvable targets for `@@SystemName()`
+                             // call sites in handler bodies and module-scope native code.
     let imported_system_names: Vec<String> = module_imports
         .iter()
         .flat_map(|imp| imp.symbols.iter().cloned())

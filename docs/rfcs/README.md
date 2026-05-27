@@ -37,7 +37,7 @@ numbers are not re-used.
 | [0022](rfc-0022.md) | Cross-file `@@import` directive | **Superseded by [0024](rfc-0024.md)** | historical |
 | [0022.1](rfc-0022-1.md) | `@@import` semantics on Java/C#/Go | **Superseded by [0024](rfc-0024.md)** | historical |
 | 0023 | — | (unassigned) | numbering reserved; no document |
-| [0024](rfc-0024.md) | Remove `@@import` — host-language imports via Oceans Model | Accepted; shipped in 4.2.0 | supersedes [0022](rfc-0022.md), [0022.1](rfc-0022-1.md); breaking change |
+| [0024](rfc-0024.md) | Remove `@@import` — host-language imports via Oceans Model | Accepted; shipped in 4.2.0 | supersedes [0022](rfc-0022.md), [0022.1](rfc-0022-1.md); breaking change; **analysis half amended by [0040](rfc-0040.md)** (emission removal stands) |
 | [0025](rfc-0025.md) | Quality remediation — structured errors + typed compartment payload | Accepted; shipped (Rust target) in 4.2.0 | companion to [0026](rfc-0026.md), [0027](rfc-0027.md) |
 | [0025.1](rfc-0025-1.md) | Typed lifecycle args — close the stringify gap in the typed-payload contract | Accepted (2026-05-21); shipped in 4.2.1 | amends [0025](rfc-0025.md); resolves FRAMEC_BUGS #34 |
 | [0026](rfc-0026.md) | Oceans Model as calculus — pre-backend normalization, preservation theorem, formal grammar | Draft (Exploration) | companion to [0025](rfc-0025.md), [0027](rfc-0027.md); no execution commitment |
@@ -54,6 +54,7 @@ numbers are not re-used.
 | [0037](rfc-0037.md) | Reserved identifier namespace — the `__` prefix (validator E115) | Accepted | builds on [0025](rfc-0025.md) / [0025.1](rfc-0025-1.md); resolves the #40 residual edge |
 | [0038](rfc-0038.md) | Deferred dispatch — `@@[cast]` interface methods, addressing, bring-your-own executor | Draft | builds on [0020](rfc-0020.md), [0025](rfc-0025.md); companion to [0036](rfc-0036.md), [0026](rfc-0026.md) |
 | [0039](rfc-0039.md) | Parser as composed Frame state machines | Accepted | builds on [0035](rfc-0035.md) |
+| [0040](rfc-0040.md) | Re-introduce `@@import` as analysis-only cross-file resolution | Draft | amends [0024](rfc-0024.md) (analysis half only); builds on [0012](rfc-0012.md), [0015](rfc-0015.md) |
 
 ## Other documents in this directory
 

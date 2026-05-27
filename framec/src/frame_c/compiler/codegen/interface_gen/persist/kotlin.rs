@@ -11,7 +11,7 @@ use crate::frame_c::compiler::codegen::ast::{CodegenNode, Param, Visibility};
 use crate::frame_c::compiler::codegen::codegen_utils::kotlin_map_type;
 use crate::frame_c::compiler::frame_ast::SystemAst;
 
-use super::super::{extract_tagged_system_name, nested_uses_new_contract};
+use super::super::{child_persist_names, extract_tagged_system_name, nested_uses_new_contract};
 
 pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     system: &SystemAst,
@@ -186,10 +186,11 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
             continue;
         }
         let init = var.initializer_text.as_deref().unwrap_or("");
-        if extract_tagged_system_name(init).is_some() {
+        if let Some(child_sys) = extract_tagged_system_name(init) {
+            let (child_save, _) = child_persist_names(child_sys, "save_state", "restore_state");
             save_body.push_str(&format!(
-                "j[\"{0}\"] = if ({0} != null) mapper.readTree({0}.save_state()) else null\n",
-                var.name
+                "j[\"{0}\"] = if ({0} != null) mapper.readTree({0}.{1}()) else null\n",
+                var.name, child_save
             ));
         } else {
             save_body.push_str(&format!("j[\"{}\"] = {}\n", var.name, var.name));
@@ -235,19 +236,22 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         }
         let init = var.initializer_text.as_deref().unwrap_or("");
         if let Some(child_sys) = extract_tagged_system_name(init) {
+            let (_, child_load) = child_persist_names(child_sys, "save_state", "restore_state");
             let body = if nested_uses_new_contract(child_sys) {
                 format!(
-                    "if (_parsed.has(\"{name}\") && !_parsed.get(\"{name}\").isNull) {{ {tgt}.{name} = {child}(); {tgt}.{name}.restore_state(_parsed.get(\"{name}\").toString()) }}\n",
+                    "if (_parsed.has(\"{name}\") && !_parsed.get(\"{name}\").isNull) {{ {tgt}.{name} = {child}(); {tgt}.{name}.{load}(_parsed.get(\"{name}\").toString()) }}\n",
                     tgt = target,
                     name = var.name,
-                    child = child_sys
+                    child = child_sys,
+                    load = child_load
                 )
             } else {
                 format!(
-                    "if (_parsed.has(\"{name}\") && !_parsed.get(\"{name}\").isNull) {tgt}.{name} = {child}.restore_state(_parsed.get(\"{name}\").toString())\n",
+                    "if (_parsed.has(\"{name}\") && !_parsed.get(\"{name}\").isNull) {tgt}.{name} = {child}.{load}(_parsed.get(\"{name}\").toString())\n",
                     tgt = target,
                     name = var.name,
-                    child = child_sys
+                    child = child_sys,
+                    load = child_load
                 )
             };
             restore_body.push_str(&body);
