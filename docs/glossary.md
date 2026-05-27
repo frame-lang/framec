@@ -423,6 +423,20 @@ a resource handle, which the user reattaches explicitly). Applies only to
 [compartment](#compartment) bookkeeping, which is always persisted. Specified in
 [RFC-0016.1](rfcs/rfc-0016-1.md); see also [persist contract](#persist-contract).
 
+### `@@import`
+
+Module-level **analysis directive** naming a Frame source file —
+`@@import "./other.frm"`. It tells framec where a referenced [system](#system)'s
+source lives so framec can read it *while compiling the current file*: to check
+this file's use of that system (argument arity/types, existence) and to resolve
+cross-file facts code generation needs (notably a [composed](#composed-system)
+child's [save](#save) / [load](#load) method names). It is **not** a
+code-generation directive — framec emits no import line and no target code for an
+imported system; native host imports remain [Oceans Model](#oceans-model)
+pass-through. Removed by [RFC-0024](rfcs/rfc-0024.md) (which deleted the original
+analysis-*and*-emission directive); re-introduced in analysis-only form by
+[RFC-0040](rfcs/rfc-0040.md).
+
 ### `@@SystemName(args)`
 
 Instantiation expression: construct a [system](#system) instance by calling its
