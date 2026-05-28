@@ -55,6 +55,7 @@ numbers are not re-used.
 | [0038](rfc-0038.md) | Deferred dispatch — `@@[cast]` interface methods, addressing, bring-your-own executor | Draft | builds on [0020](rfc-0020.md), [0025](rfc-0025.md); companion to [0036](rfc-0036.md), [0026](rfc-0026.md) |
 | [0039](rfc-0039.md) | Parser as composed Frame state machines | Accepted | builds on [0035](rfc-0035.md) |
 | [0040](rfc-0040.md) | Re-introduce `@@import` as analysis-only cross-file resolution | Draft | amends [0024](rfc-0024.md) (analysis half only); builds on [0012](rfc-0012.md), [0015](rfc-0015.md) |
+| [0041](rfc-0041.md) | Web persistence — storage-bound save/load for browser targets (`@@[web_persist]`) | Draft | builds on [0012](rfc-0012.md), [0015](rfc-0015.md), [0016](rfc-0016.md) |
 
 ## Other documents in this directory
 
