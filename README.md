@@ -107,6 +107,10 @@ framec --help
 
 ## Documentation
 
+📖 **Full documentation site: [docs.frame-lang.org](https://docs.frame-lang.org)** — rendered and searchable.
+
+The same documentation is also available as source in this repository:
+
 - [Getting Started](docs/frame_getting_started.md) — learn Frame from scratch
 - [Language Reference](docs/frame_language.md) — complete Frame language reference
 - [Cookbook](docs/frame_cookbook.md) — 111 recipes from traffic lights through EIP patterns, protocol/systems stress tests, deferred event processing, and a scanner/parser pair
