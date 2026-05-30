@@ -56,6 +56,8 @@ numbers are not re-used.
 | [0039](rfc-0039.md) | Parser as composed Frame state machines | Accepted | builds on [0035](rfc-0035.md) |
 | [0040](rfc-0040.md) | Re-introduce `@@import` as analysis-only cross-file resolution | Draft | amends [0024](rfc-0024.md) (analysis half only); builds on [0012](rfc-0012.md), [0015](rfc-0015.md) |
 | [0041](rfc-0041.md) | Web persistence — storage-bound save/load for browser targets (`@@[web_persist]`) | Draft | builds on [0012](rfc-0012.md), [0015](rfc-0015.md), [0016](rfc-0016.md) |
+| [0042](rfc-0042.md) | `@@fsm` — finite-state recognizer construct | Draft | new construct; runtime model independent of [0020](rfc-0020.md) (which is scoped to `@@system`); depends on [0043](rfc-0043.md) for action-body statement grammar |
+| [0043](rfc-0043.md) | Frame statement syntax — assignment, call, `if/else`, expressions, comments | Draft | precursor to [0042](rfc-0042.md); strictly additive to existing Frame statement vocabulary |
 
 ## Other documents in this directory
 
