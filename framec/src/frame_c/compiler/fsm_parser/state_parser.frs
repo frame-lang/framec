@@ -120,7 +120,9 @@
             }
         }
 
-        // Optional transition clause: `-> target` then optional `: -> target`.
+        // Optional transition clause for the current match: `-> target`
+        // then optional `: -> target`. Then either start the next match
+        // (ordered-choice `|`) or finish the state.
         $Transition {
             $>() {
                 let mut transition: Option<FsmTransitionClauseAst> = None;
@@ -158,15 +160,22 @@
                     });
                 }
 
+                // Commit the current match.
                 let span = self.span_start.clone();
-                let m = MatchAst {
+                self.matches.push(MatchAst {
                     elements: std::mem::take(&mut self.elements),
                     transition,
                     span: span.clone(),
-                };
+                });
+
+                // Ordered-choice `|` starts another match in this state.
+                if self.tokens.as_mut().unwrap().eat(&FsmTokenKind::Pipe) {
+                    -> $Elements
+                }
+
                 self.result = Some(FsmStateAst {
                     label: self.label.take(),
-                    matches: vec![m],
+                    matches: std::mem::take(&mut self.matches),
                     span,
                 });
                 -> $Done
@@ -179,6 +188,7 @@
         tokens: Option<FsmTokenStream> = None
         label: Option<String> = None
         elements: Vec<MatchElement> = Vec::new()
+        matches: Vec<MatchAst> = Vec::new()
         span_start: Span = Span::new(0, 0)
         result: Option<FsmStateAst> = None
         error: Option<ParseError> = None

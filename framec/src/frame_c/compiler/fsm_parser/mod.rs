@@ -704,6 +704,56 @@ mod parser_tests {
         }
     }
 
+    /// Ordered-choice `|` matches within one state (RFC-0042 §3.4): a
+    /// single state holding two matches. Proves StateParser's match loop.
+    #[test]
+    fn ordered_choice_matches() {
+        let ast = parse_fsm_block(b"@@fsm M(text: bytes) : int = 0 { /a/ 1 | /b/ 2 }")
+            .expect("ordered-choice fixture must parse");
+
+        // One (implicit) state, two matches.
+        assert_eq!(ast.states.len(), 1);
+        let ms = &ast.states[0].matches;
+        assert_eq!(ms.len(), 2);
+
+        // Match 0: stage /a/ then bare `1`.
+        match &ms[0].elements[0] {
+            MatchElement::Stage(s) => assert_eq!(s.regex, "a"),
+            other => panic!("expected stage /a/, got {:?}", other),
+        }
+        match &ms[0].elements[1] {
+            MatchElement::BareExpression { expr, .. } => {
+                assert!(matches!(expr, Expression::Literal(Literal::Int(1))));
+            }
+            other => panic!("expected bare `1`, got {:?}", other),
+        }
+
+        // Match 1: stage /b/ then bare `2`.
+        match &ms[1].elements[0] {
+            MatchElement::Stage(s) => assert_eq!(s.regex, "b"),
+            other => panic!("expected stage /b/, got {:?}", other),
+        }
+        match &ms[1].elements[1] {
+            MatchElement::BareExpression { expr, .. } => {
+                assert!(matches!(expr, Expression::Literal(Literal::Int(2))));
+            }
+            other => panic!("expected bare `2`, got {:?}", other),
+        }
+    }
+
+    /// `|` matches each with their own transition clause.
+    #[test]
+    fn ordered_choice_matches_with_transitions() {
+        let ast = parse_fsm_block(
+            b"@@fsm M(text: bytes) : bool = false { /a/ -> $x | /b/ -> $y  $x: true  $y: false }",
+        )
+        .expect("must parse");
+        let ms = &ast.states[0].matches;
+        assert_eq!(ms.len(), 2);
+        assert!(ms[0].transition.is_some());
+        assert!(ms[1].transition.is_some());
+    }
+
     /// Stage-capture target: `$0.start` re-entry reference (FSM-TEST-401
     /// shape). Proves StageRef transition targets parse.
     #[test]

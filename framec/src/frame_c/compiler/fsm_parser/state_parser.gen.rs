@@ -145,6 +145,7 @@ mod _state_parser_framec {
         pub tokens: Option<FsmTokenStream>,
         pub label: Option<String>,
         pub elements: Vec<MatchElement>,
+        pub matches: Vec<MatchAst>,
         pub span_start: Span,
         pub result: Option<FsmStateAst>,
         pub error: Option<ParseError>,
@@ -159,6 +160,7 @@ mod _state_parser_framec {
                 tokens: None,
                 label: None,
                 elements: Vec::new(),
+                matches: Vec::new(),
                 span_start: Span::new(0, 0),
                 result: None,
                 error: None,
@@ -294,7 +296,9 @@ mod _state_parser_framec {
             }
         }
 
-        // Optional transition clause: `-> target` then optional `: -> target`.
+        // Optional transition clause for the current match: `-> target`
+        // then optional `: -> target`. Then either start the next match
+        // (ordered-choice `|`) or finish the state.
         fn _state_Transition(&mut self, __e: &StateParserFrameEvent) {
             match __e {
                 StateParserFrameEvent::FrameEnter { .. } => { self._s_Transition_hdl_frame_enter(__e); }
@@ -452,15 +456,24 @@ mod _state_parser_framec {
                 });
             }
             
+            // Commit the current match.
             let span = self.span_start.clone();
-            let m = MatchAst {
+            self.matches.push(MatchAst {
                 elements: std::mem::take(&mut self.elements),
                 transition,
                 span: span.clone(),
-            };
+            });
+            
+            // Ordered-choice `|` starts another match in this state.
+            if self.tokens.as_mut().unwrap().eat(&FsmTokenKind::Pipe) {
+                let mut __compartment = self.__prepareEnter("Elements");
+                self.__transition(__compartment);
+                return;
+            }
+            
             self.result = Some(FsmStateAst {
                 label: self.label.take(),
-                matches: vec![m],
+                matches: std::mem::take(&mut self.matches),
                 span,
             });
             let mut __compartment = self.__prepareEnter("Done");
