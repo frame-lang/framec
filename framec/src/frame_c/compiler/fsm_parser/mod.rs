@@ -67,12 +67,13 @@
 //!   child) parse it to an [`FsmDeclAst`] ([`parse_fsm_declaration`],
 //!   [`parse_fsm_block`]).
 //!
-//! Coverage expands fixture-by-fixture (current: header, one implicit
-//! state, stages, and full expressions — literals, probes, vars, calls,
-//! member access, parenthesization, and binary operators with
-//! precedence + associativity). Not yet: labeled states, `|` matches,
-//! transition clauses, embedding actions, actions/domain blocks, unary
-//! operators, statements (`if`/assignment). The module is wired into
+//! Coverage expands fixture-by-fixture. Expressions are complete per
+//! RFC-0043 §3.3: literals, probes, vars, calls, member access,
+//! parenthesization, unary prefix (`!`/`-`), and binary operators with
+//! precedence + left-associativity. Header + one implicit state +
+//! stages parse. Not yet: labeled states, `|` matches, transition
+//! clauses, embedding actions, actions/domain blocks, statements
+//! (`if`/assignment). The module is wired into
 //! [`crate::frame_c::compiler`] but the framec driver does not yet route
 //! real `@@fsm` blocks here (Task 14).
 //!
@@ -204,7 +205,7 @@ mod expression_fsm {
 
     use super::parse_helpers::{binary_op, binding_power};
     use super::token_stream::{FsmTokenKind, FsmTokenStream};
-    use crate::frame_c::compiler::frame_ast::{Expression, Literal};
+    use crate::frame_c::compiler::frame_ast::{Expression, Literal, UnaryOp};
     use crate::frame_c::compiler::pipeline_parser::ParseError;
 
     include!("expression_parser.gen.rs");
@@ -680,6 +681,75 @@ mod parser_tests {
                 }
             }
             other => panic!("expected top-level `>`, got {:?}", other),
+        }
+    }
+
+    /// Unary not: `!self.flag` → Unary(Not, Member(self, flag)). Member
+    /// binds tighter than unary, so the operand is the whole `self.flag`.
+    #[test]
+    fn unary_not_over_member() {
+        use crate::frame_c::compiler::frame_ast::UnaryOp;
+        let e = bare_expr(b"@@fsm M(text: bytes) : bool = false { /x/ !self.flag }");
+        match e {
+            Expression::Unary {
+                op: UnaryOp::Not,
+                expr,
+            } => match *expr {
+                Expression::Member { object, field } => {
+                    assert!(matches!(*object, Expression::Var(v) if v == "self"));
+                    assert_eq!(field, "flag");
+                }
+                other => panic!("expected Member operand, got {:?}", other),
+            },
+            other => panic!("expected Unary(Not), got {:?}", other),
+        }
+    }
+
+    /// Unary binds tighter than binary: `-a * b` → `(-a) * b`.
+    #[test]
+    fn unary_neg_binds_tighter_than_mul() {
+        use crate::frame_c::compiler::frame_ast::{BinaryOp, UnaryOp};
+        let e = bare_expr(b"@@fsm M(text: bytes) : int = 0 { /x/ -a * b }");
+        match e {
+            Expression::Binary {
+                left,
+                op: BinaryOp::Mul,
+                right,
+            } => {
+                assert!(matches!(
+                    *left,
+                    Expression::Unary {
+                        op: UnaryOp::Neg,
+                        ..
+                    }
+                ));
+                assert!(matches!(*right, Expression::Var(v) if v == "b"));
+            }
+            other => panic!("expected top-level `*` with `(-a)` left, got {:?}", other),
+        }
+    }
+
+    /// Unary composes with binary on the right: `!a && b` → `(!a) && b`.
+    #[test]
+    fn unary_then_binary() {
+        use crate::frame_c::compiler::frame_ast::{BinaryOp, UnaryOp};
+        let e = bare_expr(b"@@fsm M(text: bytes) : bool = false { /x/ !a && b }");
+        match e {
+            Expression::Binary {
+                left,
+                op: BinaryOp::And,
+                right,
+            } => {
+                assert!(matches!(
+                    *left,
+                    Expression::Unary {
+                        op: UnaryOp::Not,
+                        ..
+                    }
+                ));
+                assert!(matches!(*right, Expression::Var(v) if v == "b"));
+            }
+            other => panic!("expected top-level `&&` with `(!a)` left, got {:?}", other),
         }
     }
 

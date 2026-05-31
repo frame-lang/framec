@@ -111,6 +111,7 @@ mod _expression_parser_framec {
     enum ExpressionParserStateContext {
         Start,
         Atom,
+        Unary,
         CallArgs,
         ParenInner,
         Postfix,
@@ -139,6 +140,7 @@ mod _expression_parser_framec {
             let state_context = match state {
                 "Start" => ExpressionParserStateContext::Start,
                 "Atom" => ExpressionParserStateContext::Atom,
+                "Unary" => ExpressionParserStateContext::Unary,
                 "CallArgs" => ExpressionParserStateContext::CallArgs,
                 "ParenInner" => ExpressionParserStateContext::ParenInner,
                 "Postfix" => ExpressionParserStateContext::Postfix,
@@ -166,6 +168,7 @@ mod _expression_parser_framec {
         pub left: Option<Expression>,
         pub pending_callee: String,
         pub call_args: Vec<Expression>,
+        pub pending_unary: Option<UnaryOp>,
         pub result: Option<Expression>,
         pub error: Option<ParseError>,
     }
@@ -181,6 +184,7 @@ mod _expression_parser_framec {
                 left: None,
                 pending_callee: String::new(),
                 call_args: Vec::new(),
+                pending_unary: None,
                 result: None,
                 error: None,
                 __compartment: ExpressionParserCompartment::new("Start"),
@@ -203,6 +207,7 @@ mod _expression_parser_framec {
             match leaf {
                 "Start" => &["Start"],
                 "Atom" => &["Atom"],
+                "Unary" => &["Unary"],
                 "CallArgs" => &["CallArgs"],
                 "ParenInner" => &["ParenInner"],
                 "Postfix" => &["Postfix"],
@@ -274,6 +279,7 @@ mod _expression_parser_framec {
             match self.__compartment.state.as_str() {
                 "Start" => self._state_Start(__ev),
                 "Atom" => self._state_Atom(__ev),
+                "Unary" => self._state_Unary(__ev),
                 "CallArgs" => self._state_CallArgs(__ev),
                 "ParenInner" => self._state_ParenInner(__ev),
                 "Postfix" => self._state_Postfix(__ev),
@@ -306,6 +312,14 @@ mod _expression_parser_framec {
         fn _state_Atom(&mut self, __e: &ExpressionParserFrameEvent) {
             match __e {
                 ExpressionParserFrameEvent::FrameEnter { .. } => { self._s_Atom_hdl_frame_enter(__e); }
+                _ => {}
+            }
+        }
+
+        // Parse a prefix-unary operand via a child at UNARY_BP, then wrap.
+        fn _state_Unary(&mut self, __e: &ExpressionParserFrameEvent) {
+            match __e {
+                ExpressionParserFrameEvent::FrameEnter { .. } => { self._s_Unary_hdl_frame_enter(__e); }
                 _ => {}
             }
         }
@@ -423,6 +437,26 @@ mod _expression_parser_framec {
                     self.__transition(__compartment);
                     return;
                 }
+                // Prefix unary `!x` / `-x`. In atom position `-` is
+                // unary (binary subtraction is handled in $Climb).
+                // The operand is parsed by a child at UNARY_BP — above
+                // every binary left-power — so member/call postfixes
+                // bind into the operand (`-a.b` = -(a.b)) but no binary
+                // operator folds inside it (`-a * b` = (-a) * b).
+                FsmTokenKind::Bang => {
+                    ts.advance();
+                    self.pending_unary = Some(UnaryOp::Not);
+                    let mut __compartment = self.__prepareEnter("Unary");
+                    self.__transition(__compartment);
+                    return;
+                }
+                FsmTokenKind::Minus => {
+                    ts.advance();
+                    self.pending_unary = Some(UnaryOp::Neg);
+                    let mut __compartment = self.__prepareEnter("Unary");
+                    self.__transition(__compartment);
+                    return;
+                }
                 _ => {
                     self.error = Some(ParseError {
                         message: "expected an expression".to_string(),
@@ -433,6 +467,32 @@ mod _expression_parser_framec {
                     return;
                 }
             }
+        }
+
+        fn _s_Unary_hdl_frame_enter(&mut self, __e: &ExpressionParserFrameEvent) {
+            let mut child = ExpressionParser::__create();
+            child.min_bp = 13; // UNARY_BP — above the tightest binary l_bp (11)
+            child.tokens = self.tokens.take();
+            child.parse();
+            self.tokens = child.tokens.take();
+            if let Some(e) = child.error.take() {
+                self.error = Some(e);
+                let mut __compartment = self.__prepareEnter("Done");
+                self.__transition(__compartment);
+                return;
+            }
+            let operand = child
+                .result
+                .take()
+                .expect("child ExpressionParser sets result when no error");
+            let op = self.pending_unary.take().unwrap();
+            self.left = Some(Expression::Unary {
+                op,
+                expr: Box::new(operand),
+            });
+            let mut __compartment = self.__prepareEnter("Climb");
+            self.__transition(__compartment);
+            return;
         }
 
         fn _s_CallArgs_hdl_frame_enter(&mut self, __e: &ExpressionParserFrameEvent) {

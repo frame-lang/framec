@@ -93,6 +93,22 @@
                         ts.advance();
                         -> $ParenInner
                     }
+                    // Prefix unary `!x` / `-x`. In atom position `-` is
+                    // unary (binary subtraction is handled in $Climb).
+                    // The operand is parsed by a child at UNARY_BP — above
+                    // every binary left-power — so member/call postfixes
+                    // bind into the operand (`-a.b` = -(a.b)) but no binary
+                    // operator folds inside it (`-a * b` = (-a) * b).
+                    FsmTokenKind::Bang => {
+                        ts.advance();
+                        self.pending_unary = Some(UnaryOp::Not);
+                        -> $Unary
+                    }
+                    FsmTokenKind::Minus => {
+                        ts.advance();
+                        self.pending_unary = Some(UnaryOp::Neg);
+                        -> $Unary
+                    }
                     _ => {
                         self.error = Some(ParseError {
                             message: "expected an expression".to_string(),
@@ -101,6 +117,31 @@
                         -> $Done
                     }
                 }
+            }
+        }
+
+        // Parse a prefix-unary operand via a child at UNARY_BP, then wrap.
+        $Unary {
+            $>() {
+                let mut child = ExpressionParser::__create();
+                child.min_bp = 13; // UNARY_BP — above the tightest binary l_bp (11)
+                child.tokens = self.tokens.take();
+                child.parse();
+                self.tokens = child.tokens.take();
+                if let Some(e) = child.error.take() {
+                    self.error = Some(e);
+                    -> $Done
+                }
+                let operand = child
+                    .result
+                    .take()
+                    .expect("child ExpressionParser sets result when no error");
+                let op = self.pending_unary.take().unwrap();
+                self.left = Some(Expression::Unary {
+                    op,
+                    expr: Box::new(operand),
+                });
+                -> $Climb
             }
         }
 
@@ -267,6 +308,7 @@
         left: Option<Expression> = None
         pending_callee: String = String::new()
         call_args: Vec<Expression> = Vec::new()
+        pending_unary: Option<UnaryOp> = None
         result: Option<Expression> = None
         error: Option<ParseError> = None
 }
