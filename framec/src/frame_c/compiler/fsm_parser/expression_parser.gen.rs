@@ -6,22 +6,33 @@
 // via Option::take, moved back out when done) and builds one Expression.
 // This is the first CHILD parser in the tree — it proves the
 // cooperating-systems composition pattern (linear token-stream
-// ownership shuttling) that the whole design rests on.
+// ownership shuttling).
 //
-// v1 SCOPE: a primary expression and call expressions —
-//   primary ::= literal | probe | ident | "(" expr ")"
-//   call    ::= ident "(" ( expr ("," expr)* )? ")"
-// which is what FSM-TEST-004 ( to_int(@@:matched) ) needs. The eight
-// precedence levels (logical-or down to unary) per RFC-0043 §3.3 land
-// as additional states when a fixture first exercises operators; the
-// $Primary state below is the base of that future climb.
+// Precedence is handled by precedence climbing expressed across states
+// plus a binding-power table (parse_helpers::binding_power):
 //
-// Composition contract (matches the parent-child pattern in
-// _scratch/rfc_0043_parser_design.md):
-//   - input:  `tokens` (Option<FsmTokenStream>) set by the parent.
-//   - output: `result` (Option<Expression>) on success, or `error`.
-//   - the parent does: child.tokens = self.tokens.take(); child.parse();
-//     self.tokens = child.tokens.take(); read child.result / child.error.
+//   $Atom    — one atom: literal | probe | ident | call | parenthesized.
+//   $Postfix — fold `.field` member accesses onto the atom.
+//   $Climb   — the precedence loop: while the next operator's left
+//              binding power ≥ self.min_bp, consume it and parse the
+//              right operand with a CHILD ExpressionParser whose min_bp
+//              is the operator's right binding power. Left-associative
+//              via the (2k-1, 2k) binding-power pairs.
+//   $Done    — `result` holds the Expression, or `error` is set.
+//
+// The caller sets `min_bp` before `parse()` (default 0 = a full
+// expression). `$Climb` recursing through children at higher min_bp is
+// what makes precedence + associativity fall out — no per-level state.
+//
+// SCOPE: literals, probes, vars, calls `ident(args)`, parenthesized
+// sub-expressions, `.field` member access, and the binary operators in
+// binding_power (||, &&, ==/!=, </<=/>/>=, +/-, *///%). Unary prefix
+// (!x, -x) lands when a fixture first needs it (a child at min_bp above
+// the tightest binary, wrapping Expression::Unary).
+//
+// Composition contract:
+//   - input:  `tokens` set by the parent; `min_bp` (default 0).
+//   - output: `result` (Some on success) or `error`.
 
 #[allow(dead_code)]
 #[allow(non_camel_case_types)]
@@ -99,9 +110,11 @@ mod _expression_parser_framec {
     #[derive(Clone)]
     enum ExpressionParserStateContext {
         Start,
-        Primary,
+        Atom,
         CallArgs,
         ParenInner,
+        Postfix,
+        Climb,
         Done,
         __NoContext,
     }
@@ -125,9 +138,11 @@ mod _expression_parser_framec {
         fn new(state: &str) -> Self {
             let state_context = match state {
                 "Start" => ExpressionParserStateContext::Start,
-                "Primary" => ExpressionParserStateContext::Primary,
+                "Atom" => ExpressionParserStateContext::Atom,
                 "CallArgs" => ExpressionParserStateContext::CallArgs,
                 "ParenInner" => ExpressionParserStateContext::ParenInner,
+                "Postfix" => ExpressionParserStateContext::Postfix,
+                "Climb" => ExpressionParserStateContext::Climb,
                 "Done" => ExpressionParserStateContext::Done,
                 _ => ExpressionParserStateContext::__NoContext,
             };
@@ -147,6 +162,8 @@ mod _expression_parser_framec {
         __next_compartment: Option<ExpressionParserCompartment>,
         _context_stack: Vec<ExpressionParserFrameContext>,
         pub tokens: Option<FsmTokenStream>,
+        pub min_bp: u8,
+        pub left: Option<Expression>,
         pub pending_callee: String,
         pub call_args: Vec<Expression>,
         pub result: Option<Expression>,
@@ -160,6 +177,8 @@ mod _expression_parser_framec {
                 _state_stack: Vec::new(),
                 _context_stack: Vec::new(),
                 tokens: None,
+                min_bp: 0,
+                left: None,
                 pending_callee: String::new(),
                 call_args: Vec::new(),
                 result: None,
@@ -183,9 +202,11 @@ mod _expression_parser_framec {
         fn __hsm_chain(&mut self, leaf: &str) -> &'static [&'static str] {
             match leaf {
                 "Start" => &["Start"],
-                "Primary" => &["Primary"],
+                "Atom" => &["Atom"],
                 "CallArgs" => &["CallArgs"],
                 "ParenInner" => &["ParenInner"],
+                "Postfix" => &["Postfix"],
+                "Climb" => &["Climb"],
                 "Done" => &["Done"],
                 _ => &[],
             }
@@ -252,9 +273,11 @@ mod _expression_parser_framec {
             let __ev: &ExpressionParserFrameEvent = __e;
             match self.__compartment.state.as_str() {
                 "Start" => self._state_Start(__ev),
-                "Primary" => self._state_Primary(__ev),
+                "Atom" => self._state_Atom(__ev),
                 "CallArgs" => self._state_CallArgs(__ev),
                 "ParenInner" => self._state_ParenInner(__ev),
+                "Postfix" => self._state_Postfix(__ev),
+                "Climb" => self._state_Climb(__ev),
                 "Done" => self._state_Done(__ev),
                 _ => {}
             }
@@ -279,19 +302,17 @@ mod _expression_parser_framec {
             }
         }
 
-        // Parse one primary, then fold any trailing call-arg list onto it.
-        // (The future precedence climb will wrap this base.)
-        fn _state_Primary(&mut self, __e: &ExpressionParserFrameEvent) {
+        // Parse one atom into `self.left`, then fold postfixes.
+        fn _state_Atom(&mut self, __e: &ExpressionParserFrameEvent) {
             match __e {
-                ExpressionParserFrameEvent::FrameEnter { .. } => { self._s_Primary_hdl_frame_enter(__e); }
+                ExpressionParserFrameEvent::FrameEnter { .. } => { self._s_Atom_hdl_frame_enter(__e); }
                 _ => {}
             }
         }
 
         // Parse a (possibly empty) comma-separated argument list, having
         // already consumed the callee ident and the opening `(`. Each
-        // argument is parsed by a fresh child ExpressionParser — the
-        // recursion that makes this a real tree.
+        // argument is a fresh child ExpressionParser at min_bp 0.
         fn _state_CallArgs(&mut self, __e: &ExpressionParserFrameEvent) {
             match __e {
                 ExpressionParserFrameEvent::FrameEnter { .. } => { self._s_CallArgs_hdl_frame_enter(__e); }
@@ -299,10 +320,30 @@ mod _expression_parser_framec {
             }
         }
 
-        // Parenthesized sub-expression: parse inner via a child, expect `)`.
+        // Parenthesized sub-expression: parse inner via a child at min_bp
+        // 0 (a full expression resets precedence), expect `)`.
         fn _state_ParenInner(&mut self, __e: &ExpressionParserFrameEvent) {
             match __e {
                 ExpressionParserFrameEvent::FrameEnter { .. } => { self._s_ParenInner_hdl_frame_enter(__e); }
+                _ => {}
+            }
+        }
+
+        // Fold `.field` member accesses onto `self.left` (tightest
+        // binding, left-associative: a.b.c = (a.b).c).
+        fn _state_Postfix(&mut self, __e: &ExpressionParserFrameEvent) {
+            match __e {
+                ExpressionParserFrameEvent::FrameEnter { .. } => { self._s_Postfix_hdl_frame_enter(__e); }
+                _ => {}
+            }
+        }
+
+        // Precedence climb. While the next operator binds at least as
+        // tightly as our floor, consume it and fold in a right operand
+        // parsed by a child at the operator's right binding power.
+        fn _state_Climb(&mut self, __e: &ExpressionParserFrameEvent) {
+            match __e {
+                ExpressionParserFrameEvent::FrameEnter { .. } => { self._s_Climb_hdl_frame_enter(__e); }
                 _ => {}
             }
         }
@@ -314,57 +355,56 @@ mod _expression_parser_framec {
         }
 
         fn _s_Start_hdl_user_parse(&mut self, __e: &ExpressionParserFrameEvent) {
-            let mut __compartment = self.__prepareEnter("Primary");
+            let mut __compartment = self.__prepareEnter("Atom");
             self.__transition(__compartment);
             return;
         }
 
-        fn _s_Primary_hdl_frame_enter(&mut self, __e: &ExpressionParserFrameEvent) {
+        fn _s_Atom_hdl_frame_enter(&mut self, __e: &ExpressionParserFrameEvent) {
             let ts = self.tokens.as_mut().unwrap();
             let sp = ts.cur_span();
             
             match ts.peek_kind() {
                 FsmTokenKind::KwTrue => {
                     ts.advance();
-                    self.result = Some(Expression::Literal(Literal::Bool(true)));
-                    let mut __compartment = self.__prepareEnter("Done");
+                    self.left = Some(Expression::Literal(Literal::Bool(true)));
+                    let mut __compartment = self.__prepareEnter("Postfix");
                     self.__transition(__compartment);
                     return;
                 }
                 FsmTokenKind::KwFalse => {
                     ts.advance();
-                    self.result = Some(Expression::Literal(Literal::Bool(false)));
-                    let mut __compartment = self.__prepareEnter("Done");
+                    self.left = Some(Expression::Literal(Literal::Bool(false)));
+                    let mut __compartment = self.__prepareEnter("Postfix");
                     self.__transition(__compartment);
                     return;
                 }
                 FsmTokenKind::IntLit(n) => {
                     ts.advance();
-                    self.result = Some(Expression::Literal(Literal::Int(n)));
-                    let mut __compartment = self.__prepareEnter("Done");
+                    self.left = Some(Expression::Literal(Literal::Int(n)));
+                    let mut __compartment = self.__prepareEnter("Postfix");
                     self.__transition(__compartment);
                     return;
                 }
                 FsmTokenKind::StringLit(s) => {
                     ts.advance();
-                    self.result = Some(Expression::Literal(Literal::String(s)));
-                    let mut __compartment = self.__prepareEnter("Done");
+                    self.left = Some(Expression::Literal(Literal::String(s)));
+                    let mut __compartment = self.__prepareEnter("Postfix");
                     self.__transition(__compartment);
                     return;
                 }
                 FsmTokenKind::Probe(name) => {
                     ts.advance();
                     // A probe is a leaf reference; surface it as a Var
-                    // carrying the `@@:`-qualified name. (A dedicated
-                    // Expression::Probe variant may replace this later.)
-                    self.result = Some(Expression::Var(format!("@@:{}", name)));
-                    let mut __compartment = self.__prepareEnter("Done");
+                    // carrying the `@@:`-qualified name.
+                    self.left = Some(Expression::Var(format!("@@:{}", name)));
+                    let mut __compartment = self.__prepareEnter("Postfix");
                     self.__transition(__compartment);
                     return;
                 }
                 FsmTokenKind::Ident(name) => {
                     ts.advance();
-                    // Call expression `ident( args )` vs bare variable.
+                    // Call `ident(args)` vs bare variable.
                     if ts.eat(&FsmTokenKind::LParen) {
                         self.pending_callee = name;
                         self.call_args = Vec::new();
@@ -372,15 +412,13 @@ mod _expression_parser_framec {
                         self.__transition(__compartment);
                         return;
                     }
-                    self.result = Some(Expression::Var(name));
-                    let mut __compartment = self.__prepareEnter("Done");
+                    self.left = Some(Expression::Var(name));
+                    let mut __compartment = self.__prepareEnter("Postfix");
                     self.__transition(__compartment);
                     return;
                 }
                 FsmTokenKind::LParen => {
                     ts.advance();
-                    // Parenthesized sub-expression: recurse via a child
-                    // ExpressionParser, then expect `)`.
                     let mut __compartment = self.__prepareEnter("ParenInner");
                     self.__transition(__compartment);
                     return;
@@ -398,22 +436,20 @@ mod _expression_parser_framec {
         }
 
         fn _s_CallArgs_hdl_frame_enter(&mut self, __e: &ExpressionParserFrameEvent) {
-            // Empty arg list: `ident()`.
             {
                 let ts = self.tokens.as_mut().unwrap();
                 if ts.eat(&FsmTokenKind::RParen) {
-                    self.result = Some(Expression::Call {
+                    self.left = Some(Expression::Call {
                         func: std::mem::take(&mut self.pending_callee),
                         args: std::mem::take(&mut self.call_args),
                     });
-                    let mut __compartment = self.__prepareEnter("Done");
+                    let mut __compartment = self.__prepareEnter("Postfix");
                     self.__transition(__compartment);
                     return;
                 }
             }
             
             loop {
-                // Parse one argument via a child parser (token shuttle).
                 let mut child = ExpressionParser::__create();
                 child.tokens = self.tokens.take();
                 child.parse();
@@ -435,11 +471,11 @@ mod _expression_parser_framec {
                     continue;
                 }
                 if ts.eat(&FsmTokenKind::RParen) {
-                    self.result = Some(Expression::Call {
+                    self.left = Some(Expression::Call {
                         func: std::mem::take(&mut self.pending_callee),
                         args: std::mem::take(&mut self.call_args),
                     });
-                    let mut __compartment = self.__prepareEnter("Done");
+                    let mut __compartment = self.__prepareEnter("Postfix");
                     self.__transition(__compartment);
                     return;
                 }
@@ -471,8 +507,8 @@ mod _expression_parser_framec {
             
             let ts = self.tokens.as_mut().unwrap();
             if ts.eat(&FsmTokenKind::RParen) {
-                self.result = Some(inner);
-                let mut __compartment = self.__prepareEnter("Done");
+                self.left = Some(inner);
+                let mut __compartment = self.__prepareEnter("Postfix");
                 self.__transition(__compartment);
                 return;
             }
@@ -483,6 +519,81 @@ mod _expression_parser_framec {
             let mut __compartment = self.__prepareEnter("Done");
             self.__transition(__compartment);
             return;
+        }
+
+        fn _s_Postfix_hdl_frame_enter(&mut self, __e: &ExpressionParserFrameEvent) {
+            loop {
+                if !self.tokens.as_ref().unwrap().at(&FsmTokenKind::Dot) {
+                    let mut __compartment = self.__prepareEnter("Climb");
+                    self.__transition(__compartment);
+                    return;
+                }
+                self.tokens.as_mut().unwrap().advance(); // `.`
+                let field = match self.tokens.as_ref().unwrap().peek_kind() {
+                    FsmTokenKind::Ident(f) => f,
+                    _ => {
+                        self.error = Some(ParseError {
+                            message: "expected field name after `.`".to_string(),
+                            span: self.tokens.as_ref().unwrap().cur_span(),
+                        });
+                        let mut __compartment = self.__prepareEnter("Done");
+                        self.__transition(__compartment);
+                        return;
+                    }
+                };
+                self.tokens.as_mut().unwrap().advance(); // field ident
+                let object = self.left.take().unwrap();
+                self.left = Some(Expression::Member {
+                    object: Box::new(object),
+                    field,
+                });
+            }
+        }
+
+        fn _s_Climb_hdl_frame_enter(&mut self, __e: &ExpressionParserFrameEvent) {
+            loop {
+                let op = self.tokens.as_ref().unwrap().peek_kind();
+                let (l_bp, r_bp) = match binding_power(&op) {
+                    Some(bps) => bps,
+                    None => {
+                        self.result = self.left.take();
+                        let mut __compartment = self.__prepareEnter("Done");
+                        self.__transition(__compartment);
+                        return;
+                    }
+                };
+                if l_bp < self.min_bp {
+                    self.result = self.left.take();
+                    let mut __compartment = self.__prepareEnter("Done");
+                    self.__transition(__compartment);
+                    return;
+                }
+            
+                self.tokens.as_mut().unwrap().advance(); // operator
+            
+                let mut child = ExpressionParser::__create();
+                child.min_bp = r_bp;
+                child.tokens = self.tokens.take();
+                child.parse();
+                self.tokens = child.tokens.take();
+                if let Some(e) = child.error.take() {
+                    self.error = Some(e);
+                    let mut __compartment = self.__prepareEnter("Done");
+                    self.__transition(__compartment);
+                    return;
+                }
+                let right = child
+                    .result
+                    .take()
+                    .expect("child ExpressionParser sets result when no error");
+            
+                let left = self.left.take().unwrap();
+                self.left = Some(Expression::Binary {
+                    left: Box::new(left),
+                    op: binary_op(&op),
+                    right: Box::new(right),
+                });
+            }
         }
     }
 }

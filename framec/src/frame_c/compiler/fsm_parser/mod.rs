@@ -68,11 +68,13 @@
 //!   [`parse_fsm_block`]).
 //!
 //! Coverage expands fixture-by-fixture (current: header, one implicit
-//! state, stages, bare/call/probe expressions). Not yet: labeled
-//! states, `|` matches, transition clauses, embedding actions,
-//! actions/domain blocks, operator-precedence expressions, statements.
-//! The module is wired into [`crate::frame_c::compiler`] but the framec
-//! driver does not yet route real `@@fsm` blocks here (Task 14).
+//! state, stages, and full expressions — literals, probes, vars, calls,
+//! member access, parenthesization, and binary operators with
+//! precedence + associativity). Not yet: labeled states, `|` matches,
+//! transition clauses, embedding actions, actions/domain blocks, unary
+//! operators, statements (`if`/assignment). The module is wired into
+//! [`crate::frame_c::compiler`] but the framec driver does not yet route
+//! real `@@fsm` blocks here (Task 14).
 //!
 //! # Public API
 //!
@@ -200,6 +202,7 @@ mod expression_fsm {
         unused_parens
     )]
 
+    use super::parse_helpers::{binary_op, binding_power};
     use super::token_stream::{FsmTokenKind, FsmTokenStream};
     use crate::frame_c::compiler::frame_ast::{Expression, Literal};
     use crate::frame_c::compiler::pipeline_parser::ParseError;
@@ -234,6 +237,7 @@ mod fsm_decl_parser {
 /// → AST utilities with no state-machine content.
 mod parse_helpers {
     use super::token_stream::FsmTokenKind;
+    use crate::frame_c::compiler::frame_ast::BinaryOp;
 
     /// Render a token's surface text — used to capture single-token
     /// default expressions (`= false`, `= 0`) verbatim. v1 covers the
@@ -247,6 +251,45 @@ mod parse_helpers {
             FsmTokenKind::StringLit(s) => format!("{:?}", s),
             FsmTokenKind::Ident(s) => s.clone(),
             _ => String::new(),
+        }
+    }
+
+    /// Binding powers for binary operators, per RFC-0043 §3.3 precedence
+    /// (loosest `||` to tightest `* / %`). Returns `None` for tokens that
+    /// are not binary operators. The `(2k-1, 2k)` pairing makes every
+    /// operator left-associative: a same-level operator's left power is
+    /// below the right power the climb recurses with, so the inner climb
+    /// stops and the fold happens left-to-right.
+    pub(super) fn binding_power(op: &FsmTokenKind) -> Option<(u8, u8)> {
+        Some(match op {
+            FsmTokenKind::OrOr => (1, 2),
+            FsmTokenKind::AndAnd => (3, 4),
+            FsmTokenKind::EqEq | FsmTokenKind::NotEq => (5, 6),
+            FsmTokenKind::Lt | FsmTokenKind::Le | FsmTokenKind::Gt | FsmTokenKind::Ge => (7, 8),
+            FsmTokenKind::Plus | FsmTokenKind::Minus => (9, 10),
+            FsmTokenKind::Star | FsmTokenKind::Slash | FsmTokenKind::Percent => (11, 12),
+            _ => return None,
+        })
+    }
+
+    /// Map a binary-operator token to its [`BinaryOp`]. Precondition:
+    /// `op` is one of the tokens [`binding_power`] accepts.
+    pub(super) fn binary_op(op: &FsmTokenKind) -> BinaryOp {
+        match op {
+            FsmTokenKind::OrOr => BinaryOp::Or,
+            FsmTokenKind::AndAnd => BinaryOp::And,
+            FsmTokenKind::EqEq => BinaryOp::Eq,
+            FsmTokenKind::NotEq => BinaryOp::Ne,
+            FsmTokenKind::Lt => BinaryOp::Lt,
+            FsmTokenKind::Le => BinaryOp::Le,
+            FsmTokenKind::Gt => BinaryOp::Gt,
+            FsmTokenKind::Ge => BinaryOp::Ge,
+            FsmTokenKind::Plus => BinaryOp::Add,
+            FsmTokenKind::Minus => BinaryOp::Sub,
+            FsmTokenKind::Star => BinaryOp::Mul,
+            FsmTokenKind::Slash => BinaryOp::Div,
+            FsmTokenKind::Percent => BinaryOp::Mod,
+            _ => unreachable!("binary_op called on non-operator token"),
         }
     }
 }
@@ -500,6 +543,143 @@ mod parser_tests {
                 other => panic!("expected Call, got {:?}", other),
             },
             other => panic!("expected BareExpression, got {:?}", other),
+        }
+    }
+
+    /// Helper: extract the single bare-expression from a one-stage,
+    /// one-bare-expr body. Panics if the shape differs.
+    fn bare_expr(src: &[u8]) -> Expression {
+        let ast = parse_fsm_block(src).expect("must parse");
+        let elems = &ast.states[0].matches[0].elements;
+        match elems.last().expect("at least one element") {
+            MatchElement::BareExpression { expr, .. } => expr.clone(),
+            other => panic!("expected BareExpression tail, got {:?}", other),
+        }
+    }
+
+    /// Precedence: `1 + 2 * 3` must nest as `1 + (2 * 3)` — multiplication
+    /// binds tighter. Proves the precedence-climbing $Climb state.
+    #[test]
+    fn precedence_mul_binds_tighter_than_add() {
+        use crate::frame_c::compiler::frame_ast::BinaryOp;
+        let e = bare_expr(b"@@fsm M(text: bytes) : int = 0 { /x/ 1 + 2 * 3 }");
+        // Top node is `+` with right = `2 * 3`.
+        match e {
+            Expression::Binary {
+                left,
+                op: BinaryOp::Add,
+                right,
+            } => {
+                assert!(matches!(*left, Expression::Literal(Literal::Int(1))));
+                match *right {
+                    Expression::Binary {
+                        left: rl,
+                        op: BinaryOp::Mul,
+                        right: rr,
+                    } => {
+                        assert!(matches!(*rl, Expression::Literal(Literal::Int(2))));
+                        assert!(matches!(*rr, Expression::Literal(Literal::Int(3))));
+                    }
+                    other => panic!("expected `2 * 3` on the right, got {:?}", other),
+                }
+            }
+            other => panic!("expected top-level `+`, got {:?}", other),
+        }
+    }
+
+    /// Left-associativity: `1 - 2 - 3` must nest as `(1 - 2) - 3`.
+    #[test]
+    fn subtraction_left_associates() {
+        use crate::frame_c::compiler::frame_ast::BinaryOp;
+        let e = bare_expr(b"@@fsm M(text: bytes) : int = 0 { /x/ 1 - 2 - 3 }");
+        match e {
+            Expression::Binary {
+                left,
+                op: BinaryOp::Sub,
+                right,
+            } => {
+                // Left is `(1 - 2)`, right is `3`.
+                assert!(matches!(*right, Expression::Literal(Literal::Int(3))));
+                assert!(matches!(
+                    *left,
+                    Expression::Binary {
+                        op: BinaryOp::Sub,
+                        ..
+                    }
+                ));
+            }
+            other => panic!("expected top-level `-`, got {:?}", other),
+        }
+    }
+
+    /// Parentheses override precedence: `(1 + 2) * 3` nests as `(1+2) * 3`.
+    #[test]
+    fn parens_override_precedence() {
+        use crate::frame_c::compiler::frame_ast::BinaryOp;
+        let e = bare_expr(b"@@fsm M(text: bytes) : int = 0 { /x/ (1 + 2) * 3 }");
+        match e {
+            Expression::Binary {
+                left,
+                op: BinaryOp::Mul,
+                right,
+            } => {
+                assert!(matches!(*right, Expression::Literal(Literal::Int(3))));
+                assert!(matches!(
+                    *left,
+                    Expression::Binary {
+                        op: BinaryOp::Add,
+                        ..
+                    }
+                ));
+            }
+            other => panic!("expected top-level `*`, got {:?}", other),
+        }
+    }
+
+    /// Member access: `len(self.text)` — call with a `self.text` Member arg.
+    #[test]
+    fn member_access_in_call_arg() {
+        let e = bare_expr(b"@@fsm M(text: bytes) : int = 0 { /[0-9]+/ len(self.text) }");
+        match e {
+            Expression::Call { func, args } => {
+                assert_eq!(func, "len");
+                assert_eq!(args.len(), 1);
+                match &args[0] {
+                    Expression::Member { object, field } => {
+                        assert!(matches!(&**object, Expression::Var(v) if v == "self"));
+                        assert_eq!(field, "text");
+                    }
+                    other => panic!("expected Member arg, got {:?}", other),
+                }
+            }
+            other => panic!("expected Call, got {:?}", other),
+        }
+    }
+
+    /// FSM-TEST-105 shape: `to_int(@@:matched) > self.threshold` —
+    /// relational operator with a call LHS and a member-access RHS.
+    #[test]
+    fn relational_with_call_and_member() {
+        use crate::frame_c::compiler::frame_ast::BinaryOp;
+        let e = bare_expr(
+            b"@@fsm M(text: bytes, threshold: int = 10) : bool = false { /[0-9]+/ to_int(@@:matched) > self.threshold }",
+        );
+        match e {
+            Expression::Binary {
+                left,
+                op: BinaryOp::Gt,
+                right,
+            } => {
+                assert!(matches!(*left, Expression::Call { .. }));
+                match *right {
+                    Expression::Member { object, field } => {
+                        assert!(matches!(*object, Expression::Var(v) if v == "self"));
+                        assert_eq!(field, "threshold");
+                    }
+                    other => panic!("expected Member RHS, got {:?}", other),
+                }
+            }
+            other => panic!("expected top-level `>`, got {:?}", other),
         }
     }
 
