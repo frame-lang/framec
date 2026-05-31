@@ -8,25 +8,31 @@
 //! [`crate::frame_c::compiler::fsm_regex`]; the emitted class carries the
 //! DFA tables as data and drives recognition with a per-state dispatch
 //! loop implementing §5.2 (construction), §5.3 (execution), §5.5
-//! (transitions), and §5.6 (failure). Acceptance follows the
-//! terminating-event rule (§5.3): `accepted` reflects the most recent
-//! stage attempt — a successful match completion at a terminal state
-//! accepts; a stage failure that halts (failure branch to a terminal, or
-//! no branch) rejects; a failure branch to a non-terminal state continues
-//! and may still accept.
+//! (transitions), and §5.6 (failure).
+//!
+//! Acceptance follows the RE2 recognizer model (§5.3): the fsm accepts
+//! iff the input is in the recognized language — i.e. recognition halts
+//! on a *successful match completion* at a terminal state. A stage
+//! failure (or a conditional transition matching no `when`) that routes
+//! to a terminal rejects; a failure branch to a non-terminal continues
+//! and may still accept (the classifier idiom). `emit_failure` records
+//! the rejection (`accepted = False`); a later stage success flips it
+//! back. `reject_position` is normalized to 0 on acceptance.
 //!
 //! # v0.1 scope
 //!
 //! Supports single-match states, match stages (with `.label` captures),
-//! bare-expression returns, and static success/failure transitions over
-//! the `bytes`/`char` alphabets. Constructs not yet handled —
-//! multi-match (`|`) states, conditional / stage-ref transition targets,
-//! embedding actions, action blocks, and the token alphabet — produce a
-//! clear `Unsupported` error rather than a silent miscompile.
+//! bare-expression returns, action blocks (assignment / `if`-`else`
+//! statements), and static + conditional (`when`) success/failure
+//! transitions over the `bytes`/`char` alphabets. Constructs not yet
+//! handled — multi-match (`|`) states, stage-ref transition targets,
+//! failure-only clauses, embedding actions, declared `actions:`, and the
+//! token alphabet — produce a clear `Unsupported` error rather than a
+//! silent miscompile.
 
 use crate::frame_c::compiler::frame_ast::{
     BinaryOp, Expression, FsmDeclAst, FsmStateAst, FsmTransitionTarget, Literal, MatchAst,
-    MatchElement, Type, UnaryOp,
+    MatchElement, Statement, Type, UnaryOp,
 };
 use crate::frame_c::compiler::fsm_regex::{
     self, size_check::DEFAULT_MAX_DFA_STATES, subset::DfaLabel, Alphabet, CompileError,
@@ -249,7 +255,9 @@ impl<'a> Generator<'a> {
              \x20       self.cursor = 0\n\
              \x20       self._matched = \"\"\n\
              \x20       self._cap = {}\n\
-             \x20       self._run()\n\n",
+             \x20       self._run()\n\
+             \x20       if self.accepted:\n\
+             \x20           self.reject_position = 0\n\n",
         );
     }
 
@@ -322,10 +330,7 @@ impl<'a> Generator<'a> {
         m: &MatchAst,
         sid: &mut usize,
     ) -> Result<(), String> {
-        // Resolve transition targets to dispatch indices.
-        let (success_idx, failure_idx) = self.resolve_targets(m)?;
         let state_label = st.label.clone().unwrap_or_default();
-
         writeln!(out, "    def _state_{}(self):", index).ok();
 
         for el in &m.elements {
@@ -335,9 +340,9 @@ impl<'a> Generator<'a> {
                     *sid += 1;
                     writeln!(out, "        _r = self._dfa_match(self._DFA_{})", my_sid).ok();
                     out.push_str("        if _r < 0:\n");
-                    out.push_str("            self.accepted = False\n");
-                    out.push_str("            self.reject_position = self.cursor\n");
-                    writeln!(out, "            return {}", failure_idx).ok();
+                    // The stage failed: follow the failure branch (or §5.6).
+                    // emit_failure records the rejection (accepted=False).
+                    self.emit_failure(out, m, "            ")?;
                     out.push_str("        self._matched = self.text[self.cursor:_r]\n");
                     if let Some(slabel) = &stage.label {
                         writeln!(
@@ -353,59 +358,149 @@ impl<'a> Generator<'a> {
                 MatchElement::BareExpression { expr, .. } => {
                     writeln!(out, "        self.return_value = {}", expr_to_py(expr)).ok();
                 }
-                MatchElement::ActionBlock(_) => {
-                    return Err(
-                        "action blocks in matches are not yet supported by the Python backend"
-                            .into(),
-                    );
+                MatchElement::ActionBlock(blk) => {
+                    // Action blocks consume no input and (in v0.1) cannot
+                    // fail; emit their statements inline at the method body
+                    // indent.
+                    for st in &blk.statements {
+                        out.push_str(&stmt_to_py(st, "        ")?);
+                    }
                 }
             }
         }
 
-        // After all elements succeed, follow the success branch (or halt
-        // at a terminal). `accepted` already reflects the last stage.
-        writeln!(out, "        return {}\n", success_idx).ok();
+        // All elements succeeded: follow the success branch (or halt at a
+        // terminal). `accepted` already reflects the last stage.
+        self.emit_success(out, m, "        ")?;
+        out.push('\n');
         Ok(())
     }
 
-    /// Resolve a match's success/failure transition targets to dispatch
-    /// indices. `-1` means "halt" (terminal success, or §5.6 on failure).
-    fn resolve_targets(&self, m: &MatchAst) -> Result<(i64, i64), String> {
-        let Some(clause) = &m.transition else {
-            // No transition: implicit-terminal match. Success halts;
-            // failure (only reachable for a fallible stage, which the
-            // validator requires be provably non-failing here) also halts.
-            return Ok((-1, -1));
-        };
-        let success = self.target_index(&clause.success)?;
-        let failure = match &clause.failure {
-            Some(t) => self.target_index(t)?,
-            None => -1,
-        };
-        Ok((success, failure))
+    /// Emit the success-branch transition after a match completes. A
+    /// static target returns its index; a conditional target evaluates
+    /// each `when` in order and, if none holds, the failure branch fires
+    /// (FSM-TEST-402). No transition halts (terminal, accepted stands).
+    fn emit_success(&self, out: &mut String, m: &MatchAst, indent: &str) -> Result<(), String> {
+        match m.transition.as_ref() {
+            None => {
+                writeln!(out, "{}return -1", indent).ok();
+                Ok(())
+            }
+            Some(clause) => self.emit_target(out, &clause.success, indent, &|out, indent| {
+                // No success condition held → the failure branch fires.
+                self.emit_failure(out, m, indent)
+            }),
+        }
     }
 
-    fn target_index(&self, t: &FsmTransitionTarget) -> Result<i64, String> {
-        match t {
-            FsmTransitionTarget::Static { state, stage, .. } => {
-                if stage.is_some() {
-                    return Err(
-                        "stage-ref transition targets (`$State.stage`) are not yet supported \
-                         by the Python backend"
-                            .into(),
-                    );
-                }
-                self.label_to_index
-                    .get(state)
-                    .map(|i| *i as i64)
-                    .ok_or_else(|| format!("transition to undeclared state `${}`", state))
+    /// Emit the failure-branch resolution: the failure target's transition
+    /// if present, else §5.6 (halt). Used both on a stage failure and as
+    /// the fallback when a conditional success matches no `when`.
+    ///
+    /// Per the RE2 recognizer model (§5.3), reaching here is a rejection
+    /// event: it records `accepted = False` and the reject position. If the
+    /// failure branch routes to a non-terminal state that later completes a
+    /// match, a subsequent stage success flips `accepted` back to True.
+    fn emit_failure(&self, out: &mut String, m: &MatchAst, indent: &str) -> Result<(), String> {
+        writeln!(out, "{}self.accepted = False", indent).ok();
+        writeln!(out, "{}self.reject_position = self.cursor", indent).ok();
+        match m.transition.as_ref().and_then(|c| c.failure.as_ref()) {
+            None => {
+                writeln!(out, "{}return -1", indent).ok();
+                Ok(())
             }
-            FsmTransitionTarget::Conditional(_) => Err(
-                "conditional transition targets (`-> ( $A when ... )`) are not yet supported \
+            Some(target) => self.emit_target(out, target, indent, &|out, indent| {
+                writeln!(out, "{}return -1", indent).ok();
+                Ok(())
+            }),
+        }
+    }
+
+    /// Emit `return <index>` for a target. A conditional target emits an
+    /// ordered `if <when>: return <idx>` chain, then `on_none` for the
+    /// no-match case.
+    fn emit_target(
+        &self,
+        out: &mut String,
+        target: &FsmTransitionTarget,
+        indent: &str,
+        on_none: &dyn Fn(&mut String, &str) -> Result<(), String>,
+    ) -> Result<(), String> {
+        match target {
+            FsmTransitionTarget::Static { .. } => {
+                let idx = self.static_index(target)?;
+                writeln!(out, "{}return {}", indent, idx).ok();
+                Ok(())
+            }
+            FsmTransitionTarget::Conditional(alts) => {
+                let inner = format!("{}    ", indent);
+                for alt in alts {
+                    writeln!(out, "{}if {}:", indent, expr_to_py(&alt.condition)).ok();
+                    let idx = self.static_index(&alt.target)?;
+                    writeln!(out, "{}return {}", inner, idx).ok();
+                }
+                on_none(out, indent)
+            }
+        }
+    }
+
+    /// Dispatch index for a static (state-only) target. Stage-ref targets
+    /// are not yet supported.
+    fn static_index(&self, t: &FsmTransitionTarget) -> Result<usize, String> {
+        match t {
+            FsmTransitionTarget::Static {
+                state, stage: None, ..
+            } => self
+                .label_to_index
+                .get(state)
+                .copied()
+                .ok_or_else(|| format!("transition to undeclared state `${}`", state)),
+            FsmTransitionTarget::Static { stage: Some(_), .. } => Err(
+                "stage-ref transition targets (`$State.stage`) are not yet supported \
                  by the Python backend"
                     .into(),
             ),
+            FsmTransitionTarget::Conditional(_) => {
+                Err("a conditional target may not nest another conditional target".into())
+            }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Statement translation (action-block bodies, RFC-0043)
+// ---------------------------------------------------------------------------
+
+/// Render a statement as Python source lines, each prefixed with `indent`.
+/// Action-block statements are expression statements (incl. assignments)
+/// and `if/else`; transitions are not valid here (E712, caught earlier).
+fn stmt_to_py(stmt: &Statement, indent: &str) -> Result<String, String> {
+    match stmt {
+        Statement::Expression(e) => Ok(format!("{}{}\n", indent, expr_to_py(&e.expr))),
+        Statement::If(if_ast) => {
+            let inner = format!("{}    ", indent);
+            let mut s = format!("{}if {}:\n", indent, expr_to_py(&if_ast.condition));
+            s.push_str(&stmt_to_py(&if_ast.then_branch, &inner)?);
+            if let Some(else_b) = &if_ast.else_branch {
+                s.push_str(&format!("{}else:\n", indent));
+                s.push_str(&stmt_to_py(else_b, &inner)?);
+            }
+            Ok(s)
+        }
+        Statement::Block(blk) => {
+            if blk.statements.is_empty() {
+                return Ok(format!("{}pass\n", indent));
+            }
+            let mut s = String::new();
+            for st in &blk.statements {
+                s.push_str(&stmt_to_py(st, indent)?);
+            }
+            Ok(s)
+        }
+        other => Err(format!(
+            "statement form {:?} is not supported in @@fsm action blocks by the Python backend",
+            std::mem::discriminant(other)
+        )),
     }
 }
 
@@ -578,6 +673,84 @@ mod tests {
         })
     }
 
+    /// Generate + run `src` on `input`, returning the `repr` of each
+    /// requested instance expression (e.g. `"m.return_value"`, `"m.flag"`).
+    /// `None` if python3 is unavailable.
+    fn eval_py(src: &str, input: &str, exprs: &[&str], tag: &str) -> Option<Vec<String>> {
+        let decl = parse_fsm_block(src.as_bytes()).expect("fixture must parse");
+        let code = generate(&decl).expect("fixture must generate");
+        let prints: String = exprs
+            .iter()
+            .map(|e| format!("print(repr({}))\n", e))
+            .collect();
+        let driver = format!(
+            "{code}\nimport sys\nm = {name}(sys.argv[1])\n{prints}",
+            code = code,
+            name = decl.name,
+            prints = prints
+        );
+        let path = std::env::temp_dir().join(format!("framec_fsm_{}.py", tag));
+        std::fs::write(&path, driver).expect("write temp py");
+        let out = match Command::new("python3").arg(&path).arg(input).output() {
+            Ok(o) => o,
+            Err(_) => return None,
+        };
+        assert!(
+            out.status.success(),
+            "python3 failed for {:?}: {}",
+            src,
+            String::from_utf8_lossy(&out.stderr)
+        );
+        Some(
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .map(|l| l.to_string())
+                .collect(),
+        )
+    }
+
+    /// FSM-TEST-030 — multi-statement action block (`;`-separated),
+    /// mutating domain fields.
+    #[test]
+    fn fsm_test_030_action_block_semicolons() {
+        let src = "@@fsm M(text: bytes) : int = 0 { \
+                   /[0-9]/ { self.count = self.count + 1; self.flag = true } \
+                   self.count \
+                   domain: count: int = 0  flag: bool = false }";
+        let Some(v) = eval_py(src, "5", &["m.return_value", "m.flag", "m.count"], "t030") else {
+            return;
+        };
+        assert_eq!(v, vec!["1", "True", "1"]);
+    }
+
+    /// FSM-TEST-031 — same logic, whitespace-separated statements.
+    #[test]
+    fn fsm_test_031_action_block_whitespace() {
+        let src = "@@fsm M(text: bytes) : int = 0 { \
+                   /[0-9]/ { self.count = self.count + 1  self.flag = true } \
+                   self.count \
+                   domain: count: int = 0  flag: bool = false }";
+        let Some(v) = eval_py(src, "5", &["m.return_value", "m.flag", "m.count"], "t031") else {
+            return;
+        };
+        assert_eq!(v, vec!["1", "True", "1"]);
+    }
+
+    /// FSM-TEST-032 — if/else in an action block.
+    #[test]
+    fn fsm_test_032_if_else() {
+        let src = "@@fsm M(text: bytes) : int = 0 { \
+                   /[0-9]/ { if to_int(@@:matched) > 5 { self.flag = true } else { self.flag = false } } \
+                   to_int(@@:matched) \
+                   domain: flag: bool = false }";
+        let Some(seven) = eval_py(src, "7", &["m.return_value", "m.flag"], "t032a") else {
+            return;
+        };
+        assert_eq!(seven, vec!["7", "True"]);
+        let three = eval_py(src, "3", &["m.return_value", "m.flag"], "t032b").unwrap();
+        assert_eq!(three, vec!["3", "False"]);
+    }
+
     /// FSM-TEST-001 — the smoke test.
     #[test]
     fn fsm_test_001_minimal() {
@@ -665,6 +838,68 @@ mod tests {
         assert_eq!(r2.cursor, "3");
         let r3 = run(src, "abc", "t007c").unwrap();
         assert_eq!(r3.accepted, "False");
+    }
+
+    /// FSM-TEST-402 — conditional transition target; first true `when`
+    /// wins, falling through all conditions fires the failure branch.
+    #[test]
+    fn fsm_test_402_conditional_target() {
+        let src = "@@fsm M(text: bytes, mode: int) : int = 0 { \
+                   /[01]/ -> ( $zero when self.mode == 0, $one when self.mode == 1 ) : -> $error \
+                   $zero: 0 \
+                   $one: 1 \
+                   $error: -1 }";
+        // M takes two args; the driver passes mode as a second arg.
+        let decl = parse_fsm_block(src.as_bytes()).expect("parses");
+        let code = generate(&decl).expect("generates");
+        let run_mode = |inp: &str, mode: &str, tag: &str| -> Option<String> {
+            let driver = format!(
+                "{code}\nimport sys\nm = M(sys.argv[1], int(sys.argv[2]))\nprint(repr(m.return_value))\n",
+                code = code
+            );
+            let path = std::env::temp_dir().join(format!("framec_fsm_{}.py", tag));
+            std::fs::write(&path, driver).ok()?;
+            let out = Command::new("python3")
+                .arg(&path)
+                .arg(inp)
+                .arg(mode)
+                .output()
+                .ok()?;
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+        };
+        let Some(zero) = run_mode("0", "0", "t402a") else {
+            return;
+        };
+        assert_eq!(zero, "0");
+        assert_eq!(run_mode("1", "1", "t402b").unwrap(), "1");
+        assert_eq!(run_mode("0", "2", "t402c").unwrap(), "-1"); // no when matches → failure
+    }
+
+    /// Static transitions across multiple states (success + failure
+    /// branches). Uses an explicit success arrow on the intermediate
+    /// state, since failure-only clauses (`/b/ true : -> $error`) are a
+    /// separate parser feature (tracked follow-up).
+    #[test]
+    fn static_transitions_multi_state() {
+        let src = "@@fsm M(text: bytes) : bool = false { \
+                   /a/ -> $next : -> $error \
+                   $next: /b/ -> $ok : -> $error \
+                   $ok: true \
+                   $error: false }";
+        let Some(ab) = run(src, "ab", "t400a") else {
+            return;
+        };
+        assert_eq!(ab.accepted, "True");
+        assert_eq!(ab.return_value, "True");
+        let ax = run(src, "ax", "t400b").unwrap();
+        assert_eq!(ax.accepted, "False");
+        assert_eq!(ax.return_value, "False");
+        assert_eq!(run(src, "x", "t400c").unwrap().accepted, "False");
     }
 
     /// A construct outside the v0.1 backend cut errors clearly rather than
