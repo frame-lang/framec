@@ -158,6 +158,7 @@ mod _fsm_lexer_framec {
         pub bytes: Vec<u8>,
         pub pos: usize,
         pub paren_depth: i32,
+        pub in_block: bool,
         pub tokens: Vec<FsmToken>,
         pub error: Option<ParseError>,
     }
@@ -171,6 +172,7 @@ mod _fsm_lexer_framec {
                 bytes: Vec::new(),
                 pos: 0,
                 paren_depth: 0,
+                in_block: false,
                 tokens: Vec::new(),
                 error: None,
                 __compartment: FsmLexerCompartment::new("Start"),
@@ -593,13 +595,29 @@ mod _fsm_lexer_framec {
                     continue;
                 }
             
-                // Anything else begins a bare expression / action call —
-                // hand off to $ExprLevel WITHOUT consuming. $ExprLevel
-                // lexes expression tokens (where `/` is division) until a
-                // terminator (`}`, `|`, EOF at paren-depth 0) returns
-                // control here.
+                // `{` opens an action block (a match element). Emit the
+                // brace and enter $ExprLevel in block mode (paren_depth 1,
+                // in_block true): it lexes statement tokens until the
+                // matching `}` closes the block and hands control back.
+                if b == b'{' {
+                    push1(&mut self.tokens, FsmTokenKind::LBrace, pos);
+                    pos += 1;
+                    self.pos = pos;
+                    self.paren_depth = 1;
+                    self.in_block = true;
+                    let mut __compartment = self.__prepareEnter("ExprLevel");
+                    self.__transition(__compartment);
+                    return;
+                }
+            
+                // Anything else begins a bare expression — hand off to
+                // $ExprLevel WITHOUT consuming (in_block false, paren_depth
+                // 0). $ExprLevel lexes expression tokens (where `/` is
+                // division) until a terminator (`}`, `|`, `$`, `:`, `->` at
+                // paren-depth 0) returns control here.
                 self.pos = pos;
                 self.paren_depth = 0;
+                self.in_block = false;
                 let mut __compartment = self.__prepareEnter("ExprLevel");
                 self.__transition(__compartment);
                 return;
@@ -643,6 +661,24 @@ mod _fsm_lexer_framec {
                         self.__transition(__compartment);
                         return;
                     }
+                }
+            
+                // `}` at paren-depth > 0 closes a paren/block level (the
+                // depth-0 case is the bare-expr terminator handled above).
+                // Consume it; if it closes the enclosing action block,
+                // return to $ElementLevel so the next `/` lexes as a regex.
+                if b == b'}' {
+                    push1(&mut self.tokens, FsmTokenKind::RBrace, pos);
+                    pos += 1;
+                    self.paren_depth = (self.paren_depth - 1).max(0);
+                    if self.paren_depth == 0 && self.in_block {
+                        self.in_block = false;
+                        self.pos = pos;
+                        let mut __compartment = self.__prepareEnter("ElementLevel");
+                        self.__transition(__compartment);
+                        return;
+                    }
+                    continue;
                 }
             
                 // `$State` / `$State.stage` reference. Only reached at
@@ -772,7 +808,6 @@ mod _fsm_lexer_framec {
                     b'(' => { self.paren_depth += 1; Some(FsmTokenKind::LParen) }
                     b')' => { self.paren_depth = (self.paren_depth - 1).max(0); Some(FsmTokenKind::RParen) }
                     b'{' => { self.paren_depth += 1; Some(FsmTokenKind::LBrace) }
-                    b'}' => { self.paren_depth = (self.paren_depth - 1).max(0); Some(FsmTokenKind::RBrace) }
                     b'[' => { self.paren_depth += 1; Some(FsmTokenKind::LBracket) }
                     b']' => { self.paren_depth = (self.paren_depth - 1).max(0); Some(FsmTokenKind::RBracket) }
                     b',' => Some(FsmTokenKind::Comma),

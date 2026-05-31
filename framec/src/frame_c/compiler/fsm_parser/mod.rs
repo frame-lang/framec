@@ -554,6 +554,55 @@ mod lexer_tests {
         );
     }
 
+    /// Action block as a match element, followed by another stage — proves
+    /// the lexer enters block mode on `{`, tracks brace depth (including the
+    /// nested `if { }` block), and returns to element level after the block
+    /// so the trailing `/c/` lexes as a regex (not division).
+    #[test]
+    fn action_block_then_stage() {
+        let got = kinds(
+            "@@fsm M(text: bytes) : int = 0 { /a/ { self.x = 1  if self.x > 0 { self.y = 2 } } /c/ self.y }",
+        );
+        let body: Vec<_> = got
+            .iter()
+            .skip_while(|k| !matches!(k, RegexLiteral(_)))
+            .cloned()
+            .collect();
+        assert_eq!(
+            body,
+            vec![
+                RegexLiteral("a".to_string()),
+                LBrace,
+                Ident("self".to_string()),
+                Dot,
+                Ident("x".to_string()),
+                Eq,
+                IntLit(1),
+                KwIf,
+                Ident("self".to_string()),
+                Dot,
+                Ident("x".to_string()),
+                Gt,
+                IntLit(0),
+                LBrace,
+                Ident("self".to_string()),
+                Dot,
+                Ident("y".to_string()),
+                Eq,
+                IntLit(2),
+                RBrace,
+                RBrace,
+                // back at element level — `/c/` is a regex, not division:
+                RegexLiteral("c".to_string()),
+                Ident("self".to_string()),
+                Dot,
+                Ident("y".to_string()),
+                RBrace,
+                Eof,
+            ]
+        );
+    }
+
     /// FSM-TEST-004 body: a regex stage followed by a call bare-expression
     /// with a `@@:` probe argument. Exercises $ExprLevel (probe, call,
     /// parens) and the regex-at-element-level / call-at-expr-level split.
