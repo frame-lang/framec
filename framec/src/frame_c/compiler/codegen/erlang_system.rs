@@ -4,6 +4,25 @@
 //! It bypasses the standard class-based CodegenNode pipeline entirely, producing
 //! raw Erlang source text with proper gen_statem callbacks, -record(data, {}),
 //! and Frame infrastructure (frame_transition__, frame_dispatch__, etc.).
+//!
+//! # Why Erlang has its own pipeline
+//!
+//! The class-based primitive set the shared pipeline encodes has no
+//! analogue in Erlang. OTP's `gen_statem` is an actor with a state
+//! callback module and a process record, not an object with methods
+//! and fields. Externally, callers send messages via `gen_statem:call/2`
+//! which the process mailbox serializes by construction. Internally,
+//! the `frame_dispatch__/3` helper calls dispatch directly without
+//! messaging — this is the natural "internal vs external" split that
+//! the class-based pipeline has to reconstruct explicitly via the
+//! system/machine layering of RFC-0043.
+//!
+//! Cross-cutting codegen changes that target the class-based pipeline
+//! (RFC-0043 layered async, future trace hooks, future
+//! `@@[serialize_events]`) typically receive a no-op here because OTP
+//! already provides the equivalent guarantee in actor form. The
+//! validator may still emit warnings target-agnostically; this module
+//! ignores codegen attributes that have no Erlang manifestation.
 
 mod actions_ops;
 mod blocks;

@@ -69,11 +69,32 @@ pub fn generate_system(
     lang: TargetLanguage,
     source: &[u8],
 ) -> CodegenNode {
-    // Erlang: gen_statem native — completely different codegen path
+    // Erlang and Rust have dedicated pipelines because their structural
+    // model diverges from the class-based-with-runtime-type-erasure
+    // assumption the shared pipeline encodes. See
+    // `docs/codegen_pipeline.md` § "Why two backends have dedicated
+    // pipelines" for the full rationale.
+    //
+    // Practical consequence for cross-cutting codegen changes
+    // (RFC-0043 layered async, future trace hooks, etc.): the change
+    // is applied in `generate_system_shared` for 15 backends and in
+    // `rust_system::generate_rust_system` for Rust separately. Erlang
+    // typically receives a no-op because gen_statem already provides
+    // the guarantee in actor form.
+
+    // Erlang: gen_statem actor model — emits raw Erlang source, not a
+    // CodegenNode tree. The class-based primitive set has no analogue
+    // here (callers use `gen_statem:call/2` through the process
+    // mailbox; internal dispatch is direct `frame_dispatch__/3`).
     if lang == TargetLanguage::Erlang {
         return super::erlang_system::generate_erlang_system(system, arcanum, source);
     }
-    // Rust: dedicated codegen with Rc<RefCell<Compartment>> ownership
+    // Rust: diverges for three independent reasons —
+    //   1. `Rc<RefCell<Compartment>>` ownership (no GC).
+    //   2. Typed per-state `Context` structs (RFC-0025.1) instead of
+    //      a single type-erased compartment.
+    //   3. `Rc<FrameEvent>` to satisfy the borrow checker on event
+    //      passthrough (RFC-0020 § Exceptions: Rust).
     if lang == TargetLanguage::Rust {
         return super::rust_system::generate_rust_system(system, arcanum, source);
     }
