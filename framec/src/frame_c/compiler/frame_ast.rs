@@ -1035,6 +1035,24 @@ pub struct FsmDeclAst {
     pub span: Span,
 }
 
+impl FsmDeclAst {
+    /// An empty placeholder, used as the default for a validator/codegen
+    /// FSM's owned-AST domain field before the real AST is assigned.
+    pub fn empty() -> Self {
+        FsmDeclAst {
+            name: String::new(),
+            attributes: Vec::new(),
+            params: Vec::new(),
+            return_type: Type::Unknown,
+            default_expr: String::new(),
+            states: Vec::new(),
+            actions: None,
+            domain: None,
+            span: Span::new(0, 0),
+        }
+    }
+}
+
 /// One parameter in the `@@fsm` header. Auto-promotes to a same-named
 /// domain field on the constructed instance (§3.2).
 #[derive(Debug, Clone)]

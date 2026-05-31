@@ -23,6 +23,7 @@ pub mod frame_ast;
 pub mod frame_validator;
 pub mod fsm_parser;
 pub mod fsm_regex;
+pub mod fsm_validator;
 pub mod gdscript_multisys;
 pub mod graphviz;
 pub mod hsm_cycle_validator;
