@@ -32,10 +32,19 @@ read domain variables and the system / self / return accessors but cannot fire
 
 ### async system
 
-A [system](#system) whose [interface](#interface) methods are generated as the
-host language's asynchronous form (`async`/`await`, `CompletableFuture`,
-`Future`, …) while its internal [dispatch](#dispatch) stays synchronous. Enabled
-by an `async` modifier on interface methods. See
+A [system](#system) declared with the `@@[async]` system-header attribute.
+framec emits an async system as a layered pair: a public system object
+exposing the declared [interface](#interface) and [operations](#operation),
+holding a private inner [machine](#machine) that owns the
+[dispatch](#dispatch) path. The system layer is the natural home for the
+[single-driver gate](#single-driver-gate) (`E703`) and for future
+cross-cutting concerns (instrumentation, optional serialization). Interface
+methods are generated in the host language's asynchronous form
+(`async`/`await`, `CompletableFuture`, `Future`, …). On Erlang the
+`gen_statem` actor model already provides single-driver semantics; the
+layered shape is not emitted there. Async members in a system without
+`@@[async]` are an `E710` validator error (with a one-release `W710`
+grace period). See [RFC-0043](rfcs/rfc-0043.md) and
 [language reference § Async](frame_language.md#async).
 
 ### backbone
@@ -187,6 +196,13 @@ A [system](#system)'s state machine, declared in the `machine:` block: its
 [transitions](#transition) between them. See
 [language reference § Machine Section](frame_language.md#machine-section).
 
+In an [async system](#async-system) the term also refers to the *generated*
+inner artifact that owns the [dispatch](#dispatch) path —
+[kernel](#dispatch), [compartment](#compartment), [context stack](#frame-context),
+transition loop, lifecycle cascades — held privately by the outer system
+object and unreachable from outside it. See
+[RFC-0043](rfcs/rfc-0043.md).
+
 ### no-initialization
 
 Allocating a [system](#system) instance *without* running any
@@ -279,22 +295,27 @@ nested `@@system` domain fields). Named with `@@[save(<name>)]`. See
 
 ### single-driver contract
 
-The rule that a [system](#system) instance has at most one external
-[interface](#interface) call in flight at any time. The caller — the host
-code holding the instance — is responsible for serializing its events. Frame
-provides no concurrency primitives, no locking, no event queue. Internal flow
-(`@@:self`, [forward](#forward), lifecycle cascades, async [await](#dispatch)
-suspension) is not subject to this rule. Enforced at runtime by the
-[single-driver gate](#single-driver-gate). See [RFC-0043](rfcs/rfc-0043.md).
+The rule that an [async system](#async-system) instance has at most one
+external [interface](#interface) call in flight at any time. The caller —
+the host code holding the instance — is responsible for serializing its
+events. Frame provides no concurrency primitives, no locking, no event
+queue. Internal flow (`@@:self`, [forward](#forward), lifecycle cascades,
+async [await](#dispatch) suspension) is not subject to this rule because
+it never crosses out of the inner [machine](#machine). Sync systems are
+subject to the same single-driver discipline they have always been —
+the host's own call-return order — and the gate is not emitted for them.
+Enforced at runtime by the [single-driver gate](#single-driver-gate). See
+[RFC-0043](rfcs/rfc-0043.md).
 
 ### single-driver gate
 
 The runtime mechanism that detects violations of the
-[single-driver contract](#single-driver-contract). Implemented as a per-instance
-busy flag set on entry to a public [interface](#interface) method and cleared
-on return; internal call paths bypass the flag, so re-entry from inside Frame's
-own machinery is unaffected. A violation raises `E703`. See
-[RFC-0043](rfcs/rfc-0043.md).
+[single-driver contract](#single-driver-contract). Emitted on the system
+layer of every [async system](#async-system) as a per-instance busy flag,
+set on entry to a public [interface](#interface) method and cleared on
+return in a `try`/`finally` equivalent. Internal dispatch lives in the
+inner [machine](#machine) and never touches the flag. A violation raises
+`E703`. See [RFC-0043](rfcs/rfc-0043.md).
 
 ### start state
 
