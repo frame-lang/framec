@@ -176,41 +176,95 @@ pub fn lex_fsm_block(bytes: &[u8]) -> Result<Vec<FsmToken>, ParseError> {
     }
 }
 
-/// Parse one `@@fsm` declaration from a tokenized source range.
-///
-/// Drives the root `FsmDeclParser` FSM to completion. Returns either
-/// the parsed AST or the first parse error encountered.
-///
-/// `tokens` is a freshly-built stream positioned at the `@@fsm`
-/// keyword. On success, the stream is consumed through the closing `}`
-/// of the declaration; on error, the stream's cursor reflects the
-/// failure position.
-pub fn parse_fsm_declaration(_tokens: FsmTokenStream) -> Result<FsmDeclAst, ParseError> {
-    // Implementation lands in Task 13 (Implement composition parsers).
-    // At that point the body becomes:
-    //
-    //     let mut parser = root_fsm::FsmDeclParser::__create();
-    //     parser.tokens = Some(tokens);
-    //     parser.parse();
-    //     match parser.error {
-    //         Some(e) => Err(e),
-    //         None => Ok(parser.result.expect("must succeed if no error")),
-    //     }
-    //
-    // and the corresponding `mod root_fsm { include!("fsm_decl_parser.gen.rs"); }`
-    // module gets uncommented below.
-    unimplemented!("fsm_parser not yet implemented; see _scratch/rfc_0043_parser_design.md")
+// ---------------------------------------------------------------------------
+// Parser
+// ---------------------------------------------------------------------------
+
+/// The generated `FsmDeclParser` state machine. Source: `fsm_decl_parser.frs`.
+mod fsm_decl_parser {
+    #![allow(
+        unreachable_patterns,
+        unused_mut,
+        dead_code,
+        non_snake_case,
+        unused_variables,
+        unused_parens
+    )]
+
+    use super::parse_helpers::{primary_expr, token_text};
+    use super::token_stream::{FsmTokenKind, FsmTokenStream};
+    use crate::frame_c::compiler::frame_ast::{
+        Expression, FsmDeclAst, FsmParameter, FsmStateAst, MatchAst, MatchElement, Span, StageAst,
+        Type,
+    };
+    use crate::frame_c::compiler::pipeline_parser::ParseError;
+
+    include!("fsm_decl_parser.gen.rs");
 }
 
-// Generated FSM modules (commented out until each .frs lands):
-//
-// mod root_fsm {
-//     #![allow(unreachable_patterns, unused_mut, dead_code, non_snake_case,
-//              unused_variables, unused_parens)]
-//     use super::*;
-//     include!("fsm_decl_parser.gen.rs");
-// }
-//
+/// Native helpers the generated parser's action bodies call. Pure token
+/// → AST utilities with no state-machine content.
+mod parse_helpers {
+    use super::token_stream::FsmTokenKind;
+    use crate::frame_c::compiler::frame_ast::{Expression, Literal};
+
+    /// Render a token's surface text — used to capture single-token
+    /// default expressions (`= false`, `= 0`) verbatim. v1 covers the
+    /// primary tokens a default expression can be; expands when the
+    /// header default becomes a full expression.
+    pub(super) fn token_text(kind: &FsmTokenKind) -> String {
+        match kind {
+            FsmTokenKind::KwTrue => "true".to_string(),
+            FsmTokenKind::KwFalse => "false".to_string(),
+            FsmTokenKind::IntLit(n) => n.to_string(),
+            FsmTokenKind::StringLit(s) => format!("{:?}", s),
+            FsmTokenKind::Ident(s) => s.clone(),
+            _ => String::new(),
+        }
+    }
+
+    /// Build an `Expression` from a single primary token. v1 handles
+    /// the literal/var primaries a bare expression can start with;
+    /// multi-token expressions delegate to ExpressionParser once it
+    /// lands. Returns `None` for tokens that cannot begin an expression.
+    pub(super) fn primary_expr(kind: &FsmTokenKind) -> Option<Expression> {
+        match kind {
+            FsmTokenKind::KwTrue => Some(Expression::Literal(Literal::Bool(true))),
+            FsmTokenKind::KwFalse => Some(Expression::Literal(Literal::Bool(false))),
+            FsmTokenKind::IntLit(n) => Some(Expression::Literal(Literal::Int(*n))),
+            FsmTokenKind::StringLit(s) => Some(Expression::Literal(Literal::String(s.clone()))),
+            FsmTokenKind::Ident(s) => Some(Expression::Var(s.clone())),
+            _ => None,
+        }
+    }
+}
+
+/// Parse one `@@fsm` declaration from a token stream.
+///
+/// Drives the root `FsmDeclParser` FSM to completion. Returns either the
+/// parsed [`FsmDeclAst`] or the first parse error encountered.
+///
+/// `tokens` is the stream produced by [`lex_fsm_block`], positioned at
+/// the `@@fsm` keyword.
+pub fn parse_fsm_declaration(tokens: FsmTokenStream) -> Result<FsmDeclAst, ParseError> {
+    let mut parser = fsm_decl_parser::FsmDeclParser::__create();
+    parser.tokens = Some(tokens);
+    parser.parse();
+    match parser.error {
+        Some(e) => Err(e),
+        None => Ok(parser
+            .result
+            .expect("FsmDeclParser reaches $Done with result set when no error")),
+    }
+}
+
+/// Convenience: lex + parse an `@@fsm` block's bytes in one call.
+pub fn parse_fsm_block(bytes: &[u8]) -> Result<FsmDeclAst, ParseError> {
+    let tokens = lex_fsm_block(bytes)?;
+    parse_fsm_declaration(FsmTokenStream::new(tokens))
+}
+
+// Child parser FSMs (split out as fixtures grow):
 // mod state_fsm     { ... include!("state_parser.gen.rs"); }
 // mod match_fsm     { ... include!("match_parser.gen.rs"); }
 // mod stage_fsm     { ... include!("stage_parser.gen.rs"); }
@@ -300,5 +354,77 @@ mod lexer_tests {
     fn unterminated_regex_errors() {
         let err = lex_fsm_block(b"@@fsm M(text: bytes) : bool = false { /a true }");
         assert!(err.is_err(), "unterminated regex must surface an error");
+    }
+}
+
+#[cfg(test)]
+mod parser_tests {
+    use super::*;
+    use crate::frame_c::compiler::frame_ast::{Expression, Literal, MatchElement, Type};
+
+    /// FSM-TEST-001 smoke fixture parses into a complete FsmDeclAst.
+    #[test]
+    fn smoke_fixture_parses() {
+        let ast = parse_fsm_block(b"@@fsm M(text: bytes) : bool = false { /a/ true }")
+            .expect("smoke fixture must parse");
+
+        assert_eq!(ast.name, "M");
+        assert_eq!(ast.default_expr, "false");
+        assert!(matches!(ast.return_type, Type::Custom(ref t) if t == "bool"));
+
+        // One parameter: text: bytes.
+        assert_eq!(ast.params.len(), 1);
+        assert_eq!(ast.params[0].name, "text");
+        assert!(matches!(ast.params[0].param_type, Type::Custom(ref t) if t == "bytes"));
+
+        // One implicit (unlabeled) state, one match, two elements.
+        assert_eq!(ast.states.len(), 1);
+        assert!(ast.states[0].label.is_none());
+        assert_eq!(ast.states[0].matches.len(), 1);
+        let elems = &ast.states[0].matches[0].elements;
+        assert_eq!(elems.len(), 2);
+
+        // Element 0: stage /a/.
+        match &elems[0] {
+            MatchElement::Stage(s) => {
+                assert!(s.label.is_none());
+                assert_eq!(s.regex, "a");
+                assert!(s.embedding_actions.is_empty());
+            }
+            other => panic!("expected Stage, got {:?}", other),
+        }
+
+        // Element 1: bare expression `true`.
+        match &elems[1] {
+            MatchElement::BareExpression { expr, .. } => {
+                assert!(matches!(expr, Expression::Literal(Literal::Bool(true))));
+            }
+            other => panic!("expected BareExpression, got {:?}", other),
+        }
+
+        // No actions / domain blocks.
+        assert!(ast.actions.is_none());
+        assert!(ast.domain.is_none());
+    }
+
+    /// Two parameters, int default — exercises the param loop and a
+    /// non-bool default token.
+    #[test]
+    fn two_params_int_default() {
+        let ast = parse_fsm_block(b"@@fsm Counter(text: bytes, n: int = 0) : int = 0 { /x/ n }")
+            .expect("must parse");
+        assert_eq!(ast.name, "Counter");
+        assert_eq!(ast.params.len(), 2);
+        assert_eq!(ast.params[1].name, "n");
+        assert_eq!(ast.params[1].default.as_deref(), Some("0"));
+        assert_eq!(ast.default_expr, "0");
+    }
+
+    /// A header missing its return type is a parse error (RFC-0042
+    /// E705 territory — the parser surfaces the missing `:` / type).
+    #[test]
+    fn missing_return_type_errors() {
+        let err = parse_fsm_block(b"@@fsm M(text: bytes) = false { /a/ true }");
+        assert!(err.is_err(), "missing return type must error");
     }
 }

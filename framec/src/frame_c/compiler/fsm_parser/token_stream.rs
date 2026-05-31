@@ -168,4 +168,27 @@ impl FsmTokenStream {
     pub fn is_eof(&self) -> bool {
         matches!(self.peek().kind, FsmTokenKind::Eof)
     }
+
+    /// Clone of the current token's kind — convenient for `match` in
+    /// parser action bodies where borrowing `peek()` would conflict
+    /// with a subsequent `advance()`.
+    pub fn peek_kind(&self) -> FsmTokenKind {
+        self.peek().kind.clone()
+    }
+
+    /// If the current token matches `kind`, consume it and return true;
+    /// otherwise leave the cursor put and return false.
+    pub fn eat(&mut self, kind: &FsmTokenKind) -> bool {
+        if self.at(kind) {
+            self.advance();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Span of the current token (for diagnostics / AST node spans).
+    pub fn cur_span(&self) -> Span {
+        self.peek().span.clone()
+    }
 }
