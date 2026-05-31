@@ -73,12 +73,10 @@ pub(crate) fn forbidden_message(c: &ForbiddenConstruct) -> &'static str {
         ForbiddenConstruct::Backref(_) => "backreferences are non-regular",
         ForbiddenConstruct::NamedBackref(_) => "named backreferences are non-regular",
         ForbiddenConstruct::Recursion => "regex recursion is non-regular",
-        ForbiddenConstruct::PositiveLookahead(_)
-        | ForbiddenConstruct::NegativeLookahead(_) => {
+        ForbiddenConstruct::PositiveLookahead(_) | ForbiddenConstruct::NegativeLookahead(_) => {
             "fixed-width lookahead is not supported in v0.1"
         }
-        ForbiddenConstruct::PositiveLookbehind(_)
-        | ForbiddenConstruct::NegativeLookbehind(_) => {
+        ForbiddenConstruct::PositiveLookbehind(_) | ForbiddenConstruct::NegativeLookbehind(_) => {
             "lookbehind is not supported in v0.1"
         }
         ForbiddenConstruct::UnicodeClass(_) => {

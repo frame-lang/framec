@@ -1,0 +1,235 @@
+@@[target("rust")]
+
+// RFC-0042 — the @@fsm lexer as a Frame @@system byte-scanner.
+//
+// Tokenizes the raw bytes of an @@fsm declaration into a Vec<FsmToken>.
+// Built as a state machine because the load-bearing lexing decision —
+// is `/` a regex-literal delimiter or a division operator? — IS a state
+// machine (the classic regex-vs-division problem). The lexer's mode is
+// its state:
+//
+//   $Header       — `@@fsm Name(params) : Type = default {` ... up to and
+//                   including the body-opening `{`. Header punctuation +
+//                   the default expression.
+//   $ElementLevel — the state list / match-element level. A `/` here
+//                   starts a regex literal (scanned whole, emitted as one
+//                   RegexLiteral token).
+//   $ExprLevel    — inside action blocks / when-conditions / bare
+//                   expressions. A `/` here is division. (TODO: full
+//                   expansion — v1 covers only what the smoke fixture
+//                   needs; see the task tracker.)
+//
+// The byte-level work (whitespace/comment skip, token emission) is native
+// Rust inside the `$>` handlers, exactly as expr_scanner.frs and
+// domain_scanner.frs do it. Frame owns the mode control flow.
+//
+// v1 SCOPE: tokenizes the smoke fixture
+//   @@fsm M(text: bytes) : bool = false { /a/ true }
+// into the documented token stream. Embedding-action operators, the full
+// operator set, `when`/`if`/`else`, `@@:` probes, and real $ExprLevel
+// division handling are TODO — added incrementally as later fixtures need
+// them. Each addition keeps the smoke fixture green.
+//
+// The wrapper (fsm_parser/mod.rs::lex_fsm_block) builds this system, sets
+// `bytes`, calls `tokenize()`, and lifts `tokens` / `error` out.
+
+@@system FsmLexer {
+    interface:
+        tokenize()
+
+    machine:
+        $Start {
+            tokenize() { -> $Header }
+        }
+
+        // Lex the @@fsm header through the body-opening `{`.
+        $Header {
+            $>() {
+                let src = &self.bytes;
+                let n = src.len();
+                let mut pos = self.pos;
+
+                // The header is a fixed shape: `@@fsm` IDENT `(` ... `)` `:`
+                // TYPE `=` DEFAULT `{`. We scan token-by-token, skipping
+                // whitespace, until we emit the body-opening `{`.
+                loop {
+                    // Skip whitespace + comments.
+                    pos = skip_ws_comments(src, pos);
+                    if pos >= n {
+                        self.error = Some(ParseError {
+                            message: "unexpected end of input in @@fsm header".to_string(),
+                            span: Span::new(pos, pos),
+                        });
+                        self.pos = pos;
+                        -> $Done
+                    }
+
+                    let b = src[pos];
+
+                    // `@@fsm` keyword.
+                    if b == b'@' && pos + 4 < n && &src[pos..pos + 5] == b"@@fsm" {
+                        self.tokens.push(FsmToken {
+                            kind: FsmTokenKind::KwFsm,
+                            span: Span::new(pos, pos + 5),
+                        });
+                        pos += 5;
+                        continue;
+                    }
+
+                    // Punctuation that can appear in a header.
+                    match b {
+                        b'(' => { push1(&mut self.tokens, FsmTokenKind::LParen, pos); pos += 1; continue; }
+                        b')' => { push1(&mut self.tokens, FsmTokenKind::RParen, pos); pos += 1; continue; }
+                        b':' => { push1(&mut self.tokens, FsmTokenKind::Colon, pos); pos += 1; continue; }
+                        b',' => { push1(&mut self.tokens, FsmTokenKind::Comma, pos); pos += 1; continue; }
+                        b'=' => { push1(&mut self.tokens, FsmTokenKind::Eq, pos); pos += 1; continue; }
+                        b'{' => {
+                            // Body opens. Emit LBrace and switch to element level.
+                            push1(&mut self.tokens, FsmTokenKind::LBrace, pos);
+                            pos += 1;
+                            self.pos = pos;
+                            -> $ElementLevel
+                        }
+                        _ => {}
+                    }
+
+                    // Identifier / keyword (true/false). Header identifiers
+                    // are the name, parameter names, type names, and the
+                    // boolean default literal.
+                    if b.is_ascii_alphabetic() || b == b'_' {
+                        let start = pos;
+                        while pos < n && (src[pos].is_ascii_alphanumeric() || src[pos] == b'_') {
+                            pos += 1;
+                        }
+                        let word = std::str::from_utf8(&src[start..pos]).unwrap_or("");
+                        let kind = match word {
+                            "true" => FsmTokenKind::KwTrue,
+                            "false" => FsmTokenKind::KwFalse,
+                            other => FsmTokenKind::Ident(other.to_string()),
+                        };
+                        self.tokens.push(FsmToken { kind, span: Span::new(start, pos) });
+                        continue;
+                    }
+
+                    // Integer literal (header default exprs like `= 0`).
+                    if b.is_ascii_digit() {
+                        let start = pos;
+                        while pos < n && src[pos].is_ascii_digit() {
+                            pos += 1;
+                        }
+                        let text = std::str::from_utf8(&src[start..pos]).unwrap_or("0");
+                        let val: i64 = text.parse().unwrap_or(0);
+                        self.tokens.push(FsmToken {
+                            kind: FsmTokenKind::IntLit(val),
+                            span: Span::new(start, pos),
+                        });
+                        continue;
+                    }
+
+                    // Unexpected byte in header.
+                    self.error = Some(ParseError {
+                        message: format!("unexpected byte '{}' in @@fsm header", b as char),
+                        span: Span::new(pos, pos + 1),
+                    });
+                    self.pos = pos;
+                    -> $Done
+                }
+            }
+        }
+
+        // Match-element level. `/` starts a regex literal here.
+        $ElementLevel {
+            $>() {
+                let src = &self.bytes;
+                let n = src.len();
+                let mut pos = self.pos;
+
+                loop {
+                    pos = skip_ws_comments(src, pos);
+                    if pos >= n {
+                        self.tokens.push(FsmToken {
+                            kind: FsmTokenKind::Eof,
+                            span: Span::new(pos, pos),
+                        });
+                        self.pos = pos;
+                        -> $Done
+                    }
+
+                    let b = src[pos];
+
+                    // Regex literal: scan to the matching unescaped `/`.
+                    if b == b'/' {
+                        let start = pos;
+                        pos += 1; // opening /
+                        let body_start = pos;
+                        while pos < n && src[pos] != b'/' {
+                            if src[pos] == b'\\' && pos + 1 < n {
+                                pos += 2; // escaped char (incl. \/)
+                            } else {
+                                pos += 1;
+                            }
+                        }
+                        if pos >= n {
+                            self.error = Some(ParseError {
+                                message: "unterminated regex literal".to_string(),
+                                span: Span::new(start, pos),
+                            });
+                            self.pos = pos;
+                            -> $Done
+                        }
+                        let body = std::str::from_utf8(&src[body_start..pos])
+                            .unwrap_or("")
+                            .to_string();
+                        pos += 1; // closing /
+                        self.tokens.push(FsmToken {
+                            kind: FsmTokenKind::RegexLiteral(body),
+                            span: Span::new(start, pos),
+                        });
+                        continue;
+                    }
+
+                    // Body close.
+                    if b == b'}' {
+                        push1(&mut self.tokens, FsmTokenKind::RBrace, pos);
+                        pos += 1;
+                        continue;
+                    }
+
+                    // Identifier / keyword — a bare expression at element
+                    // level. v1: emit the keyword/ident directly. (TODO:
+                    // transition into $ExprLevel for multi-token bare
+                    // expressions with operators.)
+                    if b.is_ascii_alphabetic() || b == b'_' {
+                        let start = pos;
+                        while pos < n && (src[pos].is_ascii_alphanumeric() || src[pos] == b'_') {
+                            pos += 1;
+                        }
+                        let word = std::str::from_utf8(&src[start..pos]).unwrap_or("");
+                        let kind = match word {
+                            "true" => FsmTokenKind::KwTrue,
+                            "false" => FsmTokenKind::KwFalse,
+                            other => FsmTokenKind::Ident(other.to_string()),
+                        };
+                        self.tokens.push(FsmToken { kind, span: Span::new(start, pos) });
+                        continue;
+                    }
+
+                    // Unexpected byte at element level (v1 — broader handling TODO).
+                    self.error = Some(ParseError {
+                        message: format!("unexpected byte '{}' at match-element level", b as char),
+                        span: Span::new(pos, pos + 1),
+                    });
+                    self.pos = pos;
+                    -> $Done
+                }
+            }
+        }
+
+        $Done { }
+
+    domain:
+        bytes: Vec<u8> = Vec::new()
+        pos: usize = 0
+        tokens: Vec<FsmToken> = Vec::new()
+        error: Option<ParseError> = None
+}

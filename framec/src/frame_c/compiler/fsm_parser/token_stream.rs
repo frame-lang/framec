@@ -22,22 +22,106 @@ pub struct FsmToken {
     pub span: Span,
 }
 
-/// Token-kind tags relevant to fsm parsing. Populated in Phase 1
-/// alongside the lexer extensions; this enum will expand to cover
-/// regex literals, `.label` stage prefixes, embedding-action
-/// operators, RFC-0043 statement keywords, etc.
+/// Token-kind tags produced by the fsm lexer (`fsm_lexer.frs`).
+///
+/// Final token set per `_scratch/rfc_0042_lexer_design.md`. Covers the
+/// `@@fsm` header, regex literals, stage/state references, embedding-action
+/// operators, the RFC-0043 statement/expression token set, and `@@:`
+/// context probes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FsmTokenKind {
-    // Placeholder set; real variants land with the lexer work.
-    /// `@@fsm` keyword
+    // --- Keywords ---
+    /// `@@fsm`
     KwFsm,
-    /// `{` `}` `(` `)` `,` `:` `=` etc — punctuation
-    Punct(char),
-    /// Identifier
+    /// `if`
+    KwIf,
+    /// `else`
+    KwElse,
+    /// `true`
+    KwTrue,
+    /// `false`
+    KwFalse,
+    /// `when` — transition-guard keyword (RFC-0042 §3.5.4.1)
+    KwWhen,
+    /// `actions` section header
+    KwActions,
+    /// `domain` section header
+    KwDomain,
+
+    // --- Identifiers & literals ---
     Ident(String),
-    /// End-of-fsm-block marker (or EOF).
+    IntLit(i64),
+    StringLit(String),
+
+    // --- Regex + stage labels ---
+    /// Regex literal body, verbatim between the delimiting `/`s
+    /// (escapes like `\/` resolved). Not parsed here — handed to
+    /// `StageAst.regex` and parsed later by `fsm_regex`.
+    RegexLiteral(String),
+    /// `.name` stage label preceding a `/regex/`.
+    StageLabel(String),
+
+    // --- State references ---
+    /// `$Name:` — a state-label declaration.
+    StateLabel(String),
+    /// `$Name` — a transition target / state reference.
+    StateRef(String),
+    /// `$State.stage` — a stage-capture or stage-target reference.
+    StageRef {
+        state: String,
+        stage: String,
+    },
+
+    // --- Context probes ---
+    /// `@@:cursor`, `@@:matched`, `@@:fc`, `@@:return`, etc. The string
+    /// is the probe name without the `@@:` prefix.
+    Probe(String),
+
+    // --- Embedding-action operators (op fused with its opening `{`) ---
+    /// `>{`
+    EmbedStart,
+    /// `@{`
+    EmbedAccept,
+    /// `${`
+    EmbedEvery,
+    /// `%{`
+    EmbedLeave,
+    /// `@eof{`
+    EmbedEof,
+
+    // --- Operators ---
+    AndAnd,  // &&
+    OrOr,    // ||
+    Bang,    // !
+    EqEq,    // ==
+    NotEq,   // !=
+    Le,      // <=
+    Ge,      // >=
+    Lt,      // <
+    Gt,      // >
+    Plus,    // +
+    Minus,   // -
+    Star,    // *
+    Slash,   // /  (division — only emitted in expression context)
+    Percent, // %
+    Eq,      // =
+    Arrow,   // ->
+
+    // --- Punctuation ---
+    LParen,
+    RParen,
+    LBrace,
+    RBrace,
+    LBracket,
+    RBracket,
+    Comma,
+    Colon,
+    Semi,
+    Dot,
+    Pipe, // |
+
+    /// End of the fsm block.
     Eof,
-    // ... more to come.
 }
 
 /// Mutable cursor over a fsm declaration's tokens.

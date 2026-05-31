@@ -52,11 +52,17 @@ pub struct DfaTransition {
 pub enum DfaLabel {
     /// Byte alphabet.
     Byte(u8),
-    ByteRange { low: u8, high: u8 },
+    ByteRange {
+        low: u8,
+        high: u8,
+    },
 
     /// Char alphabet.
     CodePoint(char),
-    CodePointRange { low: char, high: char },
+    CodePointRange {
+        low: char,
+        high: char,
+    },
 
     /// Token alphabet.
     Token(String),
