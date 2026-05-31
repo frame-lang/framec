@@ -56,3 +56,36 @@ pub fn check(dfa: &Dfa, max_states: usize) -> SizeCheckResult {
         status,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::frame_c::compiler::fsm_regex::{parser, subset, thompson, Alphabet};
+
+    fn dfa(src: &str) -> Dfa {
+        let ast = parser::parse(src, Alphabet::Bytes).expect("parse");
+        let nfa = thompson::build(&ast, Alphabet::Bytes);
+        super::super::hopcroft::minimize(&subset::construct(&nfa))
+    }
+
+    #[test]
+    fn small_dfa_is_ok() {
+        let r = check(&dfa("[0-9]+"), DEFAULT_MAX_DFA_STATES);
+        assert_eq!(r.status, SizeStatus::Ok);
+    }
+
+    #[test]
+    fn exceeds_when_over_limit() {
+        // `abc` minimizes to 4 states; a limit of 3 is exceeded.
+        let r = check(&dfa("abc"), 3);
+        assert_eq!(r.status, SizeStatus::Exceeds);
+        assert_eq!(r.state_count, 4);
+    }
+
+    #[test]
+    fn approaching_at_warn_threshold() {
+        // 4 states, limit 5 → warn threshold = 3; 4 >= 3 and 4 <= 5.
+        let r = check(&dfa("abc"), 5);
+        assert_eq!(r.status, SizeStatus::Approaching);
+    }
+}
