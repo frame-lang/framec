@@ -76,6 +76,10 @@ pub enum FsmTokenKind {
     /// `@@:cursor`, `@@:matched`, `@@:fc`, `@@:return`, etc. The string
     /// is the probe name without the `@@:` prefix.
     Probe(String),
+    /// `@@:` immediately followed by `(` — the concise return setter
+    /// `@@:(expr)`. Emitted for the `@@:` (the `(` follows as LParen).
+    /// The parser desugars `@@:( expr )` to `@@:return = expr`.
+    ConciseReturn,
 
     // --- Embedding-action operators (op fused with its opening `{`) ---
     /// `>{`

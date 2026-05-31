@@ -78,12 +78,13 @@
 //! (assignment, call/expression, `if`/`else`/`else if`); and both body
 //! sections — `actions:` (declared helpers with typed params, optional
 //! return type, and a body) and `domain:` (typed fields with parsed
-//! default expressions); and embedding actions on stages (`>{`, `@{`,
-//! `${`, `%{`, `@eof{`, each with an action-block body). The only
-//! remaining grammar gap is the `@@:return =` / `@@:(expr)` return
-//! statement forms. The module is wired into
-//! [`crate::frame_c::compiler`] but the framec driver does not yet route
-//! real `@@fsm` blocks here (Task 14).
+//! default expressions); embedding actions on stages (`>{`, `@{`, `${`,
+//! `%{`, `@eof{`, each with an action-block body); and the return-setter
+//! forms (`@@:return = expr` as a statement, `@@:(expr)` desugared to
+//! the same). The `@@fsm` grammar is fully parsed. The module is wired
+//! into [`crate::frame_c::compiler`] but the framec driver does not yet
+//! route real `@@fsm` blocks here (Task 14), and semantic validation
+//! (E700-series) is not yet implemented (Task 15).
 //!
 //! # Public API
 //!
@@ -1094,6 +1095,71 @@ mod parser_tests {
                 assert_eq!(s.embedding_actions[0].body.statements.len(), 1);
             }
             other => panic!("expected Stage, got {:?}", other),
+        }
+    }
+
+    /// `@@:(expr)` concise return setter as a bare-tail element. Desugars
+    /// to `@@:return = expr` → Assign{ Var("@@:return"), expr }.
+    #[test]
+    fn concise_return_bare_tail() {
+        let e = bare_expr(b"@@fsm M(text: bytes) : int = 0 { /[0-9]+/ @@:(to_int(@@:matched)) }");
+        match e {
+            Expression::Assign { target, value } => {
+                assert!(matches!(*target, Expression::Var(v) if v == "@@:return"));
+                assert!(matches!(*value, Expression::Call { .. }));
+            }
+            other => panic!("expected Assign to @@:return, got {:?}", other),
+        }
+    }
+
+    /// `@@:(expr)` as a statement inside an action block.
+    #[test]
+    fn concise_return_in_action_block() {
+        use crate::frame_c::compiler::frame_ast::Statement;
+        let ast = parse_fsm_block(
+            b"@@fsm M(text: bytes) : int = 0 { /[0-9]+/ { @@:(5) } self.x  domain: x: int = 0 }",
+        )
+        .expect("must parse");
+        match &ast.states[0].matches[0].elements[1] {
+            MatchElement::ActionBlock(block) => {
+                assert_eq!(block.statements.len(), 1);
+                match &block.statements[0] {
+                    Statement::Expression(e) => match &e.expr {
+                        Expression::Assign { target, value } => {
+                            assert!(matches!(&**target, Expression::Var(v) if v == "@@:return"));
+                            assert!(matches!(&**value, Expression::Literal(Literal::Int(5))));
+                        }
+                        other => panic!("expected Assign, got {:?}", other),
+                    },
+                    other => panic!("expected expression statement, got {:?}", other),
+                }
+            }
+            other => panic!("expected ActionBlock, got {:?}", other),
+        }
+    }
+
+    /// Explicit `@@:return = expr` as an action-block statement (the
+    /// verbose equivalent of the concise `@@:(expr)` form). Assignment is
+    /// a statement, so it appears in `{ }`, not as a bare match tail.
+    #[test]
+    fn explicit_return_assignment_statement() {
+        use crate::frame_c::compiler::frame_ast::Statement;
+        let ast = parse_fsm_block(
+            b"@@fsm M(text: bytes) : int = 0 { /[0-9]+/ { @@:return = 7 } self.x  domain: x: int = 0 }",
+        )
+        .expect("must parse");
+        match &ast.states[0].matches[0].elements[1] {
+            MatchElement::ActionBlock(block) => match &block.statements[0] {
+                Statement::Expression(e) => match &e.expr {
+                    Expression::Assign { target, value } => {
+                        assert!(matches!(&**target, Expression::Var(v) if v == "@@:return"));
+                        assert!(matches!(&**value, Expression::Literal(Literal::Int(7))));
+                    }
+                    other => panic!("expected Assign, got {:?}", other),
+                },
+                other => panic!("expected expression statement, got {:?}", other),
+            },
+            other => panic!("expected ActionBlock, got {:?}", other),
         }
     }
 

@@ -509,6 +509,15 @@
                     if b == b'@' && pos + 2 < n && src[pos + 1] == b'@' && src[pos + 2] == b':' {
                         let start = pos;
                         pos += 3; // @@:
+                        // `@@:(` — the concise return setter `@@:(expr)`. Emit
+                        // ConciseReturn; the `(` follows as a normal LParen.
+                        if pos < n && src[pos] == b'(' {
+                            self.tokens.push(FsmToken {
+                                kind: FsmTokenKind::ConciseReturn,
+                                span: Span::new(start, pos),
+                            });
+                            continue;
+                        }
                         let name_start = pos;
                         while pos < n && (src[pos].is_ascii_alphanumeric() || src[pos] == b'_') {
                             pos += 1;

@@ -93,6 +93,19 @@
                         ts.advance();
                         -> $ParenInner
                     }
+                    // `@@:( expr )` — concise return setter. Desugars to
+                    // `@@:return = expr`, i.e. Assign{ Var("@@:return"), expr }.
+                    FsmTokenKind::ConciseReturn => {
+                        ts.advance(); // `@@:`
+                        if !ts.eat(&FsmTokenKind::LParen) {
+                            self.error = Some(ParseError {
+                                message: "expected `(` after `@@:`".to_string(),
+                                span: ts.cur_span(),
+                            });
+                            -> $Done
+                        }
+                        -> $ConciseReturn
+                    }
                     // Prefix unary `!x` / `-x`. In atom position `-` is
                     // unary (binary subtraction is handled in $Climb).
                     // The operand is parsed by a child at UNARY_BP — above
@@ -223,6 +236,40 @@
                     span: ts.cur_span(),
                 });
                 -> $Done
+            }
+        }
+
+        // `@@:( expr )` concise return setter — the `@@:` and `(` are
+        // already consumed. Parse the inner expression, expect `)`, and
+        // desugar to `@@:return = expr`.
+        $ConciseReturn {
+            $>() {
+                let mut child = ExpressionParser::__create();
+                child.tokens = self.tokens.take();
+                child.parse();
+                self.tokens = child.tokens.take();
+                if let Some(e) = child.error.take() {
+                    self.error = Some(e);
+                    -> $Done
+                }
+                let inner = child
+                    .result
+                    .take()
+                    .expect("child ExpressionParser sets result when no error");
+
+                let ts = self.tokens.as_mut().unwrap();
+                if !ts.eat(&FsmTokenKind::RParen) {
+                    self.error = Some(ParseError {
+                        message: "expected `)` to close `@@:(...)`".to_string(),
+                        span: ts.cur_span(),
+                    });
+                    -> $Done
+                }
+                self.left = Some(Expression::Assign {
+                    target: Box::new(Expression::Var("@@:return".to_string())),
+                    value: Box::new(inner),
+                });
+                -> $Postfix
             }
         }
 

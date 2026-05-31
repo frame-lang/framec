@@ -114,6 +114,7 @@ mod _expression_parser_framec {
         Unary,
         CallArgs,
         ParenInner,
+        ConciseReturn,
         Postfix,
         Climb,
         Done,
@@ -143,6 +144,7 @@ mod _expression_parser_framec {
                 "Unary" => ExpressionParserStateContext::Unary,
                 "CallArgs" => ExpressionParserStateContext::CallArgs,
                 "ParenInner" => ExpressionParserStateContext::ParenInner,
+                "ConciseReturn" => ExpressionParserStateContext::ConciseReturn,
                 "Postfix" => ExpressionParserStateContext::Postfix,
                 "Climb" => ExpressionParserStateContext::Climb,
                 "Done" => ExpressionParserStateContext::Done,
@@ -210,6 +212,7 @@ mod _expression_parser_framec {
                 "Unary" => &["Unary"],
                 "CallArgs" => &["CallArgs"],
                 "ParenInner" => &["ParenInner"],
+                "ConciseReturn" => &["ConciseReturn"],
                 "Postfix" => &["Postfix"],
                 "Climb" => &["Climb"],
                 "Done" => &["Done"],
@@ -282,6 +285,7 @@ mod _expression_parser_framec {
                 "Unary" => self._state_Unary(__ev),
                 "CallArgs" => self._state_CallArgs(__ev),
                 "ParenInner" => self._state_ParenInner(__ev),
+                "ConciseReturn" => self._state_ConciseReturn(__ev),
                 "Postfix" => self._state_Postfix(__ev),
                 "Climb" => self._state_Climb(__ev),
                 "Done" => self._state_Done(__ev),
@@ -339,6 +343,16 @@ mod _expression_parser_framec {
         fn _state_ParenInner(&mut self, __e: &ExpressionParserFrameEvent) {
             match __e {
                 ExpressionParserFrameEvent::FrameEnter { .. } => { self._s_ParenInner_hdl_frame_enter(__e); }
+                _ => {}
+            }
+        }
+
+        // `@@:( expr )` concise return setter — the `@@:` and `(` are
+        // already consumed. Parse the inner expression, expect `)`, and
+        // desugar to `@@:return = expr`.
+        fn _state_ConciseReturn(&mut self, __e: &ExpressionParserFrameEvent) {
+            match __e {
+                ExpressionParserFrameEvent::FrameEnter { .. } => { self._s_ConciseReturn_hdl_frame_enter(__e); }
                 _ => {}
             }
         }
@@ -434,6 +448,23 @@ mod _expression_parser_framec {
                 FsmTokenKind::LParen => {
                     ts.advance();
                     let mut __compartment = self.__prepareEnter("ParenInner");
+                    self.__transition(__compartment);
+                    return;
+                }
+                // `@@:( expr )` — concise return setter. Desugars to
+                // `@@:return = expr`, i.e. Assign{ Var("@@:return"), expr }.
+                FsmTokenKind::ConciseReturn => {
+                    ts.advance(); // `@@:`
+                    if !ts.eat(&FsmTokenKind::LParen) {
+                        self.error = Some(ParseError {
+                            message: "expected `(` after `@@:`".to_string(),
+                            span: ts.cur_span(),
+                        });
+                        let mut __compartment = self.__prepareEnter("Done");
+                        self.__transition(__compartment);
+                        return;
+                    }
+                    let mut __compartment = self.__prepareEnter("ConciseReturn");
                     self.__transition(__compartment);
                     return;
                 }
@@ -577,6 +608,41 @@ mod _expression_parser_framec {
                 span: ts.cur_span(),
             });
             let mut __compartment = self.__prepareEnter("Done");
+            self.__transition(__compartment);
+            return;
+        }
+
+        fn _s_ConciseReturn_hdl_frame_enter(&mut self, __e: &ExpressionParserFrameEvent) {
+            let mut child = ExpressionParser::__create();
+            child.tokens = self.tokens.take();
+            child.parse();
+            self.tokens = child.tokens.take();
+            if let Some(e) = child.error.take() {
+                self.error = Some(e);
+                let mut __compartment = self.__prepareEnter("Done");
+                self.__transition(__compartment);
+                return;
+            }
+            let inner = child
+                .result
+                .take()
+                .expect("child ExpressionParser sets result when no error");
+            
+            let ts = self.tokens.as_mut().unwrap();
+            if !ts.eat(&FsmTokenKind::RParen) {
+                self.error = Some(ParseError {
+                    message: "expected `)` to close `@@:(...)`".to_string(),
+                    span: ts.cur_span(),
+                });
+                let mut __compartment = self.__prepareEnter("Done");
+                self.__transition(__compartment);
+                return;
+            }
+            self.left = Some(Expression::Assign {
+                target: Box::new(Expression::Var("@@:return".to_string())),
+                value: Box::new(inner),
+            });
+            let mut __compartment = self.__prepareEnter("Postfix");
             self.__transition(__compartment);
             return;
         }
