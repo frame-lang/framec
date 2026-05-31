@@ -158,11 +158,22 @@ fn types_equal(a: &Type, b: &Type) -> bool {
 /// by E703 read-of-undeclared).
 #[derive(Default)]
 struct RefSet {
-    self_fields: HashSet<String>,
+    /// `self.<field>` references, each with the span of the enclosing
+    /// top-level expression/statement (Expression nodes carry no span of
+    /// their own, so this is the best available location).
+    self_fields: Vec<(String, Span)>,
+    /// Bare identifiers (call targets, initializer-scope param refs).
     bare: HashSet<String>,
 }
 
-fn walk_expr(e: &Expression, refs: &mut RefSet) {
+impl RefSet {
+    /// The set of distinct `self.<field>` names referenced.
+    fn self_field_names(&self) -> HashSet<&str> {
+        self.self_fields.iter().map(|(n, _)| n.as_str()).collect()
+    }
+}
+
+fn walk_expr(e: &Expression, ctx: &Span, refs: &mut RefSet) {
     match e {
         Expression::Var(name) => {
             // Skip `@@:`-probes and `$state.stage` refs — neither names a
@@ -174,29 +185,29 @@ fn walk_expr(e: &Expression, refs: &mut RefSet) {
         Expression::Member { object, field } => {
             if let Expression::Var(o) = object.as_ref() {
                 if o == "self" {
-                    refs.self_fields.insert(field.clone());
+                    refs.self_fields.push((field.clone(), ctx.clone()));
                 }
             }
-            walk_expr(object, refs);
+            walk_expr(object, ctx, refs);
         }
         Expression::Binary { left, right, .. } => {
-            walk_expr(left, refs);
-            walk_expr(right, refs);
+            walk_expr(left, ctx, refs);
+            walk_expr(right, ctx, refs);
         }
-        Expression::Unary { expr, .. } => walk_expr(expr, refs),
+        Expression::Unary { expr, .. } => walk_expr(expr, ctx, refs),
         Expression::Call { func, args } => {
             refs.bare.insert(func.clone());
             for a in args {
-                walk_expr(a, refs);
+                walk_expr(a, ctx, refs);
             }
         }
         Expression::Assign { target, value } => {
-            walk_expr(target, refs);
-            walk_expr(value, refs);
+            walk_expr(target, ctx, refs);
+            walk_expr(value, ctx, refs);
         }
         Expression::Index { object, index } => {
-            walk_expr(object, refs);
-            walk_expr(index, refs);
+            walk_expr(object, ctx, refs);
+            walk_expr(index, ctx, refs);
         }
         Expression::Literal(_) | Expression::NativeExpr(_) => {}
     }
@@ -210,9 +221,9 @@ fn walk_block(b: &BlockAst, refs: &mut RefSet) {
 
 fn walk_stmt(s: &Statement, refs: &mut RefSet) {
     match s {
-        Statement::Expression(e) => walk_expr(&e.expr, refs),
+        Statement::Expression(e) => walk_expr(&e.expr, &e.span, refs),
         Statement::If(if_ast) => {
-            walk_expr(&if_ast.condition, refs);
+            walk_expr(&if_ast.condition, &if_ast.span, refs);
             walk_stmt(&if_ast.then_branch, refs);
             if let Some(eb) = &if_ast.else_branch {
                 walk_stmt(eb, refs);
@@ -223,14 +234,15 @@ fn walk_stmt(s: &Statement, refs: &mut RefSet) {
     }
 }
 
-/// Walk the whole declaration, collecting every referenced name.
+/// Walk the whole declaration, collecting every referenced name (with a
+/// best-available span for `self.<field>` references).
 fn collect_refs(decl: &FsmDeclAst) -> RefSet {
     let mut refs = RefSet::default();
     for st in &decl.states {
         for m in &st.matches {
             for el in &m.elements {
                 match el {
-                    MatchElement::BareExpression { expr, .. } => walk_expr(expr, &mut refs),
+                    MatchElement::BareExpression { expr, span } => walk_expr(expr, span, &mut refs),
                     MatchElement::ActionBlock(b) => walk_block(b, &mut refs),
                     MatchElement::Stage(s) => {
                         for ea in &s.embedding_actions {
@@ -254,7 +266,7 @@ fn collect_refs(decl: &FsmDeclAst) -> RefSet {
     }
     if let Some(domain) = &decl.domain {
         for v in &domain.vars {
-            walk_expr(&v.default, &mut refs);
+            walk_expr(&v.default, &v.span, &mut refs);
         }
     }
     refs
@@ -263,7 +275,7 @@ fn collect_refs(decl: &FsmDeclAst) -> RefSet {
 fn collect_target_conditions(t: &FsmTransitionTarget, refs: &mut RefSet) {
     if let FsmTransitionTarget::Conditional(alts) = t {
         for alt in alts {
-            walk_expr(&alt.condition, refs);
+            walk_expr(&alt.condition, &alt.span, refs);
         }
     }
 }
@@ -277,8 +289,9 @@ fn collect_target_conditions(t: &FsmTransitionTarget, refs: &mut RefSet) {
 pub(crate) fn check_warnings(decl: &FsmDeclAst) -> Vec<FsmDiagnostic> {
     let mut out = Vec::new();
     let refs = collect_refs(decl);
+    let self_names = refs.self_field_names();
 
-    let used = |name: &str| refs.self_fields.contains(name) || refs.bare.contains(name);
+    let used = |name: &str| self_names.contains(name) || refs.bare.contains(name);
 
     // W702 — unused parameters (skip the input parameter).
     for p in decl.params.iter().skip(1) {
@@ -294,7 +307,7 @@ pub(crate) fn check_warnings(decl: &FsmDeclAst) -> Vec<FsmDiagnostic> {
     // W703 — unused domain fields (accessed via `self.<name>`).
     if let Some(domain) = &decl.domain {
         for v in &domain.vars {
-            if !refs.self_fields.contains(&v.name) {
+            if !self_names.contains(v.name.as_str()) {
                 out.push(FsmDiagnostic {
                     code: "W703",
                     span: v.span.clone(),
@@ -333,6 +346,39 @@ fn collect_constant_when(t: &FsmTransitionTarget, out: &mut Vec<FsmDiagnostic>) 
             }
         }
     }
+}
+
+/// E703 — a `self.<field>` read of an undeclared name. The declared
+/// names are the parameters (each auto-promotes to a same-named domain
+/// field, §3.2) plus the explicit `domain:` fields. Each undeclared
+/// field is reported once, at its first reference.
+pub(crate) fn check_undeclared_reads(decl: &FsmDeclAst) -> Vec<FsmDiagnostic> {
+    let mut symbols: HashSet<&str> = HashSet::new();
+    for p in &decl.params {
+        symbols.insert(p.name.as_str());
+    }
+    if let Some(domain) = &decl.domain {
+        for v in &domain.vars {
+            symbols.insert(v.name.as_str());
+        }
+    }
+
+    let refs = collect_refs(decl);
+    let mut out = Vec::new();
+    let mut reported: HashSet<&str> = HashSet::new();
+    for (field, span) in &refs.self_fields {
+        if !symbols.contains(field.as_str()) && reported.insert(field.as_str()) {
+            out.push(FsmDiagnostic {
+                code: "E703",
+                span: span.clone(),
+                message: format!(
+                    "read of undeclared name `self.{}` (no such parameter or domain field)",
+                    field
+                ),
+            });
+        }
+    }
+    out
 }
 
 /// E731 / E732 — every transition target must name a declared state
@@ -430,8 +476,8 @@ mod validator_fsm {
     )]
 
     use super::{
-        check_input_param_type, check_structure, check_transition_targets, check_warnings,
-        FsmDiagnostic,
+        check_input_param_type, check_structure, check_transition_targets, check_undeclared_reads,
+        check_warnings, FsmDiagnostic,
     };
     use crate::frame_c::compiler::frame_ast::FsmDeclAst;
 
@@ -580,5 +626,23 @@ mod tests {
             b"@@fsm M(text: bytes, mode: int) : int = 0 { /[01]/ -> ( $a when self.mode == 0 ) : -> $err  $a: 1  $err: -1 }",
         );
         assert!(!d.iter().any(|x| x.code == "W705"), "got {:?}", d);
+    }
+
+    /// E703 — reading a `self.<field>` that names no parameter or domain field.
+    #[test]
+    fn e703_undeclared_read() {
+        let d = diags(b"@@fsm M(text: bytes) : int = 0 { /a/ { self.count = self.nope } self.count  domain: count: int = 0 }");
+        assert!(d.iter().any(|x| x.code == "E703"), "got {:?}", d);
+    }
+
+    /// Reads of a declared domain field and of an auto-promoted parameter
+    /// (`self.<param>`) are NOT flagged E703.
+    #[test]
+    fn e703_declared_and_promoted_ok() {
+        // self.count (domain) + self.threshold (auto-promoted param) both declared.
+        let d = diags(
+            b"@@fsm M(text: bytes, threshold: int = 0) : int = 0 { /[0-9]+/ { self.count = self.threshold } self.count  domain: count: int = 0 }",
+        );
+        assert!(!d.iter().any(|x| x.code == "E703"), "got {:?}", d);
     }
 }

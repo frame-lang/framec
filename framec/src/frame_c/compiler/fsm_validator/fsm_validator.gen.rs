@@ -99,6 +99,7 @@ mod _fsm_validator_framec {
         CheckHeader,
         CheckStructure,
         CheckTransitions,
+        CheckNames,
         CheckWarnings,
         Done,
         __NoContext,
@@ -126,6 +127,7 @@ mod _fsm_validator_framec {
                 "CheckHeader" => FsmValidatorStateContext::CheckHeader,
                 "CheckStructure" => FsmValidatorStateContext::CheckStructure,
                 "CheckTransitions" => FsmValidatorStateContext::CheckTransitions,
+                "CheckNames" => FsmValidatorStateContext::CheckNames,
                 "CheckWarnings" => FsmValidatorStateContext::CheckWarnings,
                 "Done" => FsmValidatorStateContext::Done,
                 _ => FsmValidatorStateContext::__NoContext,
@@ -179,6 +181,7 @@ mod _fsm_validator_framec {
                 "CheckHeader" => &["CheckHeader"],
                 "CheckStructure" => &["CheckStructure"],
                 "CheckTransitions" => &["CheckTransitions"],
+                "CheckNames" => &["CheckNames"],
                 "CheckWarnings" => &["CheckWarnings"],
                 "Done" => &["Done"],
                 _ => &[],
@@ -249,6 +252,7 @@ mod _fsm_validator_framec {
                 "CheckHeader" => self._state_CheckHeader(__ev),
                 "CheckStructure" => self._state_CheckStructure(__ev),
                 "CheckTransitions" => self._state_CheckTransitions(__ev),
+                "CheckNames" => self._state_CheckNames(__ev),
                 "CheckWarnings" => self._state_CheckWarnings(__ev),
                 "Done" => self._state_Done(__ev),
                 _ => {}
@@ -295,6 +299,13 @@ mod _fsm_validator_framec {
             }
         }
 
+        fn _state_CheckNames(&mut self, __e: &FsmValidatorFrameEvent) {
+            match __e {
+                FsmValidatorFrameEvent::FrameEnter { .. } => { self._s_CheckNames_hdl_frame_enter(__e); }
+                _ => {}
+            }
+        }
+
         fn _state_CheckWarnings(&mut self, __e: &FsmValidatorFrameEvent) {
             match __e {
                 FsmValidatorFrameEvent::FrameEnter { .. } => { self._s_CheckWarnings_hdl_frame_enter(__e); }
@@ -333,6 +344,14 @@ mod _fsm_validator_framec {
 
         fn _s_CheckTransitions_hdl_frame_enter(&mut self, __e: &FsmValidatorFrameEvent) {
             let mut found = check_transition_targets(&self.decl);
+            self.diagnostics.append(&mut found);
+            let mut __compartment = self.__prepareEnter("CheckNames");
+            self.__transition(__compartment);
+            return;
+        }
+
+        fn _s_CheckNames_hdl_frame_enter(&mut self, __e: &FsmValidatorFrameEvent) {
+            let mut found = check_undeclared_reads(&self.decl);
             self.diagnostics.append(&mut found);
             let mut __compartment = self.__prepareEnter("CheckWarnings");
             self.__transition(__compartment);
