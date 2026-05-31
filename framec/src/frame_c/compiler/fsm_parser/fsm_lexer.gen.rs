@@ -110,6 +110,7 @@ mod _fsm_lexer_framec {
         Start,
         Header,
         ElementLevel,
+        ExprLevel,
         Done,
         __NoContext,
     }
@@ -135,6 +136,7 @@ mod _fsm_lexer_framec {
                 "Start" => FsmLexerStateContext::Start,
                 "Header" => FsmLexerStateContext::Header,
                 "ElementLevel" => FsmLexerStateContext::ElementLevel,
+                "ExprLevel" => FsmLexerStateContext::ExprLevel,
                 "Done" => FsmLexerStateContext::Done,
                 _ => FsmLexerStateContext::__NoContext,
             };
@@ -155,6 +157,7 @@ mod _fsm_lexer_framec {
         _context_stack: Vec<FsmLexerFrameContext>,
         pub bytes: Vec<u8>,
         pub pos: usize,
+        pub paren_depth: i32,
         pub tokens: Vec<FsmToken>,
         pub error: Option<ParseError>,
     }
@@ -167,6 +170,7 @@ mod _fsm_lexer_framec {
                 _context_stack: Vec::new(),
                 bytes: Vec::new(),
                 pos: 0,
+                paren_depth: 0,
                 tokens: Vec::new(),
                 error: None,
                 __compartment: FsmLexerCompartment::new("Start"),
@@ -190,6 +194,7 @@ mod _fsm_lexer_framec {
                 "Start" => &["Start"],
                 "Header" => &["Header"],
                 "ElementLevel" => &["ElementLevel"],
+                "ExprLevel" => &["ExprLevel"],
                 "Done" => &["Done"],
                 _ => &[],
             }
@@ -258,6 +263,7 @@ mod _fsm_lexer_framec {
                 "Start" => self._state_Start(__ev),
                 "Header" => self._state_Header(__ev),
                 "ElementLevel" => self._state_ElementLevel(__ev),
+                "ExprLevel" => self._state_ExprLevel(__ev),
                 "Done" => self._state_Done(__ev),
                 _ => {}
             }
@@ -294,6 +300,16 @@ mod _fsm_lexer_framec {
         fn _state_ElementLevel(&mut self, __e: &FsmLexerFrameEvent) {
             match __e {
                 FsmLexerFrameEvent::FrameEnter { .. } => { self._s_ElementLevel_hdl_frame_enter(__e); }
+                _ => {}
+            }
+        }
+
+        // Expression level — inside a bare expression / action body /
+        // when-condition. A `/` here is the division operator, not a regex
+        // delimiter. Returns to $ElementLevel at a terminator.
+        fn _state_ExprLevel(&mut self, __e: &FsmLexerFrameEvent) {
+            match __e {
+                FsmLexerFrameEvent::FrameEnter { .. } => { self._s_ExprLevel_hdl_frame_enter(__e); }
                 _ => {}
             }
         }
@@ -468,10 +484,69 @@ mod _fsm_lexer_framec {
                     continue;
                 }
             
-                // Identifier / keyword — a bare expression at element
-                // level. v1: emit the keyword/ident directly. (TODO:
-                // transition into $ExprLevel for multi-token bare
-                // expressions with operators.)
+                // `|` — ordered-choice match separator. Stays element level.
+                if b == b'|' {
+                    push1(&mut self.tokens, FsmTokenKind::Pipe, pos);
+                    pos += 1;
+                    continue;
+                }
+            
+                // Anything else begins a bare expression / action call —
+                // hand off to $ExprLevel WITHOUT consuming. $ExprLevel
+                // lexes expression tokens (where `/` is division) until a
+                // terminator (`}`, `|`, EOF at paren-depth 0) returns
+                // control here.
+                self.pos = pos;
+                self.paren_depth = 0;
+                let mut __compartment = self.__prepareEnter("ExprLevel");
+                self.__transition(__compartment);
+                return;
+            }
+        }
+
+        fn _s_ExprLevel_hdl_frame_enter(&mut self, __e: &FsmLexerFrameEvent) {
+            let src = &self.bytes;
+            let n = src.len();
+            let mut pos = self.pos;
+            
+            loop {
+                pos = skip_ws_comments(src, pos);
+                if pos >= n {
+                    // EOF terminates the expression; element level emits Eof.
+                    self.pos = pos;
+                    let mut __compartment = self.__prepareEnter("ElementLevel");
+                    self.__transition(__compartment);
+                    return;
+                }
+            
+                let b = src[pos];
+            
+                // Terminators at paren-depth 0 hand control back to
+                // $ElementLevel without consuming.
+                if self.paren_depth == 0 && (b == b'}' || b == b'|') {
+                    self.pos = pos;
+                    let mut __compartment = self.__prepareEnter("ElementLevel");
+                    self.__transition(__compartment);
+                    return;
+                }
+            
+                // `@@:` context probe — e.g. @@:matched, @@:cursor, @@:return.
+                if b == b'@' && pos + 2 < n && src[pos + 1] == b'@' && src[pos + 2] == b':' {
+                    let start = pos;
+                    pos += 3; // @@:
+                    let name_start = pos;
+                    while pos < n && (src[pos].is_ascii_alphanumeric() || src[pos] == b'_') {
+                        pos += 1;
+                    }
+                    let name = std::str::from_utf8(&src[name_start..pos]).unwrap_or("").to_string();
+                    self.tokens.push(FsmToken {
+                        kind: FsmTokenKind::Probe(name),
+                        span: Span::new(start, pos),
+                    });
+                    continue;
+                }
+            
+                // Identifier / keyword.
                 if b.is_ascii_alphabetic() || b == b'_' {
                     let start = pos;
                     while pos < n && (src[pos].is_ascii_alphanumeric() || src[pos] == b'_') {
@@ -481,21 +556,88 @@ mod _fsm_lexer_framec {
                     let kind = match word {
                         "true" => FsmTokenKind::KwTrue,
                         "false" => FsmTokenKind::KwFalse,
+                        "if" => FsmTokenKind::KwIf,
+                        "else" => FsmTokenKind::KwElse,
+                        "when" => FsmTokenKind::KwWhen,
                         other => FsmTokenKind::Ident(other.to_string()),
                     };
                     self.tokens.push(FsmToken { kind, span: Span::new(start, pos) });
                     continue;
                 }
             
-                // Unexpected byte at element level (v1 — broader handling TODO).
-                self.error = Some(ParseError {
-                    message: format!("unexpected byte '{}' at match-element level", b as char),
-                    span: Span::new(pos, pos + 1),
-                });
-                self.pos = pos;
-                let mut __compartment = self.__prepareEnter("Done");
-                self.__transition(__compartment);
-                return;
+                // Integer literal.
+                if b.is_ascii_digit() {
+                    let start = pos;
+                    while pos < n && src[pos].is_ascii_digit() {
+                        pos += 1;
+                    }
+                    let text = std::str::from_utf8(&src[start..pos]).unwrap_or("0");
+                    let val: i64 = text.parse().unwrap_or(0);
+                    self.tokens.push(FsmToken {
+                        kind: FsmTokenKind::IntLit(val),
+                        span: Span::new(start, pos),
+                    });
+                    continue;
+                }
+            
+                // Two-character operators (checked before single-char).
+                if pos + 1 < n {
+                    let two = &src[pos..pos + 2];
+                    let two_kind = match two {
+                        b"&&" => Some(FsmTokenKind::AndAnd),
+                        b"||" => Some(FsmTokenKind::OrOr),
+                        b"==" => Some(FsmTokenKind::EqEq),
+                        b"!=" => Some(FsmTokenKind::NotEq),
+                        b"<=" => Some(FsmTokenKind::Le),
+                        b">=" => Some(FsmTokenKind::Ge),
+                        _ => None,
+                    };
+                    if let Some(k) = two_kind {
+                        self.tokens.push(FsmToken { kind: k, span: Span::new(pos, pos + 2) });
+                        pos += 2;
+                        continue;
+                    }
+                }
+            
+                // Single-character tokens.
+                let one = match b {
+                    b'(' => { self.paren_depth += 1; Some(FsmTokenKind::LParen) }
+                    b')' => { self.paren_depth = (self.paren_depth - 1).max(0); Some(FsmTokenKind::RParen) }
+                    b'{' => { self.paren_depth += 1; Some(FsmTokenKind::LBrace) }
+                    b'}' => { self.paren_depth = (self.paren_depth - 1).max(0); Some(FsmTokenKind::RBrace) }
+                    b'[' => { self.paren_depth += 1; Some(FsmTokenKind::LBracket) }
+                    b']' => { self.paren_depth = (self.paren_depth - 1).max(0); Some(FsmTokenKind::RBracket) }
+                    b',' => Some(FsmTokenKind::Comma),
+                    b';' => Some(FsmTokenKind::Semi),
+                    b'.' => Some(FsmTokenKind::Dot),
+                    b'<' => Some(FsmTokenKind::Lt),
+                    b'>' => Some(FsmTokenKind::Gt),
+                    b'!' => Some(FsmTokenKind::Bang),
+                    b'+' => Some(FsmTokenKind::Plus),
+                    b'-' => Some(FsmTokenKind::Minus),
+                    b'*' => Some(FsmTokenKind::Star),
+                    b'/' => Some(FsmTokenKind::Slash), // division at expression level
+                    b'%' => Some(FsmTokenKind::Percent),
+                    b'=' => Some(FsmTokenKind::Eq),
+                    _ => None,
+                };
+                match one {
+                    Some(k) => {
+                        push1(&mut self.tokens, k, pos);
+                        pos += 1;
+                        continue;
+                    }
+                    None => {
+                        self.error = Some(ParseError {
+                            message: format!("unexpected byte '{}' in expression", b as char),
+                            span: Span::new(pos, pos + 1),
+                        });
+                        self.pos = pos;
+                        let mut __compartment = self.__prepareEnter("Done");
+                        self.__transition(__compartment);
+                        return;
+                    }
+                }
             }
         }
     }

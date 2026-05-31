@@ -61,17 +61,24 @@
 //!
 //! # Status
 //!
-//! Lexer landed: [`fsm_lexer.frs`] tokenizes an `@@fsm` block into a
-//! [`token_stream::FsmToken`] stream via [`lex_fsm_block`]. The parser
-//! FSMs (`fsm_decl_parser.frs` and its children) are not yet written;
-//! [`parse_fsm_declaration`] is `unimplemented!()` pending Tasks 12–13.
+//! Working front-end for a growing subset of `@@fsm`:
+//! - [`fsm_lexer.frs`] tokenizes a block ([`lex_fsm_block`]).
+//! - `fsm_decl_parser.frs` (root) + `expression_parser.frs` (first
+//!   child) parse it to an [`FsmDeclAst`] ([`parse_fsm_declaration`],
+//!   [`parse_fsm_block`]).
+//!
+//! Coverage expands fixture-by-fixture (current: header, one implicit
+//! state, stages, bare/call/probe expressions). Not yet: labeled
+//! states, `|` matches, transition clauses, embedding actions,
+//! actions/domain blocks, operator-precedence expressions, statements.
 //! The module is wired into [`crate::frame_c::compiler`] but the framec
-//! driver does not yet route `@@fsm` blocks here (Task 14).
+//! driver does not yet route real `@@fsm` blocks here (Task 14).
 //!
 //! # Public API
 //!
-//! - [`lex_fsm_block`] — bytes → token stream (working).
-//! - [`parse_fsm_declaration`] — token stream → AST (pending).
+//! - [`lex_fsm_block`] — bytes → token stream.
+//! - [`parse_fsm_declaration`] — token stream → AST.
+//! - [`parse_fsm_block`] — bytes → AST (lex + parse).
 
 pub mod token_stream;
 
@@ -180,6 +187,26 @@ pub fn lex_fsm_block(bytes: &[u8]) -> Result<Vec<FsmToken>, ParseError> {
 // Parser
 // ---------------------------------------------------------------------------
 
+/// The generated `ExpressionParser` state machine. Source:
+/// `expression_parser.frs`. The first child parser in the tree; proves
+/// the token-stream-shuttling composition pattern.
+mod expression_fsm {
+    #![allow(
+        unreachable_patterns,
+        unused_mut,
+        dead_code,
+        non_snake_case,
+        unused_variables,
+        unused_parens
+    )]
+
+    use super::token_stream::{FsmTokenKind, FsmTokenStream};
+    use crate::frame_c::compiler::frame_ast::{Expression, Literal};
+    use crate::frame_c::compiler::pipeline_parser::ParseError;
+
+    include!("expression_parser.gen.rs");
+}
+
 /// The generated `FsmDeclParser` state machine. Source: `fsm_decl_parser.frs`.
 mod fsm_decl_parser {
     #![allow(
@@ -191,7 +218,8 @@ mod fsm_decl_parser {
         unused_parens
     )]
 
-    use super::parse_helpers::{primary_expr, token_text};
+    use super::expression_fsm::ExpressionParser;
+    use super::parse_helpers::token_text;
     use super::token_stream::{FsmTokenKind, FsmTokenStream};
     use crate::frame_c::compiler::frame_ast::{
         Expression, FsmDeclAst, FsmParameter, FsmStateAst, MatchAst, MatchElement, Span, StageAst,
@@ -206,7 +234,6 @@ mod fsm_decl_parser {
 /// → AST utilities with no state-machine content.
 mod parse_helpers {
     use super::token_stream::FsmTokenKind;
-    use crate::frame_c::compiler::frame_ast::{Expression, Literal};
 
     /// Render a token's surface text — used to capture single-token
     /// default expressions (`= false`, `= 0`) verbatim. v1 covers the
@@ -220,21 +247,6 @@ mod parse_helpers {
             FsmTokenKind::StringLit(s) => format!("{:?}", s),
             FsmTokenKind::Ident(s) => s.clone(),
             _ => String::new(),
-        }
-    }
-
-    /// Build an `Expression` from a single primary token. v1 handles
-    /// the literal/var primaries a bare expression can start with;
-    /// multi-token expressions delegate to ExpressionParser once it
-    /// lands. Returns `None` for tokens that cannot begin an expression.
-    pub(super) fn primary_expr(kind: &FsmTokenKind) -> Option<Expression> {
-        match kind {
-            FsmTokenKind::KwTrue => Some(Expression::Literal(Literal::Bool(true))),
-            FsmTokenKind::KwFalse => Some(Expression::Literal(Literal::Bool(false))),
-            FsmTokenKind::IntLit(n) => Some(Expression::Literal(Literal::Int(*n))),
-            FsmTokenKind::StringLit(s) => Some(Expression::Literal(Literal::String(s.clone()))),
-            FsmTokenKind::Ident(s) => Some(Expression::Var(s.clone())),
-            _ => None,
         }
     }
 }
@@ -355,6 +367,36 @@ mod lexer_tests {
         let err = lex_fsm_block(b"@@fsm M(text: bytes) : bool = false { /a true }");
         assert!(err.is_err(), "unterminated regex must surface an error");
     }
+
+    /// FSM-TEST-004 body: a regex stage followed by a call bare-expression
+    /// with a `@@:` probe argument. Exercises $ExprLevel (probe, call,
+    /// parens) and the regex-at-element-level / call-at-expr-level split.
+    #[test]
+    fn call_with_probe_arg() {
+        let got = kinds("@@fsm M(text: bytes) : int = 0 { /[0-9]/ to_int(@@:matched) }");
+        let want = vec![
+            KwFsm,
+            Ident("M".to_string()),
+            LParen,
+            Ident("text".to_string()),
+            Colon,
+            Ident("bytes".to_string()),
+            RParen,
+            Colon,
+            Ident("int".to_string()),
+            Eq,
+            IntLit(0),
+            LBrace,
+            RegexLiteral("[0-9]".to_string()),
+            Ident("to_int".to_string()),
+            LParen,
+            Probe("matched".to_string()),
+            RParen,
+            RBrace,
+            Eof,
+        ];
+        assert_eq!(got, want);
+    }
 }
 
 #[cfg(test)]
@@ -426,5 +468,69 @@ mod parser_tests {
     fn missing_return_type_errors() {
         let err = parse_fsm_block(b"@@fsm M(text: bytes) = false { /a/ true }");
         assert!(err.is_err(), "missing return type must error");
+    }
+
+    /// FSM-TEST-004: a call bare-expression with a `@@:` probe argument
+    /// parses via the child ExpressionParser. Proves the cooperating-
+    /// systems composition (parent FsmDeclParser shuttles the token
+    /// stream into the child ExpressionParser and back).
+    #[test]
+    fn call_expression_parses_via_child() {
+        let ast = parse_fsm_block(b"@@fsm M(text: bytes) : int = 0 { /[0-9]/ to_int(@@:matched) }")
+            .expect("FSM-TEST-004 must parse");
+
+        let elems = &ast.states[0].matches[0].elements;
+        assert_eq!(elems.len(), 2);
+
+        // Element 0: stage /[0-9]/.
+        match &elems[0] {
+            MatchElement::Stage(s) => assert_eq!(s.regex, "[0-9]"),
+            other => panic!("expected Stage, got {:?}", other),
+        }
+
+        // Element 1: call `to_int(@@:matched)`.
+        match &elems[1] {
+            MatchElement::BareExpression { expr, .. } => match expr {
+                Expression::Call { func, args } => {
+                    assert_eq!(func, "to_int");
+                    assert_eq!(args.len(), 1);
+                    // The lone argument is the probe @@:matched.
+                    assert!(matches!(&args[0], Expression::Var(v) if v == "@@:matched"));
+                }
+                other => panic!("expected Call, got {:?}", other),
+            },
+            other => panic!("expected BareExpression, got {:?}", other),
+        }
+    }
+
+    /// Nested call — exercises the child-of-child recursion in the
+    /// ExpressionParser tree.
+    #[test]
+    fn nested_call_parses() {
+        let ast =
+            parse_fsm_block(b"@@fsm M(text: bytes) : int = 0 { /x/ outer(inner(@@:cursor)) }")
+                .expect("nested call must parse");
+        let elems = &ast.states[0].matches[0].elements;
+        match &elems[1] {
+            MatchElement::BareExpression {
+                expr: Expression::Call { func, args },
+                ..
+            } => {
+                assert_eq!(func, "outer");
+                assert_eq!(args.len(), 1);
+                match &args[0] {
+                    Expression::Call {
+                        func: inner_f,
+                        args: inner_a,
+                    } => {
+                        assert_eq!(inner_f, "inner");
+                        assert_eq!(inner_a.len(), 1);
+                        assert!(matches!(&inner_a[0], Expression::Var(v) if v == "@@:cursor"));
+                    }
+                    other => panic!("expected inner Call, got {:?}", other),
+                }
+            }
+            other => panic!("expected outer Call, got {:?}", other),
+        }
     }
 }

@@ -1,0 +1,191 @@
+@@[target("rust")]
+
+// RFC-0043 — the expression parser as a Frame @@system child of the
+// fsm parser tree.
+//
+// Consumes tokens from a shared FsmTokenStream (moved in by the parent
+// via Option::take, moved back out when done) and builds one Expression.
+// This is the first CHILD parser in the tree — it proves the
+// cooperating-systems composition pattern (linear token-stream
+// ownership shuttling) that the whole design rests on.
+//
+// v1 SCOPE: a primary expression and call expressions —
+//   primary ::= literal | probe | ident | "(" expr ")"
+//   call    ::= ident "(" ( expr ("," expr)* )? ")"
+// which is what FSM-TEST-004 ( to_int(@@:matched) ) needs. The eight
+// precedence levels (logical-or down to unary) per RFC-0043 §3.3 land
+// as additional states when a fixture first exercises operators; the
+// $Primary state below is the base of that future climb.
+//
+// Composition contract (matches the parent-child pattern in
+// _scratch/rfc_0043_parser_design.md):
+//   - input:  `tokens` (Option<FsmTokenStream>) set by the parent.
+//   - output: `result` (Option<Expression>) on success, or `error`.
+//   - the parent does: child.tokens = self.tokens.take(); child.parse();
+//     self.tokens = child.tokens.take(); read child.result / child.error.
+
+@@system ExpressionParser {
+    interface:
+        parse()
+
+    machine:
+        $Start {
+            parse() { -> $Primary }
+        }
+
+        // Parse one primary, then fold any trailing call-arg list onto it.
+        // (The future precedence climb will wrap this base.)
+        $Primary {
+            $>() {
+                let ts = self.tokens.as_mut().unwrap();
+                let sp = ts.cur_span();
+
+                match ts.peek_kind() {
+                    FsmTokenKind::KwTrue => {
+                        ts.advance();
+                        self.result = Some(Expression::Literal(Literal::Bool(true)));
+                        -> $Done
+                    }
+                    FsmTokenKind::KwFalse => {
+                        ts.advance();
+                        self.result = Some(Expression::Literal(Literal::Bool(false)));
+                        -> $Done
+                    }
+                    FsmTokenKind::IntLit(n) => {
+                        ts.advance();
+                        self.result = Some(Expression::Literal(Literal::Int(n)));
+                        -> $Done
+                    }
+                    FsmTokenKind::StringLit(s) => {
+                        ts.advance();
+                        self.result = Some(Expression::Literal(Literal::String(s)));
+                        -> $Done
+                    }
+                    FsmTokenKind::Probe(name) => {
+                        ts.advance();
+                        // A probe is a leaf reference; surface it as a Var
+                        // carrying the `@@:`-qualified name. (A dedicated
+                        // Expression::Probe variant may replace this later.)
+                        self.result = Some(Expression::Var(format!("@@:{}", name)));
+                        -> $Done
+                    }
+                    FsmTokenKind::Ident(name) => {
+                        ts.advance();
+                        // Call expression `ident( args )` vs bare variable.
+                        if ts.eat(&FsmTokenKind::LParen) {
+                            self.pending_callee = name;
+                            self.call_args = Vec::new();
+                            -> $CallArgs
+                        }
+                        self.result = Some(Expression::Var(name));
+                        -> $Done
+                    }
+                    FsmTokenKind::LParen => {
+                        ts.advance();
+                        // Parenthesized sub-expression: recurse via a child
+                        // ExpressionParser, then expect `)`.
+                        -> $ParenInner
+                    }
+                    _ => {
+                        self.error = Some(ParseError {
+                            message: "expected an expression".to_string(),
+                            span: sp,
+                        });
+                        -> $Done
+                    }
+                }
+            }
+        }
+
+        // Parse a (possibly empty) comma-separated argument list, having
+        // already consumed the callee ident and the opening `(`. Each
+        // argument is parsed by a fresh child ExpressionParser — the
+        // recursion that makes this a real tree.
+        $CallArgs {
+            $>() {
+                // Empty arg list: `ident()`.
+                {
+                    let ts = self.tokens.as_mut().unwrap();
+                    if ts.eat(&FsmTokenKind::RParen) {
+                        self.result = Some(Expression::Call {
+                            func: std::mem::take(&mut self.pending_callee),
+                            args: std::mem::take(&mut self.call_args),
+                        });
+                        -> $Done
+                    }
+                }
+
+                loop {
+                    // Parse one argument via a child parser (token shuttle).
+                    let mut child = ExpressionParser::__create();
+                    child.tokens = self.tokens.take();
+                    child.parse();
+                    self.tokens = child.tokens.take();
+                    if let Some(e) = child.error.take() {
+                        self.error = Some(e);
+                        -> $Done
+                    }
+                    let arg = child
+                        .result
+                        .take()
+                        .expect("child ExpressionParser sets result when no error");
+                    self.call_args.push(arg);
+
+                    let ts = self.tokens.as_mut().unwrap();
+                    if ts.eat(&FsmTokenKind::Comma) {
+                        continue;
+                    }
+                    if ts.eat(&FsmTokenKind::RParen) {
+                        self.result = Some(Expression::Call {
+                            func: std::mem::take(&mut self.pending_callee),
+                            args: std::mem::take(&mut self.call_args),
+                        });
+                        -> $Done
+                    }
+                    self.error = Some(ParseError {
+                        message: "expected `,` or `)` in call arguments".to_string(),
+                        span: ts.cur_span(),
+                    });
+                    -> $Done
+                }
+            }
+        }
+
+        // Parenthesized sub-expression: parse inner via a child, expect `)`.
+        $ParenInner {
+            $>() {
+                let mut child = ExpressionParser::__create();
+                child.tokens = self.tokens.take();
+                child.parse();
+                self.tokens = child.tokens.take();
+                if let Some(e) = child.error.take() {
+                    self.error = Some(e);
+                    -> $Done
+                }
+                let inner = child
+                    .result
+                    .take()
+                    .expect("child ExpressionParser sets result when no error");
+
+                let ts = self.tokens.as_mut().unwrap();
+                if ts.eat(&FsmTokenKind::RParen) {
+                    self.result = Some(inner);
+                    -> $Done
+                }
+                self.error = Some(ParseError {
+                    message: "expected `)` to close parenthesized expression".to_string(),
+                    span: ts.cur_span(),
+                });
+                -> $Done
+            }
+        }
+
+        $Done { }
+
+    domain:
+        tokens: Option<FsmTokenStream> = None
+        pending_callee: String = String::new()
+        call_args: Vec<Expression> = Vec::new()
+        result: Option<Expression> = None
+        error: Option<ParseError> = None
+}

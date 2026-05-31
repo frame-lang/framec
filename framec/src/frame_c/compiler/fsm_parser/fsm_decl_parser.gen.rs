@@ -476,26 +476,32 @@ mod _fsm_decl_parser_framec {
         }
 
         fn _s_Body_hdl_frame_enter(&mut self, __e: &FsmDeclParserFrameEvent) {
-            let ts = self.tokens.as_mut().unwrap();
-            let body_start = ts.cur_span();
+            let body_start = self.tokens.as_ref().unwrap().cur_span();
             
             // v1: a single implicit (unlabeled) start state with one
-            // match. Collect elements until `}`.
+            // match. Collect elements until `}`. The token stream is
+            // accessed via short-lived borrows so it can be shuttled
+            // into the child ExpressionParser for bare expressions.
             let mut elements: Vec<MatchElement> = Vec::new();
             
             loop {
-                match ts.peek_kind() {
-                    FsmTokenKind::RBrace => { ts.advance(); break; }
+                let next = self.tokens.as_ref().unwrap().peek_kind();
+                match next {
+                    FsmTokenKind::RBrace => {
+                        self.tokens.as_mut().unwrap().advance();
+                        break;
+                    }
                     FsmTokenKind::Eof => {
                         self.error = Some(ParseError {
                             message: "unexpected end of input; expected `}`".to_string(),
-                            span: ts.cur_span(),
+                            span: self.tokens.as_ref().unwrap().cur_span(),
                         });
                         let mut __compartment = self.__prepareEnter("Done");
                         self.__transition(__compartment);
                         return;
                     }
                     FsmTokenKind::RegexLiteral(body) => {
+                        let ts = self.tokens.as_mut().unwrap();
                         let sp = ts.cur_span();
                         ts.advance();
                         elements.push(MatchElement::Stage(StageAst {
@@ -505,29 +511,30 @@ mod _fsm_decl_parser_framec {
                             span: sp,
                         }));
                     }
-                    other => {
-                        // Treat as a bare expression (single primary in v1).
-                        let sp = ts.cur_span();
-                        match primary_expr(&other) {
-                            Some(expr) => {
-                                ts.advance();
-                                elements.push(MatchElement::BareExpression { expr, span: sp });
-                            }
-                            None => {
-                                self.error = Some(ParseError {
-                                    message: "unexpected token in match body".to_string(),
-                                    span: sp,
-                                });
-                                let mut __compartment = self.__prepareEnter("Done");
-                                self.__transition(__compartment);
-                                return;
-                            }
+                    _ => {
+                        // Bare expression — delegate to the child
+                        // ExpressionParser (token-stream shuttle).
+                        let sp = self.tokens.as_ref().unwrap().cur_span();
+                        let mut child = ExpressionParser::__create();
+                        child.tokens = self.tokens.take();
+                        child.parse();
+                        self.tokens = child.tokens.take();
+                        if let Some(e) = child.error.take() {
+                            self.error = Some(e);
+                            let mut __compartment = self.__prepareEnter("Done");
+                            self.__transition(__compartment);
+                            return;
                         }
+                        let expr = child
+                            .result
+                            .take()
+                            .expect("child ExpressionParser sets result when no error");
+                        elements.push(MatchElement::BareExpression { expr, span: sp });
                     }
                 }
             }
             
-            let body_end = ts.cur_span();
+            let body_end = self.tokens.as_ref().unwrap().cur_span();
             let span = Span::new(body_start.start, body_end.start);
             
             self.states.push(FsmStateAst {
