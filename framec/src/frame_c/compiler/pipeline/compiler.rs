@@ -144,6 +144,9 @@ pub(crate) struct PipelineCtx {
     generated_systems: Vec<(String, String)>,
     /// Soft warnings harvested across all systems (W-codes), surfaced at the end.
     module_warnings: Vec<CompileError>,
+    /// W-code warnings from `@@fsm` blocks (RFC-0042), harvested in
+    /// `do_segment` and merged into the final warnings at codegen time.
+    fsm_warnings: Vec<CompileError>,
 }
 
 impl PipelineCtx {
@@ -162,6 +165,7 @@ impl PipelineCtx {
             arcanum: None,
             generated_systems: Vec::new(),
             module_warnings: Vec::new(),
+            fsm_warnings: Vec::new(),
         }
     }
 
@@ -308,6 +312,44 @@ pub(crate) fn do_segment(c: &mut PipelineCtx) -> Option<CompileResult> {
             // (collected into `module_imports`, then resolved into
             // analysis-only systems); no rejection here.
         }
+    }
+
+    // RFC-0042: parse + validate every `@@fsm` block. Errors fail the
+    // compile (returned now); warnings are stashed and merged into the
+    // final warnings at codegen time. @@fsm emits no target code yet, so
+    // clean blocks just pass through (the assembler has an emit-nothing
+    // Fsm arm).
+    let mut fsm_errors: Vec<CompileError> = Vec::new();
+    for seg in &source_map.segments {
+        if let Segment::Fsm { outer_span, name } = seg {
+            let block = &source_map.source[outer_span.start..outer_span.end];
+            match crate::frame_c::compiler::fsm_parser::parse_fsm_block(block) {
+                Err(pe) => {
+                    fsm_errors.push(CompileError::new(
+                        "E700",
+                        &format!("@@fsm {}: {}", name, pe.message),
+                    ));
+                }
+                Ok(ast) => {
+                    for d in crate::frame_c::compiler::fsm_validator::validate_fsm(&ast) {
+                        let ce = CompileError::new(d.code, &d.message);
+                        if d.code.starts_with('W') {
+                            c.fsm_warnings.push(ce);
+                        } else {
+                            fsm_errors.push(ce);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if !fsm_errors.is_empty() {
+        return Some(CompileResult {
+            code: String::new(),
+            errors: fsm_errors,
+            warnings: std::mem::take(&mut c.fsm_warnings),
+            source_map: None,
+        });
     }
 
     c.source_map = Some(source_map);
@@ -1278,6 +1320,8 @@ pub(crate) fn do_validate_codegen(c: &mut PipelineCtx) -> Option<CompileResult> 
 
     c.system_asts = system_asts;
     c.generated_systems = generated_systems;
+    // Merge any @@fsm warnings harvested in do_segment.
+    module_warnings.extend(std::mem::take(&mut c.fsm_warnings));
     c.module_warnings = module_warnings;
     None
 }
@@ -1616,6 +1660,76 @@ mod tests {
         let error = CompileError::new("E001", "test error").with_location(10, 5);
         assert_eq!(error.line, Some(10));
         assert_eq!(error.column, Some(5));
+    }
+
+    // --- RFC-0042 @@fsm driver wiring (Task 14) ---
+
+    fn compile_py(source: &str) -> CompileResult {
+        use crate::frame_c::compiler::pipeline_supervisor::run_pipeline;
+        let config = PipelineConfig::production(TargetLanguage::Python3);
+        run_pipeline(source.as_bytes(), &config)
+    }
+
+    /// A clean `@@fsm` block compiles without errors (codegen is a later
+    /// phase, so it simply emits no target code for the block).
+    #[test]
+    fn fsm_block_clean_compiles() {
+        let r = compile_py("@@fsm M(text: bytes) : bool = false { /a/ true }\n");
+        assert!(
+            r.errors.is_empty(),
+            "expected no errors, got {:?}",
+            r.errors
+        );
+    }
+
+    /// A bad input-parameter type surfaces E713 through the pipeline.
+    #[test]
+    fn fsm_block_e713_errors() {
+        let r = compile_py("@@fsm M(text: float) : bool = false { /a/ true }\n");
+        assert!(
+            r.errors.iter().any(|e| e.code == "E713"),
+            "expected E713, got {:?}",
+            r.errors
+        );
+    }
+
+    /// A `@@fsm` parse error (missing return type) surfaces as a compile error.
+    #[test]
+    fn fsm_block_parse_error_surfaces() {
+        let r = compile_py("@@fsm M(text: bytes) = false { /a/ true }\n");
+        assert!(!r.errors.is_empty(), "expected a parse error, got none");
+    }
+
+    /// An unused domain field surfaces W703 as a warning (and still compiles).
+    #[test]
+    fn fsm_block_w703_warning() {
+        let r = compile_py(
+            "@@fsm M(text: bytes) : bool = false { /a/ true  domain: unused: int = 0 }\n",
+        );
+        assert!(
+            r.errors.is_empty(),
+            "expected no errors, got {:?}",
+            r.errors
+        );
+        assert!(
+            r.warnings.iter().any(|w| w.code == "W703"),
+            "expected W703 warning, got {:?}",
+            r.warnings
+        );
+    }
+
+    /// A broken `@@fsm` alongside a valid `@@system` fails the compile with
+    /// the fsm diagnostic.
+    #[test]
+    fn fsm_alongside_system() {
+        let src = "@@system S { interface: go() machine: $A { go() {} } }\n\
+                   @@fsm M(text: float) : bool = false { /a/ true }\n";
+        let r = compile_py(src);
+        assert!(
+            r.errors.iter().any(|e| e.code == "E713"),
+            "got {:?}",
+            r.errors
+        );
     }
 
     #[test]
