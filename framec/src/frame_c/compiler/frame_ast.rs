@@ -1149,7 +1149,10 @@ pub enum EmbeddingOp {
 /// when present; failure branch optional. §3.5.4.
 #[derive(Debug, Clone)]
 pub struct FsmTransitionClauseAst {
-    pub success: FsmTransitionTarget,
+    /// The success target (`-> $X`). `None` for a failure-only clause
+    /// (`: -> $Err` with no success arrow): success leaves the match in
+    /// its final position as an implicit-terminal match (§4.3).
+    pub success: Option<FsmTransitionTarget>,
     pub failure: Option<FsmTransitionTarget>,
     pub span: Span,
 }

@@ -256,7 +256,9 @@ fn collect_refs(decl: &FsmDeclAst) -> RefSet {
                 }
             }
             if let Some(t) = &m.transition {
-                collect_target_conditions(&t.success, &mut refs);
+                if let Some(s) = &t.success {
+                    collect_target_conditions(s, &mut refs);
+                }
                 if let Some(f) = &t.failure {
                     collect_target_conditions(f, &mut refs);
                 }
@@ -330,11 +332,15 @@ pub(crate) fn check_warnings(decl: &FsmDeclAst) -> Vec<FsmDiagnostic> {
     for st in &decl.states {
         for m in &st.matches {
             if let Some(t) = &m.transition {
-                collect_constant_when(&t.success, &mut out);
+                if let Some(s) = &t.success {
+                    collect_constant_when(s, &mut out);
+                }
                 if let Some(f) = &t.failure {
                     collect_constant_when(f, &mut out);
                 }
-                if matches!(t.success, FsmTransitionTarget::Conditional(_)) && t.failure.is_none() {
+                if matches!(&t.success, Some(FsmTransitionTarget::Conditional(_)))
+                    && t.failure.is_none()
+                {
                     out.push(FsmDiagnostic {
                         code: "W701",
                         span: t.span.clone(),
@@ -527,7 +533,9 @@ pub(crate) fn check_transition_targets(decl: &FsmDeclAst) -> Vec<FsmDiagnostic> 
     for st in &decl.states {
         for m in &st.matches {
             if let Some(t) = &m.transition {
-                check_target(&t.success, &labels, &stages, &mut out);
+                if let Some(s) = &t.success {
+                    check_target(s, &labels, &stages, &mut out);
+                }
                 if let Some(f) = &t.failure {
                     check_target(f, &labels, &stages, &mut out);
                 }

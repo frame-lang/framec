@@ -199,6 +199,14 @@
         $Transition {
             $>() {
                 if !self.tokens.as_ref().unwrap().at(&FsmTokenKind::Arrow) {
+                    // A leading `:` (no `->`) is a failure-only clause: the
+                    // success path is the implicit-terminal match (§4.3),
+                    // success_target stays None. Anything else ends the match.
+                    if self.tokens.as_ref().unwrap().at(&FsmTokenKind::Colon) {
+                        self.transition_span = self.tokens.as_ref().unwrap().cur_span();
+                        self.has_arrow = true;
+                        -> $FailureBranch
+                    }
                     self.has_arrow = false;
                     -> $CommitMatch
                 }
@@ -303,7 +311,8 @@
             $>() {
                 let transition = if self.has_arrow {
                     Some(FsmTransitionClauseAst {
-                        success: self.success_target.take().expect("success target set when has_arrow"),
+                        // `None` for a failure-only clause (`: -> $Err`).
+                        success: self.success_target.take(),
                         failure: self.failure_target.take(),
                         span: self.transition_span.clone(),
                     })

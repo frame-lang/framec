@@ -24,11 +24,11 @@
 //! Supports single-match states, match stages (with `.label` captures),
 //! bare-expression returns, action blocks (assignment / `if`-`else`
 //! statements), and static + conditional (`when`) success/failure
-//! transitions over the `bytes`/`char` alphabets. Constructs not yet
-//! handled — multi-match (`|`) states, stage-ref transition targets,
-//! failure-only clauses, embedding actions, declared `actions:`, and the
-//! token alphabet — produce a clear `Unsupported` error rather than a
-//! silent miscompile.
+//! transitions (including failure-only clauses `: -> $Err`) over the
+//! `bytes`/`char` alphabets. Constructs not yet handled — multi-match
+//! (`|`) states, stage-ref transition targets, embedding actions,
+//! declared `actions:`, and the token alphabet — produce a clear
+//! `Unsupported` error rather than a silent miscompile.
 
 use crate::frame_c::compiler::frame_ast::{
     BinaryOp, Expression, FsmDeclAst, FsmStateAst, FsmTransitionTarget, Literal, MatchAst,
@@ -381,12 +381,14 @@ impl<'a> Generator<'a> {
     /// each `when` in order and, if none holds, the failure branch fires
     /// (FSM-TEST-402). No transition halts (terminal, accepted stands).
     fn emit_success(&self, out: &mut String, m: &MatchAst, indent: &str) -> Result<(), String> {
-        match m.transition.as_ref() {
+        match m.transition.as_ref().and_then(|c| c.success.as_ref()) {
+            // No transition, or a failure-only clause: the success path is
+            // the implicit-terminal match — halt (accepted stands).
             None => {
                 writeln!(out, "{}return -1", indent).ok();
                 Ok(())
             }
-            Some(clause) => self.emit_target(out, &clause.success, indent, &|out, indent| {
+            Some(success) => self.emit_target(out, success, indent, &|out, indent| {
                 // No success condition held → the failure branch fires.
                 self.emit_failure(out, m, indent)
             }),
@@ -880,16 +882,14 @@ mod tests {
         assert_eq!(run_mode("0", "2", "t402c").unwrap(), "-1"); // no when matches → failure
     }
 
-    /// Static transitions across multiple states (success + failure
-    /// branches). Uses an explicit success arrow on the intermediate
-    /// state, since failure-only clauses (`/b/ true : -> $error`) are a
-    /// separate parser feature (tracked follow-up).
+    /// FSM-TEST-400 — static transitions across multiple states, success +
+    /// failure branches on both initial and intermediate states. The
+    /// intermediate state uses a failure-only clause (`/b/ true : -> $error`).
     #[test]
-    fn static_transitions_multi_state() {
+    fn fsm_test_400_static_transitions() {
         let src = "@@fsm M(text: bytes) : bool = false { \
                    /a/ -> $next : -> $error \
-                   $next: /b/ -> $ok : -> $error \
-                   $ok: true \
+                   $next: /b/ true : -> $error \
                    $error: false }";
         let Some(ab) = run(src, "ab", "t400a") else {
             return;
@@ -900,6 +900,23 @@ mod tests {
         assert_eq!(ax.accepted, "False");
         assert_eq!(ax.return_value, "False");
         assert_eq!(run(src, "x", "t400c").unwrap().accepted, "False");
+    }
+
+    /// A standalone failure-only clause on an implicit-terminal match:
+    /// `/a/ true : -> $err` accepts on match, routes to `$err` on failure.
+    #[test]
+    fn failure_only_clause() {
+        let src = "@@fsm M(text: bytes) : bool = false { \
+                   /a/ true : -> $err \
+                   $err: false }";
+        let Some(a) = run(src, "a", "tfo_a") else {
+            return;
+        };
+        assert_eq!(a.accepted, "True");
+        assert_eq!(a.return_value, "True");
+        let b = run(src, "b", "tfo_b").unwrap();
+        assert_eq!(b.accepted, "False");
+        assert_eq!(b.return_value, "False");
     }
 
     /// A construct outside the v0.1 backend cut errors clearly rather than

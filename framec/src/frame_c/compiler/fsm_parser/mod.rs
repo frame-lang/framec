@@ -1235,7 +1235,7 @@ mod parser_tests {
             other => panic!("expected stage /a/, got {:?}", other),
         }
         let t = m0.transition.as_ref().expect("state 0 has a transition");
-        match &t.success {
+        match t.success.as_ref().expect("state 0 has a success target") {
             FsmTransitionTarget::Static { state, stage, .. } => {
                 assert_eq!(state, "next");
                 assert!(stage.is_none());
@@ -1328,7 +1328,7 @@ mod parser_tests {
             .transition
             .as_ref()
             .expect("transition present");
-        match &t.success {
+        match t.success.as_ref().expect("success target present") {
             FsmTransitionTarget::Conditional(alts) => {
                 assert_eq!(alts.len(), 2);
                 // alt 0: $zero when self.mode == 0
@@ -1403,7 +1403,7 @@ mod parser_tests {
             .transition
             .as_ref()
             .expect("transition present");
-        match &t.success {
+        match t.success.as_ref().expect("success target present") {
             FsmTransitionTarget::Static { state, stage, .. } => {
                 assert_eq!(state, "main");
                 assert_eq!(stage.as_deref(), Some("start"));

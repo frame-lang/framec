@@ -562,6 +562,16 @@ mod _state_parser_framec {
 
         fn _s_Transition_hdl_frame_enter(&mut self, __e: &StateParserFrameEvent) {
             if !self.tokens.as_ref().unwrap().at(&FsmTokenKind::Arrow) {
+                // A leading `:` (no `->`) is a failure-only clause: the
+                // success path is the implicit-terminal match (§4.3),
+                // success_target stays None. Anything else ends the match.
+                if self.tokens.as_ref().unwrap().at(&FsmTokenKind::Colon) {
+                    self.transition_span = self.tokens.as_ref().unwrap().cur_span();
+                    self.has_arrow = true;
+                    let mut __compartment = self.__prepareEnter("FailureBranch");
+                    self.__transition(__compartment);
+                    return;
+                }
                 self.has_arrow = false;
                 let mut __compartment = self.__prepareEnter("CommitMatch");
                 self.__transition(__compartment);
@@ -681,7 +691,8 @@ mod _state_parser_framec {
         fn _s_CommitMatch_hdl_frame_enter(&mut self, __e: &StateParserFrameEvent) {
             let transition = if self.has_arrow {
                 Some(FsmTransitionClauseAst {
-                    success: self.success_target.take().expect("success target set when has_arrow"),
+                    // `None` for a failure-only clause (`: -> $Err`).
+                    success: self.success_target.take(),
                     failure: self.failure_target.take(),
                     span: self.transition_span.clone(),
                 })
