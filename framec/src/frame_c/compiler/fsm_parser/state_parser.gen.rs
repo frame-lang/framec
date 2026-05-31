@@ -442,6 +442,25 @@ mod _state_parser_framec {
                             span: sp,
                         }));
                     }
+                    // `{ ... }` — an action block element. Delegate to
+                    // ActionBlockParser (token-stream shuttle).
+                    FsmTokenKind::LBrace => {
+                        let mut child = ActionBlockParser::__create();
+                        child.tokens = self.tokens.take();
+                        child.parse();
+                        self.tokens = child.tokens.take();
+                        if let Some(e) = child.error.take() {
+                            self.error = Some(e);
+                            let mut __compartment = self.__prepareEnter("Done");
+                            self.__transition(__compartment);
+                            return;
+                        }
+                        let block = child
+                            .result
+                            .take()
+                            .expect("child ActionBlockParser sets result when no error");
+                        self.elements.push(MatchElement::ActionBlock(block));
+                    }
                     // Anything else — a bare expression. Delegate to the
                     // ExpressionParser child (token-stream shuttle).
                     _ => {

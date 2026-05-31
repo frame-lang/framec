@@ -61,24 +61,25 @@
 //!
 //! # Status
 //!
-//! Working front-end for a growing subset of `@@fsm`, three child
-//! parsers deep:
-//! - [`fsm_lexer.frs`] tokenizes a block ([`lex_fsm_block`]).
-//! - `fsm_decl_parser.frs` (root) → `state_parser.frs` →
-//!   `expression_parser.frs` parse it to an [`FsmDeclAst`]
-//!   ([`parse_fsm_declaration`], [`parse_fsm_block`]).
+//! Working front-end for a growing subset of `@@fsm`. The parser is a
+//! tree of cooperating `@@system` FSMs: `fsm_decl_parser` (root) →
+//! `state_parser` → { `expression_parser`, `action_block_parser` ⇄
+//! `statement_parser` }, with `expression_parser` under the statement
+//! and state parsers. Entry: [`lex_fsm_block`], [`parse_fsm_declaration`],
+//! [`parse_fsm_block`].
 //!
-//! Coverage expands fixture-by-fixture. Parsed today: the header
-//! (name, params, return type, default); multiple states (implicit
-//! start + `$Label:`); stages (`/regex/`, `.label/regex/`); ordered-
-//! choice `|` matches; transition clauses with static, stage-ref, and
-//! conditional `when` targets (`-> ( $A when cond, ... ) : -> $err`);
-//! and full expressions per RFC-0043 §3.3 (literals, probes, vars,
-//! calls, member access, parens, unary, binary ops with precedence +
-//! left-assoc). Not yet: embedding actions, action/domain blocks,
-//! statements (`if`/assignment). The module is wired into
-//! [`crate::frame_c::compiler`] but the framec driver does not yet route
-//! real `@@fsm` blocks here (Task 14).
+//! Coverage expands fixture-by-fixture. Parsed today: the header (name,
+//! params, return type, default); multiple states (implicit start +
+//! `$Label:`); stages (`/regex/`, `.label/regex/`); ordered-choice `|`
+//! matches; transition clauses with static, stage-ref, and conditional
+//! `when` targets; full expressions per RFC-0043 §3.3 (literals, probes,
+//! vars, calls, member access, parens, unary, binary ops with precedence
+//! + left-assoc); and action blocks `{ ... }` with RFC-0043 statements
+//! (assignment, call/expression, `if`/`else`/`else if`). Not yet:
+//! embedding actions (`>{ ... }` etc.), `@@:return =` / `@@:(expr)`
+//! return statements, `actions:` / `domain:` section blocks. The module
+//! is wired into [`crate::frame_c::compiler`] but the framec driver does
+//! not yet route real `@@fsm` blocks here (Task 14).
 //!
 //! # Public API
 //!
@@ -239,6 +240,50 @@ mod expression_fsm {
     include!("expression_parser.gen.rs");
 }
 
+/// The generated `StatementParser` state machine. Source:
+/// `statement_parser.frs`. Mutually recursive with `action_block_fsm`
+/// (an `if` branch is an action block; an action block holds statements).
+mod statement_fsm {
+    #![allow(
+        unreachable_patterns,
+        unused_mut,
+        dead_code,
+        non_snake_case,
+        unused_variables,
+        unused_parens
+    )]
+
+    use super::action_block_fsm::ActionBlockParser;
+    use super::expression_fsm::ExpressionParser;
+    use super::token_stream::{FsmTokenKind, FsmTokenStream};
+    use crate::frame_c::compiler::frame_ast::{
+        BlockAst, Expression, ExpressionAst, IfAst, Span, Statement,
+    };
+    use crate::frame_c::compiler::pipeline_parser::ParseError;
+
+    include!("statement_parser.gen.rs");
+}
+
+/// The generated `ActionBlockParser` state machine. Source:
+/// `action_block_parser.frs`. Parses `{ statement* }` into a `BlockAst`.
+mod action_block_fsm {
+    #![allow(
+        unreachable_patterns,
+        unused_mut,
+        dead_code,
+        non_snake_case,
+        unused_variables,
+        unused_parens
+    )]
+
+    use super::statement_fsm::StatementParser;
+    use super::token_stream::{FsmTokenKind, FsmTokenStream};
+    use crate::frame_c::compiler::frame_ast::{BlockAst, Span, Statement};
+    use crate::frame_c::compiler::pipeline_parser::ParseError;
+
+    include!("action_block_parser.gen.rs");
+}
+
 /// The generated `StateParser` state machine. Source: `state_parser.frs`.
 /// Parses one state declaration (label + match elements + transition).
 mod state_fsm {
@@ -251,6 +296,7 @@ mod state_fsm {
         unused_parens
     )]
 
+    use super::action_block_fsm::ActionBlockParser;
     use super::expression_fsm::ExpressionParser;
     use super::parse_helpers::parse_target;
     use super::token_stream::{FsmTokenKind, FsmTokenStream};
@@ -695,6 +741,122 @@ mod parser_tests {
         assert_eq!(ast.params[1].name, "n");
         assert_eq!(ast.params[1].default.as_deref(), Some("0"));
         assert_eq!(ast.default_expr, "0");
+    }
+
+    /// FSM-TEST-030 shape: an action block with two `;`-separated
+    /// assignments. Proves ActionBlockParser + StatementParser parse the
+    /// block into MatchElement::ActionBlock with Assign statements.
+    #[test]
+    fn action_block_assignments() {
+        use crate::frame_c::compiler::frame_ast::Statement;
+        let ast = parse_fsm_block(
+            b"@@fsm M(text: bytes) : int = 0 { /[0-9]/ { self.count = self.count + 1; self.flag = true } self.count }",
+        )
+        .expect("action-block fixture must parse");
+
+        let elems = &ast.states[0].matches[0].elements;
+        // [ Stage(/[0-9]/), ActionBlock{2 stmts}, BareExpr(self.count) ]
+        assert_eq!(elems.len(), 3);
+        match &elems[1] {
+            MatchElement::ActionBlock(block) => {
+                assert_eq!(block.statements.len(), 2);
+                // Both statements are assignments (Expression::Assign).
+                for s in &block.statements {
+                    match s {
+                        Statement::Expression(e) => {
+                            assert!(matches!(e.expr, Expression::Assign { .. }));
+                        }
+                        other => panic!("expected assignment statement, got {:?}", other),
+                    }
+                }
+            }
+            other => panic!("expected ActionBlock element, got {:?}", other),
+        }
+    }
+
+    /// FSM-TEST-032 shape: an `if/else` statement inside an action block,
+    /// with a relational condition and assignment branches.
+    #[test]
+    fn action_block_if_else() {
+        use crate::frame_c::compiler::frame_ast::{BinaryOp, Statement};
+        let ast = parse_fsm_block(
+            b"@@fsm M(text: bytes) : int = 0 { /[0-9]/ { if to_int(@@:matched) > 5 { self.flag = true } else { self.flag = false } } self.flag }",
+        )
+        .expect("if/else fixture must parse");
+
+        let elems = &ast.states[0].matches[0].elements;
+        match &elems[1] {
+            MatchElement::ActionBlock(block) => {
+                assert_eq!(block.statements.len(), 1);
+                match &block.statements[0] {
+                    Statement::If(if_ast) => {
+                        // condition is `... > 5`
+                        assert!(matches!(
+                            if_ast.condition,
+                            Expression::Binary {
+                                op: BinaryOp::Gt,
+                                ..
+                            }
+                        ));
+                        // then-branch and else-branch are blocks
+                        assert!(matches!(*if_ast.then_branch, Statement::Block(_)));
+                        match &if_ast.else_branch {
+                            Some(b) => assert!(matches!(**b, Statement::Block(_))),
+                            None => panic!("expected an else branch"),
+                        }
+                    }
+                    other => panic!("expected If statement, got {:?}", other),
+                }
+            }
+            other => panic!("expected ActionBlock element, got {:?}", other),
+        }
+    }
+
+    /// FSM-TEST-121 shape: a bare call statement inside an action block.
+    #[test]
+    fn action_block_call_statement() {
+        use crate::frame_c::compiler::frame_ast::Statement;
+        let ast = parse_fsm_block(
+            b"@@fsm M(text: bytes) : int = 0 { /[0-9]/ { increment() } self.count }",
+        )
+        .expect("call-statement fixture must parse");
+        let elems = &ast.states[0].matches[0].elements;
+        match &elems[1] {
+            MatchElement::ActionBlock(block) => {
+                assert_eq!(block.statements.len(), 1);
+                match &block.statements[0] {
+                    Statement::Expression(e) => {
+                        assert!(matches!(e.expr, Expression::Call { .. }));
+                    }
+                    other => panic!("expected call statement, got {:?}", other),
+                }
+            }
+            other => panic!("expected ActionBlock element, got {:?}", other),
+        }
+    }
+
+    /// `else if` chain nests as an If in the else branch.
+    #[test]
+    fn action_block_else_if_chain() {
+        use crate::frame_c::compiler::frame_ast::Statement;
+        let ast = parse_fsm_block(
+            b"@@fsm M(text: bytes) : int = 0 { /x/ { if a { self.x = 1 } else if b { self.x = 2 } else { self.x = 3 } } self.x }",
+        )
+        .expect("else-if fixture must parse");
+        let elems = &ast.states[0].matches[0].elements;
+        match &elems[1] {
+            MatchElement::ActionBlock(block) => match &block.statements[0] {
+                Statement::If(outer) => {
+                    // else branch is itself an If (the `else if`).
+                    match &outer.else_branch {
+                        Some(b) => assert!(matches!(**b, Statement::If(_))),
+                        None => panic!("expected else-if"),
+                    }
+                }
+                other => panic!("expected If, got {:?}", other),
+            },
+            other => panic!("expected ActionBlock, got {:?}", other),
+        }
     }
 
     /// A header missing its return type is a parse error (RFC-0042

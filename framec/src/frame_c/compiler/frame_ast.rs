@@ -334,6 +334,11 @@ pub enum Statement {
     If(IfAst),
     /// Frame loop statement
     Loop(LoopAst),
+    /// A `{ ... }` block of statements. Used by RFC-0043 statement
+    /// bodies (e.g. an `if` branch, an `@@fsm` action block). Carried
+    /// as a single `Statement` so `IfAst`'s `Box<Statement>` branches
+    /// can hold a multi-statement block.
+    Block(BlockAst),
     /// Frame expression (assignments, calls, etc.)
     Expression(ExpressionAst),
     /// Native code chunk within handler body (V4 pipeline: Lexer extracts, Parser stores)
