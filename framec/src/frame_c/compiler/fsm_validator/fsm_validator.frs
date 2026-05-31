@@ -51,6 +51,14 @@
             $>() {
                 let mut found = check_transition_targets(&self.decl);
                 self.diagnostics.append(&mut found);
+                -> $CheckWarnings
+            }
+        }
+
+        $CheckWarnings {
+            $>() {
+                let mut found = check_warnings(&self.decl);
+                self.diagnostics.append(&mut found);
                 -> $Done
             }
         }

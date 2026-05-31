@@ -22,7 +22,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::frame_c::compiler::frame_ast::{
-    FsmDeclAst, FsmTransitionTarget, MatchElement, Span, Type,
+    BlockAst, Expression, FsmDeclAst, FsmTransitionTarget, Literal, MatchElement, Span, Statement,
+    Type,
 };
 
 /// One validation finding. `code` is the RFC-0042 §9 diagnostic code
@@ -150,6 +151,190 @@ fn types_equal(a: &Type, b: &Type) -> bool {
     }
 }
 
+/// Names referenced across an fsm body, partitioned by access form:
+/// `self.<field>` references (domain / auto-promoted params) and bare
+/// identifiers (call targets, initializer-scope param refs). Built by a
+/// full expression walk; reused by the unused-name warnings (and, later,
+/// by E703 read-of-undeclared).
+#[derive(Default)]
+struct RefSet {
+    self_fields: HashSet<String>,
+    bare: HashSet<String>,
+}
+
+fn walk_expr(e: &Expression, refs: &mut RefSet) {
+    match e {
+        Expression::Var(name) => {
+            // Skip `@@:`-probes and `$state.stage` refs — neither names a
+            // domain field or parameter.
+            if !name.starts_with("@@:") && !name.starts_with('$') {
+                refs.bare.insert(name.clone());
+            }
+        }
+        Expression::Member { object, field } => {
+            if let Expression::Var(o) = object.as_ref() {
+                if o == "self" {
+                    refs.self_fields.insert(field.clone());
+                }
+            }
+            walk_expr(object, refs);
+        }
+        Expression::Binary { left, right, .. } => {
+            walk_expr(left, refs);
+            walk_expr(right, refs);
+        }
+        Expression::Unary { expr, .. } => walk_expr(expr, refs),
+        Expression::Call { func, args } => {
+            refs.bare.insert(func.clone());
+            for a in args {
+                walk_expr(a, refs);
+            }
+        }
+        Expression::Assign { target, value } => {
+            walk_expr(target, refs);
+            walk_expr(value, refs);
+        }
+        Expression::Index { object, index } => {
+            walk_expr(object, refs);
+            walk_expr(index, refs);
+        }
+        Expression::Literal(_) | Expression::NativeExpr(_) => {}
+    }
+}
+
+fn walk_block(b: &BlockAst, refs: &mut RefSet) {
+    for s in &b.statements {
+        walk_stmt(s, refs);
+    }
+}
+
+fn walk_stmt(s: &Statement, refs: &mut RefSet) {
+    match s {
+        Statement::Expression(e) => walk_expr(&e.expr, refs),
+        Statement::If(if_ast) => {
+            walk_expr(&if_ast.condition, refs);
+            walk_stmt(&if_ast.then_branch, refs);
+            if let Some(eb) = &if_ast.else_branch {
+                walk_stmt(eb, refs);
+            }
+        }
+        Statement::Block(b) => walk_block(b, refs),
+        _ => {}
+    }
+}
+
+/// Walk the whole declaration, collecting every referenced name.
+fn collect_refs(decl: &FsmDeclAst) -> RefSet {
+    let mut refs = RefSet::default();
+    for st in &decl.states {
+        for m in &st.matches {
+            for el in &m.elements {
+                match el {
+                    MatchElement::BareExpression { expr, .. } => walk_expr(expr, &mut refs),
+                    MatchElement::ActionBlock(b) => walk_block(b, &mut refs),
+                    MatchElement::Stage(s) => {
+                        for ea in &s.embedding_actions {
+                            walk_block(&ea.body, &mut refs);
+                        }
+                    }
+                }
+            }
+            if let Some(t) = &m.transition {
+                collect_target_conditions(&t.success, &mut refs);
+                if let Some(f) = &t.failure {
+                    collect_target_conditions(f, &mut refs);
+                }
+            }
+        }
+    }
+    if let Some(actions) = &decl.actions {
+        for a in &actions.actions {
+            walk_block(&a.body, &mut refs);
+        }
+    }
+    if let Some(domain) = &decl.domain {
+        for v in &domain.vars {
+            walk_expr(&v.default, &mut refs);
+        }
+    }
+    refs
+}
+
+fn collect_target_conditions(t: &FsmTransitionTarget, refs: &mut RefSet) {
+    if let FsmTransitionTarget::Conditional(alts) = t {
+        for alt in alts {
+            walk_expr(&alt.condition, refs);
+        }
+    }
+}
+
+/// Warning-level checks:
+/// - W702: an unused parameter (auto-promoted but never referenced). The
+///   input parameter (first positional) is exempt — it's implicitly the
+///   recognizer's input.
+/// - W703: an unused explicit `domain:` field.
+/// - W705: a `when` guard whose condition is the constant `true`.
+pub(crate) fn check_warnings(decl: &FsmDeclAst) -> Vec<FsmDiagnostic> {
+    let mut out = Vec::new();
+    let refs = collect_refs(decl);
+
+    let used = |name: &str| refs.self_fields.contains(name) || refs.bare.contains(name);
+
+    // W702 — unused parameters (skip the input parameter).
+    for p in decl.params.iter().skip(1) {
+        if !used(&p.name) {
+            out.push(FsmDiagnostic {
+                code: "W702",
+                span: p.span.clone(),
+                message: format!("parameter `{}` is never referenced", p.name),
+            });
+        }
+    }
+
+    // W703 — unused domain fields (accessed via `self.<name>`).
+    if let Some(domain) = &decl.domain {
+        for v in &domain.vars {
+            if !refs.self_fields.contains(&v.name) {
+                out.push(FsmDiagnostic {
+                    code: "W703",
+                    span: v.span.clone(),
+                    message: format!("domain field `{}` is never referenced", v.name),
+                });
+            }
+        }
+    }
+
+    // W705 — constant-true `when` guards.
+    for st in &decl.states {
+        for m in &st.matches {
+            if let Some(t) = &m.transition {
+                collect_constant_when(&t.success, &mut out);
+                if let Some(f) = &t.failure {
+                    collect_constant_when(f, &mut out);
+                }
+            }
+        }
+    }
+
+    out
+}
+
+fn collect_constant_when(t: &FsmTransitionTarget, out: &mut Vec<FsmDiagnostic>) {
+    if let FsmTransitionTarget::Conditional(alts) = t {
+        for alt in alts {
+            if matches!(alt.condition, Expression::Literal(Literal::Bool(true))) {
+                out.push(FsmDiagnostic {
+                    code: "W705",
+                    span: alt.span.clone(),
+                    message:
+                        "constant-true `when` guard; use an unguarded target or the failure branch"
+                            .to_string(),
+                });
+            }
+        }
+    }
+}
+
 /// E731 / E732 — every transition target must name a declared state
 /// (E731), and a stage-ref target `$State.stage` must name a stage that
 /// exists in that state (E732).
@@ -244,7 +429,10 @@ mod validator_fsm {
         unused_parens
     )]
 
-    use super::{check_input_param_type, check_structure, check_transition_targets, FsmDiagnostic};
+    use super::{
+        check_input_param_type, check_structure, check_transition_targets, check_warnings,
+        FsmDiagnostic,
+    };
     use crate::frame_c::compiler::frame_ast::FsmDeclAst;
 
     include!("fsm_validator.gen.rs");
@@ -341,5 +529,56 @@ mod tests {
             b"@@fsm M(text: bytes, n: int = 0) : int = 0 { /[0-9]/ self.n  domain: n: int = 5 }",
         );
         assert!(!d.iter().any(|x| x.code == "E707"), "got {:?}", d);
+    }
+
+    /// W702 — an unused (non-input) parameter.
+    #[test]
+    fn w702_unused_parameter() {
+        let d = diags(b"@@fsm M(text: bytes, unused: int = 0) : bool = false { /a/ true }");
+        assert!(d.iter().any(|x| x.code == "W702"), "got {:?}", d);
+    }
+
+    /// A referenced parameter (via self.<name>) is not flagged W702; nor is
+    /// the input parameter ever flagged (it's the implicit input).
+    #[test]
+    fn w702_referenced_and_input_ok() {
+        let d = diags(
+            b"@@fsm M(text: bytes, threshold: int = 0) : bool = false { /[0-9]+/ to_int(@@:matched) > self.threshold }",
+        );
+        assert!(!d.iter().any(|x| x.code == "W702"), "got {:?}", d);
+    }
+
+    /// W703 — an unused domain field.
+    #[test]
+    fn w703_unused_domain_field() {
+        let d = diags(b"@@fsm M(text: bytes) : bool = false { /a/ true  domain: unused: int = 0 }");
+        assert!(d.iter().any(|x| x.code == "W703"), "got {:?}", d);
+    }
+
+    /// A referenced domain field is not flagged W703.
+    #[test]
+    fn w703_referenced_domain_ok() {
+        let d = diags(
+            b"@@fsm M(text: bytes) : int = 0 { /[0-9]/ { self.count = self.count + 1 } self.count  domain: count: int = 0 }",
+        );
+        assert!(!d.iter().any(|x| x.code == "W703"), "got {:?}", d);
+    }
+
+    /// W705 — a constant-true `when` guard.
+    #[test]
+    fn w705_constant_true_when() {
+        let d = diags(
+            b"@@fsm M(text: bytes) : int = 0 { /[01]/ -> ( $a when true ) : -> $err  $a: 1  $err: -1 }",
+        );
+        assert!(d.iter().any(|x| x.code == "W705"), "got {:?}", d);
+    }
+
+    /// A real `when` condition is not flagged W705.
+    #[test]
+    fn w705_real_condition_ok() {
+        let d = diags(
+            b"@@fsm M(text: bytes, mode: int) : int = 0 { /[01]/ -> ( $a when self.mode == 0 ) : -> $err  $a: 1  $err: -1 }",
+        );
+        assert!(!d.iter().any(|x| x.code == "W705"), "got {:?}", d);
     }
 }
