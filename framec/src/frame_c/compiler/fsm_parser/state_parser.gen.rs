@@ -392,17 +392,16 @@ mod _state_parser_framec {
                 let next = self.tokens.as_ref().unwrap().peek_kind();
                 match next {
                     // Boundaries — stop collecting, move to transition.
+                    // KwActions/KwDomain end the state list (a section
+                    // follows); the next StateLabel begins another state.
                     FsmTokenKind::Arrow
                     | FsmTokenKind::Colon
                     | FsmTokenKind::Pipe
                     | FsmTokenKind::RBrace
-                    | FsmTokenKind::Eof => {
-                        let mut __compartment = self.__prepareEnter("Transition");
-                        self.__transition(__compartment);
-                        return;
-                    }
-                    // Next state begins — this state is done, no transition.
-                    FsmTokenKind::StateLabel(_) => {
+                    | FsmTokenKind::Eof
+                    | FsmTokenKind::KwActions
+                    | FsmTokenKind::KwDomain
+                    | FsmTokenKind::StateLabel(_) => {
                         let mut __compartment = self.__prepareEnter("Transition");
                         self.__transition(__compartment);
                         return;

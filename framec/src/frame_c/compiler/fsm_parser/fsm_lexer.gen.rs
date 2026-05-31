@@ -595,6 +595,39 @@ mod _fsm_lexer_framec {
                     continue;
                 }
             
+                // Section headers `actions:` / `domain:` terminate the
+                // state list. Detected with a lookahead so a non-section
+                // identifier still falls through to the $ExprLevel route.
+                if b.is_ascii_alphabetic() || b == b'_' {
+                    let id_start = pos;
+                    let mut p = pos;
+                    while p < n && (src[p].is_ascii_alphanumeric() || src[p] == b'_') {
+                        p += 1;
+                    }
+                    let word = std::str::from_utf8(&src[id_start..p]).unwrap_or("");
+                    let mut q = p;
+                    while q < n && (src[q] == b' ' || src[q] == b'\t') {
+                        q += 1;
+                    }
+                    let header = match word {
+                        "actions" => Some(FsmTokenKind::KwActions),
+                        "domain" => Some(FsmTokenKind::KwDomain),
+                        _ => None,
+                    };
+                    if let Some(kind) = header {
+                        if q < n && src[q] == b':' {
+                            self.tokens.push(FsmToken {
+                                kind,
+                                span: Span::new(id_start, p),
+                            });
+                            pos = q + 1; // consume the `:`
+                            continue;
+                        }
+                    }
+                    // Not a section header — fall through to the bare-
+                    // expression route below (without consuming the ident).
+                }
+            
                 // `{` opens an action block (a match element). Emit the
                 // brace and enter $ExprLevel in block mode (paren_depth 1,
                 // in_block true): it lexes statement tokens until the
@@ -660,6 +693,31 @@ mod _fsm_lexer_framec {
                         let mut __compartment = self.__prepareEnter("ElementLevel");
                         self.__transition(__compartment);
                         return;
+                    }
+                    // A section header (`actions:` / `domain:`) at depth 0
+                    // ends the current bare expression — hand back to
+                    // $ElementLevel so the header is detected there. (A
+                    // depth-0 `ident :` is never valid expression syntax in
+                    // RFC-0043, so this only fires for real section headers.)
+                    if b.is_ascii_alphabetic() || b == b'_' {
+                        let id_start = pos;
+                        let mut p = pos;
+                        while p < n && (src[p].is_ascii_alphanumeric() || src[p] == b'_') {
+                            p += 1;
+                        }
+                        let word = std::str::from_utf8(&src[id_start..p]).unwrap_or("");
+                        if word == "actions" || word == "domain" {
+                            let mut q = p;
+                            while q < n && (src[q] == b' ' || src[q] == b'\t') {
+                                q += 1;
+                            }
+                            if q < n && src[q] == b':' {
+                                self.pos = pos;
+                                let mut __compartment = self.__prepareEnter("ElementLevel");
+                                self.__transition(__compartment);
+                                return;
+                            }
+                        }
                     }
                 }
             

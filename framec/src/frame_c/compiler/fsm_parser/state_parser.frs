@@ -53,15 +53,16 @@
                     let next = self.tokens.as_ref().unwrap().peek_kind();
                     match next {
                         // Boundaries — stop collecting, move to transition.
+                        // KwActions/KwDomain end the state list (a section
+                        // follows); the next StateLabel begins another state.
                         FsmTokenKind::Arrow
                         | FsmTokenKind::Colon
                         | FsmTokenKind::Pipe
                         | FsmTokenKind::RBrace
-                        | FsmTokenKind::Eof => {
-                            -> $Transition
-                        }
-                        // Next state begins — this state is done, no transition.
-                        FsmTokenKind::StateLabel(_) => {
+                        | FsmTokenKind::Eof
+                        | FsmTokenKind::KwActions
+                        | FsmTokenKind::KwDomain
+                        | FsmTokenKind::StateLabel(_) => {
                             -> $Transition
                         }
                         // `.label /regex/` — a labeled stage.

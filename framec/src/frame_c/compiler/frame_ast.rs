@@ -1190,13 +1190,13 @@ pub struct FsmDomainBlock {
 }
 
 /// One declared `domain:` field. Mandatory typed declaration with a
-/// default initializer.
+/// default initializer (RFC-0042 §3.8).
 #[derive(Debug, Clone)]
 pub struct FsmDomainVar {
     pub name: String,
     pub var_type: Type,
-    /// Default expression, stored as a raw string.
-    pub default: String,
+    /// Default initializer — a parsed expression.
+    pub default: Expression,
     pub span: Span,
 }
 

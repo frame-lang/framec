@@ -74,11 +74,12 @@
 //! matches; transition clauses with static, stage-ref, and conditional
 //! `when` targets; full expressions per RFC-0043 §3.3 (literals, probes,
 //! vars, calls, member access, parens, unary, binary ops with precedence
-//! + left-assoc); and action blocks `{ ... }` with RFC-0043 statements
-//! (assignment, call/expression, `if`/`else`/`else if`). Not yet:
-//! embedding actions (`>{ ... }` etc.), `@@:return =` / `@@:(expr)`
-//! return statements, `actions:` / `domain:` section blocks. The module
-//! is wired into [`crate::frame_c::compiler`] but the framec driver does
+//! + left-assoc); action blocks `{ ... }` with RFC-0043 statements
+//! (assignment, call/expression, `if`/`else`/`else if`); and the
+//! `domain:` section (typed fields with parsed default expressions).
+//! Not yet: embedding actions (`>{ ... }` etc.), `@@:return =` /
+//! `@@:(expr)` return statements, the `actions:` section. The module is
+//! wired into [`crate::frame_c::compiler`] but the framec driver does
 //! not yet route real `@@fsm` blocks here (Task 14).
 //!
 //! # Public API
@@ -284,6 +285,26 @@ mod action_block_fsm {
     include!("action_block_parser.gen.rs");
 }
 
+/// The generated `DomainBlockParser` state machine. Source:
+/// `domain_block_parser.frs`. Parses the `domain:` section.
+mod domain_block_fsm {
+    #![allow(
+        unreachable_patterns,
+        unused_mut,
+        dead_code,
+        non_snake_case,
+        unused_variables,
+        unused_parens
+    )]
+
+    use super::expression_fsm::ExpressionParser;
+    use super::token_stream::{FsmTokenKind, FsmTokenStream};
+    use crate::frame_c::compiler::frame_ast::{FsmDomainBlock, FsmDomainVar, Span, Type};
+    use crate::frame_c::compiler::pipeline_parser::ParseError;
+
+    include!("domain_block_parser.gen.rs");
+}
+
 /// The generated `StateParser` state machine. Source: `state_parser.frs`.
 /// Parses one state declaration (label + match elements + transition).
 mod state_fsm {
@@ -320,10 +341,13 @@ mod fsm_decl_parser {
         unused_parens
     )]
 
+    use super::domain_block_fsm::DomainBlockParser;
     use super::parse_helpers::token_text;
     use super::state_fsm::StateParser;
     use super::token_stream::{FsmTokenKind, FsmTokenStream};
-    use crate::frame_c::compiler::frame_ast::{FsmDeclAst, FsmParameter, FsmStateAst, Span, Type};
+    use crate::frame_c::compiler::frame_ast::{
+        FsmDeclAst, FsmDomainBlock, FsmParameter, FsmStateAst, Span, Type,
+    };
     use crate::frame_c::compiler::pipeline_parser::ParseError;
 
     include!("fsm_decl_parser.gen.rs");
@@ -857,6 +881,69 @@ mod parser_tests {
             },
             other => panic!("expected ActionBlock, got {:?}", other),
         }
+    }
+
+    /// `domain:` section with two fields, parsed into FsmDomainBlock with
+    /// parsed default expressions (RFC-0042 §3.8).
+    #[test]
+    fn domain_section() {
+        use crate::frame_c::compiler::frame_ast::Type;
+        let ast = parse_fsm_block(
+            b"@@fsm M(text: bytes) : int = 0 { /[0-9]/ self.count  domain: count: int = 0  flag: bool = false }",
+        )
+        .expect("domain fixture must parse");
+
+        let domain = ast.domain.as_ref().expect("domain block present");
+        assert_eq!(domain.vars.len(), 2);
+
+        assert_eq!(domain.vars[0].name, "count");
+        assert!(matches!(domain.vars[0].var_type, Type::Custom(ref t) if t == "int"));
+        assert!(matches!(
+            domain.vars[0].default,
+            Expression::Literal(Literal::Int(0))
+        ));
+
+        assert_eq!(domain.vars[1].name, "flag");
+        assert!(matches!(domain.vars[1].var_type, Type::Custom(ref t) if t == "bool"));
+        assert!(matches!(
+            domain.vars[1].default,
+            Expression::Literal(Literal::Bool(false))
+        ));
+    }
+
+    /// A domain default may itself be an expression (FSM-TEST-011 shape:
+    /// `initial: int = initial * 2`).
+    #[test]
+    fn domain_default_expression() {
+        use crate::frame_c::compiler::frame_ast::BinaryOp;
+        let ast = parse_fsm_block(
+            b"@@fsm M(text: bytes, initial: int = 0) : int = 0 { /[0-9]/ self.count  domain: count: int = initial * 2 }",
+        )
+        .expect("must parse");
+        let d = ast.domain.as_ref().unwrap();
+        assert_eq!(d.vars.len(), 1);
+        assert!(matches!(
+            d.vars[0].default,
+            Expression::Binary {
+                op: BinaryOp::Mul,
+                ..
+            }
+        ));
+    }
+
+    /// FSM-TEST-030 end to end: action block (assignments) + bare expr +
+    /// domain section — the full fixture parses into one coherent AST.
+    #[test]
+    fn fsm_test_030_full() {
+        let ast = parse_fsm_block(
+            b"@@fsm M(text: bytes) : int = 0 { /[0-9]/ { self.count = self.count + 1; self.flag = true } self.count  domain: count: int = 0  flag: bool = false }",
+        )
+        .expect("FSM-TEST-030 must parse");
+        // Implicit start state: stage, action block (2 stmts), bare expr.
+        assert_eq!(ast.states.len(), 1);
+        assert_eq!(ast.states[0].matches[0].elements.len(), 3);
+        // Domain: count, flag.
+        assert_eq!(ast.domain.as_ref().unwrap().vars.len(), 2);
     }
 
     /// A header missing its return type is a parse error (RFC-0042
