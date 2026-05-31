@@ -412,6 +412,27 @@ mod _fsm_lexer_framec {
                     continue;
                 }
             
+                // String literal (header default exprs like `= ""`).
+                if b == b'"' {
+                    let (content, end, ok) = scan_string(src, pos);
+                    if !ok {
+                        self.error = Some(ParseError {
+                            message: "unterminated string literal in @@fsm header".to_string(),
+                            span: Span::new(pos, end),
+                        });
+                        self.pos = end;
+                        let mut __compartment = self.__prepareEnter("Done");
+                        self.__transition(__compartment);
+                        return;
+                    }
+                    self.tokens.push(FsmToken {
+                        kind: FsmTokenKind::StringLit(content),
+                        span: Span::new(pos, end),
+                    });
+                    pos = end;
+                    continue;
+                }
+            
                 // Unexpected byte in header.
                 self.error = Some(ParseError {
                     message: format!("unexpected byte '{}' in @@fsm header", b as char),
@@ -491,6 +512,87 @@ mod _fsm_lexer_framec {
                     continue;
                 }
             
+                // `->` transition arrow. A lone `-` (not followed by `>`)
+                // begins a bare expression (unary minus) — fall through to
+                // the $ExprLevel route below.
+                if b == b'-' && pos + 1 < n && src[pos + 1] == b'>' {
+                    self.tokens.push(FsmToken {
+                        kind: FsmTokenKind::Arrow,
+                        span: Span::new(pos, pos + 2),
+                    });
+                    pos += 2;
+                    continue;
+                }
+            
+                // `:` failure-branch marker (the `:` in `-> $a : -> $b`)
+                // or a state-label colon (handled with `$` below).
+                if b == b':' {
+                    push1(&mut self.tokens, FsmTokenKind::Colon, pos);
+                    pos += 1;
+                    continue;
+                }
+            
+                // `$Name` state reference / label / `$State.stage` ref.
+                if b == b'$' {
+                    let start = pos;
+                    pos += 1; // `$`
+                    let name_start = pos;
+                    while pos < n && (src[pos].is_ascii_alphanumeric() || src[pos] == b'_') {
+                        pos += 1;
+                    }
+                    let name = std::str::from_utf8(&src[name_start..pos]).unwrap_or("").to_string();
+            
+                    // `$State.stage` — a stage-capture / stage-target ref.
+                    if pos < n && src[pos] == b'.' {
+                        pos += 1; // `.`
+                        let stage_start = pos;
+                        while pos < n && (src[pos].is_ascii_alphanumeric() || src[pos] == b'_') {
+                            pos += 1;
+                        }
+                        let stage = std::str::from_utf8(&src[stage_start..pos]).unwrap_or("").to_string();
+                        self.tokens.push(FsmToken {
+                            kind: FsmTokenKind::StageRef { state: name, stage },
+                            span: Span::new(start, pos),
+                        });
+                        continue;
+                    }
+            
+                    // `$Name:` — a state-label declaration (consume the `:`).
+                    if pos < n && src[pos] == b':' {
+                        self.tokens.push(FsmToken {
+                            kind: FsmTokenKind::StateLabel(name),
+                            span: Span::new(start, pos + 1),
+                        });
+                        pos += 1; // `:`
+                        continue;
+                    }
+            
+                    // `$Name` — a transition target / state reference.
+                    self.tokens.push(FsmToken {
+                        kind: FsmTokenKind::StateRef(name),
+                        span: Span::new(start, pos),
+                    });
+                    continue;
+                }
+            
+                // `.name` stage label preceding a `/regex/`. (At element
+                // level a leading `.` is always a stage label; member
+                // access only occurs inside expressions.)
+                if b == b'.' && pos + 1 < n && (src[pos + 1].is_ascii_alphabetic() || src[pos + 1] == b'_') {
+                    let start = pos;
+                    pos += 1; // `.`
+                    let name_start = pos;
+                    while pos < n && (src[pos].is_ascii_alphanumeric() || src[pos] == b'_') {
+                        pos += 1;
+                    }
+                    let name = std::str::from_utf8(&src[name_start..pos]).unwrap_or("").to_string();
+                    self.tokens.push(FsmToken {
+                        kind: FsmTokenKind::StageLabel(name),
+                        span: Span::new(start, pos),
+                    });
+                    continue;
+                }
+            
                 // Anything else begins a bare expression / action call —
                 // hand off to $ExprLevel WITHOUT consuming. $ExprLevel
                 // lexes expression tokens (where `/` is division) until a
@@ -522,12 +624,25 @@ mod _fsm_lexer_framec {
                 let b = src[pos];
             
                 // Terminators at paren-depth 0 hand control back to
-                // $ElementLevel without consuming.
-                if self.paren_depth == 0 && (b == b'}' || b == b'|') {
-                    self.pos = pos;
-                    let mut __compartment = self.__prepareEnter("ElementLevel");
-                    self.__transition(__compartment);
-                    return;
+                // $ElementLevel without consuming. Besides the obvious
+                // block/match terminators (`}` `|`), an expression also
+                // ends where an element-level construct begins: a state
+                // label/ref (`$`), a failure-branch marker (`:`), or a
+                // transition arrow (`->`). (`@@:` probes are matched
+                // before this check, so a bare `:` here is never a probe.)
+                if self.paren_depth == 0 {
+                    if b == b'}' || b == b'|' || b == b'$' || b == b':' {
+                        self.pos = pos;
+                        let mut __compartment = self.__prepareEnter("ElementLevel");
+                        self.__transition(__compartment);
+                        return;
+                    }
+                    if b == b'-' && pos + 1 < n && src[pos + 1] == b'>' {
+                        self.pos = pos;
+                        let mut __compartment = self.__prepareEnter("ElementLevel");
+                        self.__transition(__compartment);
+                        return;
+                    }
                 }
             
                 // `@@:` context probe — e.g. @@:matched, @@:cursor, @@:return.
@@ -577,6 +692,27 @@ mod _fsm_lexer_framec {
                         kind: FsmTokenKind::IntLit(val),
                         span: Span::new(start, pos),
                     });
+                    continue;
+                }
+            
+                // String literal.
+                if b == b'"' {
+                    let (content, end, ok) = scan_string(src, pos);
+                    if !ok {
+                        self.error = Some(ParseError {
+                            message: "unterminated string literal".to_string(),
+                            span: Span::new(pos, end),
+                        });
+                        self.pos = end;
+                        let mut __compartment = self.__prepareEnter("Done");
+                        self.__transition(__compartment);
+                        return;
+                    }
+                    self.tokens.push(FsmToken {
+                        kind: FsmTokenKind::StringLit(content),
+                        span: Span::new(pos, end),
+                    });
+                    pos = end;
                     continue;
                 }
             

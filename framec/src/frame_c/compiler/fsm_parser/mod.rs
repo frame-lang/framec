@@ -106,7 +106,7 @@ mod fsm_lexer {
         unused_parens
     )]
 
-    use super::lex_helpers::{push1, skip_ws_comments};
+    use super::lex_helpers::{push1, scan_string, skip_ws_comments};
     use super::{FsmToken, FsmTokenKind};
     use crate::frame_c::compiler::frame_ast::Span;
     use crate::frame_c::compiler::pipeline_parser::ParseError;
@@ -127,6 +127,31 @@ mod lex_helpers {
             kind,
             span: Span::new(pos, pos + 1),
         });
+    }
+
+    /// Scan a `"..."` string literal starting at the opening quote `open`.
+    /// Returns (content-between-quotes, position-after-closing-quote,
+    /// terminated). `\"` and other backslash escapes are skipped during
+    /// the scan; the content is returned verbatim (unescaping happens
+    /// later if needed).
+    pub(super) fn scan_string(src: &[u8], open: usize) -> (String, usize, bool) {
+        let n = src.len();
+        let mut pos = open + 1; // past the opening quote
+        let content_start = pos;
+        while pos < n && src[pos] != b'"' {
+            if src[pos] == b'\\' && pos + 1 < n {
+                pos += 2;
+            } else {
+                pos += 1;
+            }
+        }
+        if pos >= n {
+            return (String::new(), pos, false); // unterminated
+        }
+        let content = std::str::from_utf8(&src[content_start..pos])
+            .unwrap_or("")
+            .to_string();
+        (content, pos + 1, true) // past the closing quote
     }
 
     /// Advance past ASCII whitespace and Frame-level comments (`//` to
@@ -410,6 +435,68 @@ mod lexer_tests {
     fn unterminated_regex_errors() {
         let err = lex_fsm_block(b"@@fsm M(text: bytes) : bool = false { /a true }");
         assert!(err.is_err(), "unterminated regex must surface an error");
+    }
+
+    /// Multi-state transition fixture (FSM-TEST-400 shape): arrows, state
+    /// refs, state labels, and the failure-branch colon. Exercises the
+    /// element-level state/transition tokens and the bare-expression /
+    /// element-level handoff (`true` / `false` bordered by `$labels`).
+    #[test]
+    fn states_and_transitions() {
+        let got = kinds(
+            "@@fsm M(text: bytes) : bool = false { /a/ -> $next : -> $error  $next: /b/ true  $error: false }",
+        );
+        // Body tokens only (skip the header prefix the smoke test pins).
+        let body: Vec<_> = got
+            .iter()
+            .skip_while(|k| !matches!(k, LBrace))
+            .cloned()
+            .collect();
+        assert_eq!(
+            body,
+            vec![
+                LBrace,
+                RegexLiteral("a".to_string()),
+                Arrow,
+                StateRef("next".to_string()),
+                Colon,
+                Arrow,
+                StateRef("error".to_string()),
+                StateLabel("next".to_string()),
+                RegexLiteral("b".to_string()),
+                KwTrue,
+                StateLabel("error".to_string()),
+                KwFalse,
+                RBrace,
+                Eof,
+            ]
+        );
+    }
+
+    /// Stage label `.n` and stage-capture ref `$state.n` (FSM-TEST-007 shape).
+    #[test]
+    fn stage_label_and_capture_ref() {
+        let got = kinds("@@fsm M(text: bytes) : bytes = \"\" { $main: .x/[0-9]+/ $main.x }");
+        let body: Vec<_> = got
+            .iter()
+            .skip_while(|k| !matches!(k, LBrace))
+            .cloned()
+            .collect();
+        assert_eq!(
+            body,
+            vec![
+                LBrace,
+                StateLabel("main".to_string()),
+                StageLabel("x".to_string()),
+                RegexLiteral("[0-9]+".to_string()),
+                StageRef {
+                    state: "main".to_string(),
+                    stage: "x".to_string()
+                },
+                RBrace,
+                Eof,
+            ]
+        );
     }
 
     /// FSM-TEST-004 body: a regex stage followed by a call bare-expression
