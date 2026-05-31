@@ -78,10 +78,12 @@
 //! (assignment, call/expression, `if`/`else`/`else if`); and both body
 //! sections — `actions:` (declared helpers with typed params, optional
 //! return type, and a body) and `domain:` (typed fields with parsed
-//! default expressions). Not yet: embedding actions (`>{ ... }` etc.)
-//! and `@@:return =` / `@@:(expr)` return statements. The module is
-//! wired into [`crate::frame_c::compiler`] but the framec driver does
-//! not yet route real `@@fsm` blocks here (Task 14).
+//! default expressions); and embedding actions on stages (`>{`, `@{`,
+//! `${`, `%{`, `@eof{`, each with an action-block body). The only
+//! remaining grammar gap is the `@@:return =` / `@@:(expr)` return
+//! statement forms. The module is wired into
+//! [`crate::frame_c::compiler`] but the framec driver does not yet route
+//! real `@@fsm` blocks here (Task 14).
 //!
 //! # Public API
 //!
@@ -346,8 +348,8 @@ mod state_fsm {
     use super::parse_helpers::parse_target;
     use super::token_stream::{FsmTokenKind, FsmTokenStream};
     use crate::frame_c::compiler::frame_ast::{
-        Expression, FsmCondAlt, FsmStateAst, FsmTransitionClauseAst, FsmTransitionTarget, MatchAst,
-        MatchElement, Span, StageAst,
+        EmbeddingActionAst, EmbeddingOp, Expression, FsmCondAlt, FsmStateAst,
+        FsmTransitionClauseAst, FsmTransitionTarget, MatchAst, MatchElement, Span, StageAst,
     };
     use crate::frame_c::compiler::pipeline_parser::ParseError;
 
@@ -647,6 +649,34 @@ mod lexer_tests {
                 Eof,
             ]
         );
+    }
+
+    /// Embedding-action sigils on a stage (RFC-0042 §3.5.5). Each sigil is
+    /// its own token; the following `{` opens a block (LBrace). Longest-
+    /// match: `@eof{` is EmbedEof, not EmbedAccept.
+    #[test]
+    fn embedding_action_sigils() {
+        let got = kinds(
+            "@@fsm M(text: bytes) : int = 0 { /[0-9]+/ >{ self.a = 1 } @{ self.b = 2 } ${ self.c = 3 } %{ self.d = 4 } @eof{ self.e = 5 } self.a }",
+        );
+        // Pull out just the embedding-op tokens in order.
+        let ops: Vec<_> = got
+            .iter()
+            .filter(|k| {
+                matches!(
+                    k,
+                    EmbedStart | EmbedAccept | EmbedEvery | EmbedLeave | EmbedEof
+                )
+            })
+            .cloned()
+            .collect();
+        assert_eq!(
+            ops,
+            vec![EmbedStart, EmbedAccept, EmbedEvery, EmbedLeave, EmbedEof]
+        );
+        // Each sigil is followed by an LBrace; plus the fsm body's own `{`.
+        let n_lbrace = got.iter().filter(|k| matches!(k, LBrace)).count();
+        assert_eq!(n_lbrace, 6); // 1 body brace + 5 embed-block braces
     }
 
     /// Action block as a match element, followed by another stage — proves
@@ -1013,6 +1043,58 @@ mod parser_tests {
 
         let domain = ast.domain.as_ref().expect("domain present");
         assert_eq!(domain.vars.len(), 2);
+    }
+
+    /// Embedding actions attach to a stage (RFC-0042 §3.5.5). All five
+    /// operator kinds on one stage, each with an assignment body.
+    #[test]
+    fn embedding_actions_on_stage() {
+        use crate::frame_c::compiler::frame_ast::EmbeddingOp;
+        let ast = parse_fsm_block(
+            b"@@fsm M(text: bytes) : int = 0 { /[0-9]+/ >{ self.a = 1 } @{ self.b = 2 } ${ self.c = 3 } %{ self.d = 4 } @eof{ self.e = 5 } self.a  domain: a: int = 0  b: int = 0  c: int = 0  d: int = 0  e: int = 0 }",
+        )
+        .expect("embedding-actions fixture must parse");
+
+        let elems = &ast.states[0].matches[0].elements;
+        // First element is the stage carrying all five embedding actions.
+        match &elems[0] {
+            MatchElement::Stage(s) => {
+                assert_eq!(s.regex, "[0-9]+");
+                let ops: Vec<EmbeddingOp> = s.embedding_actions.iter().map(|e| e.op).collect();
+                assert_eq!(
+                    ops,
+                    vec![
+                        EmbeddingOp::Start,
+                        EmbeddingOp::Accept,
+                        EmbeddingOp::EveryTransition,
+                        EmbeddingOp::LeaveAccept,
+                        EmbeddingOp::Eof,
+                    ]
+                );
+                // Each embedding body is a one-statement block.
+                for e in &s.embedding_actions {
+                    assert_eq!(e.body.statements.len(), 1);
+                }
+            }
+            other => panic!("expected Stage with embedding actions, got {:?}", other),
+        }
+    }
+
+    /// A single embedding action that calls a declared action (the
+    /// composability point of §3.5.5 — embedding bodies can call actions).
+    #[test]
+    fn embedding_action_calls_action() {
+        let ast = parse_fsm_block(
+            b"@@fsm M(text: bytes) : int = 0 { /[0-9]+/ ${ tally() } self.count  actions: tally() { self.count = self.count + 1 }  domain: count: int = 0 }",
+        )
+        .expect("must parse");
+        match &ast.states[0].matches[0].elements[0] {
+            MatchElement::Stage(s) => {
+                assert_eq!(s.embedding_actions.len(), 1);
+                assert_eq!(s.embedding_actions[0].body.statements.len(), 1);
+            }
+            other => panic!("expected Stage, got {:?}", other),
+        }
     }
 
     /// A header missing its return type is a parse error (RFC-0042

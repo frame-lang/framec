@@ -97,6 +97,7 @@ mod _state_parser_framec {
         Start,
         Label,
         Elements,
+        StageEmbeds,
         Transition,
         CondTarget,
         FailureBranch,
@@ -126,6 +127,7 @@ mod _state_parser_framec {
                 "Start" => StateParserStateContext::Start,
                 "Label" => StateParserStateContext::Label,
                 "Elements" => StateParserStateContext::Elements,
+                "StageEmbeds" => StateParserStateContext::StageEmbeds,
                 "Transition" => StateParserStateContext::Transition,
                 "CondTarget" => StateParserStateContext::CondTarget,
                 "FailureBranch" => StateParserStateContext::FailureBranch,
@@ -152,6 +154,10 @@ mod _state_parser_framec {
         pub label: Option<String>,
         pub elements: Vec<MatchElement>,
         pub matches: Vec<MatchAst>,
+        pub pending_stage_label: Option<String>,
+        pub pending_stage_regex: String,
+        pub pending_stage_span: Span,
+        pub pending_embeds: Vec<EmbeddingActionAst>,
         pub has_arrow: bool,
         pub success_target: Option<FsmTransitionTarget>,
         pub failure_target: Option<FsmTransitionTarget>,
@@ -172,6 +178,10 @@ mod _state_parser_framec {
                 label: None,
                 elements: Vec::new(),
                 matches: Vec::new(),
+                pending_stage_label: None,
+                pending_stage_regex: String::new(),
+                pending_stage_span: Span::new(0, 0),
+                pending_embeds: Vec::new(),
                 has_arrow: false,
                 success_target: None,
                 failure_target: None,
@@ -201,6 +211,7 @@ mod _state_parser_framec {
                 "Start" => &["Start"],
                 "Label" => &["Label"],
                 "Elements" => &["Elements"],
+                "StageEmbeds" => &["StageEmbeds"],
                 "Transition" => &["Transition"],
                 "CondTarget" => &["CondTarget"],
                 "FailureBranch" => &["FailureBranch"],
@@ -273,6 +284,7 @@ mod _state_parser_framec {
                 "Start" => self._state_Start(__ev),
                 "Label" => self._state_Label(__ev),
                 "Elements" => self._state_Elements(__ev),
+                "StageEmbeds" => self._state_StageEmbeds(__ev),
                 "Transition" => self._state_Transition(__ev),
                 "CondTarget" => self._state_CondTarget(__ev),
                 "FailureBranch" => self._state_FailureBranch(__ev),
@@ -314,6 +326,17 @@ mod _state_parser_framec {
         fn _state_Elements(&mut self, __e: &StateParserFrameEvent) {
             match __e {
                 StateParserFrameEvent::FrameEnter { .. } => { self._s_Elements_hdl_frame_enter(__e); }
+                _ => {}
+            }
+        }
+
+        // Collect zero or more embedding actions on the stage just parsed,
+        // then push the complete Stage and return to $Elements. Each
+        // embedding sigil (`>{` `@{` `${` `%{` `@eof{`) is followed by an
+        // action block (ActionBlockParser child).
+        fn _state_StageEmbeds(&mut self, __e: &StateParserFrameEvent) {
+            match __e {
+                StateParserFrameEvent::FrameEnter { .. } => { self._s_StageEmbeds_hdl_frame_enter(__e); }
                 _ => {}
             }
         }
@@ -406,7 +429,8 @@ mod _state_parser_framec {
                         self.__transition(__compartment);
                         return;
                     }
-                    // `.label /regex/` — a labeled stage.
+                    // `.label /regex/` — a labeled stage. Stash the base
+                    // stage and collect any embedding actions in $StageEmbeds.
                     FsmTokenKind::StageLabel(name) => {
                         let sp = self.tokens.as_ref().unwrap().cur_span();
                         self.tokens.as_mut().unwrap().advance();
@@ -423,23 +447,25 @@ mod _state_parser_framec {
                             }
                         };
                         self.tokens.as_mut().unwrap().advance();
-                        self.elements.push(MatchElement::Stage(StageAst {
-                            label: Some(name),
-                            regex: body,
-                            embedding_actions: Vec::new(),
-                            span: sp,
-                        }));
+                        self.pending_stage_label = Some(name);
+                        self.pending_stage_regex = body;
+                        self.pending_stage_span = sp;
+                        self.pending_embeds = Vec::new();
+                        let mut __compartment = self.__prepareEnter("StageEmbeds");
+                        self.__transition(__compartment);
+                        return;
                     }
                     // `/regex/` — an unlabeled stage.
                     FsmTokenKind::RegexLiteral(body) => {
                         let sp = self.tokens.as_ref().unwrap().cur_span();
                         self.tokens.as_mut().unwrap().advance();
-                        self.elements.push(MatchElement::Stage(StageAst {
-                            label: None,
-                            regex: body,
-                            embedding_actions: Vec::new(),
-                            span: sp,
-                        }));
+                        self.pending_stage_label = None;
+                        self.pending_stage_regex = body;
+                        self.pending_stage_span = sp;
+                        self.pending_embeds = Vec::new();
+                        let mut __compartment = self.__prepareEnter("StageEmbeds");
+                        self.__transition(__compartment);
+                        return;
                     }
                     // `{ ... }` — an action block element. Delegate to
                     // ActionBlockParser (token-stream shuttle).
@@ -479,6 +505,56 @@ mod _state_parser_framec {
                             .take()
                             .expect("child ExpressionParser sets result when no error");
                         self.elements.push(MatchElement::BareExpression { expr, span: sp });
+                    }
+                }
+            }
+        }
+
+        fn _s_StageEmbeds_hdl_frame_enter(&mut self, __e: &StateParserFrameEvent) {
+            loop {
+                let op = match self.tokens.as_ref().unwrap().peek_kind() {
+                    FsmTokenKind::EmbedStart => Some(EmbeddingOp::Start),
+                    FsmTokenKind::EmbedAccept => Some(EmbeddingOp::Accept),
+                    FsmTokenKind::EmbedEvery => Some(EmbeddingOp::EveryTransition),
+                    FsmTokenKind::EmbedLeave => Some(EmbeddingOp::LeaveAccept),
+                    FsmTokenKind::EmbedEof => Some(EmbeddingOp::Eof),
+                    _ => None,
+                };
+                match op {
+                    Some(op) => {
+                        let esp = self.tokens.as_ref().unwrap().cur_span();
+                        self.tokens.as_mut().unwrap().advance(); // the sigil
+                        let mut child = ActionBlockParser::__create();
+                        child.tokens = self.tokens.take();
+                        child.parse();
+                        self.tokens = child.tokens.take();
+                        if let Some(e) = child.error.take() {
+                            self.error = Some(e);
+                            let mut __compartment = self.__prepareEnter("Done");
+                            self.__transition(__compartment);
+                            return;
+                        }
+                        let body = child
+                            .result
+                            .take()
+                            .expect("child ActionBlockParser sets result when no error");
+                        self.pending_embeds.push(EmbeddingActionAst {
+                            op,
+                            body,
+                            span: esp,
+                        });
+                    }
+                    None => {
+                        // No more embeds — emit the complete stage.
+                        self.elements.push(MatchElement::Stage(StageAst {
+                            label: self.pending_stage_label.take(),
+                            regex: std::mem::take(&mut self.pending_stage_regex),
+                            embedding_actions: std::mem::take(&mut self.pending_embeds),
+                            span: self.pending_stage_span.clone(),
+                        }));
+                        let mut __compartment = self.__prepareEnter("Elements");
+                        self.__transition(__compartment);
+                        return;
                     }
                 }
             }

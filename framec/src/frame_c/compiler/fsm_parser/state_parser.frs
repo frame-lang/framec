@@ -65,7 +65,8 @@
                         | FsmTokenKind::StateLabel(_) => {
                             -> $Transition
                         }
-                        // `.label /regex/` — a labeled stage.
+                        // `.label /regex/` — a labeled stage. Stash the base
+                        // stage and collect any embedding actions in $StageEmbeds.
                         FsmTokenKind::StageLabel(name) => {
                             let sp = self.tokens.as_ref().unwrap().cur_span();
                             self.tokens.as_mut().unwrap().advance();
@@ -80,23 +81,21 @@
                                 }
                             };
                             self.tokens.as_mut().unwrap().advance();
-                            self.elements.push(MatchElement::Stage(StageAst {
-                                label: Some(name),
-                                regex: body,
-                                embedding_actions: Vec::new(),
-                                span: sp,
-                            }));
+                            self.pending_stage_label = Some(name);
+                            self.pending_stage_regex = body;
+                            self.pending_stage_span = sp;
+                            self.pending_embeds = Vec::new();
+                            -> $StageEmbeds
                         }
                         // `/regex/` — an unlabeled stage.
                         FsmTokenKind::RegexLiteral(body) => {
                             let sp = self.tokens.as_ref().unwrap().cur_span();
                             self.tokens.as_mut().unwrap().advance();
-                            self.elements.push(MatchElement::Stage(StageAst {
-                                label: None,
-                                regex: body,
-                                embedding_actions: Vec::new(),
-                                span: sp,
-                            }));
+                            self.pending_stage_label = None;
+                            self.pending_stage_regex = body;
+                            self.pending_stage_span = sp;
+                            self.pending_embeds = Vec::new();
+                            -> $StageEmbeds
                         }
                         // `{ ... }` — an action block element. Delegate to
                         // ActionBlockParser (token-stream shuttle).
@@ -132,6 +131,58 @@
                                 .take()
                                 .expect("child ExpressionParser sets result when no error");
                             self.elements.push(MatchElement::BareExpression { expr, span: sp });
+                        }
+                    }
+                }
+            }
+        }
+
+        // Collect zero or more embedding actions on the stage just parsed,
+        // then push the complete Stage and return to $Elements. Each
+        // embedding sigil (`>{` `@{` `${` `%{` `@eof{`) is followed by an
+        // action block (ActionBlockParser child).
+        $StageEmbeds {
+            $>() {
+                loop {
+                    let op = match self.tokens.as_ref().unwrap().peek_kind() {
+                        FsmTokenKind::EmbedStart => Some(EmbeddingOp::Start),
+                        FsmTokenKind::EmbedAccept => Some(EmbeddingOp::Accept),
+                        FsmTokenKind::EmbedEvery => Some(EmbeddingOp::EveryTransition),
+                        FsmTokenKind::EmbedLeave => Some(EmbeddingOp::LeaveAccept),
+                        FsmTokenKind::EmbedEof => Some(EmbeddingOp::Eof),
+                        _ => None,
+                    };
+                    match op {
+                        Some(op) => {
+                            let esp = self.tokens.as_ref().unwrap().cur_span();
+                            self.tokens.as_mut().unwrap().advance(); // the sigil
+                            let mut child = ActionBlockParser::__create();
+                            child.tokens = self.tokens.take();
+                            child.parse();
+                            self.tokens = child.tokens.take();
+                            if let Some(e) = child.error.take() {
+                                self.error = Some(e);
+                                -> $Done
+                            }
+                            let body = child
+                                .result
+                                .take()
+                                .expect("child ActionBlockParser sets result when no error");
+                            self.pending_embeds.push(EmbeddingActionAst {
+                                op,
+                                body,
+                                span: esp,
+                            });
+                        }
+                        None => {
+                            // No more embeds — emit the complete stage.
+                            self.elements.push(MatchElement::Stage(StageAst {
+                                label: self.pending_stage_label.take(),
+                                regex: std::mem::take(&mut self.pending_stage_regex),
+                                embedding_actions: std::mem::take(&mut self.pending_embeds),
+                                span: self.pending_stage_span.clone(),
+                            }));
+                            -> $Elements
                         }
                     }
                 }
@@ -289,6 +340,10 @@
         label: Option<String> = None
         elements: Vec<MatchElement> = Vec::new()
         matches: Vec<MatchAst> = Vec::new()
+        pending_stage_label: Option<String> = None
+        pending_stage_regex: String = String::new()
+        pending_stage_span: Span = Span::new(0, 0)
+        pending_embeds: Vec<EmbeddingActionAst> = Vec::new()
         has_arrow: bool = false
         success_target: Option<FsmTransitionTarget> = None
         failure_target: Option<FsmTransitionTarget> = None

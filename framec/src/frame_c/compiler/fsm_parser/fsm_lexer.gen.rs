@@ -526,6 +526,42 @@ mod _fsm_lexer_framec {
                     continue;
                 }
             
+                // Embedding-action sigils on a stage: `>{` `@{` `${` `%{`
+                // `@eof{`. Only the sigil is emitted here; the following
+                // `{` is lexed by the action-block handler below (block
+                // mode), and StageParser pairs the sigil with that block.
+                // Longest-match: `@eof{` before `@{`. (`${` is handled here
+                // before the `$` state-ref branch; `>{`/`%{`/`@{` have no
+                // other element-level meaning.)
+                if b == b'@' && pos + 4 < n && &src[pos..pos + 4] == b"@eof" && src[pos + 4] == b'{' {
+                    self.tokens.push(FsmToken {
+                        kind: FsmTokenKind::EmbedEof,
+                        span: Span::new(pos, pos + 4),
+                    });
+                    pos += 4;
+                    continue;
+                }
+                if b == b'@' && pos + 1 < n && src[pos + 1] == b'{' {
+                    push1(&mut self.tokens, FsmTokenKind::EmbedAccept, pos);
+                    pos += 1;
+                    continue;
+                }
+                if b == b'>' && pos + 1 < n && src[pos + 1] == b'{' {
+                    push1(&mut self.tokens, FsmTokenKind::EmbedStart, pos);
+                    pos += 1;
+                    continue;
+                }
+                if b == b'%' && pos + 1 < n && src[pos + 1] == b'{' {
+                    push1(&mut self.tokens, FsmTokenKind::EmbedLeave, pos);
+                    pos += 1;
+                    continue;
+                }
+                if b == b'$' && pos + 1 < n && src[pos + 1] == b'{' {
+                    push1(&mut self.tokens, FsmTokenKind::EmbedEvery, pos);
+                    pos += 1;
+                    continue;
+                }
+            
                 // `:` failure-branch marker (the `:` in `-> $a : -> $b`)
                 // or a state-label colon (handled with `$` below).
                 if b == b':' {
