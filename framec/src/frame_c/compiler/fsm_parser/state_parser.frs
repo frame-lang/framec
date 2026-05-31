@@ -1,0 +1,185 @@
+@@[target("rust")]
+
+// RFC-0042 — the state parser as a Frame @@system child of the fsm
+// parser tree. Parses ONE state declaration: an optional `$Label`, a
+// sequence of match elements (stages + bare expressions), and an
+// optional transition clause (`-> target : -> target`).
+//
+// FsmDeclParser loops, spawning a StateParser per state until `}`. The
+// state ends where the next state begins (a `$Label:`) or at `}` / EOF;
+// StateParser stops at those boundaries WITHOUT consuming them, leaving
+// them for the parent's loop.
+//
+// SCOPE: optional label, one match (element sequence), optional static
+// transition clause. Ordered-choice `|` matches and conditional `when`
+// targets land when a fixture needs them. Bare expressions delegate to
+// the (complete) ExpressionParser child; stages capture the regex body
+// string and an optional `.label`.
+//
+// Composition contract:
+//   - input:  `tokens` set by the parent.
+//   - output: `result` (Some<FsmStateAst>) or `error`.
+
+@@system StateParser {
+    interface:
+        parse()
+
+    machine:
+        $Start {
+            parse() { -> $Label }
+        }
+
+        // Optional `$Label:` — consume if present.
+        $Label {
+            $>() {
+                let lbl = match self.tokens.as_ref().unwrap().peek_kind() {
+                    FsmTokenKind::StateLabel(name) => Some(name),
+                    _ => None,
+                };
+                if lbl.is_some() {
+                    self.tokens.as_mut().unwrap().advance();
+                    self.label = lbl;
+                }
+                self.span_start = self.tokens.as_ref().unwrap().cur_span();
+                -> $Elements
+            }
+        }
+
+        // Collect match elements until a transition (`->`/`:`), an
+        // ordered-choice `|`, the next state (`$Label:`), or `}` / EOF.
+        $Elements {
+            $>() {
+                loop {
+                    let next = self.tokens.as_ref().unwrap().peek_kind();
+                    match next {
+                        // Boundaries — stop collecting, move to transition.
+                        FsmTokenKind::Arrow
+                        | FsmTokenKind::Colon
+                        | FsmTokenKind::Pipe
+                        | FsmTokenKind::RBrace
+                        | FsmTokenKind::Eof => {
+                            -> $Transition
+                        }
+                        // Next state begins — this state is done, no transition.
+                        FsmTokenKind::StateLabel(_) => {
+                            -> $Transition
+                        }
+                        // `.label /regex/` — a labeled stage.
+                        FsmTokenKind::StageLabel(name) => {
+                            let sp = self.tokens.as_ref().unwrap().cur_span();
+                            self.tokens.as_mut().unwrap().advance();
+                            let body = match self.tokens.as_ref().unwrap().peek_kind() {
+                                FsmTokenKind::RegexLiteral(b) => b,
+                                _ => {
+                                    self.error = Some(ParseError {
+                                        message: "expected a regex literal after stage label".to_string(),
+                                        span: self.tokens.as_ref().unwrap().cur_span(),
+                                    });
+                                    -> $Done
+                                }
+                            };
+                            self.tokens.as_mut().unwrap().advance();
+                            self.elements.push(MatchElement::Stage(StageAst {
+                                label: Some(name),
+                                regex: body,
+                                embedding_actions: Vec::new(),
+                                span: sp,
+                            }));
+                        }
+                        // `/regex/` — an unlabeled stage.
+                        FsmTokenKind::RegexLiteral(body) => {
+                            let sp = self.tokens.as_ref().unwrap().cur_span();
+                            self.tokens.as_mut().unwrap().advance();
+                            self.elements.push(MatchElement::Stage(StageAst {
+                                label: None,
+                                regex: body,
+                                embedding_actions: Vec::new(),
+                                span: sp,
+                            }));
+                        }
+                        // Anything else — a bare expression. Delegate to the
+                        // ExpressionParser child (token-stream shuttle).
+                        _ => {
+                            let sp = self.tokens.as_ref().unwrap().cur_span();
+                            let mut child = ExpressionParser::__create();
+                            child.tokens = self.tokens.take();
+                            child.parse();
+                            self.tokens = child.tokens.take();
+                            if let Some(e) = child.error.take() {
+                                self.error = Some(e);
+                                -> $Done
+                            }
+                            let expr = child
+                                .result
+                                .take()
+                                .expect("child ExpressionParser sets result when no error");
+                            self.elements.push(MatchElement::BareExpression { expr, span: sp });
+                        }
+                    }
+                }
+            }
+        }
+
+        // Optional transition clause: `-> target` then optional `: -> target`.
+        $Transition {
+            $>() {
+                let mut transition: Option<FsmTransitionClauseAst> = None;
+
+                if self.tokens.as_ref().unwrap().at(&FsmTokenKind::Arrow) {
+                    let tsp = self.tokens.as_ref().unwrap().cur_span();
+                    self.tokens.as_mut().unwrap().advance(); // `->`
+
+                    let success = match parse_target(self.tokens.as_mut().unwrap()) {
+                        Ok(t) => t,
+                        Err(e) => { self.error = Some(e); -> $Done }
+                    };
+
+                    // Optional failure branch `: -> target`.
+                    let failure = if self.tokens.as_mut().unwrap().eat(&FsmTokenKind::Colon) {
+                        if !self.tokens.as_mut().unwrap().eat(&FsmTokenKind::Arrow) {
+                            self.error = Some(ParseError {
+                                message: "expected `->` after `:` in failure branch".to_string(),
+                                span: self.tokens.as_ref().unwrap().cur_span(),
+                            });
+                            -> $Done
+                        }
+                        match parse_target(self.tokens.as_mut().unwrap()) {
+                            Ok(t) => Some(t),
+                            Err(e) => { self.error = Some(e); -> $Done }
+                        }
+                    } else {
+                        None
+                    };
+
+                    transition = Some(FsmTransitionClauseAst {
+                        success,
+                        failure,
+                        span: tsp,
+                    });
+                }
+
+                let span = self.span_start.clone();
+                let m = MatchAst {
+                    elements: std::mem::take(&mut self.elements),
+                    transition,
+                    span: span.clone(),
+                };
+                self.result = Some(FsmStateAst {
+                    label: self.label.take(),
+                    matches: vec![m],
+                    span,
+                });
+                -> $Done
+            }
+        }
+
+        $Done { }
+
+    domain:
+        tokens: Option<FsmTokenStream> = None
+        label: Option<String> = None
+        elements: Vec<MatchElement> = Vec::new()
+        span_start: Span = Span::new(0, 0)
+        result: Option<FsmStateAst> = None
+        error: Option<ParseError> = None
+}

@@ -61,19 +61,22 @@
 //!
 //! # Status
 //!
-//! Working front-end for a growing subset of `@@fsm`:
+//! Working front-end for a growing subset of `@@fsm`, three child
+//! parsers deep:
 //! - [`fsm_lexer.frs`] tokenizes a block ([`lex_fsm_block`]).
-//! - `fsm_decl_parser.frs` (root) + `expression_parser.frs` (first
-//!   child) parse it to an [`FsmDeclAst`] ([`parse_fsm_declaration`],
-//!   [`parse_fsm_block`]).
+//! - `fsm_decl_parser.frs` (root) → `state_parser.frs` →
+//!   `expression_parser.frs` parse it to an [`FsmDeclAst`]
+//!   ([`parse_fsm_declaration`], [`parse_fsm_block`]).
 //!
-//! Coverage expands fixture-by-fixture. Expressions are complete per
-//! RFC-0043 §3.3: literals, probes, vars, calls, member access,
-//! parenthesization, unary prefix (`!`/`-`), and binary operators with
-//! precedence + left-associativity. Header + one implicit state +
-//! stages parse. Not yet: labeled states, `|` matches, transition
-//! clauses, embedding actions, actions/domain blocks, statements
-//! (`if`/assignment). The module is wired into
+//! Coverage expands fixture-by-fixture. Parsed today: the header
+//! (name, params, return type, default); multiple states (implicit
+//! start + `$Label:` states); stages (`/regex/`, `.label/regex/`);
+//! static transition clauses (`-> target : -> target`, target =
+//! `$State` or `$State.stage`); and full expressions per RFC-0043 §3.3
+//! (literals, probes, vars, calls, member access, parens, unary,
+//! binary ops with precedence + left-assoc). Not yet: `|` ordered-choice
+//! matches, conditional `when` targets, embedding actions, action/domain
+//! blocks, statements (`if`/assignment). The module is wired into
 //! [`crate::frame_c::compiler`] but the framec driver does not yet route
 //! real `@@fsm` blocks here (Task 14).
 //!
@@ -236,6 +239,29 @@ mod expression_fsm {
     include!("expression_parser.gen.rs");
 }
 
+/// The generated `StateParser` state machine. Source: `state_parser.frs`.
+/// Parses one state declaration (label + match elements + transition).
+mod state_fsm {
+    #![allow(
+        unreachable_patterns,
+        unused_mut,
+        dead_code,
+        non_snake_case,
+        unused_variables,
+        unused_parens
+    )]
+
+    use super::expression_fsm::ExpressionParser;
+    use super::parse_helpers::parse_target;
+    use super::token_stream::{FsmTokenKind, FsmTokenStream};
+    use crate::frame_c::compiler::frame_ast::{
+        Expression, FsmStateAst, FsmTransitionClauseAst, MatchAst, MatchElement, Span, StageAst,
+    };
+    use crate::frame_c::compiler::pipeline_parser::ParseError;
+
+    include!("state_parser.gen.rs");
+}
+
 /// The generated `FsmDeclParser` state machine. Source: `fsm_decl_parser.frs`.
 mod fsm_decl_parser {
     #![allow(
@@ -247,13 +273,10 @@ mod fsm_decl_parser {
         unused_parens
     )]
 
-    use super::expression_fsm::ExpressionParser;
     use super::parse_helpers::token_text;
+    use super::state_fsm::StateParser;
     use super::token_stream::{FsmTokenKind, FsmTokenStream};
-    use crate::frame_c::compiler::frame_ast::{
-        Expression, FsmDeclAst, FsmParameter, FsmStateAst, MatchAst, MatchElement, Span, StageAst,
-        Type,
-    };
+    use crate::frame_c::compiler::frame_ast::{FsmDeclAst, FsmParameter, FsmStateAst, Span, Type};
     use crate::frame_c::compiler::pipeline_parser::ParseError;
 
     include!("fsm_decl_parser.gen.rs");
@@ -296,6 +319,37 @@ mod parse_helpers {
             FsmTokenKind::Star | FsmTokenKind::Slash | FsmTokenKind::Percent => (11, 12),
             _ => return None,
         })
+    }
+
+    /// Parse a transition target: a state reference `$State` or a
+    /// stage reference `$State.stage`. Consumes the target token.
+    pub(super) fn parse_target(
+        ts: &mut super::token_stream::FsmTokenStream,
+    ) -> Result<crate::frame_c::compiler::frame_ast::FsmTransitionTarget, super::ParseError> {
+        use crate::frame_c::compiler::frame_ast::{FsmTransitionTarget, Span};
+        let sp: Span = ts.cur_span();
+        match ts.peek_kind() {
+            FsmTokenKind::StateRef(state) => {
+                ts.advance();
+                Ok(FsmTransitionTarget::Static {
+                    state,
+                    stage: None,
+                    span: sp,
+                })
+            }
+            FsmTokenKind::StageRef { state, stage } => {
+                ts.advance();
+                Ok(FsmTransitionTarget::Static {
+                    state,
+                    stage: Some(stage),
+                    span: sp,
+                })
+            }
+            _ => Err(super::ParseError {
+                message: "expected a transition target (`$State` or `$State.stage`)".to_string(),
+                span: sp,
+            }),
+        }
     }
 
     /// Map a binary-operator token to its [`BinaryOp`]. Precondition:
@@ -599,6 +653,77 @@ mod parser_tests {
     fn missing_return_type_errors() {
         let err = parse_fsm_block(b"@@fsm M(text: bytes) = false { /a/ true }");
         assert!(err.is_err(), "missing return type must error");
+    }
+
+    /// FSM-TEST-400 shape: three states with static transitions. The
+    /// implicit first state has a success + failure branch; the labeled
+    /// states are terminals. Proves multi-state parsing (FsmDeclParser
+    /// looping StateParser) and transition clauses.
+    #[test]
+    fn multi_state_with_transitions() {
+        use crate::frame_c::compiler::frame_ast::FsmTransitionTarget;
+        let ast = parse_fsm_block(
+            b"@@fsm M(text: bytes) : bool = false { /a/ -> $next : -> $error  $next: /b/ true  $error: false }",
+        )
+        .expect("multi-state fixture must parse");
+
+        assert_eq!(ast.states.len(), 3);
+
+        // State 0: implicit (unlabeled) start, stage /a/, success→next, fail→error.
+        assert!(ast.states[0].label.is_none());
+        let m0 = &ast.states[0].matches[0];
+        match &m0.elements[0] {
+            MatchElement::Stage(s) => assert_eq!(s.regex, "a"),
+            other => panic!("expected stage /a/, got {:?}", other),
+        }
+        let t = m0.transition.as_ref().expect("state 0 has a transition");
+        match &t.success {
+            FsmTransitionTarget::Static { state, stage, .. } => {
+                assert_eq!(state, "next");
+                assert!(stage.is_none());
+            }
+            other => panic!("expected static success target, got {:?}", other),
+        }
+        match t.failure.as_ref().expect("state 0 has a failure branch") {
+            FsmTransitionTarget::Static { state, .. } => assert_eq!(state, "error"),
+            other => panic!("expected static failure target, got {:?}", other),
+        }
+
+        // State 1: `$next` — stage /b/ + bare expr `true`, no transition.
+        assert_eq!(ast.states[1].label.as_deref(), Some("next"));
+        assert!(ast.states[1].matches[0].transition.is_none());
+        assert_eq!(ast.states[1].matches[0].elements.len(), 2);
+
+        // State 2: `$error` — bare expr `false`.
+        assert_eq!(ast.states[2].label.as_deref(), Some("error"));
+        match &ast.states[2].matches[0].elements[0] {
+            MatchElement::BareExpression { expr, .. } => {
+                assert!(matches!(expr, Expression::Literal(Literal::Bool(false))));
+            }
+            other => panic!("expected bare `false`, got {:?}", other),
+        }
+    }
+
+    /// Stage-capture target: `$0.start` re-entry reference (FSM-TEST-401
+    /// shape). Proves StageRef transition targets parse.
+    #[test]
+    fn stage_ref_transition_target() {
+        use crate::frame_c::compiler::frame_ast::FsmTransitionTarget;
+        let ast = parse_fsm_block(
+            b"@@fsm M(text: bytes) : bool = false { $other: /x/ -> $main.start : -> $err  $main: /a/ true  $err: false }",
+        )
+        .expect("stage-ref target fixture must parse");
+        let t = ast.states[0].matches[0]
+            .transition
+            .as_ref()
+            .expect("transition present");
+        match &t.success {
+            FsmTransitionTarget::Static { state, stage, .. } => {
+                assert_eq!(state, "main");
+                assert_eq!(stage.as_deref(), Some("start"));
+            }
+            other => panic!("expected `$main.start` static target, got {:?}", other),
+        }
     }
 
     /// FSM-TEST-004: a call bare-expression with a `@@:` probe argument
