@@ -70,13 +70,13 @@
 //!
 //! Coverage expands fixture-by-fixture. Parsed today: the header
 //! (name, params, return type, default); multiple states (implicit
-//! start + `$Label:` states); stages (`/regex/`, `.label/regex/`);
-//! static transition clauses (`-> target : -> target`, target =
-//! `$State` or `$State.stage`); and full expressions per RFC-0043 §3.3
-//! (literals, probes, vars, calls, member access, parens, unary,
-//! binary ops with precedence + left-assoc). Not yet: `|` ordered-choice
-//! matches, conditional `when` targets, embedding actions, action/domain
-//! blocks, statements (`if`/assignment). The module is wired into
+//! start + `$Label:`); stages (`/regex/`, `.label/regex/`); ordered-
+//! choice `|` matches; transition clauses with static, stage-ref, and
+//! conditional `when` targets (`-> ( $A when cond, ... ) : -> $err`);
+//! and full expressions per RFC-0043 §3.3 (literals, probes, vars,
+//! calls, member access, parens, unary, binary ops with precedence +
+//! left-assoc). Not yet: embedding actions, action/domain blocks,
+//! statements (`if`/assignment). The module is wired into
 //! [`crate::frame_c::compiler`] but the framec driver does not yet route
 //! real `@@fsm` blocks here (Task 14).
 //!
@@ -255,7 +255,8 @@ mod state_fsm {
     use super::parse_helpers::parse_target;
     use super::token_stream::{FsmTokenKind, FsmTokenStream};
     use crate::frame_c::compiler::frame_ast::{
-        Expression, FsmStateAst, FsmTransitionClauseAst, MatchAst, MatchElement, Span, StageAst,
+        Expression, FsmCondAlt, FsmStateAst, FsmTransitionClauseAst, FsmTransitionTarget, MatchAst,
+        MatchElement, Span, StageAst,
     };
     use crate::frame_c::compiler::pipeline_parser::ParseError;
 
@@ -752,6 +753,61 @@ mod parser_tests {
         assert_eq!(ms.len(), 2);
         assert!(ms[0].transition.is_some());
         assert!(ms[1].transition.is_some());
+    }
+
+    /// FSM-TEST-402: conditional transition target with `when` guards.
+    /// `-> ( $zero when self.mode == 0, $one when self.mode == 1 ) : -> $error`
+    /// Proves the lexer's `$ref`-inside-parens handling and StateParser's
+    /// $CondTarget loop (each condition parsed by ExpressionParser).
+    #[test]
+    fn conditional_when_target() {
+        use crate::frame_c::compiler::frame_ast::{BinaryOp, FsmTransitionTarget};
+        let ast = parse_fsm_block(
+            b"@@fsm M(text: bytes, mode: int) : int = 0 { /[01]/ -> ( $zero when self.mode == 0, $one when self.mode == 1 ) : -> $error  $zero: 0  $one: 1  $error: -1 }",
+        )
+        .expect("conditional-target fixture must parse");
+
+        let t = ast.states[0].matches[0]
+            .transition
+            .as_ref()
+            .expect("transition present");
+        match &t.success {
+            FsmTransitionTarget::Conditional(alts) => {
+                assert_eq!(alts.len(), 2);
+                // alt 0: $zero when self.mode == 0
+                match &alts[0].target {
+                    FsmTransitionTarget::Static { state, .. } => assert_eq!(state, "zero"),
+                    other => panic!("expected static `$zero`, got {:?}", other),
+                }
+                assert!(matches!(
+                    &alts[0].condition,
+                    Expression::Binary {
+                        op: BinaryOp::Eq,
+                        ..
+                    }
+                ));
+                match &alts[1].target {
+                    FsmTransitionTarget::Static { state, .. } => assert_eq!(state, "one"),
+                    other => panic!("expected static `$one`, got {:?}", other),
+                }
+            }
+            other => panic!("expected conditional target, got {:?}", other),
+        }
+        // Failure branch is the static `$error`.
+        match t.failure.as_ref().expect("failure branch present") {
+            FsmTransitionTarget::Static { state, .. } => assert_eq!(state, "error"),
+            other => panic!("expected static failure `$error`, got {:?}", other),
+        }
+    }
+
+    /// A conditional alternative missing its `when` guard is an error
+    /// (RFC-0042 E715, FSM-TEST-406).
+    #[test]
+    fn conditional_missing_when_errors() {
+        let err = parse_fsm_block(
+            b"@@fsm M(text: bytes, mode: int) : int = 0 { /[01]/ -> ( $zero when self.mode == 0, $one ) : -> $error  $zero: 0  $one: 1  $error: -1 }",
+        );
+        assert!(err.is_err(), "missing `when` guard must error (E715)");
     }
 
     /// Stage-capture target: `$0.start` re-entry reference (FSM-TEST-401

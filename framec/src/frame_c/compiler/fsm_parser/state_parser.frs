@@ -123,44 +123,125 @@
         // Optional transition clause for the current match: `-> target`
         // then optional `: -> target`. Then either start the next match
         // (ordered-choice `|`) or finish the state.
+        // Begin an optional transition clause. Parses the success target,
+        // which is either a static `$State`/`$State.stage` or a conditional
+        // `( $A when cond, ... )`. The failure branch and the match commit
+        // follow in $FailureBranch / $CommitMatch.
         $Transition {
             $>() {
-                let mut transition: Option<FsmTransitionClauseAst> = None;
+                if !self.tokens.as_ref().unwrap().at(&FsmTokenKind::Arrow) {
+                    self.has_arrow = false;
+                    -> $CommitMatch
+                }
+                self.transition_span = self.tokens.as_ref().unwrap().cur_span();
+                self.has_arrow = true;
+                self.tokens.as_mut().unwrap().advance(); // `->`
 
-                if self.tokens.as_ref().unwrap().at(&FsmTokenKind::Arrow) {
-                    let tsp = self.tokens.as_ref().unwrap().cur_span();
-                    self.tokens.as_mut().unwrap().advance(); // `->`
+                // Conditional target: `( $A when cond, ... )`.
+                if self.tokens.as_ref().unwrap().at(&FsmTokenKind::LParen) {
+                    self.tokens.as_mut().unwrap().advance(); // `(`
+                    self.cond_alts = Vec::new();
+                    -> $CondTarget
+                }
 
-                    let success = match parse_target(self.tokens.as_mut().unwrap()) {
+                // Static target.
+                match parse_target(self.tokens.as_mut().unwrap()) {
+                    Ok(t) => { self.success_target = Some(t); -> $FailureBranch }
+                    Err(e) => { self.error = Some(e); -> $Done }
+                }
+            }
+        }
+
+        // Parse a conditional target's `cond_alt` list: `static when expr`
+        // entries, comma-separated, until `)`. Each condition is parsed by
+        // the ExpressionParser child (token-stream shuttle). Per §3.5.4.1
+        // every alternative requires its `when` guard.
+        $CondTarget {
+            $>() {
+                loop {
+                    let alt_span = self.tokens.as_ref().unwrap().cur_span();
+                    let target = match parse_target(self.tokens.as_mut().unwrap()) {
                         Ok(t) => t,
                         Err(e) => { self.error = Some(e); -> $Done }
                     };
+                    if !self.tokens.as_mut().unwrap().eat(&FsmTokenKind::KwWhen) {
+                        // E715: every conditional alternative needs a `when`.
+                        self.error = Some(ParseError {
+                            message: "conditional_target alternative is missing its `when` guard (E715)".to_string(),
+                            span: self.tokens.as_ref().unwrap().cur_span(),
+                        });
+                        -> $Done
+                    }
 
-                    // Optional failure branch `: -> target`.
-                    let failure = if self.tokens.as_mut().unwrap().eat(&FsmTokenKind::Colon) {
-                        if !self.tokens.as_mut().unwrap().eat(&FsmTokenKind::Arrow) {
-                            self.error = Some(ParseError {
-                                message: "expected `->` after `:` in failure branch".to_string(),
-                                span: self.tokens.as_ref().unwrap().cur_span(),
-                            });
-                            -> $Done
-                        }
-                        match parse_target(self.tokens.as_mut().unwrap()) {
-                            Ok(t) => Some(t),
-                            Err(e) => { self.error = Some(e); -> $Done }
-                        }
-                    } else {
-                        None
-                    };
-
-                    transition = Some(FsmTransitionClauseAst {
-                        success,
-                        failure,
-                        span: tsp,
+                    let mut child = ExpressionParser::__create();
+                    child.tokens = self.tokens.take();
+                    child.parse();
+                    self.tokens = child.tokens.take();
+                    if let Some(e) = child.error.take() {
+                        self.error = Some(e);
+                        -> $Done
+                    }
+                    let condition = child
+                        .result
+                        .take()
+                        .expect("child ExpressionParser sets result when no error");
+                    self.cond_alts.push(FsmCondAlt {
+                        target,
+                        condition,
+                        span: alt_span,
                     });
-                }
 
-                // Commit the current match.
+                    if self.tokens.as_mut().unwrap().eat(&FsmTokenKind::Comma) {
+                        continue;
+                    }
+                    if self.tokens.as_mut().unwrap().eat(&FsmTokenKind::RParen) {
+                        self.success_target =
+                            Some(FsmTransitionTarget::Conditional(std::mem::take(&mut self.cond_alts)));
+                        -> $FailureBranch
+                    }
+                    self.error = Some(ParseError {
+                        message: "expected `,` or `)` in conditional transition target".to_string(),
+                        span: self.tokens.as_ref().unwrap().cur_span(),
+                    });
+                    -> $Done
+                }
+            }
+        }
+
+        // Optional failure branch `: -> target` (static target).
+        $FailureBranch {
+            $>() {
+                if self.tokens.as_mut().unwrap().eat(&FsmTokenKind::Colon) {
+                    if !self.tokens.as_mut().unwrap().eat(&FsmTokenKind::Arrow) {
+                        self.error = Some(ParseError {
+                            message: "expected `->` after `:` in failure branch".to_string(),
+                            span: self.tokens.as_ref().unwrap().cur_span(),
+                        });
+                        -> $Done
+                    }
+                    match parse_target(self.tokens.as_mut().unwrap()) {
+                        Ok(t) => { self.failure_target = Some(t); }
+                        Err(e) => { self.error = Some(e); -> $Done }
+                    }
+                }
+                -> $CommitMatch
+            }
+        }
+
+        // Commit the current match (elements + optional transition), then
+        // either start the next ordered-choice match (`|`) or finish.
+        $CommitMatch {
+            $>() {
+                let transition = if self.has_arrow {
+                    Some(FsmTransitionClauseAst {
+                        success: self.success_target.take().expect("success target set when has_arrow"),
+                        failure: self.failure_target.take(),
+                        span: self.transition_span.clone(),
+                    })
+                } else {
+                    None
+                };
+
                 let span = self.span_start.clone();
                 self.matches.push(MatchAst {
                     elements: std::mem::take(&mut self.elements),
@@ -170,6 +251,7 @@
 
                 // Ordered-choice `|` starts another match in this state.
                 if self.tokens.as_mut().unwrap().eat(&FsmTokenKind::Pipe) {
+                    self.has_arrow = false;
                     -> $Elements
                 }
 
@@ -189,6 +271,11 @@
         label: Option<String> = None
         elements: Vec<MatchElement> = Vec::new()
         matches: Vec<MatchAst> = Vec::new()
+        has_arrow: bool = false
+        success_target: Option<FsmTransitionTarget> = None
+        failure_target: Option<FsmTransitionTarget> = None
+        cond_alts: Vec<FsmCondAlt> = Vec::new()
+        transition_span: Span = Span::new(0, 0)
         span_start: Span = Span::new(0, 0)
         result: Option<FsmStateAst> = None
         error: Option<ParseError> = None

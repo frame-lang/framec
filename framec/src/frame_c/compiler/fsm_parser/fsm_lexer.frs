@@ -351,6 +351,38 @@
                         }
                     }
 
+                    // `$State` / `$State.stage` reference. Only reached at
+                    // paren-depth > 0 (a depth-0 `$` is an element-level
+                    // terminator, handled above) — e.g. the targets inside a
+                    // conditional transition `( $A when ..., $B when ... )`.
+                    if b == b'$' {
+                        let start = pos;
+                        pos += 1; // `$`
+                        let name_start = pos;
+                        while pos < n && (src[pos].is_ascii_alphanumeric() || src[pos] == b'_') {
+                            pos += 1;
+                        }
+                        let name = std::str::from_utf8(&src[name_start..pos]).unwrap_or("").to_string();
+                        if pos < n && src[pos] == b'.' {
+                            pos += 1;
+                            let stage_start = pos;
+                            while pos < n && (src[pos].is_ascii_alphanumeric() || src[pos] == b'_') {
+                                pos += 1;
+                            }
+                            let stage = std::str::from_utf8(&src[stage_start..pos]).unwrap_or("").to_string();
+                            self.tokens.push(FsmToken {
+                                kind: FsmTokenKind::StageRef { state: name, stage },
+                                span: Span::new(start, pos),
+                            });
+                            continue;
+                        }
+                        self.tokens.push(FsmToken {
+                            kind: FsmTokenKind::StateRef(name),
+                            span: Span::new(start, pos),
+                        });
+                        continue;
+                    }
+
                     // `@@:` context probe — e.g. @@:matched, @@:cursor, @@:return.
                     if b == b'@' && pos + 2 < n && src[pos + 1] == b'@' && src[pos + 2] == b':' {
                         let start = pos;

@@ -98,6 +98,9 @@ mod _state_parser_framec {
         Label,
         Elements,
         Transition,
+        CondTarget,
+        FailureBranch,
+        CommitMatch,
         Done,
         __NoContext,
     }
@@ -124,6 +127,9 @@ mod _state_parser_framec {
                 "Label" => StateParserStateContext::Label,
                 "Elements" => StateParserStateContext::Elements,
                 "Transition" => StateParserStateContext::Transition,
+                "CondTarget" => StateParserStateContext::CondTarget,
+                "FailureBranch" => StateParserStateContext::FailureBranch,
+                "CommitMatch" => StateParserStateContext::CommitMatch,
                 "Done" => StateParserStateContext::Done,
                 _ => StateParserStateContext::__NoContext,
             };
@@ -146,6 +152,11 @@ mod _state_parser_framec {
         pub label: Option<String>,
         pub elements: Vec<MatchElement>,
         pub matches: Vec<MatchAst>,
+        pub has_arrow: bool,
+        pub success_target: Option<FsmTransitionTarget>,
+        pub failure_target: Option<FsmTransitionTarget>,
+        pub cond_alts: Vec<FsmCondAlt>,
+        pub transition_span: Span,
         pub span_start: Span,
         pub result: Option<FsmStateAst>,
         pub error: Option<ParseError>,
@@ -161,6 +172,11 @@ mod _state_parser_framec {
                 label: None,
                 elements: Vec::new(),
                 matches: Vec::new(),
+                has_arrow: false,
+                success_target: None,
+                failure_target: None,
+                cond_alts: Vec::new(),
+                transition_span: Span::new(0, 0),
                 span_start: Span::new(0, 0),
                 result: None,
                 error: None,
@@ -186,6 +202,9 @@ mod _state_parser_framec {
                 "Label" => &["Label"],
                 "Elements" => &["Elements"],
                 "Transition" => &["Transition"],
+                "CondTarget" => &["CondTarget"],
+                "FailureBranch" => &["FailureBranch"],
+                "CommitMatch" => &["CommitMatch"],
                 "Done" => &["Done"],
                 _ => &[],
             }
@@ -255,6 +274,9 @@ mod _state_parser_framec {
                 "Label" => self._state_Label(__ev),
                 "Elements" => self._state_Elements(__ev),
                 "Transition" => self._state_Transition(__ev),
+                "CondTarget" => self._state_CondTarget(__ev),
+                "FailureBranch" => self._state_FailureBranch(__ev),
+                "CommitMatch" => self._state_CommitMatch(__ev),
                 "Done" => self._state_Done(__ev),
                 _ => {}
             }
@@ -299,9 +321,41 @@ mod _state_parser_framec {
         // Optional transition clause for the current match: `-> target`
         // then optional `: -> target`. Then either start the next match
         // (ordered-choice `|`) or finish the state.
+        // Begin an optional transition clause. Parses the success target,
+        // which is either a static `$State`/`$State.stage` or a conditional
+        // `( $A when cond, ... )`. The failure branch and the match commit
+        // follow in $FailureBranch / $CommitMatch.
         fn _state_Transition(&mut self, __e: &StateParserFrameEvent) {
             match __e {
                 StateParserFrameEvent::FrameEnter { .. } => { self._s_Transition_hdl_frame_enter(__e); }
+                _ => {}
+            }
+        }
+
+        // Parse a conditional target's `cond_alt` list: `static when expr`
+        // entries, comma-separated, until `)`. Each condition is parsed by
+        // the ExpressionParser child (token-stream shuttle). Per §3.5.4.1
+        // every alternative requires its `when` guard.
+        fn _state_CondTarget(&mut self, __e: &StateParserFrameEvent) {
+            match __e {
+                StateParserFrameEvent::FrameEnter { .. } => { self._s_CondTarget_hdl_frame_enter(__e); }
+                _ => {}
+            }
+        }
+
+        // Optional failure branch `: -> target` (static target).
+        fn _state_FailureBranch(&mut self, __e: &StateParserFrameEvent) {
+            match __e {
+                StateParserFrameEvent::FrameEnter { .. } => { self._s_FailureBranch_hdl_frame_enter(__e); }
+                _ => {}
+            }
+        }
+
+        // Commit the current match (elements + optional transition), then
+        // either start the next ordered-choice match (`|`) or finish.
+        fn _state_CommitMatch(&mut self, __e: &StateParserFrameEvent) {
+            match __e {
+                StateParserFrameEvent::FrameEnter { .. } => { self._s_CommitMatch_hdl_frame_enter(__e); }
                 _ => {}
             }
         }
@@ -413,50 +467,134 @@ mod _state_parser_framec {
         }
 
         fn _s_Transition_hdl_frame_enter(&mut self, __e: &StateParserFrameEvent) {
-            let mut transition: Option<FsmTransitionClauseAst> = None;
+            if !self.tokens.as_ref().unwrap().at(&FsmTokenKind::Arrow) {
+                self.has_arrow = false;
+                let mut __compartment = self.__prepareEnter("CommitMatch");
+                self.__transition(__compartment);
+                return;
+            }
+            self.transition_span = self.tokens.as_ref().unwrap().cur_span();
+            self.has_arrow = true;
+            self.tokens.as_mut().unwrap().advance(); // `->`
             
-            if self.tokens.as_ref().unwrap().at(&FsmTokenKind::Arrow) {
-                let tsp = self.tokens.as_ref().unwrap().cur_span();
-                self.tokens.as_mut().unwrap().advance(); // `->`
+            // Conditional target: `( $A when cond, ... )`.
+            if self.tokens.as_ref().unwrap().at(&FsmTokenKind::LParen) {
+                self.tokens.as_mut().unwrap().advance(); // `(`
+                self.cond_alts = Vec::new();
+                let mut __compartment = self.__prepareEnter("CondTarget");
+                self.__transition(__compartment);
+                return;
+            }
             
-                let success = match parse_target(self.tokens.as_mut().unwrap()) {
+            // Static target.
+            match parse_target(self.tokens.as_mut().unwrap()) {
+                Ok(t) => { self.success_target = Some(t);
+                let mut __compartment = self.__prepareEnter("FailureBranch");
+                self.__transition(__compartment);
+                return; }
+                Err(e) => { self.error = Some(e);
+                let mut __compartment = self.__prepareEnter("Done");
+                self.__transition(__compartment);
+                return; }
+            }
+        }
+
+        fn _s_CondTarget_hdl_frame_enter(&mut self, __e: &StateParserFrameEvent) {
+            loop {
+                let alt_span = self.tokens.as_ref().unwrap().cur_span();
+                let target = match parse_target(self.tokens.as_mut().unwrap()) {
                     Ok(t) => t,
                     Err(e) => { self.error = Some(e);
                     let mut __compartment = self.__prepareEnter("Done");
                     self.__transition(__compartment);
                     return; }
                 };
+                if !self.tokens.as_mut().unwrap().eat(&FsmTokenKind::KwWhen) {
+                    // E715: every conditional alternative needs a `when`.
+                    self.error = Some(ParseError {
+                        message: "conditional_target alternative is missing its `when` guard (E715)".to_string(),
+                        span: self.tokens.as_ref().unwrap().cur_span(),
+                    });
+                    let mut __compartment = self.__prepareEnter("Done");
+                    self.__transition(__compartment);
+                    return;
+                }
             
-                // Optional failure branch `: -> target`.
-                let failure = if self.tokens.as_mut().unwrap().eat(&FsmTokenKind::Colon) {
-                    if !self.tokens.as_mut().unwrap().eat(&FsmTokenKind::Arrow) {
-                        self.error = Some(ParseError {
-                            message: "expected `->` after `:` in failure branch".to_string(),
-                            span: self.tokens.as_ref().unwrap().cur_span(),
-                        });
-                        let mut __compartment = self.__prepareEnter("Done");
-                        self.__transition(__compartment);
-                        return;
-                    }
-                    match parse_target(self.tokens.as_mut().unwrap()) {
-                        Ok(t) => Some(t),
-                        Err(e) => { self.error = Some(e);
-                        let mut __compartment = self.__prepareEnter("Done");
-                        self.__transition(__compartment);
-                        return; }
-                    }
-                } else {
-                    None
-                };
-            
-                transition = Some(FsmTransitionClauseAst {
-                    success,
-                    failure,
-                    span: tsp,
+                let mut child = ExpressionParser::__create();
+                child.tokens = self.tokens.take();
+                child.parse();
+                self.tokens = child.tokens.take();
+                if let Some(e) = child.error.take() {
+                    self.error = Some(e);
+                    let mut __compartment = self.__prepareEnter("Done");
+                    self.__transition(__compartment);
+                    return;
+                }
+                let condition = child
+                    .result
+                    .take()
+                    .expect("child ExpressionParser sets result when no error");
+                self.cond_alts.push(FsmCondAlt {
+                    target,
+                    condition,
+                    span: alt_span,
                 });
-            }
             
-            // Commit the current match.
+                if self.tokens.as_mut().unwrap().eat(&FsmTokenKind::Comma) {
+                    continue;
+                }
+                if self.tokens.as_mut().unwrap().eat(&FsmTokenKind::RParen) {
+                    self.success_target =
+                        Some(FsmTransitionTarget::Conditional(std::mem::take(&mut self.cond_alts)));
+                    let mut __compartment = self.__prepareEnter("FailureBranch");
+                    self.__transition(__compartment);
+                    return;
+                }
+                self.error = Some(ParseError {
+                    message: "expected `,` or `)` in conditional transition target".to_string(),
+                    span: self.tokens.as_ref().unwrap().cur_span(),
+                });
+                let mut __compartment = self.__prepareEnter("Done");
+                self.__transition(__compartment);
+                return;
+            }
+        }
+
+        fn _s_FailureBranch_hdl_frame_enter(&mut self, __e: &StateParserFrameEvent) {
+            if self.tokens.as_mut().unwrap().eat(&FsmTokenKind::Colon) {
+                if !self.tokens.as_mut().unwrap().eat(&FsmTokenKind::Arrow) {
+                    self.error = Some(ParseError {
+                        message: "expected `->` after `:` in failure branch".to_string(),
+                        span: self.tokens.as_ref().unwrap().cur_span(),
+                    });
+                    let mut __compartment = self.__prepareEnter("Done");
+                    self.__transition(__compartment);
+                    return;
+                }
+                match parse_target(self.tokens.as_mut().unwrap()) {
+                    Ok(t) => { self.failure_target = Some(t); }
+                    Err(e) => { self.error = Some(e);
+                    let mut __compartment = self.__prepareEnter("Done");
+                    self.__transition(__compartment);
+                    return; }
+                }
+            }
+            let mut __compartment = self.__prepareEnter("CommitMatch");
+            self.__transition(__compartment);
+            return;
+        }
+
+        fn _s_CommitMatch_hdl_frame_enter(&mut self, __e: &StateParserFrameEvent) {
+            let transition = if self.has_arrow {
+                Some(FsmTransitionClauseAst {
+                    success: self.success_target.take().expect("success target set when has_arrow"),
+                    failure: self.failure_target.take(),
+                    span: self.transition_span.clone(),
+                })
+            } else {
+                None
+            };
+            
             let span = self.span_start.clone();
             self.matches.push(MatchAst {
                 elements: std::mem::take(&mut self.elements),
@@ -466,6 +604,7 @@ mod _state_parser_framec {
             
             // Ordered-choice `|` starts another match in this state.
             if self.tokens.as_mut().unwrap().eat(&FsmTokenKind::Pipe) {
+                self.has_arrow = false;
                 let mut __compartment = self.__prepareEnter("Elements");
                 self.__transition(__compartment);
                 return;
