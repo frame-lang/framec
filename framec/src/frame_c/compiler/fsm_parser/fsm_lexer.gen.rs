@@ -871,6 +871,10 @@ mod _fsm_lexer_framec {
                     b',' => Some(FsmTokenKind::Comma),
                     b';' => Some(FsmTokenKind::Semi),
                     b'.' => Some(FsmTokenKind::Dot),
+                    // `:` only reaches here at paren-depth > 0 (a depth-0
+                    // `:` terminates the expression above) — e.g. the
+                    // type colon in an `actions:` param list `(s: bytes)`.
+                    b':' => Some(FsmTokenKind::Colon),
                     b'<' => Some(FsmTokenKind::Lt),
                     b'>' => Some(FsmTokenKind::Gt),
                     b'!' => Some(FsmTokenKind::Bang),

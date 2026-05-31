@@ -151,6 +151,7 @@ mod _fsm_decl_parser_framec {
         pub return_type: Type,
         pub default_expr: String,
         pub states: Vec<FsmStateAst>,
+        pub actions_block: Option<FsmActionsBlock>,
         pub domain_block: Option<FsmDomainBlock>,
         pub result: Option<FsmDeclAst>,
         pub error: Option<ParseError>,
@@ -168,6 +169,7 @@ mod _fsm_decl_parser_framec {
                 return_type: Type::Unknown,
                 default_expr: String::new(),
                 states: Vec::new(),
+                actions_block: None,
                 domain_block: None,
                 result: None,
                 error: None,
@@ -502,6 +504,20 @@ mod _fsm_decl_parser_framec {
                         self.__transition(__compartment);
                         return;
                     }
+                    FsmTokenKind::KwActions => {
+                        self.tokens.as_mut().unwrap().advance(); // `actions` (`:` consumed by lexer)
+                        let mut child = ActionsBlockParser::__create();
+                        child.tokens = self.tokens.take();
+                        child.parse();
+                        self.tokens = child.tokens.take();
+                        if let Some(e) = child.error.take() {
+                            self.error = Some(e);
+                            let mut __compartment = self.__prepareEnter("Done");
+                            self.__transition(__compartment);
+                            return;
+                        }
+                        self.actions_block = child.result.take();
+                    }
                     FsmTokenKind::KwDomain => {
                         self.tokens.as_mut().unwrap().advance(); // `domain` (`:` consumed by lexer)
                         let mut child = DomainBlockParser::__create();
@@ -559,7 +575,7 @@ mod _fsm_decl_parser_framec {
                 return_type: std::mem::replace(&mut self.return_type, Type::Unknown),
                 default_expr: std::mem::take(&mut self.default_expr),
                 states: std::mem::take(&mut self.states),
-                actions: None,
+                actions: self.actions_block.take(),
                 domain: self.domain_block.take(),
                 span,
             });
