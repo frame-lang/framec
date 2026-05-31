@@ -331,6 +331,12 @@ pub fn assemble(
                     });
                 }
             }
+
+            Segment::Fsm { .. } => {
+                // @@fsm codegen is a later phase. The block has already been
+                // parsed + validated by earlier stages; it emits no target
+                // code yet, so it contributes nothing to assembled output.
+            }
         }
     }
 
