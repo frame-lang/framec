@@ -11,6 +11,8 @@
 //   $CheckHeader      — E713 (input-param alphabet type).
 //   $CheckTransitions — E731 (undeclared transition-target state),
 //                       E732 (undeclared stage in a stage-ref target).
+//   $CheckRegex       — per-stage regex compilation (E720-E723, W704,
+//                       anchor deferral) + E701 match exhaustiveness.
 //   $Done             — terminal; `diagnostics` holds the findings.
 //
 // SCOPE (v1): the two checks above. More passes ($CheckStages for E730
@@ -101,6 +103,7 @@ mod _fsm_validator_framec {
         CheckTransitions,
         CheckNames,
         CheckWarnings,
+        CheckRegex,
         Done,
         __NoContext,
     }
@@ -129,6 +132,7 @@ mod _fsm_validator_framec {
                 "CheckTransitions" => FsmValidatorStateContext::CheckTransitions,
                 "CheckNames" => FsmValidatorStateContext::CheckNames,
                 "CheckWarnings" => FsmValidatorStateContext::CheckWarnings,
+                "CheckRegex" => FsmValidatorStateContext::CheckRegex,
                 "Done" => FsmValidatorStateContext::Done,
                 _ => FsmValidatorStateContext::__NoContext,
             };
@@ -183,6 +187,7 @@ mod _fsm_validator_framec {
                 "CheckTransitions" => &["CheckTransitions"],
                 "CheckNames" => &["CheckNames"],
                 "CheckWarnings" => &["CheckWarnings"],
+                "CheckRegex" => &["CheckRegex"],
                 "Done" => &["Done"],
                 _ => &[],
             }
@@ -254,6 +259,7 @@ mod _fsm_validator_framec {
                 "CheckTransitions" => self._state_CheckTransitions(__ev),
                 "CheckNames" => self._state_CheckNames(__ev),
                 "CheckWarnings" => self._state_CheckWarnings(__ev),
+                "CheckRegex" => self._state_CheckRegex(__ev),
                 "Done" => self._state_Done(__ev),
                 _ => {}
             }
@@ -313,6 +319,13 @@ mod _fsm_validator_framec {
             }
         }
 
+        fn _state_CheckRegex(&mut self, __e: &FsmValidatorFrameEvent) {
+            match __e {
+                FsmValidatorFrameEvent::FrameEnter { .. } => { self._s_CheckRegex_hdl_frame_enter(__e); }
+                _ => {}
+            }
+        }
+
         fn _state_Done(&mut self, __e: &FsmValidatorFrameEvent) {
             match __e {
                 _ => {}
@@ -360,6 +373,14 @@ mod _fsm_validator_framec {
 
         fn _s_CheckWarnings_hdl_frame_enter(&mut self, __e: &FsmValidatorFrameEvent) {
             let mut found = check_warnings(&self.decl);
+            self.diagnostics.append(&mut found);
+            let mut __compartment = self.__prepareEnter("CheckRegex");
+            self.__transition(__compartment);
+            return;
+        }
+
+        fn _s_CheckRegex_hdl_frame_enter(&mut self, __e: &FsmValidatorFrameEvent) {
+            let mut found = check_regexes(&self.decl);
             self.diagnostics.append(&mut found);
             let mut __compartment = self.__prepareEnter("Done");
             self.__transition(__compartment);

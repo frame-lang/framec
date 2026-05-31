@@ -1718,6 +1718,18 @@ mod tests {
         );
     }
 
+    /// A forbidden regex construct inside an `@@fsm` surfaces its engine
+    /// diagnostic (E720) through the full pipeline.
+    #[test]
+    fn fsm_block_regex_e720_errors() {
+        let r = compile_py("@@fsm M(text: bytes) : bool = false { /a*?/ true }\n");
+        assert!(
+            r.errors.iter().any(|e| e.code == "E720"),
+            "expected E720, got {:?}",
+            r.errors
+        );
+    }
+
     /// A broken `@@fsm` alongside a valid `@@system` fails the compile with
     /// the fsm diagnostic.
     #[test]

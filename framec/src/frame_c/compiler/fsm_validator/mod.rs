@@ -8,11 +8,14 @@
 //!
 //! # Coverage
 //!
-//! v1: E713 (input-param alphabet type), E731 (undeclared transition-
-//! target state), E732 (undeclared stage in a stage-ref target). More
-//! checks (E730 duplicate stage labels, E703/E706 name/type checks, E701
-//! exhaustiveness, unused-var warnings) are added as additional passes /
-//! helpers.
+//! E713 (input-param alphabet type), E730 (duplicate stage label), E704
+//! (unlabeled non-start state), E707 (domain/param type mismatch), E731 /
+//! E732 (undeclared transition state / stage), E703 (read of undeclared
+//! name), W701/W702/W703/W705 (unused / silent-reject / constant-guard
+//! warnings), and — via the `$CheckRegex` pass over each stage's regex —
+//! E720/E721/E722/E723 + W704 forwarded from [`crate::frame_c::compiler::fsm_regex`],
+//! plus E701 match exhaustiveness (§4.3). E706 (assignment/return type
+//! mismatch) is out of scope: Frame has no type system.
 //!
 //! # `.frs` regen
 //!
@@ -25,6 +28,7 @@ use crate::frame_c::compiler::frame_ast::{
     BlockAst, Expression, FsmDeclAst, FsmTransitionTarget, Literal, MatchElement, Span, Statement,
     Type,
 };
+use crate::frame_c::compiler::fsm_regex::Alphabet;
 
 /// One validation finding. `code` is the RFC-0042 §9 diagnostic code
 /// (e.g. `"E713"`); `span` locates it; `message` describes it.
@@ -362,6 +366,106 @@ fn collect_constant_when(t: &FsmTransitionTarget, out: &mut Vec<FsmDiagnostic>) 
     }
 }
 
+/// The regex alphabet implied by the fsm's input parameter type
+/// (RFC-0042 §6.1). Defaults to `Bytes` when the type is absent or
+/// unrecognized (E713 reports the bad type separately).
+fn alphabet_of(decl: &FsmDeclAst) -> Alphabet {
+    match decl.params.first().map(|p| &p.param_type) {
+        Some(Type::Custom(t)) if t == "char" => Alphabet::Char,
+        Some(Type::Custom(t)) if t == "token" => Alphabet::Token,
+        _ => Alphabet::Bytes,
+    }
+}
+
+/// Compile every stage regex through [`fsm_regex::compile`] and surface
+/// its diagnostics, plus the match-level exhaustiveness check:
+///
+/// - **E720–E723 / W704** — forwarded from the regex engine (forbidden
+///   constructs, invalid syntax, empty regex, DFA-size limits), located
+///   at the offending stage.
+/// - **Anchors** — the v0.1 DFA engine does not yet fold zero-width
+///   anchors in; reported as a tracked engine limitation (E722) rather
+///   than miscompiled. See [`fsm_regex`]'s `subset` module note.
+/// - **E701** — a match with a success transition (`-> ...`) but no
+///   failure branch is permitted only when it cannot fail. A match is
+///   provably non-failing when every stage's regex accepts the empty
+///   string (RFC-0042 §4.3); otherwise E701.
+pub(crate) fn check_regexes(decl: &FsmDeclAst) -> Vec<FsmDiagnostic> {
+    use crate::frame_c::compiler::fsm_regex::{
+        self, size_check::DEFAULT_MAX_DFA_STATES, CompileError,
+    };
+
+    let alphabet = alphabet_of(decl);
+    let mut out = Vec::new();
+
+    for st in &decl.states {
+        for m in &st.matches {
+            let mut has_stage = false;
+            // A match is provably non-failing only if every stage's regex
+            // accepts the empty string. A regex that fails to compile or
+            // uses anchors can fail, so it does not establish nullability.
+            let mut all_nullable = true;
+
+            for el in &m.elements {
+                if let MatchElement::Stage(stage) = el {
+                    has_stage = true;
+                    match fsm_regex::compile(&stage.regex, alphabet, DEFAULT_MAX_DFA_STATES) {
+                        Ok(compiled) => {
+                            if !compiled.dfa.states[compiled.dfa.start].is_accept {
+                                all_nullable = false;
+                            }
+                            for w in compiled.warnings {
+                                out.push(FsmDiagnostic {
+                                    code: w.code,
+                                    span: stage.span.clone(),
+                                    message: w.message,
+                                });
+                            }
+                        }
+                        Err(CompileError::Diagnostics(ds)) => {
+                            all_nullable = false;
+                            for d in ds {
+                                out.push(FsmDiagnostic {
+                                    code: d.code,
+                                    span: stage.span.clone(),
+                                    message: d.message,
+                                });
+                            }
+                        }
+                        Err(CompileError::UnsupportedAnchors(_)) => {
+                            all_nullable = false;
+                            out.push(FsmDiagnostic {
+                                code: "E722",
+                                span: stage.span.clone(),
+                                message: "zero-width anchors are not yet supported by the v0.1 \
+                                          DFA engine (tracked); use a non-anchored pattern"
+                                    .to_string(),
+                            });
+                        }
+                    }
+                }
+            }
+
+            // E701 — success transition with no failure branch on a match
+            // that can fail.
+            if let Some(clause) = &m.transition {
+                if clause.failure.is_none() && has_stage && !all_nullable {
+                    out.push(FsmDiagnostic {
+                        code: "E701",
+                        span: m.span.clone(),
+                        message:
+                            "this match can fail but has no failure branch; add `: -> $State` \
+                                  (a match without a failure branch must be provably non-failing)"
+                                .to_string(),
+                    });
+                }
+            }
+        }
+    }
+
+    out
+}
+
 /// E703 — a `self.<field>` read of an undeclared name. The declared
 /// names are the parameters (each auto-promotes to a same-named domain
 /// field, §3.2) plus the explicit `domain:` fields. Each undeclared
@@ -490,8 +594,8 @@ mod validator_fsm {
     )]
 
     use super::{
-        check_input_param_type, check_structure, check_transition_targets, check_undeclared_reads,
-        check_warnings, FsmDiagnostic,
+        check_input_param_type, check_regexes, check_structure, check_transition_targets,
+        check_undeclared_reads, check_warnings, FsmDiagnostic,
     };
     use crate::frame_c::compiler::frame_ast::FsmDeclAst;
 
@@ -677,5 +781,74 @@ mod tests {
             b"@@fsm M(text: bytes, threshold: int = 0) : int = 0 { /[0-9]+/ { self.count = self.threshold } self.count  domain: count: int = 0 }",
         );
         assert!(!d.iter().any(|x| x.code == "E703"), "got {:?}", d);
+    }
+
+    // --- $CheckRegex: per-stage regex compilation + E701 (Task 21) ---
+
+    /// A forbidden regex construct (lazy quantifier) surfaces E720 from the
+    /// engine, located at the stage.
+    #[test]
+    fn regex_forbidden_is_e720() {
+        let d = diags(b"@@fsm M(text: bytes) : bool = false { /a*?/ true }");
+        assert!(d.iter().any(|x| x.code == "E720"), "got {:?}", d);
+    }
+
+    /// A malformed regex (unbalanced group) surfaces E722.
+    #[test]
+    fn regex_malformed_is_e722() {
+        let d = diags(b"@@fsm M(text: bytes) : bool = false { /(a/ true }");
+        assert!(d.iter().any(|x| x.code == "E722"), "got {:?}", d);
+    }
+
+    /// A zero-width anchor is reported as the tracked engine limitation
+    /// (E722, message mentions anchors) rather than miscompiled.
+    #[test]
+    fn regex_anchor_is_deferred() {
+        let d = diags(b"@@fsm M(text: bytes) : bool = false { /^a/ true }");
+        assert!(
+            d.iter()
+                .any(|x| x.code == "E722" && x.message.contains("anchor")),
+            "got {:?}",
+            d
+        );
+    }
+
+    /// E701 — a success transition with no failure branch on a match whose
+    /// regex can fail (`/a/` does not accept the empty string).
+    #[test]
+    fn e701_fallible_match_without_failure_branch() {
+        let d = diags(b"@@fsm M(text: bytes) : int = 0 { /a/ -> $x  $x: 1 }");
+        assert!(d.iter().any(|x| x.code == "E701"), "got {:?}", d);
+    }
+
+    /// No E701 when the match is provably non-failing: a nullable regex
+    /// (`a*` accepts the empty string) can never fail.
+    #[test]
+    fn e701_not_fired_for_nullable_match() {
+        let d = diags(b"@@fsm M(text: bytes) : int = 0 { /a*/ -> $x  $x: 1 }");
+        assert!(!d.iter().any(|x| x.code == "E701"), "got {:?}", d);
+    }
+
+    /// No E701 when a failure branch is present, even for a fallible regex.
+    #[test]
+    fn e701_not_fired_with_failure_branch() {
+        let d = diags(b"@@fsm M(text: bytes) : int = 0 { /a/ -> $x : -> $e  $x: 1  $e: -1 }");
+        assert!(!d.iter().any(|x| x.code == "E701"), "got {:?}", d);
+    }
+
+    /// No E701 for an implicit-terminal match (no transition at all), even
+    /// though `/a/` can fail — failure follows §5.6 instead.
+    #[test]
+    fn e701_not_fired_for_implicit_terminal() {
+        let d = diags(b"@@fsm M(text: bytes) : bool = false { /a/ true }");
+        assert!(!d.iter().any(|x| x.code == "E701"), "got {:?}", d);
+    }
+
+    /// A clean fsm with a real regex and a proper failure branch produces
+    /// no regex/E701 diagnostics.
+    #[test]
+    fn regex_clean_fsm_no_diagnostics() {
+        let d = diags(b"@@fsm M(text: bytes) : int = 0 { /[0-9]+/ -> $n : -> $e  $n: 1  $e: -1 }");
+        assert!(d.is_empty(), "expected none, got {:?}", d);
     }
 }

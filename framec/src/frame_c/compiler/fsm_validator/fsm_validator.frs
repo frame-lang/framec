@@ -12,6 +12,8 @@
 //   $CheckHeader      — E713 (input-param alphabet type).
 //   $CheckTransitions — E731 (undeclared transition-target state),
 //                       E732 (undeclared stage in a stage-ref target).
+//   $CheckRegex       — per-stage regex compilation (E720-E723, W704,
+//                       anchor deferral) + E701 match exhaustiveness.
 //   $Done             — terminal; `diagnostics` holds the findings.
 //
 // SCOPE (v1): the two checks above. More passes ($CheckStages for E730
@@ -66,6 +68,14 @@
         $CheckWarnings {
             $>() {
                 let mut found = check_warnings(&self.decl);
+                self.diagnostics.append(&mut found);
+                -> $CheckRegex
+            }
+        }
+
+        $CheckRegex {
+            $>() {
+                let mut found = check_regexes(&self.decl);
                 self.diagnostics.append(&mut found);
                 -> $Done
             }
