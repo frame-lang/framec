@@ -277,6 +277,25 @@ fields, [compartment](#compartment), and [state stack](#state-stack) (and any
 nested `@@system` domain fields). Named with `@@[save(<name>)]`. See
 [language reference § Persistence](frame_language.md#persistence).
 
+### single-driver contract
+
+The rule that a [system](#system) instance has at most one external
+[interface](#interface) call in flight at any time. The caller — the host
+code holding the instance — is responsible for serializing its events. Frame
+provides no concurrency primitives, no locking, no event queue. Internal flow
+(`@@:self`, [forward](#forward), lifecycle cascades, async [await](#dispatch)
+suspension) is not subject to this rule. Enforced at runtime by the
+[single-driver gate](#single-driver-gate). See [RFC-0043](rfcs/rfc-0043.md).
+
+### single-driver gate
+
+The runtime mechanism that detects violations of the
+[single-driver contract](#single-driver-contract). Implemented as a per-instance
+busy flag set on entry to a public [interface](#interface) method and cleared
+on return; internal call paths bypass the flag, so re-entry from inside Frame's
+own machinery is unaffected. A violation raises `E703`. See
+[RFC-0043](rfcs/rfc-0043.md).
+
 ### start state
 
 The first [state](#state) declared in a [system](#system)'s `machine:` block —
