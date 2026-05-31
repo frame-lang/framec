@@ -318,12 +318,26 @@ pub(crate) fn check_warnings(decl: &FsmDeclAst) -> Vec<FsmDiagnostic> {
     }
 
     // W705 — constant-true `when` guards.
+    // W701 — a conditional success target with no failure branch: if no
+    // alternative's `when` holds, the match falls through to a silent
+    // reject. The writer probably wanted an explicit fallback (§3.5.4.1,
+    // §5). A conditional in the failure position needs no warning — it is
+    // already the fallback.
     for st in &decl.states {
         for m in &st.matches {
             if let Some(t) = &m.transition {
                 collect_constant_when(&t.success, &mut out);
                 if let Some(f) = &t.failure {
                     collect_constant_when(f, &mut out);
+                }
+                if matches!(t.success, FsmTransitionTarget::Conditional(_)) && t.failure.is_none() {
+                    out.push(FsmDiagnostic {
+                        code: "W701",
+                        span: t.span.clone(),
+                        message: "conditional transition target has no failure branch; \
+                                  unmatched input is silently rejected"
+                            .to_string(),
+                    });
                 }
             }
         }
@@ -626,6 +640,25 @@ mod tests {
             b"@@fsm M(text: bytes, mode: int) : int = 0 { /[01]/ -> ( $a when self.mode == 0 ) : -> $err  $a: 1  $err: -1 }",
         );
         assert!(!d.iter().any(|x| x.code == "W705"), "got {:?}", d);
+    }
+
+    /// W701 — a conditional success target with no failure branch can
+    /// silently reject unmatched input.
+    #[test]
+    fn w701_conditional_without_failure() {
+        let d = diags(
+            b"@@fsm M(text: bytes, mode: int) : int = 0 { /[01]/ -> ( $a when self.mode == 0 )  $a: 1 }",
+        );
+        assert!(d.iter().any(|x| x.code == "W701"), "got {:?}", d);
+    }
+
+    /// A conditional success target WITH a failure branch is not flagged W701.
+    #[test]
+    fn w701_conditional_with_failure_ok() {
+        let d = diags(
+            b"@@fsm M(text: bytes, mode: int) : int = 0 { /[01]/ -> ( $a when self.mode == 0 ) : -> $err  $a: 1  $err: -1 }",
+        );
+        assert!(!d.iter().any(|x| x.code == "W701"), "got {:?}", d);
     }
 
     /// E703 — reading a `self.<field>` that names no parameter or domain field.
