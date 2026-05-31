@@ -147,6 +147,10 @@ pub(crate) struct PipelineCtx {
     /// W-code warnings from `@@fsm` blocks (RFC-0042), harvested in
     /// `do_segment` and merged into the final warnings at codegen time.
     fsm_warnings: Vec<CompileError>,
+    /// Generated `@@fsm` code keyed by fsm name (RFC-0042). Produced in
+    /// `do_segment` after a block validates; the assembler emits it in
+    /// place of the `Segment::Fsm` block.
+    fsm_generated: Vec<(String, String)>,
 }
 
 impl PipelineCtx {
@@ -166,6 +170,7 @@ impl PipelineCtx {
             generated_systems: Vec::new(),
             module_warnings: Vec::new(),
             fsm_warnings: Vec::new(),
+            fsm_generated: Vec::new(),
         }
     }
 
@@ -331,12 +336,39 @@ pub(crate) fn do_segment(c: &mut PipelineCtx) -> Option<CompileResult> {
                     ));
                 }
                 Ok(ast) => {
+                    let mut had_error = false;
                     for d in crate::frame_c::compiler::fsm_validator::validate_fsm(&ast) {
                         let ce = CompileError::new(d.code, &d.message);
                         if d.code.starts_with('W') {
                             c.fsm_warnings.push(ce);
                         } else {
+                            had_error = true;
                             fsm_errors.push(ce);
+                        }
+                    }
+                    // Codegen — v0.1 implements only the Python reference
+                    // backend. Other targets surface a clear capability
+                    // error rather than silently dropping the @@fsm.
+                    if !had_error {
+                        match c.config.target {
+                            crate::frame_c::visitors::TargetLanguage::Python3 => {
+                                match crate::frame_c::compiler::codegen::fsm_python::generate(&ast)
+                                {
+                                    Ok(code) => c.fsm_generated.push((name.clone(), code)),
+                                    Err(reason) => fsm_errors.push(CompileError::new(
+                                        "E740",
+                                        &format!("@@fsm {}: {}", name, reason),
+                                    )),
+                                }
+                            }
+                            other => fsm_errors.push(CompileError::new(
+                                "E740",
+                                &format!(
+                                    "@@fsm {}: code generation for the {:?} target is not yet \
+                                     implemented (v0.1 supports python_3)",
+                                    name, other
+                                ),
+                            )),
                         }
                     }
                 }
@@ -1335,6 +1367,7 @@ pub(crate) fn do_assemble(c: &mut PipelineCtx) -> CompileResult {
     let system_asts = &c.system_asts;
     let module_imports = &c.module_imports;
     let generated_systems = &c.generated_systems;
+    let generated_fsms = std::mem::take(&mut c.fsm_generated);
     let strict_import_errors = std::mem::take(&mut c.strict_import_errors);
     let module_warnings = std::mem::take(&mut c.module_warnings);
     let backend = get_backend(config.target);
@@ -1384,6 +1417,7 @@ pub(crate) fn do_assemble(c: &mut PipelineCtx) -> CompileResult {
     let code = match assembler::assemble(
         &source_map,
         &generated_systems,
+        &generated_fsms,
         &system_params,
         config.target,
         &runtime_imports,
@@ -1670,14 +1704,64 @@ mod tests {
         run_pipeline(source.as_bytes(), &config)
     }
 
-    /// A clean `@@fsm` block compiles without errors (codegen is a later
-    /// phase, so it simply emits no target code for the block).
+    /// A clean `@@fsm` block compiles without errors and emits the
+    /// generated Python recognizer into the output.
     #[test]
     fn fsm_block_clean_compiles() {
         let r = compile_py("@@fsm M(text: bytes) : bool = false { /a/ true }\n");
         assert!(
             r.errors.is_empty(),
             "expected no errors, got {:?}",
+            r.errors
+        );
+        assert!(
+            r.code.contains("class M"),
+            "expected emitted class, got:\n{}",
+            r.code
+        );
+        assert!(r.code.contains("def _run"), "expected the DFA driver");
+    }
+
+    /// End-to-end: the Python emitted by the full pipeline actually runs
+    /// and produces the FSM-TEST-001 verdicts. Proves `framec compile -l
+    /// python_3` of an `@@fsm` yields runnable output. Self-skips if
+    /// python3 is unavailable.
+    #[test]
+    fn fsm_block_emitted_python_runs() {
+        use std::process::Command;
+        let r = compile_py("@@fsm M(text: bytes) : bool = false { /a/ true }\n");
+        assert!(r.errors.is_empty(), "got {:?}", r.errors);
+        let driver = format!(
+            "{}\nimport sys\nm = M(sys.argv[1])\nprint(m.accepted)\n",
+            r.code
+        );
+        let path = std::env::temp_dir().join("framec_fsm_e2e_pipeline.py");
+        std::fs::write(&path, driver).expect("write temp py");
+        let out = match Command::new("python3").arg(&path).arg("a").output() {
+            Ok(o) => o,
+            Err(_) => return, // python3 absent — skip
+        };
+        assert!(
+            out.status.success(),
+            "python3 failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "True");
+    }
+
+    /// `@@fsm` codegen for a non-Python target surfaces E740 (capability
+    /// limitation) rather than silently dropping the block.
+    #[test]
+    fn fsm_block_non_python_target_e740() {
+        use crate::frame_c::compiler::pipeline_supervisor::run_pipeline;
+        let config = PipelineConfig::production(TargetLanguage::Rust);
+        let r = run_pipeline(
+            b"@@fsm M(text: bytes) : bool = false { /a/ true }\n",
+            &config,
+        );
+        assert!(
+            r.errors.iter().any(|e| e.code == "E740"),
+            "expected E740, got {:?}",
             r.errors
         );
     }

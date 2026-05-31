@@ -60,6 +60,7 @@ impl std::error::Error for AssemblyError {}
 pub fn assemble(
     source_map: &SourceMap,
     generated_systems: &[(String, String)],
+    generated_fsms: &[(String, String)],
     system_params: &[(String, Vec<SystemParam>)],
     lang: TargetLanguage,
     runtime_imports: &[String],
@@ -332,10 +333,18 @@ pub fn assemble(
                 }
             }
 
-            Segment::Fsm { .. } => {
-                // @@fsm codegen is a later phase. The block has already been
-                // parsed + validated by earlier stages; it emits no target
-                // code yet, so it contributes nothing to assembled output.
+            Segment::Fsm { name, .. } => {
+                // RFC-0042: emit the generated recognizer in place of the
+                // `@@fsm` block. Generation happened in `do_segment` after
+                // the block validated; an absent entry means the target has
+                // no @@fsm backend (the pipeline already raised E740), so we
+                // emit nothing rather than fail assembly.
+                if let Some((_, code)) = generated_fsms.iter().find(|(n, _)| n == name) {
+                    output.push_str(code);
+                    if !code.ends_with('\n') {
+                        output.push('\n');
+                    }
+                }
             }
         }
     }
@@ -839,8 +848,18 @@ mod tests {
                 },
             }],
         );
-        let result =
-            assemble(&map, &[], &[], TargetLanguage::Python3, &[], &[], &[], None).unwrap();
+        let result = assemble(
+            &map,
+            &[],
+            &[],
+            &[],
+            TargetLanguage::Python3,
+            &[],
+            &[],
+            &[],
+            None,
+        )
+        .unwrap();
         assert_eq!(result, src);
     }
 
@@ -887,6 +906,7 @@ mod tests {
             &map,
             &generated,
             &[],
+            &[],
             TargetLanguage::Python3,
             &[],
             &[],
@@ -916,8 +936,18 @@ mod tests {
                 },
             ],
         );
-        let result =
-            assemble(&map, &[], &[], TargetLanguage::Python3, &[], &[], &[], None).unwrap();
+        let result = assemble(
+            &map,
+            &[],
+            &[],
+            &[],
+            TargetLanguage::Python3,
+            &[],
+            &[],
+            &[],
+            None,
+        )
+        .unwrap();
         assert_eq!(result, "import os\n");
     }
 
@@ -1122,6 +1152,7 @@ mod tests {
             &map,
             &generated,
             &[],
+            &[],
             TargetLanguage::Python3,
             &[],
             &[],
@@ -1153,7 +1184,17 @@ mod tests {
                 visibility: None,
             }],
         );
-        let result = assemble(&map, &[], &[], TargetLanguage::Python3, &[], &[], &[], None);
+        let result = assemble(
+            &map,
+            &[],
+            &[],
+            &[],
+            TargetLanguage::Python3,
+            &[],
+            &[],
+            &[],
+            None,
+        );
         assert!(result.is_err());
         assert!(result.unwrap_err().message.contains("Foo"));
     }
@@ -1217,6 +1258,7 @@ mod tests {
             &map,
             &generated,
             &[],
+            &[],
             TargetLanguage::Python3,
             &[],
             &[],
@@ -1263,6 +1305,7 @@ mod tests {
         let result = assemble(
             &map,
             &generated,
+            &[],
             &[],
             TargetLanguage::Python3,
             &runtime_imports,
