@@ -23,16 +23,16 @@
 //!
 //! Supports single-match states, match stages (with `.label` captures),
 //! bare-expression returns, action blocks (assignment / `if`-`else`
-//! statements), and static + conditional (`when`) success/failure
-//! transitions (including failure-only clauses `: -> $Err`) over the
-//! `bytes`/`char` alphabets. Constructs not yet handled — multi-match
-//! (`|`) states, stage-ref transition targets, embedding actions,
-//! declared `actions:`, and the token alphabet — produce a clear
-//! `Unsupported` error rather than a silent miscompile.
+//! statements), declared `actions:` helpers (emitted as methods), and
+//! static + conditional (`when`) success/failure transitions (including
+//! failure-only clauses `: -> $Err`) over the `bytes`/`char` alphabets.
+//! Constructs not yet handled — multi-match (`|`) states, stage-ref
+//! transition targets, embedding actions, and the token alphabet —
+//! produce a clear `Unsupported` error rather than a silent miscompile.
 
 use crate::frame_c::compiler::frame_ast::{
-    BinaryOp, Expression, FsmDeclAst, FsmStateAst, FsmTransitionTarget, Literal, MatchAst,
-    MatchElement, Statement, Type, UnaryOp,
+    BinaryOp, BlockAst, Expression, FsmDeclAst, FsmStateAst, FsmTransitionTarget, Literal,
+    MatchAst, MatchElement, Statement, Type, UnaryOp,
 };
 use crate::frame_c::compiler::fsm_regex::{
     self, size_check::DEFAULT_MAX_DFA_STATES, subset::DfaLabel, Alphabet, CompileError,
@@ -185,6 +185,54 @@ impl<'a> Generator<'a> {
         self.emit_dfa_matcher(out);
         self.emit_run(out);
         self.emit_state_methods(out)?;
+        self.emit_action_methods(out)?;
+        Ok(())
+    }
+
+    /// Emit each declared `actions:` helper as a method on the recognizer.
+    /// Actions read/write domain fields via `self.<name>` (they share the
+    /// instance); a trailing bare expression is the action's return value.
+    fn emit_action_methods(&self, out: &mut String) -> Result<(), String> {
+        let Some(block) = &self.decl.actions else {
+            return Ok(());
+        };
+        for act in &block.actions {
+            let mut sig = String::from("self");
+            for p in &act.params {
+                write!(sig, ", {}", p.name).ok();
+            }
+            writeln!(out, "    def {}({}):", act.name, sig).ok();
+            self.emit_action_body(out, &act.body, act.return_type.is_some())?;
+            out.push('\n');
+        }
+        Ok(())
+    }
+
+    /// Emit an action body. When the action declares a return type and its
+    /// final statement is a (non-assignment) bare expression, that
+    /// expression is the action's return value (§3.7 implicit tail).
+    fn emit_action_body(
+        &self,
+        out: &mut String,
+        body: &BlockAst,
+        has_return: bool,
+    ) -> Result<(), String> {
+        if body.statements.is_empty() {
+            out.push_str("        pass\n");
+            return Ok(());
+        }
+        let last = body.statements.len() - 1;
+        for (i, st) in body.statements.iter().enumerate() {
+            if i == last && has_return {
+                if let Statement::Expression(e) = st {
+                    if !matches!(e.expr, Expression::Assign { .. }) {
+                        writeln!(out, "        return {}", expr_to_py(&e.expr)).ok();
+                        continue;
+                    }
+                }
+            }
+            out.push_str(&stmt_to_py(st, "        ")?);
+        }
         Ok(())
     }
 
@@ -577,9 +625,9 @@ fn call_to_py(func: &str, args: &[Expression]) -> String {
         // RFC-0042 built-ins.
         "to_int" => format!("_frame_to_int({})", rendered.join(", ")),
         "len" => format!("_frame_len({})", rendered.join(", ")),
-        // Anything else is emitted verbatim (e.g. a declared action, once
-        // those are supported).
-        _ => format!("{}({})", func, rendered.join(", ")),
+        // Any other call names a declared `actions:` helper, emitted as a
+        // method on the recognizer instance.
+        _ => format!("self.{}({})", func, rendered.join(", ")),
     }
 }
 
@@ -751,6 +799,34 @@ mod tests {
         assert_eq!(seven, vec!["7", "True"]);
         let three = eval_py(src, "3", &["m.return_value", "m.flag"], "t032b").unwrap();
         assert_eq!(three, vec!["3", "False"]);
+    }
+
+    /// FSM-TEST-120 — declared action callable from a match, with params
+    /// and a return value propagated to `@@:return`.
+    #[test]
+    fn fsm_test_120_action_callable() {
+        let src = "@@fsm M(text: bytes) : int = 0 { \
+                   /[0-9]+/ parse_int(@@:matched) \
+                   actions: parse_int(s: bytes): int { to_int(s) } }";
+        let Some(v) = eval_py(src, "42", &["m.return_value"], "t120") else {
+            return;
+        };
+        assert_eq!(v, vec!["42"]);
+    }
+
+    /// FSM-TEST-121 — action reads/writes a domain field; its side effect
+    /// persists into the bare-expression return.
+    #[test]
+    fn fsm_test_121_action_domain_access() {
+        let src = "@@fsm M(text: bytes) : int = 0 { \
+                   /[0-9]/ { increment() } \
+                   self.count \
+                   actions: increment() { self.count = self.count + 1 } \
+                   domain: count: int = 0 }";
+        let Some(v) = eval_py(src, "5", &["m.return_value", "m.count"], "t121") else {
+            return;
+        };
+        assert_eq!(v, vec!["1", "1"]);
     }
 
     /// FSM-TEST-001 — the smoke test.
