@@ -169,6 +169,7 @@ pub mod block_transform;
 pub mod codegen_utils;
 pub mod erlang_system;
 pub mod frame_expansion;
+pub mod fsm_python;
 pub mod interface_gen;
 pub mod machinery;
 pub mod runtime;
