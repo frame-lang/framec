@@ -121,6 +121,85 @@ Python async is mature:
 
 ---
 
+## Concurrency and re-entrancy
+
+Frame does **not** manage concurrency. The Python runtime is
+single-threaded by design — the context stack, compartment, and
+state-variable storage on a system instance are **not** guarded
+by locks or atomics. The intended deployment model is:
+
+> **One system instance per session, driven by a single sequential
+> driver.**
+
+For an automation pipeline, a long-running daemon, or a background
+worker, that typically means one `asyncio` task or one Python
+thread owns each `@@Counter()` instance and serializes events
+through it.
+
+### What's safe
+
+- **Sequential event dispatch on one instance.** Call `s.event_a()`,
+  let it return, call `s.event_b()`. This is the normal usage.
+- **`@@:self.method()` from inside a handler.** Frame's context
+  stack handles re-entry on the same instance — the inner call
+  runs to completion before control returns to the outer handler.
+  Cookbook recipes covering self-call (e.g. transitions triggered
+  from a handler body) rely on this.
+- **Independent instances on independent driver tasks.** Two
+  `Counter()` instances driven by two `asyncio` tasks do not
+  contend.
+
+### What's not safe (without external serialization)
+
+- **External re-entry during `await`.** If interface method `A` is
+  an `async` method and is currently suspended on
+  `await self.cache.get(...)`, calling interface method `B` on the
+  *same* instance from another `asyncio` task will execute `B`
+  against a partially-progressed context stack. The runtime does
+  not detect this.
+- **Multi-threaded access to one instance.** Frame's generated
+  Python code has no `threading.Lock` around dispatch. Two OS
+  threads calling methods on the same instance race on the
+  compartment and state vars.
+
+### Pattern: serialize external events
+
+If your driver has multiple sources that can fire events into the
+same instance (HTTP handlers, scheduler ticks, signal handlers),
+put a per-instance `asyncio.Queue` (or `queue.Queue` for threaded
+drivers) in front of the system and drain it from a single
+consumer task:
+
+```python
+import asyncio
+
+async def driver(system, inbox: asyncio.Queue):
+    while True:
+        event, args = await inbox.get()
+        await getattr(system, event)(*args)
+        inbox.task_done()
+
+system = Counter()
+inbox = asyncio.Queue()
+asyncio.create_task(driver(system, inbox))
+
+# Producers (handlers, schedulers, sockets) only enqueue.
+await inbox.put(("bump", ()))
+```
+
+This keeps the "one driver per instance" invariant while letting
+many producers fire events.
+
+### Persistence under concurrency
+
+`save_state()` requires the system to be **quiescent** — no event
+in flight, `_context_stack` empty. Calling it from inside a
+handler raises `RuntimeError("E700: system not quiescent")`. In a
+queued-driver design, save between drains (after `inbox.get()`
+returns and before the next event runs) or with the driver paused.
+
+---
+
 ## Cross-system fields: direct instantiation
 
 `var counter: Counter = @@Counter()` lowers to an instance
@@ -271,6 +350,63 @@ Python on `restore_state()`.
 JSON-based persist that closes this hole; it's deferred pending
 customer feedback. See `docs/rfcs/rfc-0012.md` "Python: switch
 from pickle to JSON-based persist."
+
+---
+
+## Testing a Frame system
+
+Frame's canonical test pattern is **white-box assertion through
+operations**, documented in detail as
+[Cookbook Recipe 32 — Test Harness](../frame_cookbook.md#32-test-harness--white-box-testing-with-operations).
+The shape:
+
+1. Read state via `@@:system.state` inside an operation. It returns
+   the current state name as a string (no `$` prefix) and is
+   read-only — assignment is a parse error.
+2. Expose any state-variable values you need to assert on through
+   additional operations (operations don't dispatch events, so
+   they're safe inspection points).
+3. Drive the system through events in your `pytest` / `unittest`
+   driver and assert against those operations.
+
+```frame
+@@system Counter {
+    interface:
+        tick()
+    machine:
+        $Idle {
+            tick() { $.ticks = $.ticks + 1; -> $Running }
+        }
+        $Running {
+            tick() { $.ticks = $.ticks + 1 }
+
+            $.ticks: int = 0
+        }
+    operations:
+        current_state(): str { @@:(@@:system.state) }
+        tick_count(): int    { @@:($.ticks) }
+}
+```
+
+```python
+def test_counter_advances_to_running():
+    c = Counter()
+    assert c.current_state() == "Idle"
+    c.tick()
+    assert c.current_state() == "Running"
+    assert c.tick_count() == 1
+```
+
+For deeper introspection (compartment, state stack), generated
+Python exposes `obj._compartment.state`,
+`obj._compartment.state_vars`, etc. These are not part of the
+documented stable surface — operations are the supported route.
+
+**Per-event tracing / mocking actions:** Frame does not currently
+provide a built-in transition-trace callback or action-stub mode.
+If you need to suppress side effects in unit tests today, write
+thin actions that delegate to injectable callables and replace
+them in the test fixture.
 
 ---
 

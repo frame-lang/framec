@@ -27,6 +27,7 @@ Complete reference for the Frame language. For a tutorial introduction, see [Get
 - [Persistence](#persistence)
 - [Async](#async)
 - [System Instantiation](#system-instantiation)
+- [Versioning & Stability](#versioning--stability)
 - [Token Summary](#token-summary)
 - [Error Codes](#error-codes)
 - [Complete Example](#complete-example)
@@ -1039,6 +1040,46 @@ The framepiler validates at the assembler stage:
 - No duplicate named args.
 - No mixing positional and named within a single call.
 - State and enter args have matching declarations on the start state's `$Start(name: type)` and `$>(name: type)` handlers.
+
+---
+
+## Versioning & Stability
+
+Frame has two version numbers that move on different schedules.
+
+| Number | What it tracks | Example |
+|---|---|---|
+| **framec semver** | The compiler release line. Bumps signal CLI/codegen changes. | `4.3.0` |
+| **Grammar version** | The Frame language specification itself. Moves much more slowly. | `v0.30` |
+
+The compiler version on its own does not tell you the language version, and vice versa. A patch release of framec almost never changes the grammar; a grammar bump only happens when the language surface changes (new syntax, removed syntax, semantics change).
+
+### Source compatibility (what `4.x` means for your `.fpy` files)
+
+`framec` follows semver for **source-level** compatibility of `.fpy` / `.frs` / `.fts` / etc. files:
+
+- **Major** (`4.x` → `5.x`) may require source changes — a grammar version bump usually rides with it. Migration notes ship in `docs/releases/<version>-migration.md`.
+- **Minor** (`4.2` → `4.3`) is additive. Existing valid sources continue to compile.
+- **Patch** (`4.2.3` → `4.2.4`) is bug-fix only. No source changes required.
+
+### Generated code stability (will codegen churn on upgrade?)
+
+Frame does **not** offer a formal byte-stability contract across versions, but in practice patch and minor releases are de facto byte-stable for sources that don't use changed features. Each release's CHANGELOG entry calls out the specific cases where output differs from the previous release.
+
+For example, the `4.2.4` entry states:
+
+> Output for files without `@@import` is byte-identical to `4.2.3` except for the two fixes below.
+
+**Practical advice:**
+
+- Treat the CHANGELOG as the authoritative diff between releases. If your repo pins `framec` and commits generated code, a CHANGELOG read is enough to know whether `git diff` after `cargo install framec` is expected.
+- Pin `framec` in CI for reproducible builds. Bump intentionally.
+- The `--debug-output` and `--emit-debug` JSON sidecars (source maps, frame-maps, visitor-maps) are not currently positioned as a stable public schema — useful for tooling but expect churn between minor versions.
+
+### Where to look
+
+- `CHANGELOG.md` — per-release notes, including codegen-affecting changes.
+- `docs/releases/` — long-form release notes and migration guides.
 
 ---
 
