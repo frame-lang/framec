@@ -14,14 +14,18 @@
 //!
 //! Each diagnostic includes a span and a recovery hint.
 
-use super::ast::{ForbiddenConstruct, Literal, RegexAst, RegexNode, SpannedNode};
+use super::ast::{
+    CharClass, ClassMember, ForbiddenConstruct, Laziness, Literal, RegexAst, RegexNode, SpannedNode,
+};
 use super::{Alphabet, Span};
 
 /// Validate a parsed regex against the v0.1 dialect and the declared
 /// alphabet. Returns *all* violations, not just the first — this lets
 /// the frontend emit batched diagnostics in one pass.
-pub fn check(_ast: &RegexAst, _alphabet: Alphabet) -> Vec<Diagnostic> {
-    todo!("Phase 4: walk AST; emit per-node diagnostics")
+pub fn check(ast: &RegexAst, alphabet: Alphabet) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
+    visit(&ast.root, alphabet, &mut diagnostics);
+    diagnostics
 }
 
 /// One diagnostic emitted by [`check`].
@@ -50,24 +54,145 @@ pub enum DiagCode {
     E723,
 }
 
-/// Internal traversal helper. Phase 4 will implement.
-#[allow(dead_code)]
-fn visit(_node: &SpannedNode, _alphabet: Alphabet, _diagnostics: &mut Vec<Diagnostic>) {
-    // Dispatch on node kind:
-    //   RegexNode::Forbidden(_)     → emit E720 with variant-specific message
-    //   RegexNode::Literal(byte) in Char alphabet → E722
-    //   RegexNode::Literal(cp)   in Bytes/Token   → E722
-    //   RegexNode::Class(_)      in Token alphabet → E722
-    //   RegexNode::Empty (top-level) → E723
-    //   RegexNode::Quantifier { laziness: Lazy, .. } → E720
-    //   ...descend into children
-    todo!()
+/// Recursively walk a node, appending every v0.1 violation. Forbidden
+/// subtrees are reported once at their root and not descended into (the
+/// whole construct is rejected, so nested diagnostics would be noise).
+fn visit(node: &SpannedNode, alphabet: Alphabet, diagnostics: &mut Vec<Diagnostic>) {
+    match &node.node {
+        RegexNode::Forbidden(c) => {
+            diagnostics.push(Diagnostic {
+                code: DiagCode::E720,
+                span: node.span,
+                message: forbidden_message(c).to_string(),
+                recovery_hint: forbidden_hint(c).to_string(),
+            });
+        }
+
+        RegexNode::Empty => {
+            diagnostics.push(Diagnostic {
+                code: DiagCode::E723,
+                span: node.span,
+                message: "empty regex `//` matches nothing useful".to_string(),
+                recovery_hint: "remove the match or give it a non-empty pattern".to_string(),
+            });
+        }
+
+        RegexNode::Literal(lit) => {
+            if !literal_matches_alphabet(lit, alphabet) {
+                diagnostics.push(Diagnostic {
+                    code: DiagCode::E722,
+                    span: node.span,
+                    message: format!(
+                        "literal is not valid in the {} alphabet",
+                        alphabet_name(alphabet)
+                    ),
+                    recovery_hint: alphabet_hint(alphabet).to_string(),
+                });
+            }
+        }
+
+        RegexNode::Class(class) => {
+            // The token alphabet has no character classes (RFC-0042 §6.8) —
+            // a token is matched by name, not by composed element ranges.
+            if alphabet == Alphabet::Token {
+                diagnostics.push(Diagnostic {
+                    code: DiagCode::E722,
+                    span: node.span,
+                    message: "character classes are not valid in the token alphabet".to_string(),
+                    recovery_hint: "match token kinds by name, or use alternation `A|B`"
+                        .to_string(),
+                });
+            }
+            check_class_ranges(class, node.span, diagnostics);
+        }
+
+        RegexNode::Quantifier {
+            inner, laziness, ..
+        } => {
+            if *laziness == Laziness::Lazy {
+                diagnostics.push(Diagnostic {
+                    code: DiagCode::E720,
+                    span: node.span,
+                    message: "lazy quantifiers are not supported in v0.1".to_string(),
+                    recovery_hint:
+                        "use the greedy form; lazy matching is deferred to v0.2 (RFC-0042 §11.1)"
+                            .to_string(),
+                });
+            }
+            visit(inner, alphabet, diagnostics);
+        }
+
+        RegexNode::Group(inner) => visit(inner, alphabet, diagnostics),
+
+        RegexNode::Concat(items) | RegexNode::Alt(items) => {
+            for item in items {
+                visit(item, alphabet, diagnostics);
+            }
+        }
+
+        // `.` and zero-width anchors carry no alphabet/dialect restriction
+        // at this layer.
+        RegexNode::Dot | RegexNode::Anchor(_) => {}
+    }
+}
+
+/// A reversed range (`[z-a]`) in a class is malformed (E722 — invalid
+/// class syntax). Shorthand members carry no ordering.
+fn check_class_ranges(class: &CharClass, span: Span, diagnostics: &mut Vec<Diagnostic>) {
+    for m in &class.members {
+        if let ClassMember::Range { low, high } = m {
+            if low > high {
+                diagnostics.push(Diagnostic {
+                    code: DiagCode::E722,
+                    span,
+                    message: format!("reversed character-class range ({low} > {high})"),
+                    recovery_hint: "write the range low-to-high, e.g. `a-z`".to_string(),
+                });
+            }
+        }
+    }
+}
+
+fn alphabet_name(a: Alphabet) -> &'static str {
+    match a {
+        Alphabet::Bytes => "bytes",
+        Alphabet::Char => "char",
+        Alphabet::Token => "token",
+    }
+}
+
+fn alphabet_hint(a: Alphabet) -> &'static str {
+    match a {
+        Alphabet::Bytes => "use a byte value (e.g. `\\x41`) or change the input type to `char`",
+        Alphabet::Char => "use a code point, or change the input type to `bytes`",
+        Alphabet::Token => "match a token kind by name",
+    }
+}
+
+/// The `help:` text for each forbidden construct.
+fn forbidden_hint(c: &ForbiddenConstruct) -> &'static str {
+    match c {
+        ForbiddenConstruct::Backref(_) | ForbiddenConstruct::NamedBackref(_) => {
+            "backreferences make the language non-regular; restructure without them"
+        }
+        ForbiddenConstruct::Recursion => "recursion is non-regular; use repetition instead",
+        ForbiddenConstruct::PositiveLookahead(_)
+        | ForbiddenConstruct::NegativeLookahead(_)
+        | ForbiddenConstruct::PositiveLookbehind(_)
+        | ForbiddenConstruct::NegativeLookbehind(_) => {
+            "lookaround is deferred to v0.2 (RFC-0042 §11.5)"
+        }
+        ForbiddenConstruct::UnicodeClass(_) => {
+            "Unicode general-category classes are deferred to v0.2 (RFC-0042 §11.6)"
+        }
+        ForbiddenConstruct::NamedCapture { .. } => "use a Frame stage label to capture (§3.5.2)",
+        ForbiddenConstruct::NonCapturingGroup(_) => "use a plain group `(...)`",
+    }
 }
 
 /// Convenience: produce the canonical E720 message for a forbidden
 /// construct. Centralized so the diagnostic-test snapshots have a
 /// single source of wording.
-#[allow(dead_code)]
 pub(crate) fn forbidden_message(c: &ForbiddenConstruct) -> &'static str {
     match c {
         ForbiddenConstruct::Backref(_) => "backreferences are non-regular",
@@ -92,8 +217,6 @@ pub(crate) fn forbidden_message(c: &ForbiddenConstruct) -> &'static str {
 }
 
 /// Convenience: alphabet compatibility predicate for a literal node.
-/// Phase 4 will wire this into [`visit`].
-#[allow(dead_code)]
 pub(crate) fn literal_matches_alphabet(lit: &Literal, alphabet: Alphabet) -> bool {
     matches!(
         (lit, alphabet),
@@ -101,4 +224,84 @@ pub(crate) fn literal_matches_alphabet(lit: &Literal, alphabet: Alphabet) -> boo
             | (Literal::CodePoint(_), Alphabet::Char)
             | (Literal::Token(_), Alphabet::Token)
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::frame_c::compiler::fsm_regex::parser;
+
+    fn diags(src: &str, alphabet: Alphabet) -> Vec<Diagnostic> {
+        let ast = parser::parse(src, alphabet).expect("fixture must parse");
+        check(&ast, alphabet)
+    }
+
+    fn codes(src: &str, alphabet: Alphabet) -> Vec<DiagCode> {
+        diags(src, alphabet).into_iter().map(|d| d.code).collect()
+    }
+
+    #[test]
+    fn clean_regex_has_no_diagnostics() {
+        assert!(diags("[a-z]+(ab|cd)*\\d", Alphabet::Bytes).is_empty());
+    }
+
+    #[test]
+    fn empty_regex_is_e723() {
+        assert_eq!(codes("", Alphabet::Bytes), vec![DiagCode::E723]);
+    }
+
+    #[test]
+    fn lazy_quantifier_is_e720() {
+        assert_eq!(codes("a*?", Alphabet::Bytes), vec![DiagCode::E720]);
+    }
+
+    #[test]
+    fn forbidden_constructs_are_e720() {
+        for src in [
+            "\\1",
+            "(?:ab)",
+            "(?=ab)",
+            "(?!ab)",
+            "(?<=ab)",
+            "(?P<n>ab)",
+            "\\p{L}",
+        ] {
+            assert_eq!(
+                codes(src, Alphabet::Bytes),
+                vec![DiagCode::E720],
+                "src {src:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn forbidden_reported_once_not_descended() {
+        // A lazy quantifier nested inside a forbidden group is not double
+        // reported: the forbidden root is reported and not descended.
+        assert_eq!(codes("(?:a*?)", Alphabet::Bytes), vec![DiagCode::E720]);
+    }
+
+    #[test]
+    fn wrong_alphabet_literal_is_e722() {
+        // A non-ASCII code point in the bytes alphabet.
+        assert_eq!(codes("é", Alphabet::Bytes), vec![DiagCode::E722]);
+    }
+
+    #[test]
+    fn char_class_in_token_alphabet_is_e722() {
+        assert!(codes("[abc]", Alphabet::Token).contains(&DiagCode::E722));
+    }
+
+    #[test]
+    fn reversed_range_is_e722() {
+        assert_eq!(codes("[z-a]", Alphabet::Bytes), vec![DiagCode::E722]);
+    }
+
+    #[test]
+    fn batches_multiple_violations() {
+        // A lazy quantifier and a backreference in one regex → two diags.
+        let cs = codes("a*?\\1", Alphabet::Bytes);
+        assert_eq!(cs.len(), 2);
+        assert!(cs.contains(&DiagCode::E720));
+    }
 }
