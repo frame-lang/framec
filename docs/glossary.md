@@ -33,10 +33,11 @@ read domain variables and the system / self / return accessors but cannot fire
 ### async system
 
 A [system](#system) declared with the `@@[async]` system-header attribute.
-framec emits an async system as a layered pair: a public system object
+framec emits an async system as a layered pair — a public [casing](#casing)
 exposing the declared [interface](#interface) and [operations](#operation),
 holding a private inner [machine](#machine) that owns the
-[dispatch](#dispatch) path. The system layer is the natural home for the
+[dispatch](#dispatch) path (the watchmaker's metaphor: a case houses the
+movement). The casing is the natural home for the
 [single-driver gate](#single-driver-gate) (`E703`) and for future
 cross-cutting concerns (instrumentation, optional serialization). Interface
 methods are generated in the host language's asynchronous form
@@ -56,6 +57,21 @@ to [oracles](#oracle). Named for being the structural spine the specialists
 attach to. framec's own parser is organized this way — one `SystemBackbone`
 system whose flat self-looping states cover the entire token-level outer grammar.
 See [RFC-0039](rfcs/rfc-0039.md#terminology).
+
+### casing
+
+The public outer artifact framec emits for an [async system](#async-system).
+Bears the user-declared name (e.g. `Counter`); is what users instantiate,
+what [domain](#domain) fields hold, and what other systems' handlers call.
+Exposes the declared [interface](#interface) and [operations](#operation) as
+the externally visible API; holds a private inner [machine](#machine) and
+delegates to it through the [single-driver gate](#single-driver-gate).
+Named for the watchmaker's metaphor: a watch case houses the movement,
+presents the readable face, and routes inputs (crown turns, button
+presses) to the movement. The casing is also where future cross-cutting
+concerns (trace hooks, instrumentation, optional serialization) will be
+mounted. Only emitted for systems carrying `@@[async]`; sync systems are
+single artifacts. See [RFC-0043](rfcs/rfc-0043.md).
 
 ### compartment
 
@@ -199,8 +215,8 @@ A [system](#system)'s state machine, declared in the `machine:` block: its
 In an [async system](#async-system) the term also refers to the *generated*
 inner artifact that owns the [dispatch](#dispatch) path —
 [kernel](#dispatch), [compartment](#compartment), [context stack](#frame-context),
-transition loop, lifecycle cascades — held privately by the outer system
-object and unreachable from outside it. See
+transition loop, lifecycle cascades — held privately by the
+[casing](#casing) and unreachable from outside it. See
 [RFC-0043](rfcs/rfc-0043.md).
 
 ### no-initialization
@@ -310,12 +326,12 @@ Enforced at runtime by the [single-driver gate](#single-driver-gate). See
 ### single-driver gate
 
 The runtime mechanism that detects violations of the
-[single-driver contract](#single-driver-contract). Emitted on the system
-layer of every [async system](#async-system) as a per-instance busy flag,
-set on entry to a public [interface](#interface) method and cleared on
-return in a `try`/`finally` equivalent. Internal dispatch lives in the
-inner [machine](#machine) and never touches the flag. A violation raises
-`E703`. See [RFC-0043](rfcs/rfc-0043.md).
+[single-driver contract](#single-driver-contract). Emitted on the
+[casing](#casing) of every [async system](#async-system) as a
+per-instance busy flag, set on entry to a public [interface](#interface)
+method and cleared on return in a `try`/`finally` equivalent. Internal
+dispatch lives in the inner [machine](#machine) and never touches the
+flag. A violation raises `E703`. See [RFC-0043](rfcs/rfc-0043.md).
 
 ### start state
 
