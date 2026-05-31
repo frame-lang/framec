@@ -161,6 +161,7 @@ mod _fsm_lexer_framec {
         pub in_block: bool,
         pub tokens: Vec<FsmToken>,
         pub error: Option<ParseError>,
+        pub error_code: Option<&'static str>,
     }
 
     #[allow(non_snake_case)]
@@ -175,6 +176,7 @@ mod _fsm_lexer_framec {
                 in_block: false,
                 tokens: Vec::new(),
                 error: None,
+                error_code: None,
                 __compartment: FsmLexerCompartment::new("Start"),
                 __next_compartment: None,
             }
@@ -433,6 +435,21 @@ mod _fsm_lexer_framec {
                     });
                     pos = end;
                     continue;
+                }
+            
+                // A `$` in the header is the `@@system` compartment sigil
+                // `$(...)` / `$>(...)`, which has no meaning in a construct
+                // without compartments (RFC-0042 §3.2, E701).
+                if b == b'$' {
+                    self.error_code = Some("E701");
+                    self.error = Some(ParseError {
+                        message: "the `$(...)` / `$>(...)` parameter sigil has no meaning in @@fsm (no compartments)".to_string(),
+                        span: Span::new(pos, pos + 1),
+                    });
+                    self.pos = pos;
+                    let mut __compartment = self.__prepareEnter("Done");
+                    self.__transition(__compartment);
+                    return;
                 }
             
                 // Unexpected byte in header.
@@ -910,6 +927,13 @@ mod _fsm_lexer_framec {
                         b"!=" => Some(FsmTokenKind::NotEq),
                         b"<=" => Some(FsmTokenKind::Le),
                         b">=" => Some(FsmTokenKind::Ge),
+                        // `->` is never valid in an expression (Frame has no
+                        // `>` prefix operator). At depth 0 it already
+                        // terminated the expression above; reaching it here
+                        // means a transition arrow nested inside a block or
+                        // paren group — emit Arrow so the action-block parser
+                        // can reject it (E712).
+                        b"->" => Some(FsmTokenKind::Arrow),
                         _ => None,
                     };
                     if let Some(k) = two_kind {

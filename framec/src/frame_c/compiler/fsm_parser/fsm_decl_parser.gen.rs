@@ -155,6 +155,7 @@ mod _fsm_decl_parser_framec {
         pub domain_block: Option<FsmDomainBlock>,
         pub result: Option<FsmDeclAst>,
         pub error: Option<ParseError>,
+        pub error_code: Option<&'static str>,
     }
 
     #[allow(non_snake_case)]
@@ -173,6 +174,7 @@ mod _fsm_decl_parser_framec {
                 domain_block: None,
                 result: None,
                 error: None,
+                error_code: None,
                 __compartment: FsmDeclParserCompartment::new("Start"),
                 __next_compartment: None,
             }
@@ -358,6 +360,21 @@ mod _fsm_decl_parser_framec {
             
                     let pname = match ts.peek_kind() {
                         FsmTokenKind::Ident(n) => { ts.advance(); n }
+                        // A `$`-sigil where a parameter name is expected is
+                        // the `@@system` compartment form `$(...)` / `$>(...)`,
+                        // which has no meaning in a construct without
+                        // compartments (RFC-0042 §3.2, E701). The lexer emits
+                        // the bare `$` as a `StateRef`.
+                        FsmTokenKind::StateRef(_) => {
+                            self.error_code = Some("E701");
+                            self.error = Some(ParseError {
+                                message: "the `$(...)` / `$>(...)` parameter sigil has no meaning in @@fsm (no compartments)".to_string(),
+                                span: ts.cur_span(),
+                            });
+                            let mut __compartment = self.__prepareEnter("Done");
+                            self.__transition(__compartment);
+                            return;
+                        }
                         _ => {
                             self.error = Some(ParseError {
                                 message: "expected parameter name".to_string(),
@@ -427,10 +444,11 @@ mod _fsm_decl_parser_framec {
                 return;
             }
             
-            // `:` return type
+            // `:` return type (mandatory — E705)
             if !ts.eat(&FsmTokenKind::Colon) {
+                self.error_code = Some("E705");
                 self.error = Some(ParseError {
-                    message: "expected `:` before return type".to_string(),
+                    message: "@@fsm declaration is missing its return type".to_string(),
                     span: ts.cur_span(),
                 });
                 let mut __compartment = self.__prepareEnter("Done");
@@ -440,8 +458,9 @@ mod _fsm_decl_parser_framec {
             match ts.peek_kind() {
                 FsmTokenKind::Ident(t) => { self.return_type = Type::Custom(t); ts.advance(); }
                 _ => {
+                    self.error_code = Some("E705");
                     self.error = Some(ParseError {
-                        message: "expected return type".to_string(),
+                        message: "@@fsm declaration is missing its return type".to_string(),
                         span: ts.cur_span(),
                     });
                     let mut __compartment = self.__prepareEnter("Done");
@@ -450,10 +469,11 @@ mod _fsm_decl_parser_framec {
                 }
             }
             
-            // `=` default value (single primary token in v1)
+            // `=` mandatory default value (single primary token in v1 — E705)
             if !ts.eat(&FsmTokenKind::Eq) {
+                self.error_code = Some("E705");
                 self.error = Some(ParseError {
-                    message: "expected `=` and a mandatory default value".to_string(),
+                    message: "@@fsm declaration is missing its mandatory default value".to_string(),
                     span: ts.cur_span(),
                 });
                 let mut __compartment = self.__prepareEnter("Done");
@@ -482,12 +502,15 @@ mod _fsm_decl_parser_framec {
         fn _s_Body_hdl_frame_enter(&mut self, __e: &FsmDeclParserFrameEvent) {
             let body_start = self.tokens.as_ref().unwrap().cur_span();
             
-            // Parse a sequence of state declarations until `}`, then the
-            // optional `domain:` section (per §3.3 canonical order, last).
-            // Each state is parsed by a child StateParser (token-stream
-            // shuttle); the first state may be unlabeled (implicit start).
-            // TODO: `actions:` section (KwActions) — needs param-list
-            // lexing; lands with ActionsBlockParser.
+            // Parse the body sections in their canonical order
+            // (§3.3): states → `actions:` → `domain:`. Each optional
+            // block may appear at most once. `seen_actions`/`seen_domain`
+            // enforce both the ordering (E710) and the at-most-once rule
+            // (E711). Each state is parsed by a child StateParser
+            // (token-stream shuttle); the first state may be unlabeled
+            // (implicit start).
+            let mut seen_actions = false;
+            let mut seen_domain = false;
             loop {
                 let next = self.tokens.as_ref().unwrap().peek_kind();
                 match next {
@@ -505,12 +528,38 @@ mod _fsm_decl_parser_framec {
                         return;
                     }
                     FsmTokenKind::KwActions => {
+                        let ksp = self.tokens.as_ref().unwrap().cur_span();
+                        // `domain:` precedes nothing — `actions:` after it
+                        // is out of order (E710); a second `actions:` is a
+                        // duplicate (E711).
+                        if seen_domain {
+                            self.error_code = Some("E710");
+                            self.error = Some(ParseError {
+                                message: "`actions:` must precede `domain:` (canonical order: states → actions → domain)".to_string(),
+                                span: ksp,
+                            });
+                            let mut __compartment = self.__prepareEnter("Done");
+                            self.__transition(__compartment);
+                            return;
+                        }
+                        if seen_actions {
+                            self.error_code = Some("E711");
+                            self.error = Some(ParseError {
+                                message: "duplicate `actions:` block".to_string(),
+                                span: ksp,
+                            });
+                            let mut __compartment = self.__prepareEnter("Done");
+                            self.__transition(__compartment);
+                            return;
+                        }
+                        seen_actions = true;
                         self.tokens.as_mut().unwrap().advance(); // `actions` (`:` consumed by lexer)
                         let mut child = ActionsBlockParser::__create();
                         child.tokens = self.tokens.take();
                         child.parse();
                         self.tokens = child.tokens.take();
                         if let Some(e) = child.error.take() {
+                            self.error_code = child.error_code.take();
                             self.error = Some(e);
                             let mut __compartment = self.__prepareEnter("Done");
                             self.__transition(__compartment);
@@ -519,12 +568,27 @@ mod _fsm_decl_parser_framec {
                         self.actions_block = child.result.take();
                     }
                     FsmTokenKind::KwDomain => {
+                        let ksp = self.tokens.as_ref().unwrap().cur_span();
+                        // `domain:` is the last section; a second one is a
+                        // duplicate (E711).
+                        if seen_domain {
+                            self.error_code = Some("E711");
+                            self.error = Some(ParseError {
+                                message: "duplicate `domain:` block".to_string(),
+                                span: ksp,
+                            });
+                            let mut __compartment = self.__prepareEnter("Done");
+                            self.__transition(__compartment);
+                            return;
+                        }
+                        seen_domain = true;
                         self.tokens.as_mut().unwrap().advance(); // `domain` (`:` consumed by lexer)
                         let mut child = DomainBlockParser::__create();
                         child.tokens = self.tokens.take();
                         child.parse();
                         self.tokens = child.tokens.take();
                         if let Some(e) = child.error.take() {
+                            self.error_code = child.error_code.take();
                             self.error = Some(e);
                             let mut __compartment = self.__prepareEnter("Done");
                             self.__transition(__compartment);
@@ -533,6 +597,18 @@ mod _fsm_decl_parser_framec {
                         self.domain_block = child.result.take();
                     }
                     _ => {
+                        // A state after a block is out of order (E710):
+                        // all states must precede `actions:`/`domain:`.
+                        if seen_actions || seen_domain {
+                            self.error_code = Some("E710");
+                            self.error = Some(ParseError {
+                                message: "state declarations must precede `actions:` and `domain:` (canonical order: states → actions → domain)".to_string(),
+                                span: self.tokens.as_ref().unwrap().cur_span(),
+                            });
+                            let mut __compartment = self.__prepareEnter("Done");
+                            self.__transition(__compartment);
+                            return;
+                        }
                         let before = self.tokens.as_ref().unwrap().position();
                         let mut child = StateParser::__create();
                         child.tokens = self.tokens.take();

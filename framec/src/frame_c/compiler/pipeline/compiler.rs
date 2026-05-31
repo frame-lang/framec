@@ -326,7 +326,7 @@ pub(crate) fn do_segment(c: &mut PipelineCtx) -> Option<CompileResult> {
             match crate::frame_c::compiler::fsm_parser::parse_fsm_block(block) {
                 Err(pe) => {
                     fsm_errors.push(CompileError::new(
-                        "E700",
+                        pe.code,
                         &format!("@@fsm {}: {}", name, pe.message),
                     ));
                 }

@@ -136,6 +136,7 @@ mod _action_block_parser_framec {
         pub span_start: Span,
         pub result: Option<BlockAst>,
         pub error: Option<ParseError>,
+        pub error_code: Option<&'static str>,
     }
 
     #[allow(non_snake_case)]
@@ -149,6 +150,7 @@ mod _action_block_parser_framec {
                 span_start: Span::new(0, 0),
                 result: None,
                 error: None,
+                error_code: None,
                 __compartment: ActionBlockParserCompartment::new("Start"),
                 __next_compartment: None,
             }
@@ -330,6 +332,19 @@ mod _action_block_parser_framec {
                     // Stray `;` (e.g. a trailing or leading separator).
                     FsmTokenKind::Semi => {
                         self.tokens.as_mut().unwrap().advance();
+                    }
+                    // A transition (`->`) is only valid as a match's
+                    // transition clause, never as a statement inside an
+                    // action body (RFC-0042 §3.7, E712).
+                    FsmTokenKind::Arrow => {
+                        self.error_code = Some("E712");
+                        self.error = Some(ParseError {
+                            message: "transition statements (`->`) are not allowed inside an action body".to_string(),
+                            span: self.tokens.as_ref().unwrap().cur_span(),
+                        });
+                        let mut __compartment = self.__prepareEnter("Done");
+                        self.__transition(__compartment);
+                        return;
                     }
                     _ => {
                         let mut child = StatementParser::__create();

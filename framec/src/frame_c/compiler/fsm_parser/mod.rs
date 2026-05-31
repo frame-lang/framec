@@ -94,9 +94,43 @@
 
 pub mod token_stream;
 
-use crate::frame_c::compiler::frame_ast::FsmDeclAst;
+use crate::frame_c::compiler::frame_ast::{FsmDeclAst, Span};
 use crate::frame_c::compiler::pipeline_parser::ParseError;
 use token_stream::{FsmToken, FsmTokenKind, FsmTokenStream};
+
+/// An `@@fsm` parse failure carrying its RFC-0042 diagnostic code.
+///
+/// The parser FSMs accumulate a generic [`ParseError`] (message + span)
+/// in their `error` field, and — for the structural violations that the
+/// RFC assigns a specific code (E701 sigil-in-header, E705 missing
+/// return type / default / domain initializer, E710 block order, E711
+/// duplicate block, E712 transition in an action body) — also set an
+/// `error_code` domain field. The wrapper combines the two here.
+/// Errors without a structural code default to `E700` (a generic `@@fsm`
+/// parse error). The driver lifts `code` into the `CompileError`.
+#[derive(Debug, Clone)]
+pub struct FsmParseError {
+    pub code: &'static str,
+    pub message: String,
+    pub span: Span,
+}
+
+impl From<ParseError> for FsmParseError {
+    /// Lex-level and uncoded errors map to the generic `E700`.
+    fn from(e: ParseError) -> Self {
+        FsmParseError {
+            code: "E700",
+            message: e.message,
+            span: e.span,
+        }
+    }
+}
+
+impl std::fmt::Display for FsmParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.code, self.message)
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Lexer
@@ -210,12 +244,16 @@ mod lex_helpers {
 ///
 /// `bytes` is the `@@fsm` block's source (from the segmenter), beginning
 /// at the `@@fsm` keyword.
-pub fn lex_fsm_block(bytes: &[u8]) -> Result<Vec<FsmToken>, ParseError> {
+pub fn lex_fsm_block(bytes: &[u8]) -> Result<Vec<FsmToken>, FsmParseError> {
     let mut lexer = fsm_lexer::FsmLexer::__create();
     lexer.bytes = bytes.to_vec();
     lexer.tokenize();
     match lexer.error {
-        Some(e) => Err(e),
+        Some(e) => Err(FsmParseError {
+            code: lexer.error_code.unwrap_or("E700"),
+            message: e.message,
+            span: e.span,
+        }),
         None => Ok(lexer.tokens),
     }
 }
@@ -480,12 +518,16 @@ mod parse_helpers {
 ///
 /// `tokens` is the stream produced by [`lex_fsm_block`], positioned at
 /// the `@@fsm` keyword.
-pub fn parse_fsm_declaration(tokens: FsmTokenStream) -> Result<FsmDeclAst, ParseError> {
+pub fn parse_fsm_declaration(tokens: FsmTokenStream) -> Result<FsmDeclAst, FsmParseError> {
     let mut parser = fsm_decl_parser::FsmDeclParser::__create();
     parser.tokens = Some(tokens);
     parser.parse();
     match parser.error {
-        Some(e) => Err(e),
+        Some(e) => Err(FsmParseError {
+            code: parser.error_code.unwrap_or("E700"),
+            message: e.message,
+            span: e.span,
+        }),
         None => Ok(parser
             .result
             .expect("FsmDeclParser reaches $Done with result set when no error")),
@@ -493,7 +535,7 @@ pub fn parse_fsm_declaration(tokens: FsmTokenStream) -> Result<FsmDeclAst, Parse
 }
 
 /// Convenience: lex + parse an `@@fsm` block's bytes in one call.
-pub fn parse_fsm_block(bytes: &[u8]) -> Result<FsmDeclAst, ParseError> {
+pub fn parse_fsm_block(bytes: &[u8]) -> Result<FsmDeclAst, FsmParseError> {
     let tokens = lex_fsm_block(bytes)?;
     parse_fsm_declaration(FsmTokenStream::new(tokens))
 }
@@ -1638,5 +1680,101 @@ mod parser_tests {
             }
             other => panic!("expected outer Call, got {:?}", other),
         }
+    }
+}
+
+#[cfg(test)]
+mod structural_code_tests {
+    //! The parser promotes specific RFC-0042 structural violations from a
+    //! generic `E700` to their documented code (carried out through
+    //! [`FsmParseError::code`]).
+    use super::*;
+
+    /// Parse `src`, expecting a failure, and return its diagnostic code.
+    fn code(src: &str) -> &'static str {
+        match parse_fsm_block(src.as_bytes()) {
+            Err(e) => e.code,
+            Ok(_) => panic!("expected a parse error, but {:?} parsed", src),
+        }
+    }
+
+    /// E701 — the `@@system` compartment sigil `$(...)` / `$>(...)` is not
+    /// valid in an `@@fsm` header (no compartments).
+    #[test]
+    fn e701_sigil_in_header() {
+        assert_eq!(
+            code("@@fsm M($(x): bytes) : bool = false { /a/ true }"),
+            "E701"
+        );
+        assert_eq!(
+            code("@@fsm M($>(x): bytes) : bool = false { /a/ true }"),
+            "E701"
+        );
+    }
+
+    /// E705 — a missing return type, missing default value, or a domain
+    /// field with no initializer.
+    #[test]
+    fn e705_missing_return_type() {
+        assert_eq!(code("@@fsm M(text: bytes) = false { /a/ true }"), "E705");
+    }
+
+    #[test]
+    fn e705_missing_default() {
+        assert_eq!(code("@@fsm M(text: bytes) : bool { /a/ true }"), "E705");
+    }
+
+    #[test]
+    fn e705_domain_field_no_initializer() {
+        assert_eq!(
+            code("@@fsm M(text: bytes) : bool = false { /a/ true  domain: n: int }"),
+            "E705"
+        );
+    }
+
+    /// E710 — sections out of canonical order (states → actions → domain).
+    #[test]
+    fn e710_domain_before_actions() {
+        // `actions:` after `domain:` violates the canonical order.
+        assert_eq!(
+            code("@@fsm M(text: bytes) : bool = false { /a/ true  domain: n: int = 0  actions: helper() {} }"),
+            "E710"
+        );
+    }
+
+    #[test]
+    fn e710_state_after_block() {
+        // A state declaration following `domain:` is out of order.
+        assert_eq!(
+            code("@@fsm M(text: bytes) : bool = false { /a/ -> $b  domain: n: int = 0  $b: true }"),
+            "E710"
+        );
+    }
+
+    /// E711 — a section appearing more than once.
+    #[test]
+    fn e711_duplicate_domain() {
+        assert_eq!(
+            code("@@fsm M(text: bytes) : bool = false { /a/ true  domain: n: int = 0  domain: m: int = 0 }"),
+            "E711"
+        );
+    }
+
+    /// E712 — a transition statement inside an action body.
+    #[test]
+    fn e712_transition_in_action_body() {
+        assert_eq!(
+            code("@@fsm M(text: bytes) : bool = false { /a/ true  actions: helper() { -> $a } }"),
+            "E712"
+        );
+    }
+
+    /// A generic parse error still reports `E700`.
+    #[test]
+    fn generic_error_is_e700() {
+        assert_eq!(
+            code("@@fsm M(text: bytes) : bool = false { /a/ true "),
+            "E700"
+        );
     }
 }

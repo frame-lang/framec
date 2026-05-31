@@ -138,6 +138,7 @@ mod _actions_block_parser_framec {
         pub span_start: Span,
         pub result: Option<FsmActionsBlock>,
         pub error: Option<ParseError>,
+        pub error_code: Option<&'static str>,
     }
 
     #[allow(non_snake_case)]
@@ -151,6 +152,7 @@ mod _actions_block_parser_framec {
                 span_start: Span::new(0, 0),
                 result: None,
                 error: None,
+                error_code: None,
                 __compartment: ActionsBlockParserCompartment::new("Start"),
                 __next_compartment: None,
             }
@@ -283,20 +285,24 @@ mod _actions_block_parser_framec {
 
         fn _s_Decls_hdl_frame_enter(&mut self, __e: &ActionsBlockParserFrameEvent) {
             loop {
-                match self.tokens.as_ref().unwrap().peek_kind() {
-                    // Section end: `domain:` or the body close. Left
-                    // unconsumed for FsmDeclParser.
-                    FsmTokenKind::KwDomain | FsmTokenKind::RBrace | FsmTokenKind::Eof => {
-                        let span = self.span_start.clone();
-                        self.result = Some(FsmActionsBlock {
-                            actions: std::mem::take(&mut self.decls),
-                            span,
-                        });
-                        let mut __compartment = self.__prepareEnter("Done");
-                        self.__transition(__compartment);
-                        return;
-                    }
-                    _ => {}
+                // An action declaration begins with its name (Ident).
+                // Anything else — a following section keyword
+                // (`domain:`/`actions:`), a state label, the body close
+                // `}`, or EOF — ends the section. We leave that token
+                // unconsumed so FsmDeclParser regains control and applies
+                // the canonical-order (E710) and at-most-once (E711) rules.
+                if !matches!(
+                    self.tokens.as_ref().unwrap().peek_kind(),
+                    FsmTokenKind::Ident(_)
+                ) {
+                    let span = self.span_start.clone();
+                    self.result = Some(FsmActionsBlock {
+                        actions: std::mem::take(&mut self.decls),
+                        span,
+                    });
+                    let mut __compartment = self.__prepareEnter("Done");
+                    self.__transition(__compartment);
+                    return;
                 }
             
                 let dsp = self.tokens.as_ref().unwrap().cur_span();
@@ -418,6 +424,7 @@ mod _actions_block_parser_framec {
                 child.parse();
                 self.tokens = child.tokens.take();
                 if let Some(e) = child.error.take() {
+                    self.error_code = child.error_code.take();
                     self.error = Some(e);
                     let mut __compartment = self.__prepareEnter("Done");
                     self.__transition(__compartment);

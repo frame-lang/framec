@@ -137,6 +137,7 @@ mod _domain_block_parser_framec {
         pub span_start: Span,
         pub result: Option<FsmDomainBlock>,
         pub error: Option<ParseError>,
+        pub error_code: Option<&'static str>,
     }
 
     #[allow(non_snake_case)]
@@ -150,6 +151,7 @@ mod _domain_block_parser_framec {
                 span_start: Span::new(0, 0),
                 result: None,
                 error: None,
+                error_code: None,
                 __compartment: DomainBlockParserCompartment::new("Start"),
                 __next_compartment: None,
             }
@@ -282,20 +284,24 @@ mod _domain_block_parser_framec {
 
         fn _s_Vars_hdl_frame_enter(&mut self, __e: &DomainBlockParserFrameEvent) {
             loop {
-                match self.tokens.as_ref().unwrap().peek_kind() {
-                    // Body close ends the section (left unconsumed for
-                    // FsmDeclParser's `}` handling).
-                    FsmTokenKind::RBrace | FsmTokenKind::Eof => {
-                        let span = self.span_start.clone();
-                        self.result = Some(FsmDomainBlock {
-                            vars: std::mem::take(&mut self.vars),
-                            span,
-                        });
-                        let mut __compartment = self.__prepareEnter("Done");
-                        self.__transition(__compartment);
-                        return;
-                    }
-                    _ => {}
+                // A field begins with its name (Ident). Anything else —
+                // the body close `}`, a following section keyword
+                // (`actions:`/`domain:`), a state label, or EOF — ends the
+                // section. We leave that token unconsumed so FsmDeclParser
+                // regains control and applies the canonical-order (E710) and
+                // at-most-once (E711) rules.
+                if !matches!(
+                    self.tokens.as_ref().unwrap().peek_kind(),
+                    FsmTokenKind::Ident(_)
+                ) {
+                    let span = self.span_start.clone();
+                    self.result = Some(FsmDomainBlock {
+                        vars: std::mem::take(&mut self.vars),
+                        span,
+                    });
+                    let mut __compartment = self.__prepareEnter("Done");
+                    self.__transition(__compartment);
+                    return;
                 }
             
                 let vsp = self.tokens.as_ref().unwrap().cur_span();
@@ -343,8 +349,9 @@ mod _domain_block_parser_framec {
             
                 // `=` mandatory default (RFC-0042 §3.8 / E705)
                 if !self.tokens.as_mut().unwrap().eat(&FsmTokenKind::Eq) {
+                    self.error_code = Some("E705");
                     self.error = Some(ParseError {
-                        message: format!("domain field `{}` is missing its `= <default>` initializer (E705)", name),
+                        message: format!("domain field `{}` is missing its `= <default>` initializer", name),
                         span: self.tokens.as_ref().unwrap().cur_span(),
                     });
                     let mut __compartment = self.__prepareEnter("Done");
