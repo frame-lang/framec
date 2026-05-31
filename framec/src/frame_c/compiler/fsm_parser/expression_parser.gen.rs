@@ -430,6 +430,16 @@ mod _expression_parser_framec {
                     self.__transition(__compartment);
                     return;
                 }
+                // `$state.stage` stage-capture reference (§3.5.2). Surfaced
+                // as a Var carrying the qualified name; a chained
+                // `.return_value` (Mode C, §8.3) then folds on via $Postfix.
+                FsmTokenKind::StageRef { state, stage } => {
+                    ts.advance();
+                    self.left = Some(Expression::Var(format!("${}.{}", state, stage)));
+                    let mut __compartment = self.__prepareEnter("Postfix");
+                    self.__transition(__compartment);
+                    return;
+                }
                 FsmTokenKind::Ident(name) => {
                     ts.advance();
                     // Call `ident(args)` vs bare variable.

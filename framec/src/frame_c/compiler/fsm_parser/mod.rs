@@ -1325,6 +1325,29 @@ mod parser_tests {
         assert!(err.is_err(), "missing `when` guard must error (E715)");
     }
 
+    /// FSM-TEST-007 shape: a stage-capture reference used as an expression
+    /// (`$main.x` reads the `.x` stage's capture). Surfaces as a Var with
+    /// the qualified name.
+    #[test]
+    fn stage_capture_in_expression() {
+        let e = bare_expr(b"@@fsm M(text: bytes) : bytes = \"\" { $main: .x/[0-9]+/ $main.x }");
+        assert!(matches!(e, Expression::Var(v) if v == "$main.x"));
+    }
+
+    /// Mode C chained access `$state.label.return_value` (§8.3) folds the
+    /// `.return_value` as a member access onto the stage-capture ref.
+    #[test]
+    fn stage_capture_chained_return_value() {
+        let e = bare_expr(b"@@fsm M(text: bytes) : int = 0 { $p: .d/[0-9]/ $p.d.return_value }");
+        match e {
+            Expression::Member { object, field } => {
+                assert!(matches!(*object, Expression::Var(v) if v == "$p.d"));
+                assert_eq!(field, "return_value");
+            }
+            other => panic!("expected Member(.return_value), got {:?}", other),
+        }
+    }
+
     /// Stage-capture target: `$0.start` re-entry reference (FSM-TEST-401
     /// shape). Proves StageRef transition targets parse.
     #[test]

@@ -71,6 +71,85 @@ pub(crate) fn check_input_param_type(decl: &FsmDeclAst) -> Option<FsmDiagnostic>
     }
 }
 
+/// Structural checks that need no type inference:
+/// - E730: duplicate stage label within a state.
+/// - E704: only the first state may be unlabeled (a subsequent unlabeled
+///   state has no syntactic separator / cannot be referenced).
+/// - E707: a `domain:` field that re-declares a parameter name must have
+///   a matching type.
+pub(crate) fn check_structure(decl: &FsmDeclAst) -> Vec<FsmDiagnostic> {
+    let mut out = Vec::new();
+
+    // E730 — duplicate stage labels within a single state.
+    for st in &decl.states {
+        let mut seen: HashSet<String> = HashSet::new();
+        for m in &st.matches {
+            for el in &m.elements {
+                if let MatchElement::Stage(s) = el {
+                    if let Some(sl) = &s.label {
+                        if !seen.insert(sl.clone()) {
+                            out.push(FsmDiagnostic {
+                                code: "E730",
+                                span: s.span.clone(),
+                                message: format!(
+                                    "stage label `.{}` is used more than once in this state",
+                                    sl
+                                ),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // E704 — only the first state may be unlabeled.
+    for st in decl.states.iter().skip(1) {
+        if st.label.is_none() {
+            out.push(FsmDiagnostic {
+                code: "E704",
+                span: st.span.clone(),
+                message: "only the first state may be unlabeled; add a `$Label:`".to_string(),
+            });
+        }
+    }
+
+    // E707 — a domain field re-declaring a parameter must match its type.
+    if let Some(domain) = &decl.domain {
+        let mut param_types: HashMap<&str, &Type> = HashMap::new();
+        for p in &decl.params {
+            param_types.insert(p.name.as_str(), &p.param_type);
+        }
+        for v in &domain.vars {
+            if let Some(pt) = param_types.get(v.name.as_str()) {
+                if !types_equal(pt, &v.var_type) {
+                    out.push(FsmDiagnostic {
+                        code: "E707",
+                        span: v.span.clone(),
+                        message: format!(
+                            "domain field `{}` re-declares parameter `{}` with a different type",
+                            v.name, v.name
+                        ),
+                    });
+                }
+            }
+        }
+    }
+
+    out
+}
+
+/// Structural type equality for the opaque `Type::Custom` strings (and
+/// the `Unknown` placeholder). Frame has no type system; this is a
+/// surface-string comparison, which is all E707 needs.
+fn types_equal(a: &Type, b: &Type) -> bool {
+    match (a, b) {
+        (Type::Custom(x), Type::Custom(y)) => x == y,
+        (Type::Unknown, Type::Unknown) => true,
+        _ => false,
+    }
+}
+
 /// E731 / E732 — every transition target must name a declared state
 /// (E731), and a stage-ref target `$State.stage` must name a stage that
 /// exists in that state (E732).
@@ -165,7 +244,7 @@ mod validator_fsm {
         unused_parens
     )]
 
-    use super::{check_input_param_type, check_transition_targets, FsmDiagnostic};
+    use super::{check_input_param_type, check_structure, check_transition_targets, FsmDiagnostic};
     use crate::frame_c::compiler::frame_ast::FsmDeclAst;
 
     include!("fsm_validator.gen.rs");
@@ -232,5 +311,35 @@ mod tests {
             "got {:?}",
             d
         );
+    }
+
+    /// E730 — a stage label used twice within one state.
+    #[test]
+    fn e730_duplicate_stage_label() {
+        let d = diags(b"@@fsm M(text: bytes) : bytes = \"\" { $s: .x/[0-9]+/ .x/[a-z]+/ $s.x }");
+        assert!(d.iter().any(|x| x.code == "E730"), "got {:?}", d);
+    }
+
+    /// E704 — a second, unlabeled state.
+    #[test]
+    fn e704_second_unlabeled_state() {
+        let d = diags(b"@@fsm M(text: bytes) : bool = false { /a/ -> $x  /b/ true  $x: false }");
+        assert!(d.iter().any(|x| x.code == "E704"), "got {:?}", d);
+    }
+
+    /// E707 — a domain field re-declaring a parameter with a different type.
+    #[test]
+    fn e707_domain_param_type_mismatch() {
+        let d = diags(b"@@fsm M(text: bytes) : bool = false { /a/ true  domain: text: int = 0 }");
+        assert!(d.iter().any(|x| x.code == "E707"), "got {:?}", d);
+    }
+
+    /// A domain field re-declaring a parameter with the SAME type is fine.
+    #[test]
+    fn domain_param_same_type_ok() {
+        let d = diags(
+            b"@@fsm M(text: bytes, n: int = 0) : int = 0 { /[0-9]/ self.n  domain: n: int = 5 }",
+        );
+        assert!(!d.iter().any(|x| x.code == "E707"), "got {:?}", d);
     }
 }

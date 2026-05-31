@@ -35,6 +35,14 @@
                 if let Some(d) = check_input_param_type(&self.decl) {
                     self.diagnostics.push(d);
                 }
+                -> $CheckStructure
+            }
+        }
+
+        $CheckStructure {
+            $>() {
+                let mut found = check_structure(&self.decl);
+                self.diagnostics.append(&mut found);
                 -> $CheckTransitions
             }
         }

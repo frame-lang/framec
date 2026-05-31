@@ -592,6 +592,19 @@ mod _fsm_lexer_framec {
                             kind: FsmTokenKind::StageRef { state: name, stage },
                             span: Span::new(start, pos),
                         });
+                        // A trailing `.` means a chained member access
+                        // (`$state.stage.return_value`, Mode C §8.3): the
+                        // stage-ref begins a bare expression. Route to
+                        // $ExprLevel so `.field` lexes as Dot + Ident
+                        // (member access), not as a stage label.
+                        if pos < n && src[pos] == b'.' {
+                            self.pos = pos;
+                            self.paren_depth = 0;
+                            self.in_block = false;
+                            let mut __compartment = self.__prepareEnter("ExprLevel");
+                            self.__transition(__compartment);
+                            return;
+                        }
                         continue;
                     }
             

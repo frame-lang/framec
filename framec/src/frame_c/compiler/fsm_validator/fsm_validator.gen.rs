@@ -97,6 +97,7 @@ mod _fsm_validator_framec {
     enum FsmValidatorStateContext {
         Start,
         CheckHeader,
+        CheckStructure,
         CheckTransitions,
         Done,
         __NoContext,
@@ -122,6 +123,7 @@ mod _fsm_validator_framec {
             let state_context = match state {
                 "Start" => FsmValidatorStateContext::Start,
                 "CheckHeader" => FsmValidatorStateContext::CheckHeader,
+                "CheckStructure" => FsmValidatorStateContext::CheckStructure,
                 "CheckTransitions" => FsmValidatorStateContext::CheckTransitions,
                 "Done" => FsmValidatorStateContext::Done,
                 _ => FsmValidatorStateContext::__NoContext,
@@ -173,6 +175,7 @@ mod _fsm_validator_framec {
             match leaf {
                 "Start" => &["Start"],
                 "CheckHeader" => &["CheckHeader"],
+                "CheckStructure" => &["CheckStructure"],
                 "CheckTransitions" => &["CheckTransitions"],
                 "Done" => &["Done"],
                 _ => &[],
@@ -241,6 +244,7 @@ mod _fsm_validator_framec {
             match self.__compartment.state.as_str() {
                 "Start" => self._state_Start(__ev),
                 "CheckHeader" => self._state_CheckHeader(__ev),
+                "CheckStructure" => self._state_CheckStructure(__ev),
                 "CheckTransitions" => self._state_CheckTransitions(__ev),
                 "Done" => self._state_Done(__ev),
                 _ => {}
@@ -273,6 +277,13 @@ mod _fsm_validator_framec {
             }
         }
 
+        fn _state_CheckStructure(&mut self, __e: &FsmValidatorFrameEvent) {
+            match __e {
+                FsmValidatorFrameEvent::FrameEnter { .. } => { self._s_CheckStructure_hdl_frame_enter(__e); }
+                _ => {}
+            }
+        }
+
         fn _state_CheckTransitions(&mut self, __e: &FsmValidatorFrameEvent) {
             match __e {
                 FsmValidatorFrameEvent::FrameEnter { .. } => { self._s_CheckTransitions_hdl_frame_enter(__e); }
@@ -296,6 +307,14 @@ mod _fsm_validator_framec {
             if let Some(d) = check_input_param_type(&self.decl) {
                 self.diagnostics.push(d);
             }
+            let mut __compartment = self.__prepareEnter("CheckStructure");
+            self.__transition(__compartment);
+            return;
+        }
+
+        fn _s_CheckStructure_hdl_frame_enter(&mut self, __e: &FsmValidatorFrameEvent) {
+            let mut found = check_structure(&self.decl);
+            self.diagnostics.append(&mut found);
             let mut __compartment = self.__prepareEnter("CheckTransitions");
             self.__transition(__compartment);
             return;
