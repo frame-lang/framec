@@ -346,27 +346,33 @@ pub(crate) fn do_segment(c: &mut PipelineCtx) -> Option<CompileResult> {
                             fsm_errors.push(ce);
                         }
                     }
-                    // Codegen — v0.1 implements only the Python reference
-                    // backend. Other targets surface a clear capability
-                    // error rather than silently dropping the @@fsm.
+                    // Codegen — v0.1 implements the Python reference backend
+                    // and the Rust backend (Phase 8). Other targets surface
+                    // a clear capability error rather than silently dropping
+                    // the @@fsm.
                     if !had_error {
-                        match c.config.target {
-                            crate::frame_c::visitors::TargetLanguage::Python3 => {
-                                match crate::frame_c::compiler::codegen::fsm_python::generate(&ast)
-                                {
-                                    Ok(code) => c.fsm_generated.push((name.clone(), code)),
-                                    Err(reason) => fsm_errors.push(CompileError::new(
-                                        "E740",
-                                        &format!("@@fsm {}: {}", name, reason),
-                                    )),
-                                }
+                        use crate::frame_c::visitors::TargetLanguage;
+                        let generated = match c.config.target {
+                            TargetLanguage::Python3 => Some(
+                                crate::frame_c::compiler::codegen::fsm_python::generate(&ast),
+                            ),
+                            TargetLanguage::Rust => {
+                                Some(crate::frame_c::compiler::codegen::fsm_rust::generate(&ast))
                             }
-                            other => fsm_errors.push(CompileError::new(
+                            _ => None,
+                        };
+                        match generated {
+                            Some(Ok(code)) => c.fsm_generated.push((name.clone(), code)),
+                            Some(Err(reason)) => fsm_errors.push(CompileError::new(
+                                "E740",
+                                &format!("@@fsm {}: {}", name, reason),
+                            )),
+                            None => fsm_errors.push(CompileError::new(
                                 "E740",
                                 &format!(
                                     "@@fsm {}: code generation for the {:?} target is not yet \
-                                     implemented (v0.1 supports python_3)",
-                                    name, other
+                                     implemented (v0.1 supports python_3 and rust)",
+                                    name, c.config.target
                                 ),
                             )),
                         }
@@ -1889,12 +1895,12 @@ mod tests {
         assert_eq!(acc2, "False");
     }
 
-    /// `@@fsm` codegen for a non-Python target surfaces E740 (capability
-    /// limitation) rather than silently dropping the block.
+    /// `@@fsm` codegen for a target without an fsm backend (v0.1 ships
+    /// Python + Rust) surfaces E740 rather than silently dropping the block.
     #[test]
-    fn fsm_block_non_python_target_e740() {
+    fn fsm_block_unsupported_target_e740() {
         use crate::frame_c::compiler::pipeline_supervisor::run_pipeline;
-        let config = PipelineConfig::production(TargetLanguage::Rust);
+        let config = PipelineConfig::production(TargetLanguage::Java);
         let r = run_pipeline(
             b"@@fsm M(text: bytes) : bool = false { /a/ true }\n",
             &config,
