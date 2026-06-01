@@ -65,6 +65,7 @@ pub(crate) fn should_emit_layered(lang: TargetLanguage) -> bool {
             | TargetLanguage::CSharp
             | TargetLanguage::Kotlin
             | TargetLanguage::Swift
+            | TargetLanguage::Dart
     )
 }
 
@@ -286,6 +287,47 @@ fn generate_casing_fields(machine_name: &str, lang: TargetLanguage) -> Vec<Field
                 leading_comments: vec![],
             },
         ],
+        TargetLanguage::Dart => vec![
+            // Dart's `Visibility::Private` would prepend an `_` to the field
+            // name (library-private convention). To keep the field names
+            // consistent across backends (and the NativeBlock body
+            // references uniform), declare them `Public` — the casing
+            // class itself isn't reachable from outside the module in
+            // any meaningful sense, so library-public on the fields
+            // costs nothing. `late` is auto-added by `emit_field` for
+            // the non-nullable types because they have no inline
+            // initializer; the casing's constructor body assigns them.
+            Field {
+                name: "machine".to_string(),
+                type_annotation: Some(machine_name.to_string()),
+                visibility: Visibility::Public,
+                is_static: false,
+                is_const: false,
+                initializer: None,
+                leading_comments: vec![],
+            },
+            Field {
+                name: "busy".to_string(),
+                type_annotation: Some("bool".to_string()),
+                visibility: Visibility::Public,
+                is_static: false,
+                is_const: false,
+                initializer: None,
+                leading_comments: vec![],
+            },
+            Field {
+                // Nullable string — Dart's `Type?` syntax. No `late`
+                // is added because nullable fields default to null and
+                // can be uninitialized.
+                name: "in_flight".to_string(),
+                type_annotation: Some("String?".to_string()),
+                visibility: Visibility::Public,
+                is_static: false,
+                is_const: false,
+                initializer: None,
+                leading_comments: vec![],
+            },
+        ],
         TargetLanguage::Swift => vec![
             // Swift: private + var + nullable-marker String?. All three
             // declared without inline initializers; assigned in the
@@ -411,6 +453,15 @@ fn generate_casing_constructor(machine_name: &str, lang: TargetLanguage) -> Code
              self.in_flight = nil",
             m = machine_name
         ),
+        TargetLanguage::Dart => format!(
+            // Dart: `this.foo = X();` — explicit `new` not needed in
+            // modern Dart; semicolons required. The Dart Constructor
+            // render emits this inside the casing's bare constructor.
+            "this.machine = {m}();\n\
+             this.busy = false;\n\
+             this.in_flight = null;",
+            m = machine_name
+        ),
         _ => String::new(),
     };
 
@@ -512,6 +563,38 @@ fn generate_casing_interface_wrapper(ifm: &InterfaceMethod, lang: TargetLanguage
                 "if (this.busy) {{\n\
                  \x20   throw new System.InvalidOperationException(\n\
                  \x20       $\"E703: system busy: cannot enter '{name}' while '{{this.in_flight}}' is in flight\"\n\
+                 \x20   );\n\
+                 }}\n\
+                 this.busy = true;\n\
+                 this.in_flight = \"{name}\";\n\
+                 try {{\n\
+                 \x20   {delegate}\n\
+                 }} finally {{\n\
+                 \x20   this.busy = false;\n\
+                 \x20   this.in_flight = null;\n\
+                 }}",
+                name = ifm.name,
+                delegate = delegate_line
+            )
+        }
+        TargetLanguage::Dart => {
+            let arg_list: Vec<String> = ifm.params.iter().map(|p| p.name.clone()).collect();
+            let arg_str = arg_list.join(", ");
+            // Dart: `StateError` is the conventional unrecoverable-
+            // programming-error exception. `try { ... } finally { ... }`
+            // matches Python / TS / JS / Kotlin / Java / C#. Void async
+            // methods (`Future<void>`) cannot `return await ...` — emit
+            // a bare `await ...;` instead.
+            let has_return = !matches!(ifm.return_type, None | Some(FrameType::Unknown));
+            let delegate_line = if has_return {
+                format!("return await this.machine.{}({});", ifm.name, arg_str)
+            } else {
+                format!("await this.machine.{}({});", ifm.name, arg_str)
+            };
+            format!(
+                "if (this.busy) {{\n\
+                 \x20   throw StateError(\n\
+                 \x20       \"E703: system busy: cannot enter '{name}' while '${{this.in_flight}}' is in flight\"\n\
                  \x20   );\n\
                  }}\n\
                  this.busy = true;\n\
@@ -676,6 +759,26 @@ fn generate_casing_operation_delegate(op: &OperationAst, lang: TargetLanguage) -
                 )
             }
         }
+        TargetLanguage::Dart => {
+            let arg_list: Vec<String> = op.params.iter().map(|p| p.name.clone()).collect();
+            let arg_str = arg_list.join(", ");
+            // Dart: void operations cannot `return X();` — emit a bare
+            // call. Operations stay sync; no async on the casing's
+            // operation delegates.
+            if matches!(op.return_type, FrameType::Unknown) {
+                format!(
+                    "this.machine.{name}({args});",
+                    name = op.name,
+                    args = arg_str
+                )
+            } else {
+                format!(
+                    "return this.machine.{name}({args});",
+                    name = op.name,
+                    args = arg_str
+                )
+            }
+        }
         TargetLanguage::Swift => {
             let arg_list: Vec<String> = op.params.iter().map(|p| p.name.clone()).collect();
             let arg_str = arg_list.join(", ");
@@ -739,6 +842,7 @@ fn generate_casing_save_delegate(system: &SystemAst, lang: TargetLanguage) -> Op
         }
         TargetLanguage::Kotlin => format!("return this.machine.{name}()", name = save_name),
         TargetLanguage::Swift => format!("return self.machine.{name}()", name = save_name),
+        TargetLanguage::Dart => format!("return this.machine.{name}();", name = save_name),
         _ => String::new(),
     };
     Some(CodegenNode::Method {
@@ -771,6 +875,7 @@ fn generate_casing_restore_delegate(
         }
         TargetLanguage::Kotlin => format!("this.machine.{name}(data)", name = load_name),
         TargetLanguage::Swift => format!("self.machine.{name}(data)", name = load_name),
+        TargetLanguage::Dart => format!("this.machine.{name}(data);", name = load_name),
         _ => String::new(),
     };
     Some(CodegenNode::Method {
@@ -855,6 +960,7 @@ fn generate_casing_init_delegate(lang: TargetLanguage) -> CodegenNode {
         // delegate must match so the user's `await s.initAsync()` call
         // resolves through the casing.
         TargetLanguage::Swift => "await self.machine.initAsync()".to_string(),
+        TargetLanguage::Dart => "await this.machine.init();".to_string(),
         _ => String::new(),
     };
     let init_name = match lang {
