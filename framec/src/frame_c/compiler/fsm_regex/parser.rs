@@ -134,11 +134,29 @@ impl Parser {
 
     // --- grammar ---
 
+    /// In the token alphabet, whitespace separates token-kind references
+    /// and is otherwise insignificant; in byte/char alphabets a space is a
+    /// literal element, so this is a no-op there.
+    fn skip_ws(&mut self) {
+        if self.alphabet == Alphabet::Token {
+            while matches!(
+                self.peek(),
+                Some(' ') | Some('\t') | Some('\n') | Some('\r')
+            ) {
+                self.bump();
+            }
+        }
+    }
+
     /// `alt := concat ('|' concat)*`
     fn parse_alt(&mut self) -> Result<SpannedNode, ParseError> {
         let start = self.pos();
         let mut branches = vec![self.parse_concat()?];
-        while self.eat('|') {
+        loop {
+            self.skip_ws();
+            if !self.eat('|') {
+                break;
+            }
             branches.push(self.parse_concat()?);
         }
         if branches.len() == 1 {
@@ -153,9 +171,11 @@ impl Parser {
     fn parse_concat(&mut self) -> Result<SpannedNode, ParseError> {
         let start = self.pos();
         let mut items = Vec::new();
-        while let Some(c) = self.peek() {
-            if c == '|' || c == ')' {
-                break;
+        loop {
+            self.skip_ws();
+            match self.peek() {
+                None | Some('|') | Some(')') => break,
+                _ => {}
             }
             items.push(self.parse_quantified()?);
         }
@@ -302,6 +322,24 @@ impl Parser {
             '*' | '+' | '?' => {
                 // A quantifier with nothing to quantify.
                 Err(self.error(ParseErrorKind::Unexpected(c)))
+            }
+            // Token alphabet: an identifier run is one token-kind reference
+            // (`/IDENT LPAREN/` → two Token literals, not 11 char literals).
+            _ if self.alphabet == Alphabet::Token && (c.is_ascii_alphabetic() || c == '_') => {
+                let mut name = String::new();
+                while let Some(ch) = self.peek() {
+                    if ch.is_ascii_alphanumeric() || ch == '_' {
+                        name.push(ch);
+                        self.bump();
+                    } else {
+                        break;
+                    }
+                }
+                Ok(Self::spanned(
+                    RegexNode::Literal(Literal::Token(name)),
+                    start,
+                    self.pos(),
+                ))
             }
             _ => {
                 self.bump();
@@ -977,6 +1015,35 @@ mod tests {
         ));
         match root("\\p{L}") {
             RegexNode::Forbidden(ForbiddenConstruct::UnicodeClass(b)) => assert_eq!(b, "L"),
+            other => panic!("got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn token_alphabet_parses_identifier_runs() {
+        // `/IDENT LPAREN RPAREN/` → three token-kind literals, not chars.
+        let ast = parse("IDENT LPAREN RPAREN", Alphabet::Token).unwrap();
+        match ast.root.node {
+            RegexNode::Concat(items) => {
+                assert_eq!(items.len(), 3);
+                for (i, name) in ["IDENT", "LPAREN", "RPAREN"].iter().enumerate() {
+                    match &items[i].node {
+                        RegexNode::Literal(Literal::Token(t)) => assert_eq!(t, name),
+                        other => panic!("item {i} got {:?}", other),
+                    }
+                }
+            }
+            other => panic!("got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn token_alphabet_alternation() {
+        // `/A | B/` → alternation of two token literals (whitespace is
+        // insignificant between tokens and around `|`).
+        let ast = parse("A | B", Alphabet::Token).unwrap();
+        match ast.root.node {
+            RegexNode::Alt(branches) => assert_eq!(branches.len(), 2),
             other => panic!("got {:?}", other),
         }
     }
