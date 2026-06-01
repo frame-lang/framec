@@ -344,6 +344,69 @@ impl FrameValidator {
         }
     }
 
+    /// **E721 — sync system composes async system as domain field**
+    /// (RFC-0043, same-file only).
+    ///
+    /// An async system's casing has async wrappers (returning Future /
+    /// Promise / Task / etc.). A non-`@@[async]` system that holds an
+    /// async system as a domain field would have to either call into it
+    /// asynchronously (which forces the holder itself to be async — at
+    /// which point it should carry `@@[async]`) or call sync methods
+    /// only (defeating the gate that the async casing is there to
+    /// enforce). Hard cut.
+    ///
+    /// Restricted to same-file composition: Frame doesn't have
+    /// cross-file type resolution today, so this validator can only see
+    /// async systems declared in the same module. Cross-file
+    /// composition that crosses an `@@import` boundary won't trigger
+    /// E721 until that resolution arrives.
+    ///
+    /// Detection: tokenize the domain field's user-written type text on
+    /// non-identifier characters and check whether any token matches a
+    /// known async system name. This catches direct composition
+    /// (`cache: AsyncFetcher`) and container-wrapped composition
+    /// (`Option<AsyncFetcher>`, `Vec<AsyncFetcher>`, `AsyncFetcher?`)
+    /// alike, without parsing generic type syntax.
+    pub(super) fn validate_no_sync_composes_async(
+        &mut self,
+        system: &SystemAst,
+        async_systems: &HashSet<String>,
+    ) {
+        use crate::frame_c::compiler::frame_ast::Type as FrameType;
+        if system.attributes.iter().any(|a| a.name == "async") {
+            return;
+        }
+        if async_systems.is_empty() {
+            return;
+        }
+        for var in &system.domain {
+            let type_text = match &var.var_type {
+                FrameType::Custom(s) => s.as_str(),
+                FrameType::Unknown => continue,
+            };
+            for token in type_text.split(|c: char| !c.is_alphanumeric() && c != '_') {
+                if token.is_empty() {
+                    continue;
+                }
+                if async_systems.contains(token) {
+                    self.errors.push(
+                        ValidationError::new(
+                            "E721",
+                            format!(
+                                "sync @@system '{}' cannot compose async @@system '{}' as domain field '{}' (RFC-0043). \
+                                 An async system's wrappers return Future/Promise/Task; a sync holder cannot await them without \
+                                 itself becoming async. Add `@@[async]` to the '{}' header, or break the field out so '{}' is held by an async parent.",
+                                system.name, token, var.name, system.name, token
+                            ),
+                        )
+                        .with_span(var.span.clone()),
+                    );
+                    break;
+                }
+            }
+        }
+    }
+
     /// Cross-check the system header parameter list against the start
     /// state's parameter list, the start state's `$>()` enter handler,
     /// and the domain block:

@@ -1,5 +1,6 @@
 ---
 source: framec/tests/cpp_snapshots.rs
+assertion_line: 58
 expression: "compile_fixture(\"10_actions\", \"cpp\")"
 ---
 #include <string>
@@ -8,6 +9,7 @@ expression: "compile_fixture(\"10_actions\", \"cpp\")"
 #include <any>
 #include <memory>
 #include <functional>
+#include <stdexcept>
 
 class ActionsFrameEvent {
 public:

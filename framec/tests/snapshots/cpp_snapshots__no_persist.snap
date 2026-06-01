@@ -1,5 +1,6 @@
 ---
 source: framec/tests/cpp_snapshots.rs
+assertion_line: 68
 expression: "compile_fixture(\"12_no_persist\", \"cpp\")"
 ---
 #include <string>
@@ -8,6 +9,7 @@ expression: "compile_fixture(\"12_no_persist\", \"cpp\")"
 #include <any>
 #include <memory>
 #include <functional>
+#include <stdexcept>
 
 class NoPersistFrameEvent {
 public:

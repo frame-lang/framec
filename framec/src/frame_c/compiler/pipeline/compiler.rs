@@ -1165,6 +1165,28 @@ pub(crate) fn do_validate_codegen(c: &mut PipelineCtx) -> Option<CompileResult> 
         crate::frame_c::compiler::codegen::interface_gen::set_nested_system_persist_names(map);
     }
 
+    // RFC-0043 E721 — cross-system "sync composes async" check. Has to
+    // run with the full system list visible; the per-system
+    // `validate_with_arcanum` loop below sees one system at a time and
+    // cannot tell whether a domain field's type names a sibling async
+    // system declared elsewhere in the file. Validation runs on the
+    // *unfiltered* AST so the check sees every system attribute.
+    {
+        let mut e721_validator = FrameValidator::new();
+        if let Err(errs) = e721_validator.validate_module_e721_sync_composes_async(&system_asts) {
+            let errors = errs
+                .iter()
+                .map(|e| CompileError::new(&e.code, &e.message))
+                .collect();
+            return Some(CompileResult {
+                code: String::new(),
+                errors,
+                warnings: module_warnings,
+                source_map: None,
+            });
+        }
+    }
+
     for system_ast in &mut system_asts {
         // Validate with shared arcanum (all sibling systems visible).
         // Validation runs on the *unfiltered* AST so attribute-shape
