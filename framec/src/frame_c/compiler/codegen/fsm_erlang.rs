@@ -21,10 +21,10 @@
 //! {RetVal, St2}` helpers; calls are hoisted out of expression position so
 //! the state map threads), and static + failure transitions over the
 //! `bytes`/`char` alphabets, with the `@@:matched` / `to_int` / `to_str` /
-//! `len` built-ins, plus conditional (`when`) transition targets (an ordered
-//! `case` chain, the failure branch as the no-`when` fallback). Not yet
-//! handled (clear `Unsupported` error, never a silent miscompile): stage-ref
-//! transition targets, multi-match (`|`) states, embedding actions, Mode C
+//! `len` built-ins, plus conditional (`when`) and stage-ref (`-> $S.stage`,
+//! via a `fsm_enter` re-entry index a per-state `case Enter of` honors)
+//! transition targets. Not yet handled (clear `Unsupported` error, never a
+//! silent miscompile): multi-match (`|`) states, embedding actions, Mode C
 //! call-out, the token alphabet, and anchors. These land in later
 //! increments, matching the Rust backend's build-out.
 
@@ -53,6 +53,14 @@ struct Generator<'a> {
     decl: &'a FsmDeclAst,
     alphabet: Alphabet,
     label_to_index: std::collections::HashMap<String, usize>,
+    /// `(state index, element index)` → stage-DFA index. Precomputed so a
+    /// stage's DFA reference is fixed by position, letting a state body be
+    /// emitted from multiple `_Enter` entry points without a running counter
+    /// drifting out of sync with `stage_dfas`.
+    stage_sid: std::collections::HashMap<(usize, usize), usize>,
+    /// `(state label, stage label)` → element index, for stage-ref re-entry
+    /// (`-> $State.stage`).
+    stage_entry: std::collections::HashMap<(String, String), usize>,
     stage_dfas: Vec<StageDfa>,
 }
 
@@ -66,25 +74,40 @@ impl<'a> Generator<'a> {
             _ => Alphabet::Bytes,
         };
         let mut label_to_index = std::collections::HashMap::new();
+        let mut stage_entry = std::collections::HashMap::new();
         for (i, st) in decl.states.iter().enumerate() {
             if let Some(l) = &st.label {
                 label_to_index.insert(l.clone(), i);
+                if let Some(m) = st.matches.first() {
+                    for (ei, el) in m.elements.iter().enumerate() {
+                        if let MatchElement::Stage(stage) = el {
+                            if let Some(sl) = &stage.label {
+                                stage_entry.insert((l.clone(), sl.clone()), ei);
+                            }
+                        }
+                    }
+                }
             }
         }
         let mut g = Generator {
             decl,
             alphabet,
             label_to_index,
+            stage_sid: std::collections::HashMap::new(),
+            stage_entry,
             stage_dfas: Vec::new(),
         };
         g.compile_stage_dfas()?;
         Ok(g)
     }
 
-    /// Compile every stage's DFA in traversal order, so the emitted `dfa_<n>`
-    /// helpers line up with the index the state emitters advance.
+    /// Compile every stage's DFA in traversal order, recording each stage
+    /// element's `(state index, element index) → dfa index` so the emitted
+    /// `dfa_<n>` helpers line up with the references regardless of how many
+    /// `_Enter` entry points re-emit a state body.
     fn compile_stage_dfas(&mut self) -> Result<(), String> {
-        for st in &self.decl.states {
+        let mut sid = 0usize;
+        for (si, st) in self.decl.states.iter().enumerate() {
             if st.matches.len() > 1 {
                 return Err(
                     "multi-match (`|`) states are not yet supported by the Erlang backend".into(),
@@ -93,7 +116,7 @@ impl<'a> Generator<'a> {
             let Some(m) = st.matches.first() else {
                 continue;
             };
-            for el in &m.elements {
+            for (ei, el) in m.elements.iter().enumerate() {
                 if let MatchElement::Stage(stage) = el {
                     if !stage.embedding_actions.is_empty() {
                         return Err(
@@ -105,7 +128,10 @@ impl<'a> Generator<'a> {
                             "Mode C (`/@Fsm/`) is not yet supported by the Erlang backend".into(),
                         );
                     }
-                    self.stage_dfas.push(self.compile_one(&stage.regex)?);
+                    let dfa = self.compile_one(&stage.regex)?;
+                    self.stage_dfas.push(dfa);
+                    self.stage_sid.insert((si, ei), sid);
+                    sid += 1;
                 }
             }
         }
@@ -351,13 +377,12 @@ impl<'a> Generator<'a> {
     }
 
     fn emit_state_functions(&self, out: &mut String) -> Result<(), String> {
-        let mut sid = 0usize;
         for (i, st) in self.decl.states.iter().enumerate() {
             match st.matches.first() {
                 None => {
                     writeln!(out, "state_{}(St, _Enter) -> {{-1, St}}.\n", i).ok();
                 }
-                Some(m) => self.emit_one_state(out, i, st, m, &mut sid)?,
+                Some(m) => self.emit_one_state(out, i, st, m)?,
             }
         }
         Ok(())
@@ -369,25 +394,70 @@ impl<'a> Generator<'a> {
         index: usize,
         st: &FsmStateAst,
         m: &MatchAst,
-        sid: &mut usize,
     ) -> Result<(), String> {
+        let state_label = st.label.clone().unwrap_or_default();
+        // Element indices > 0 that are labeled stages — the possible
+        // stage-ref (`-> $State.stage`) re-entry points into this state. When
+        // present, the function dispatches on `Enter`; otherwise it always
+        // enters at element 0 (and the `Enter` param is unused).
+        let entries: Vec<usize> = m
+            .elements
+            .iter()
+            .enumerate()
+            .filter(|(i, el)| *i > 0 && matches!(el, MatchElement::Stage(s) if s.label.is_some()))
+            .map(|(i, _)| i)
+            .collect();
         // The parameter is `St`; fresh threaded maps are `St0`, `St1`, … so a
         // fresh name never collides with (and rebinds) the parameter.
-        writeln!(out, "state_{}(St, _Enter) ->", index).ok();
+        if entries.is_empty() {
+            writeln!(out, "state_{}(St, _Enter) ->", index).ok();
+            let mut ctr = 0usize;
+            self.emit_seq(
+                out,
+                &m.elements,
+                0,
+                "St",
+                m,
+                index,
+                &state_label,
+                "    ",
+                &mut ctr,
+            )?;
+            out.push_str(".\n\n");
+            return Ok(());
+        }
         let mut ctr = 0usize;
-        let state_label = st.label.clone().unwrap_or_default();
+        writeln!(out, "state_{}(St, Enter) ->", index).ok();
+        out.push_str("    case Enter of\n");
+        for entry in &entries {
+            writeln!(out, "        {} ->", entry).ok();
+            self.emit_seq(
+                out,
+                &m.elements,
+                *entry,
+                "St",
+                m,
+                index,
+                &state_label,
+                "            ",
+                &mut ctr,
+            )?;
+            out.push_str(";\n");
+        }
+        // Re-entry at element 0 (or any other index) enters at the top.
+        out.push_str("        _ ->\n");
         self.emit_seq(
             out,
             &m.elements,
             0,
             "St",
             m,
+            index,
             &state_label,
-            "    ",
-            sid,
+            "            ",
             &mut ctr,
         )?;
-        out.push_str(".\n\n");
+        out.push_str("\n    end.\n\n");
         Ok(())
     }
 
@@ -404,9 +474,9 @@ impl<'a> Generator<'a> {
         idx: usize,
         st: &str,
         m: &MatchAst,
+        state_idx: usize,
         state_label: &str,
         ind: &str,
-        sid: &mut usize,
         ctr: &mut usize,
     ) -> Result<(), String> {
         if idx == elements.len() {
@@ -415,8 +485,7 @@ impl<'a> Generator<'a> {
         }
         match &elements[idx] {
             MatchElement::Stage(stage) => {
-                let my_sid = *sid;
-                *sid += 1;
+                let my_sid = self.stage_sid[&(state_idx, idx)];
                 let r = fresh("R", ctr);
                 writeln!(out, "{}{} = dfa_match({}, dfa_{}()),", ind, r, st, my_sid).ok();
                 writeln!(out, "{}case {} < 0 of", ind, r).ok();
@@ -455,9 +524,9 @@ impl<'a> Generator<'a> {
                     idx + 1,
                     &st2,
                     m,
+                    state_idx,
                     state_label,
                     &ind3,
-                    sid,
                     ctr,
                 )?;
                 writeln!(out).ok();
@@ -480,11 +549,31 @@ impl<'a> Generator<'a> {
                     ind, st2, base, value
                 )
                 .ok();
-                self.emit_seq(out, elements, idx + 1, &st2, m, state_label, ind, sid, ctr)?;
+                self.emit_seq(
+                    out,
+                    elements,
+                    idx + 1,
+                    &st2,
+                    m,
+                    state_idx,
+                    state_label,
+                    ind,
+                    ctr,
+                )?;
             }
             MatchElement::ActionBlock(blk) => {
                 let st2 = self.emit_block(out, &blk.statements, st, ind, ctr)?;
-                self.emit_seq(out, elements, idx + 1, &st2, m, state_label, ind, sid, ctr)?;
+                self.emit_seq(
+                    out,
+                    elements,
+                    idx + 1,
+                    &st2,
+                    m,
+                    state_idx,
+                    state_label,
+                    ind,
+                    ctr,
+                )?;
             }
         }
         Ok(())
@@ -707,8 +796,37 @@ impl<'a> Generator<'a> {
                     write!(out, "{}{{{}, {}}}", ind, idx, st).ok();
                 }
             }
-            FsmTransitionTarget::Static { .. } => {
-                write!(out, "{}erlang:error(stage_ref_target_unsupported)", ind).ok();
+            FsmTransitionTarget::Static {
+                state,
+                stage: Some(stage),
+                ..
+            } => {
+                // Stage-ref: re-enter `state` at element `entry`, recorded in
+                // the state map as `fsm_enter` for the dispatch `case`.
+                let idx = self
+                    .label_to_index
+                    .get(state)
+                    .copied()
+                    .unwrap_or(usize::MAX);
+                let entry = self
+                    .stage_entry
+                    .get(&(state.clone(), stage.clone()))
+                    .copied();
+                match (idx, entry) {
+                    (usize::MAX, _) | (_, None) => {
+                        write!(
+                            out,
+                            "{}erlang:error({{undeclared_stage, {}, {}}})",
+                            ind,
+                            erl_atom(state),
+                            erl_atom(stage)
+                        )
+                        .ok();
+                    }
+                    (idx, Some(entry)) => {
+                        write!(out, "{}{{{}, {}#{{fsm_enter => {}}}}}", ind, idx, st, entry).ok();
+                    }
+                }
             }
             FsmTransitionTarget::Conditional(alts) => {
                 self.emit_conditional(out, alts, 0, st, ind, m);
@@ -1188,6 +1306,23 @@ mod tests {
         assert_eq!(z, "0");
         assert_eq!(run_mode("1", 1, "cond_b").unwrap(), "1");
         assert_eq!(run_mode("0", 2, "cond_c").unwrap(), "-1"); // no when → failure
+    }
+
+    /// Stage-ref target `-> $State.stage`: re-enter a state at a specific
+    /// stage, skipping its earlier elements. `$0` matches `x` then re-enters
+    /// `$rest` at the `tail` stage (element 1), bypassing element 0. The
+    /// match carries a failure branch so it passes validation (the bypassed
+    /// `/y/` stage is only reached when entering `$rest` at element 0).
+    #[test]
+    fn erl_stage_ref_target() {
+        let src = "@@fsm M(text: bytes) : int = 0 { \
+                   $0: /x/ -> $rest.tail : -> $err \
+                   $rest: /y/ .tail/[0-9]+/ to_int($rest.tail) : -> $err \
+                   $err: -1 }";
+        let Some((acc, ret)) = run(src, "m", "x42", "sref_a") else {
+            return;
+        };
+        assert_eq!((acc.as_str(), ret.as_str()), ("true", "42"));
     }
 
     /// A construct outside the first cut errors clearly.
