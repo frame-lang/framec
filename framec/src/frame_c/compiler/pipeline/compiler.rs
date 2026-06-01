@@ -359,6 +359,9 @@ pub(crate) fn do_segment(c: &mut PipelineCtx) -> Option<CompileResult> {
                             TargetLanguage::Rust => {
                                 Some(crate::frame_c::compiler::codegen::fsm_rust::generate(&ast))
                             }
+                            TargetLanguage::Erlang => Some(
+                                crate::frame_c::compiler::codegen::fsm_erlang::generate(&ast),
+                            ),
                             _ => None,
                         };
                         match generated {
@@ -371,7 +374,7 @@ pub(crate) fn do_segment(c: &mut PipelineCtx) -> Option<CompileResult> {
                                 "E740",
                                 &format!(
                                     "@@fsm {}: code generation for the {:?} target is not yet \
-                                     implemented (v0.1 supports python_3 and rust)",
+                                     implemented (v0.1 supports python_3, rust, and erlang)",
                                     name, c.config.target
                                 ),
                             )),
