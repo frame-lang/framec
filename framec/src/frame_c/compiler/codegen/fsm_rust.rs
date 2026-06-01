@@ -19,8 +19,10 @@
 //! (`>{}`/`@{}`/`${}`/`%{}`/`@eof{}`, §3.5.5/§5.4) — over all three alphabets
 //! (`bytes`/`char` as a `Vec<char>`; `token` as a `Vec<String>` mapped to
 //! small integer ids), with the `@@:matched` / `to_int` / `to_str` / `len`
-//! built-ins. Not yet handled (clear `Unsupported` error, never a silent
-//! miscompile): Mode C call-out and anchors.
+//! built-ins, and Mode C sub-fsm call-out (`/@Inner/`, §8.3 — constructs the
+//! inner fsm over the input at the cursor, exposing it via
+//! `$state.label.return_value`). Not yet handled (clear `Unsupported` error,
+//! never a silent miscompile): anchors (deferred to v0.2).
 
 use crate::frame_c::compiler::frame_ast::{
     BinaryOp, EmbeddingOp, Expression, FsmDeclAst, FsmStateAst, FsmTransitionTarget, Literal,
@@ -41,6 +43,16 @@ pub fn generate(decl: &FsmDeclAst) -> Result<String, String> {
 struct StageDfa {
     states: Vec<(Vec<(u32, u32, usize)>, bool)>,
     start: usize,
+    /// RFC-0042 §8.3 Mode C: when `Some(name)`, this stage is a call-out to
+    /// the `@@fsm` `name` rather than a regex DFA match (no DFA; a
+    /// placeholder keeps stage indices aligned with the emit walk).
+    mode_c: Option<String>,
+}
+
+/// A Mode C stage's regex body starts with `@`; the rest names the inner
+/// fsm (`/@Digit/` → `Some("Digit")`).
+fn mode_c_inner(regex: &str) -> Option<&str> {
+    regex.strip_prefix('@')
 }
 
 struct Generator<'a> {
@@ -103,11 +115,16 @@ impl<'a> Generator<'a> {
             for m in &st.matches {
                 for el in &m.elements {
                     if let MatchElement::Stage(stage) = el {
-                        if stage.regex.starts_with('@') {
-                            self.token_ids = token_ids;
-                            return Err(
-                                "Mode C (`/@Fsm/`) is not yet supported by the Rust backend".into(),
-                            );
+                        if let Some(inner) = mode_c_inner(&stage.regex) {
+                            // Mode C: a sub-fsm call-out, no DFA. Push a
+                            // placeholder so stage indices stay aligned with
+                            // the emit walk.
+                            self.stage_dfas.push(StageDfa {
+                                states: Vec::new(),
+                                start: 0,
+                                mode_c: Some(inner.to_string()),
+                            });
+                            continue;
                         }
                         match Self::compile_one(self.alphabet, &stage.regex, &mut token_ids) {
                             Ok(dfa) => self.stage_dfas.push(dfa),
@@ -160,6 +177,7 @@ impl<'a> Generator<'a> {
                 Ok(StageDfa {
                     states,
                     start: compiled.dfa.start,
+                    mode_c: None,
                 })
             }
             Err(CompileError::Diagnostics(ds)) => Err(format!(
@@ -292,6 +310,10 @@ impl<'a> Generator<'a> {
         for f in self.capture_fields() {
             writeln!(out, "    {}: {},", f, self.matched_type()).ok();
         }
+        // Mode C: the inner fsm instance, for `$state.label.<field>` reads.
+        for (f, inner) in self.mode_c_inst_fields() {
+            writeln!(out, "    {}: Option<{}>,", f, inner).ok();
+        }
         out.push_str("}\n\n");
     }
 
@@ -314,17 +336,40 @@ impl<'a> Generator<'a> {
         out
     }
 
-    /// Does any stage match via the shared DFA executor (i.e. carries no
-    /// embedding actions)? When every stage is embedding-aware, `dfa_match`
-    /// is never called and must not be emitted (dead code).
+    /// Does any stage match via the shared DFA executor (i.e. a regex stage
+    /// with no embedding actions)? When every stage is embedding-aware or a
+    /// Mode C call-out, `dfa_match` is never called and must not be emitted
+    /// (dead code).
     fn has_plain_stage(&self) -> bool {
         self.decl.states.iter().any(|st| {
             st.matches.iter().any(|m| {
-                m.elements.iter().any(
-                    |el| matches!(el, MatchElement::Stage(s) if s.embedding_actions.is_empty()),
-                )
+                m.elements.iter().any(|el| {
+                    matches!(el, MatchElement::Stage(s)
+                        if s.embedding_actions.is_empty() && mode_c_inner(&s.regex).is_none())
+                })
             })
         })
+    }
+
+    /// `(field name, inner fsm name)` for each labeled Mode C stage in a
+    /// labeled state — the `Option<Inner>` instance fields backing
+    /// `$state.label.<return_value|accepted|cursor|reject_position>` reads.
+    fn mode_c_inst_fields(&self) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        for st in &self.decl.states {
+            let Some(slabel) = &st.label else { continue };
+            for m in &st.matches {
+                for el in &m.elements {
+                    if let MatchElement::Stage(stage) = el {
+                        if let (Some(lbl), Some(inner)) = (&stage.label, mode_c_inner(&stage.regex))
+                        {
+                            out.push((cap_inst_field(slabel, lbl), inner.to_string()));
+                        }
+                    }
+                }
+            }
+        }
+        out
     }
 
     fn emit_impl(&self, out: &mut String) -> Result<(), String> {
@@ -429,6 +474,9 @@ impl<'a> Generator<'a> {
         out.push_str("            enter: 0,\n");
         for f in self.capture_fields() {
             writeln!(out, "            {}: {},", f, self.matched_empty()).ok();
+        }
+        for (f, _) in self.mode_c_inst_fields() {
+            writeln!(out, "            {}: None,", f).ok();
         }
         out.push_str("        };\n");
         out.push_str("        _m.run();\n");
@@ -712,6 +760,13 @@ impl<'a> Generator<'a> {
                     }
                     let my_sid = *sid;
                     *sid += 1;
+                    if self.stage_dfas[my_sid].mode_c.is_some() {
+                        return Err(
+                            "a Mode C (`/@Fsm/`) stage as a `|` alternative selector is not yet \
+                             supported by the Rust backend"
+                                .into(),
+                        );
+                    }
                     let MatchElement::Stage(sel) = &m.elements[fs] else {
                         unreachable!("first_stage indexes a Stage element")
                     };
@@ -787,6 +842,10 @@ impl<'a> Generator<'a> {
             MatchElement::Stage(stage) => {
                 let my_sid = *sid;
                 *sid += 1;
+                if let Some(inner) = self.stage_dfas[my_sid].mode_c.clone() {
+                    self.emit_mode_c(out, &inner, stage, m, state_label, ind, &ind4)?;
+                    return Ok(());
+                }
                 // A stage carrying embedding actions matches via its
                 // specialized `match_stage_<sid>` (which fires the actions at
                 // their DFA positions); a plain stage uses the shared DFA
@@ -829,6 +888,69 @@ impl<'a> Generator<'a> {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// Emit a Mode C stage (RFC-0042 §8.3 `/@Inner/`): construct the inner
+    /// fsm over the input at the cursor, run it to completion, and on accept
+    /// advance the outer cursor by the inner's. The stage fails (failure
+    /// branch / §5.6) when the inner rejects. A labeled stage records both
+    /// the matched slice (`$state.label`) and the inner instance
+    /// (`$state.label.return_value`).
+    #[allow(clippy::too_many_arguments)]
+    fn emit_mode_c(
+        &self,
+        out: &mut String,
+        inner: &str,
+        stage: &StageAst,
+        m: &MatchAst,
+        state_label: &str,
+        ind: &str,
+        ind4: &str,
+    ) -> Result<(), String> {
+        let input = &self.decl.params[0].name;
+        writeln!(
+            out,
+            "{}let _inner = {}::new(self.{}[self.cursor..].to_vec());",
+            ind, inner, input
+        )
+        .ok();
+        writeln!(out, "{}if !_inner.accepted {{", ind).ok();
+        self.emit_failure(out, m, ind4)?;
+        writeln!(out, "{}}}", ind).ok();
+        // The inner consumed `_inner.cursor` elements; capture before moving.
+        writeln!(out, "{}let _icur = _inner.cursor;", ind).ok();
+        let slice = match self.alphabet {
+            Alphabet::Token => format!(
+                "self.{}[self.cursor..(self.cursor + _icur)].to_vec()",
+                input
+            ),
+            _ => format!(
+                "self.{}[self.cursor..(self.cursor + _icur)].iter().collect()",
+                input
+            ),
+        };
+        writeln!(out, "{}self.matched = {};", ind, slice).ok();
+        if let Some(lbl) = &stage.label {
+            if !state_label.is_empty() {
+                writeln!(
+                    out,
+                    "{}self.{} = self.matched.clone();",
+                    ind,
+                    cap_field(state_label, lbl)
+                )
+                .ok();
+                writeln!(
+                    out,
+                    "{}self.{} = Some(_inner);",
+                    ind,
+                    cap_inst_field(state_label, lbl)
+                )
+                .ok();
+            }
+        }
+        writeln!(out, "{}self.cursor = self.cursor + _icur;", ind).ok();
+        writeln!(out, "{}self.accepted = true;", ind).ok();
         Ok(())
     }
 
@@ -1038,6 +1160,25 @@ impl<'a> Generator<'a> {
             },
             Expression::Call { func, args } => self.call(func, args),
             Expression::Member { object, field } => {
+                // Mode C (§8.3): `$state.label.<fsm field>` reads the inner
+                // fsm instance recorded for that stage, not the matched slice.
+                // (`$state.label` alone is the slice — handled by the Var arm.)
+                if let Expression::Var(name) = object.as_ref() {
+                    if let Some((state, label)) =
+                        name.strip_prefix('$').and_then(|c| c.split_once('.'))
+                    {
+                        if matches!(
+                            field.as_str(),
+                            "return_value" | "accepted" | "cursor" | "reject_position"
+                        ) {
+                            return format!(
+                                "self.{}.as_ref().unwrap().{}",
+                                cap_inst_field(state, label),
+                                field
+                            );
+                        }
+                    }
+                }
                 format!("{}.{}", self.expr(object), field)
             }
             Expression::Index { object, index } => {
@@ -1083,6 +1224,12 @@ impl<'a> Generator<'a> {
 /// Struct field name holding a stage capture: `$state.label` → `cap_state_label`.
 fn cap_field(state: &str, label: &str) -> String {
     format!("cap_{}_{}", state, label)
+}
+
+/// Struct field name holding a Mode C inner fsm instance:
+/// `$state.label` → `cap_inst_state_label`.
+fn cap_inst_field(state: &str, label: &str) -> String {
+    format!("cap_inst_{}_{}", state, label)
 }
 
 fn binop(op: &BinaryOp) -> &'static str {
@@ -1380,6 +1527,48 @@ mod tests {
             return;
         };
         assert_eq!(ret, "3");
+    }
+
+    /// Mode C call-out (RFC-0042 §8.3): `/@Inner/` constructs the inner fsm
+    /// over the input at the cursor, advances by what it consumed, and exposes
+    /// the inner instance via `$state.label.return_value`.
+    #[test]
+    fn rust_mode_c_callout() {
+        let inner_src = "@@fsm Digits(text: bytes) : int = 0 { /[0-9]+/ to_int(@@:matched) }";
+        let outer_src = "@@fsm Outer(text: bytes) : int = 0 { $s: .d/@Digits/ $s.d.return_value }";
+        let inner = generate(&parse_fsm_block(inner_src.as_bytes()).expect("inner parses"))
+            .expect("inner generates");
+        let outer = generate(&parse_fsm_block(outer_src.as_bytes()).expect("outer parses"))
+            .expect("outer generates");
+        let run_outer = |inp: &str, tag: &str| -> Option<(String, String)> {
+            let driver = format!(
+                "{inner}\n{outer}\nfn main() {{ let m = Outer::new(\"{inp}\".chars().collect()); println!(\"{{}}\", m.accepted); println!(\"{{}}\", m.return_value); }}\n",
+                inner = inner, outer = outer, inp = inp
+            );
+            let dir = std::env::temp_dir();
+            let s = dir.join(format!("framec_rs_{}.rs", tag));
+            let b = dir.join(format!("framec_rs_{}", tag));
+            std::fs::write(&s, driver).ok()?;
+            let c = Command::new("rustc")
+                .arg("-O")
+                .arg("--edition=2021")
+                .arg(&s)
+                .arg("-o")
+                .arg(&b)
+                .output()
+                .ok()?;
+            assert!(c.status.success(), "{}", String::from_utf8_lossy(&c.stderr));
+            let o = Command::new(&b).output().expect("run");
+            let text = String::from_utf8_lossy(&o.stdout);
+            let lines: Vec<&str> = text.lines().collect();
+            Some((lines[0].to_string(), lines[1].to_string()))
+        };
+        let Some((acc, ret)) = run_outer("42", "modec_a") else {
+            return;
+        };
+        assert_eq!((acc.as_str(), ret.as_str()), ("true", "42"));
+        // "x": inner Digits rejects → outer Mode C stage fails → reject.
+        assert_eq!(run_outer("x", "modec_b").unwrap().0, "false");
     }
 
     /// Token alphabet (FSM-TEST-253): the input is a sequence of token
