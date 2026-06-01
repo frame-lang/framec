@@ -64,6 +64,7 @@ pub(crate) fn should_emit_layered(lang: TargetLanguage) -> bool {
             | TargetLanguage::Java
             | TargetLanguage::CSharp
             | TargetLanguage::Kotlin
+            | TargetLanguage::Swift
     )
 }
 
@@ -285,6 +286,40 @@ fn generate_casing_fields(machine_name: &str, lang: TargetLanguage) -> Vec<Field
                 leading_comments: vec![],
             },
         ],
+        TargetLanguage::Swift => vec![
+            // Swift: private + var + nullable-marker String?. All three
+            // declared without inline initializers; assigned in the
+            // casing's `init()` body that the Swift Constructor render
+            // emits from the Constructor's NativeBlock.
+            Field {
+                name: "machine".to_string(),
+                type_annotation: Some(machine_name.to_string()),
+                visibility: Visibility::Private,
+                is_static: false,
+                is_const: false,
+                initializer: None,
+                leading_comments: vec![],
+            },
+            Field {
+                name: "busy".to_string(),
+                type_annotation: Some("Bool".to_string()),
+                visibility: Visibility::Private,
+                is_static: false,
+                is_const: false,
+                initializer: None,
+                leading_comments: vec![],
+            },
+            Field {
+                // Swift's nullable-string syntax: `String?`.
+                name: "in_flight".to_string(),
+                type_annotation: Some("String?".to_string()),
+                visibility: Visibility::Private,
+                is_static: false,
+                is_const: false,
+                initializer: None,
+                leading_comments: vec![],
+            },
+        ],
         TargetLanguage::Kotlin => vec![
             // All three declared without inline initializers; assigned in
             // the `init {}` block that the Kotlin Constructor render emits
@@ -365,6 +400,15 @@ fn generate_casing_constructor(machine_name: &str, lang: TargetLanguage) -> Code
             "this.machine = {m}()\n\
              this.busy = false\n\
              this.in_flight = null",
+            m = machine_name
+        ),
+        TargetLanguage::Swift => format!(
+            // Swift: `self.foo = X()` style (no `new`); `nil` for the
+            // optional. The Swift Constructor render emits this body
+            // inside `init()` for the casing class.
+            "self.machine = {m}()\n\
+             self.busy = false\n\
+             self.in_flight = nil",
             m = machine_name
         ),
         _ => String::new(),
@@ -478,6 +522,40 @@ fn generate_casing_interface_wrapper(ifm: &InterfaceMethod, lang: TargetLanguage
                  \x20   this.busy = false;\n\
                  \x20   this.in_flight = null;\n\
                  }}",
+                name = ifm.name,
+                delegate = delegate_line
+            )
+        }
+        TargetLanguage::Swift => {
+            let arg_list: Vec<String> = ifm.params.iter().map(|p| p.name.clone()).collect();
+            let arg_str = arg_list.join(", ");
+            // Swift: `defer { ... }` runs when the function scope exits,
+            // including after an `await` and on early `return`. This is
+            // the idiomatic equivalent of try/finally; cleaner than
+            // do/catch wrapping. `fatalError` matches the unchecked-throw
+            // semantics of the other backends — E703 is a programming
+            // error, not a recoverable condition. Optional unwrap uses
+            // nil-coalescing `?? "?"` to avoid forced-unwrap on a value
+            // we treat as advisory in the message.
+            let has_return = !matches!(ifm.return_type, None | Some(FrameType::Unknown));
+            let delegate_line = if has_return {
+                format!("return await self.machine.{}({})", ifm.name, arg_str)
+            } else {
+                format!("await self.machine.{}({})", ifm.name, arg_str)
+            };
+            format!(
+                "if self.busy {{\n\
+                 \x20   fatalError(\n\
+                 \x20       \"E703: system busy: cannot enter '{name}' while '\\(self.in_flight ?? \"?\")' is in flight\"\n\
+                 \x20   )\n\
+                 }}\n\
+                 self.busy = true\n\
+                 self.in_flight = \"{name}\"\n\
+                 defer {{\n\
+                 \x20   self.busy = false\n\
+                 \x20   self.in_flight = nil\n\
+                 }}\n\
+                 {delegate}",
                 name = ifm.name,
                 delegate = delegate_line
             )
@@ -598,6 +676,26 @@ fn generate_casing_operation_delegate(op: &OperationAst, lang: TargetLanguage) -
                 )
             }
         }
+        TargetLanguage::Swift => {
+            let arg_list: Vec<String> = op.params.iter().map(|p| p.name.clone()).collect();
+            let arg_str = arg_list.join(", ");
+            // Swift: same void-vs-value split. Calls are positional
+            // because the machine's emit_params prefixes every param
+            // with `_` (no call-site label).
+            if matches!(op.return_type, FrameType::Unknown) {
+                format!(
+                    "self.machine.{name}({args})",
+                    name = op.name,
+                    args = arg_str
+                )
+            } else {
+                format!(
+                    "return self.machine.{name}({args})",
+                    name = op.name,
+                    args = arg_str
+                )
+            }
+        }
         _ => String::new(),
     };
 
@@ -640,6 +738,7 @@ fn generate_casing_save_delegate(system: &SystemAst, lang: TargetLanguage) -> Op
             format!("return this.machine.{name}();", name = save_name)
         }
         TargetLanguage::Kotlin => format!("return this.machine.{name}()", name = save_name),
+        TargetLanguage::Swift => format!("return self.machine.{name}()", name = save_name),
         _ => String::new(),
     };
     Some(CodegenNode::Method {
@@ -671,6 +770,7 @@ fn generate_casing_restore_delegate(
             format!("this.machine.{name}(data);", name = load_name)
         }
         TargetLanguage::Kotlin => format!("this.machine.{name}(data)", name = load_name),
+        TargetLanguage::Swift => format!("self.machine.{name}(data)", name = load_name),
         _ => String::new(),
     };
     Some(CodegenNode::Method {
@@ -749,10 +849,20 @@ fn generate_casing_init_delegate(lang: TargetLanguage) -> CodegenNode {
         }
         TargetLanguage::CSharp => "await this.machine.init();".to_string(),
         TargetLanguage::Kotlin => "this.machine.init()".to_string(),
+        // Swift renames Frame's `init` interface method to `initAsync`
+        // because `init` is a reserved constructor keyword. The machine's
+        // method (post-`async_wrap`) is named `initAsync`, and the casing
+        // delegate must match so the user's `await s.initAsync()` call
+        // resolves through the casing.
+        TargetLanguage::Swift => "await self.machine.initAsync()".to_string(),
         _ => String::new(),
     };
+    let init_name = match lang {
+        TargetLanguage::Swift => "initAsync",
+        _ => "init",
+    };
     CodegenNode::Method {
-        name: "init".to_string(),
+        name: init_name.to_string(),
         params: vec![],
         return_type: None,
         body: vec![CodegenNode::NativeBlock {
