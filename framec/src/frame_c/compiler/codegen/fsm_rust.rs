@@ -16,10 +16,11 @@
 //! conditional (`when`), stage-ref (`-> $S.stage`, via a `self.enter`
 //! re-entry index), and failure-only — plus multi-match (`|`) ordered-choice
 //! states (commit-on-first-stage, stageless catch-all) and embedding actions
-//! (`>{}`/`@{}`/`${}`/`%{}`/`@eof{}`, §3.5.5/§5.4) — over the `bytes`/`char`
-//! alphabets, with the `@@:matched` / `to_int` / `to_str` / `len` built-ins.
-//! Not yet handled (clear `Unsupported` error, never a silent miscompile):
-//! Mode C call-out, the token alphabet, and anchors.
+//! (`>{}`/`@{}`/`${}`/`%{}`/`@eof{}`, §3.5.5/§5.4) — over all three alphabets
+//! (`bytes`/`char` as a `Vec<char>`; `token` as a `Vec<String>` mapped to
+//! small integer ids), with the `@@:matched` / `to_int` / `to_str` / `len`
+//! built-ins. Not yet handled (clear `Unsupported` error, never a silent
+//! miscompile): Mode C call-out and anchors.
 
 use crate::frame_c::compiler::frame_ast::{
     BinaryOp, EmbeddingOp, Expression, FsmDeclAst, FsmStateAst, FsmTransitionTarget, Literal,
@@ -49,6 +50,10 @@ struct Generator<'a> {
     /// `(state label, stage label)` → element index, for stage-ref
     /// re-entry (`-> $State.stage`). Single-match states only.
     stage_entry: std::collections::HashMap<(String, String), usize>,
+    /// Token-alphabet only: each token-kind name → a small integer id, so
+    /// token transitions reuse the same numeric range matcher as bytes/chars
+    /// (the per-element read maps a token to its id; unknown → -1).
+    token_ids: std::collections::HashMap<String, u32>,
     stage_dfas: Vec<StageDfa>,
 }
 
@@ -56,9 +61,7 @@ impl<'a> Generator<'a> {
     fn new(decl: &'a FsmDeclAst) -> Result<Self, String> {
         let alphabet = match decl.params.first().map(|p| &p.param_type) {
             Some(Type::Custom(t)) if t == "char" => Alphabet::Char,
-            Some(Type::Custom(t)) if t == "token" => {
-                return Err("the token alphabet is not yet supported by the Rust backend".into())
-            }
+            Some(Type::Custom(t)) if t == "token" => Alphabet::Token,
             _ => Alphabet::Bytes,
         };
         let mut label_to_index = std::collections::HashMap::new();
@@ -82,6 +85,7 @@ impl<'a> Generator<'a> {
             alphabet,
             label_to_index,
             stage_entry,
+            token_ids: std::collections::HashMap::new(),
             stage_dfas: Vec::new(),
         };
         g.compile_stage_dfas()?;
@@ -92,25 +96,40 @@ impl<'a> Generator<'a> {
     /// in traversal order, so the emitted `DFA_<sid>` consts line up with the
     /// `sid` counter the state emitters advance.
     fn compile_stage_dfas(&mut self) -> Result<(), String> {
+        // `token_ids` is taken out so `compile_one` can be a borrow-free
+        // associated function (it both reads `self.decl` and grows the map).
+        let mut token_ids = std::mem::take(&mut self.token_ids);
         for st in &self.decl.states {
             for m in &st.matches {
                 for el in &m.elements {
                     if let MatchElement::Stage(stage) = el {
                         if stage.regex.starts_with('@') {
+                            self.token_ids = token_ids;
                             return Err(
                                 "Mode C (`/@Fsm/`) is not yet supported by the Rust backend".into(),
                             );
                         }
-                        self.stage_dfas.push(self.compile_one(&stage.regex)?);
+                        match Self::compile_one(self.alphabet, &stage.regex, &mut token_ids) {
+                            Ok(dfa) => self.stage_dfas.push(dfa),
+                            Err(e) => {
+                                self.token_ids = token_ids;
+                                return Err(e);
+                            }
+                        }
                     }
                 }
             }
         }
+        self.token_ids = token_ids;
         Ok(())
     }
 
-    fn compile_one(&self, regex: &str) -> Result<StageDfa, String> {
-        match fsm_regex::compile(regex, self.alphabet, DEFAULT_MAX_DFA_STATES) {
+    fn compile_one(
+        alphabet: Alphabet,
+        regex: &str,
+        token_ids: &mut std::collections::HashMap<String, u32>,
+    ) -> Result<StageDfa, String> {
+        match fsm_regex::compile(regex, alphabet, DEFAULT_MAX_DFA_STATES) {
             Ok(compiled) => {
                 if compiled.requires_start || compiled.requires_end {
                     return Err(
@@ -126,8 +145,12 @@ impl<'a> Generator<'a> {
                             DfaLabel::ByteRange { low, high } => (*low as u32, *high as u32),
                             DfaLabel::CodePoint(c) => (*c as u32, *c as u32),
                             DfaLabel::CodePointRange { low, high } => (*low as u32, *high as u32),
-                            DfaLabel::Token(_) => {
-                                return Err("token-alphabet DFA is not supported here".into())
+                            DfaLabel::Token(name) => {
+                                // Map the token kind to a small integer id so
+                                // it reuses the numeric range matcher.
+                                let next = token_ids.len() as u32;
+                                let id = *token_ids.entry(name.clone()).or_insert(next);
+                                (id, id)
                             }
                         };
                         trans.push((lo, hi, t.to));
@@ -175,6 +198,54 @@ impl<'a> Generator<'a> {
         }
     }
 
+    /// The Rust type of the auto-promoted input field: a token stream is a
+    /// `Vec<String>` of token-kind names; a byte/char stream is a `Vec<char>`
+    /// (cursor-indexable in O(1)).
+    fn input_type(&self) -> &'static str {
+        match self.alphabet {
+            Alphabet::Token => "Vec<String>",
+            _ => "Vec<char>",
+        }
+    }
+
+    /// The Rust type of `matched` / stage captures: a `Vec<String>` slice of
+    /// consumed tokens, else the matched `String`.
+    fn matched_type(&self) -> &'static str {
+        match self.alphabet {
+            Alphabet::Token => "Vec<String>",
+            _ => "String",
+        }
+    }
+
+    /// The empty `matched` initializer for the alphabet.
+    fn matched_empty(&self) -> &'static str {
+        match self.alphabet {
+            Alphabet::Token => "Vec::new()",
+            _ => "String::new()",
+        }
+    }
+
+    /// The expression materializing the matched run `self.<input>[cursor.._r]`
+    /// into an owned value of [`Self::matched_type`].
+    fn matched_slice(&self) -> String {
+        let inp = &self.decl.params[0].name;
+        match self.alphabet {
+            Alphabet::Token => format!("self.{}[self.cursor..(_r as usize)].to_vec()", inp),
+            _ => format!("self.{}[self.cursor..(_r as usize)].iter().collect()", inp),
+        }
+    }
+
+    /// The per-element read as an `i64`: a byte/char by code point, a token by
+    /// its small integer id (`-1` for an unknown token, matching no range).
+    /// This is the only point where the matcher differs across alphabets.
+    fn element_read(&self) -> String {
+        let inp = &self.decl.params[0].name;
+        match self.alphabet {
+            Alphabet::Token => format!("self.tok_id(&self.{}[pos])", inp),
+            _ => format!("self.{}[pos] as i64", inp),
+        }
+    }
+
     fn emit_struct(&self, out: &mut String) {
         writeln!(out, "pub struct {} {{", self.decl.name).ok();
         out.push_str("    pub accepted: bool,\n");
@@ -187,11 +258,11 @@ impl<'a> Generator<'a> {
         )
         .ok();
         // Auto-promoted parameters become fields. The input parameter is a
-        // `Vec<char>` so the cursor indexes it in O(1); other params keep
-        // their declared type.
+        // cursor-indexable stream (`Vec<char>` / `Vec<String>`); other params
+        // keep their declared type.
         for (i, p) in self.decl.params.iter().enumerate() {
             if i == 0 {
-                writeln!(out, "    pub {}: Vec<char>,", p.name).ok();
+                writeln!(out, "    pub {}: {},", p.name, self.input_type()).ok();
             } else {
                 writeln!(
                     out,
@@ -212,14 +283,14 @@ impl<'a> Generator<'a> {
                 writeln!(out, "    pub {}: {},", v.name, Self::rust_type(&v.var_type)).ok();
             }
         }
-        out.push_str("    matched: String,\n");
+        writeln!(out, "    matched: {},", self.matched_type()).ok();
         // Stage-ref re-entry point (`-> $State.stage` sets it; the dispatch
         // loop consumes it). 0 = enter at the state's first element.
         out.push_str("    enter: usize,\n");
         // One owned field per labeled stage in a labeled state, holding the
         // matched slice for `$state.label` reads.
         for f in self.capture_fields() {
-            writeln!(out, "    {}: String,", f).ok();
+            writeln!(out, "    {}: {},", f, self.matched_type()).ok();
         }
         out.push_str("}\n\n");
     }
@@ -259,6 +330,7 @@ impl<'a> Generator<'a> {
     fn emit_impl(&self, out: &mut String) -> Result<(), String> {
         writeln!(out, "impl {} {{", self.decl.name).ok();
         self.emit_new(out);
+        self.emit_tok_id(out);
         if self.has_plain_stage() {
             self.emit_dfa_matcher(out);
         }
@@ -318,14 +390,15 @@ impl<'a> Generator<'a> {
 
     fn emit_new(&self, out: &mut String) {
         let input = &self.decl.params[0].name;
-        // Constructor signature: input as Vec<char>, other params typed.
+        // Constructor signature: input as the cursor-indexable stream, other
+        // params typed.
         let mut sig = String::new();
         for (i, p) in self.decl.params.iter().enumerate() {
             if i > 0 {
                 sig.push_str(", ");
             }
             if i == 0 {
-                write!(sig, "{}: Vec<char>", p.name).ok();
+                write!(sig, "{}: {}", p.name, self.input_type()).ok();
             } else {
                 write!(sig, "{}: {}", p.name, Self::rust_type(&p.param_type)).ok();
             }
@@ -352,10 +425,10 @@ impl<'a> Generator<'a> {
                 writeln!(out, "            {}: {},", v.name, self.expr(&v.default)).ok();
             }
         }
-        out.push_str("            matched: String::new(),\n");
+        writeln!(out, "            matched: {},", self.matched_empty()).ok();
         out.push_str("            enter: 0,\n");
         for f in self.capture_fields() {
-            writeln!(out, "            {}: String::new(),", f).ok();
+            writeln!(out, "            {}: {},", f, self.matched_empty()).ok();
         }
         out.push_str("        };\n");
         out.push_str("        _m.run();\n");
@@ -365,9 +438,26 @@ impl<'a> Generator<'a> {
         let _ = input;
     }
 
+    /// Token alphabet: emit the token-kind → id lookup used by the
+    /// per-element read (unknown token → -1). Emitted only when at least one
+    /// stage matcher exists to call it.
+    fn emit_tok_id(&self, out: &mut String) {
+        if self.alphabet != Alphabet::Token || self.stage_dfas.is_empty() {
+            return;
+        }
+        let mut entries: Vec<(&String, &u32)> = self.token_ids.iter().collect();
+        entries.sort_by_key(|(_, id)| **id);
+        out.push_str("    fn tok_id(&self, t: &str) -> i64 {\n        match t {\n");
+        for (name, id) in entries {
+            writeln!(out, "            {:?} => {},", name, id).ok();
+        }
+        out.push_str("            _ => -1,\n        }\n    }\n\n");
+    }
+
     /// Greedy longest-match DFA executor (mirrors `_dfa_match` in Python).
     fn emit_dfa_matcher(&self, out: &mut String) {
         let input = &self.decl.params[0].name;
+        let read = self.element_read();
         writeln!(
             out,
             "    fn dfa_match(&self, states: &[(&[(u32, u32, usize)], bool)], start: usize) -> i64 {{\n\
@@ -376,10 +466,10 @@ impl<'a> Generator<'a> {
              \x20       let n = self.{input}.len();\n\
              \x20       let mut last: i64 = if states[st].1 {{ pos as i64 }} else {{ -1 }};\n\
              \x20       while pos < n {{\n\
-             \x20           let v = self.{input}[pos] as u32;\n\
+             \x20           let v: i64 = {read};\n\
              \x20           let mut nxt: Option<usize> = None;\n\
              \x20           for &(lo, hi, tgt) in states[st].0 {{\n\
-             \x20               if lo <= v && v <= hi {{ nxt = Some(tgt); break; }}\n\
+             \x20               if (lo as i64) <= v && v <= (hi as i64) {{ nxt = Some(tgt); break; }}\n\
              \x20           }}\n\
              \x20           match nxt {{\n\
              \x20               Some(t) => {{ st = t; pos += 1; if states[st].1 {{ last = pos as i64; }} }}\n\
@@ -388,7 +478,8 @@ impl<'a> Generator<'a> {
              \x20       }}\n\
              \x20       last\n\
              \x20   }}\n\n",
-            input = input
+            input = input,
+            read = read
         )
         .ok();
     }
@@ -456,16 +547,16 @@ impl<'a> Generator<'a> {
         writeln!(
             out,
             "        while pos < n {{\n\
-             \x20           let v = self.{input}[pos] as u32;\n\
+             \x20           let v: i64 = {read};\n\
              \x20           let mut nxt: Option<usize> = None;\n\
              \x20           for &(lo, hi, tgt) in DFA_{sid}[st].0 {{\n\
-             \x20               if lo <= v && v <= hi {{ nxt = Some(tgt); break; }}\n\
+             \x20               if (lo as i64) <= v && v <= (hi as i64) {{ nxt = Some(tgt); break; }}\n\
              \x20           }}\n\
              \x20           let Some(t) = nxt else {{ break; }};\n\
              \x20           st = t;\n\
              \x20           pos += 1;\n\
              \x20           self.cursor = pos;",
-            input = input,
+            read = self.element_read(),
             sid = sid
         )
         .ok();
@@ -591,7 +682,6 @@ impl<'a> Generator<'a> {
         sid: &mut usize,
     ) -> Result<(), String> {
         let state_label = st.label.clone().unwrap_or_default();
-        let input = &self.decl.params[0].name;
         writeln!(
             out,
             "    fn state_{}(&mut self, _enter: usize) -> i64 {{",
@@ -638,12 +728,7 @@ impl<'a> Generator<'a> {
                     }
                     out.push_str("        if _r >= 0 {\n");
                     // Committed: record the selector's capture + advance.
-                    writeln!(
-                        out,
-                        "            self.matched = self.{}[self.cursor..(_r as usize)].iter().collect();",
-                        input
-                    )
-                    .ok();
+                    writeln!(out, "            self.matched = {};", self.matched_slice()).ok();
                     if let Some(slabel) = &sel.label {
                         if !state_label.is_empty() {
                             writeln!(
@@ -697,7 +782,6 @@ impl<'a> Generator<'a> {
         ind: &str,
         sid: &mut usize,
     ) -> Result<(), String> {
-        let input = &self.decl.params[0].name;
         let ind4 = format!("{}    ", ind);
         match el {
             MatchElement::Stage(stage) => {
@@ -721,12 +805,7 @@ impl<'a> Generator<'a> {
                 writeln!(out, "{}if _r < 0 {{", ind).ok();
                 self.emit_failure(out, m, &ind4)?;
                 writeln!(out, "{}}}", ind).ok();
-                writeln!(
-                    out,
-                    "{}self.matched = self.{}[self.cursor..(_r as usize)].iter().collect();",
-                    ind, input
-                )
-                .ok();
+                writeln!(out, "{}self.matched = {};", ind, self.matched_slice()).ok();
                 if let Some(lbl) = &stage.label {
                     if !state_label.is_empty() {
                         writeln!(
@@ -1303,11 +1382,58 @@ mod tests {
         assert_eq!(ret, "3");
     }
 
-    /// A construct outside the v0.1 Rust cut errors clearly.
+    /// Token alphabet (FSM-TEST-253): the input is a sequence of token
+    /// kinds; regex identifiers reference token kinds, not characters.
+    #[test]
+    fn rust_token_alphabet() {
+        let src = "@@fsm M(toks: token) : bool = false { /IDENT LPAREN RPAREN/ true }";
+        let decl = parse_fsm_block(src.as_bytes()).expect("parses");
+        let code = generate(&decl).expect("generates");
+        let run_toks = |toks: &[&str], tag: &str| -> Option<String> {
+            let items: Vec<String> = toks
+                .iter()
+                .map(|t| format!("{:?}.to_string()", t))
+                .collect();
+            let driver = format!(
+                "{code}\nfn main() {{ let m = M::new(vec![{items}]); println!(\"{{}}\", m.accepted); }}\n",
+                code = code,
+                items = items.join(", ")
+            );
+            let dir = std::env::temp_dir();
+            let s = dir.join(format!("framec_rs_{}.rs", tag));
+            let b = dir.join(format!("framec_rs_{}", tag));
+            std::fs::write(&s, driver).ok()?;
+            let c = Command::new("rustc")
+                .arg("-O")
+                .arg("--edition=2021")
+                .arg(&s)
+                .arg("-o")
+                .arg(&b)
+                .output()
+                .ok()?;
+            assert!(c.status.success(), "{}", String::from_utf8_lossy(&c.stderr));
+            let o = Command::new(&b).output().expect("run");
+            Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+        };
+        let Some(ok) = run_toks(&["IDENT", "LPAREN", "RPAREN"], "tok_seq") else {
+            return;
+        };
+        assert_eq!(ok, "true");
+        // Wrong token sequence → not in the language.
+        assert_eq!(run_toks(&["IDENT", "RPAREN"], "tok_bad").unwrap(), "false");
+        // An unknown token kind never matches a transition.
+        assert_eq!(
+            run_toks(&["IDENT", "WAT", "RPAREN"], "tok_unk").unwrap(),
+            "false"
+        );
+    }
+
+    /// A construct outside the v0.1 Rust cut errors clearly. Anchors are
+    /// deferred to v0.2 (a leading `^` requires the boundary model).
     #[test]
     fn rust_unsupported_errors() {
         let decl =
-            parse_fsm_block(b"@@fsm M(toks: token) : bool = false { /A/ true }").expect("parses");
+            parse_fsm_block(b"@@fsm M(text: bytes) : bool = false { /^a/ true }").expect("parses");
         assert!(generate(&decl).is_err());
     }
 }
