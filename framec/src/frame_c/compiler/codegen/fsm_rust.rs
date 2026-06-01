@@ -8,15 +8,16 @@
 //! ownership of the matched slice (the input is held as `Vec<char>`, the
 //! matched run materialized into an owned `String`).
 //!
-//! # v0.1 first cut
+//! # v0.1 scope
 //!
-//! Supports single-match states, match stages, bare-expression returns,
-//! and static + failure transitions over the `bytes`/`char` alphabets,
-//! with the `@@:matched` / `to_int` / `to_str` / `len` built-ins. Not yet
-//! handled (clear `Unsupported` error, never a silent miscompile): stage
-//! captures (`$state.label`), conditional / stage-ref transition targets,
-//! multi-match (`|`) states, embedding actions, declared `actions:`,
-//! Mode C call-out, the token alphabet, and anchors.
+//! Supports single-match states, match stages with `.label` captures,
+//! bare-expression returns, action blocks (assignment / `if`-`else`),
+//! declared `actions:` helpers, and static + failure transitions over the
+//! `bytes`/`char` alphabets, with the `@@:matched` / `to_int` / `to_str` /
+//! `len` built-ins. Not yet handled (clear `Unsupported` error, never a
+//! silent miscompile): conditional / stage-ref transition targets,
+//! multi-match (`|`) states, embedding actions, Mode C call-out, the token
+//! alphabet, and anchors.
 
 use crate::frame_c::compiler::frame_ast::{
     BinaryOp, Expression, FsmDeclAst, FsmStateAst, FsmTransitionTarget, Literal, MatchAst,
@@ -86,13 +87,6 @@ impl<'a> Generator<'a> {
                     if !stage.embedding_actions.is_empty() {
                         return Err(
                             "embedding actions are not yet supported by the Rust backend".into(),
-                        );
-                    }
-                    if stage.label.is_some() {
-                        return Err(
-                            "stage captures (`$state.label`) are not yet supported by the Rust \
-                             backend"
-                                .into(),
                         );
                     }
                     if stage.regex.starts_with('@') {
@@ -211,7 +205,31 @@ impl<'a> Generator<'a> {
             }
         }
         out.push_str("    matched: String,\n");
+        // One owned field per labeled stage in a labeled state, holding the
+        // matched slice for `$state.label` reads.
+        for f in self.capture_fields() {
+            writeln!(out, "    {}: String,", f).ok();
+        }
         out.push_str("}\n\n");
+    }
+
+    /// Field names for every labeled stage in a labeled state (the targets
+    /// of `$state.label` capture reads).
+    fn capture_fields(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        for st in &self.decl.states {
+            let Some(slabel) = &st.label else { continue };
+            for m in &st.matches {
+                for el in &m.elements {
+                    if let MatchElement::Stage(stage) = el {
+                        if let Some(lbl) = &stage.label {
+                            out.push(cap_field(slabel, lbl));
+                        }
+                    }
+                }
+            }
+        }
+        out
     }
 
     fn emit_impl(&self, out: &mut String) -> Result<(), String> {
@@ -220,7 +238,54 @@ impl<'a> Generator<'a> {
         self.emit_dfa_matcher(out);
         self.emit_run(out);
         self.emit_state_methods(out)?;
+        self.emit_action_methods(out)?;
         out.push_str("}\n");
+        Ok(())
+    }
+
+    /// Emit declared `actions:` helpers as `&mut self` methods. A trailing
+    /// bare expression is the action's return value (§3.7 implicit tail).
+    fn emit_action_methods(&self, out: &mut String) -> Result<(), String> {
+        let Some(block) = &self.decl.actions else {
+            return Ok(());
+        };
+        for act in &block.actions {
+            let mut sig = String::from("&mut self");
+            for p in &act.params {
+                write!(sig, ", {}: {}", p.name, Self::rust_type(&p.param_type)).ok();
+            }
+            let ret = match &act.return_type {
+                Some(t) => format!(" -> {}", Self::rust_type(t)),
+                None => String::new(),
+            };
+            writeln!(out, "    fn {}({}){} {{", act.name, sig, ret).ok();
+            self.emit_action_body(out, &act.body, act.return_type.is_some())?;
+            out.push_str("    }\n\n");
+        }
+        Ok(())
+    }
+
+    fn emit_action_body(
+        &self,
+        out: &mut String,
+        body: &crate::frame_c::compiler::frame_ast::BlockAst,
+        has_return: bool,
+    ) -> Result<(), String> {
+        use crate::frame_c::compiler::frame_ast::Statement;
+        let n = body.statements.len();
+        for (i, s) in body.statements.iter().enumerate() {
+            // A trailing bare (non-assignment) expression is the Rust tail
+            // expression (the action's return value).
+            if i + 1 == n && has_return {
+                if let Statement::Expression(e) = s {
+                    if !matches!(e.expr, Expression::Assign { .. }) {
+                        writeln!(out, "        {}", self.expr(&e.expr)).ok();
+                        continue;
+                    }
+                }
+            }
+            out.push_str(&self.stmt(s, "        ")?);
+        }
         Ok(())
     }
 
@@ -261,6 +326,9 @@ impl<'a> Generator<'a> {
             }
         }
         out.push_str("            matched: String::new(),\n");
+        for f in self.capture_fields() {
+            writeln!(out, "            {}: String::new(),", f).ok();
+        }
         out.push_str("        };\n");
         out.push_str("        _m.run();\n");
         out.push_str("        if _m.accepted { _m.reject_position = 0; }\n");
@@ -323,24 +391,25 @@ impl<'a> Generator<'a> {
         &self,
         out: &mut String,
         index: usize,
-        _st: &FsmStateAst,
+        st: &FsmStateAst,
         m: &MatchAst,
         sid: &mut usize,
     ) -> Result<(), String> {
         let input = &self.decl.params[0].name;
         let (success, failure) = self.resolve_targets(m)?;
+        let state_label = st.label.clone().unwrap_or_default();
         writeln!(out, "    fn state_{}(&mut self) -> i64 {{", index).ok();
 
         for el in &m.elements {
             match el {
-                MatchElement::Stage(_) => {
+                MatchElement::Stage(stage) => {
                     let my_sid = *sid;
                     *sid += 1;
                     self.emit_dfa_const(out, my_sid);
                     writeln!(
                         out,
-                        "        let _r = self.dfa_match(DFA, {});",
-                        self.stage_dfas[my_sid].start
+                        "        let _r = self.dfa_match(DFA_{}, {});",
+                        my_sid, self.stage_dfas[my_sid].start
                     )
                     .ok();
                     out.push_str("        if _r < 0 {\n");
@@ -354,14 +423,28 @@ impl<'a> Generator<'a> {
                         input
                     )
                     .ok();
+                    if let Some(lbl) = &stage.label {
+                        if st.label.is_some() {
+                            writeln!(
+                                out,
+                                "        self.{} = self.matched.clone();",
+                                cap_field(&state_label, lbl)
+                            )
+                            .ok();
+                        }
+                    }
                     out.push_str("        self.cursor = _r as usize;\n");
                     out.push_str("        self.accepted = true;\n");
                 }
                 MatchElement::BareExpression { expr, .. } => {
                     writeln!(out, "        self.return_value = {};", self.expr(expr)).ok();
                 }
-                MatchElement::ActionBlock(_) => {
-                    return Err("action blocks are not yet supported by the Rust backend".into());
+                MatchElement::ActionBlock(blk) => {
+                    // Action blocks consume no input and (in v0.1) cannot
+                    // fail; emit their statements at the method-body indent.
+                    for s in &blk.statements {
+                        out.push_str(&self.stmt(s, "        ")?);
+                    }
                 }
             }
         }
@@ -370,9 +453,45 @@ impl<'a> Generator<'a> {
         Ok(())
     }
 
-    /// Emit the per-stage DFA as a `const DFA` inside the state method. A
-    /// state with at most one stage is the v0.1 cut, so a single local
-    /// `DFA` const per method suffices.
+    /// Translate an action-block statement to Rust source lines.
+    fn stmt(
+        &self,
+        s: &crate::frame_c::compiler::frame_ast::Statement,
+        ind: &str,
+    ) -> Result<String, String> {
+        use crate::frame_c::compiler::frame_ast::Statement;
+        match s {
+            Statement::Expression(e) => Ok(format!("{}{};\n", ind, self.expr(&e.expr))),
+            Statement::If(if_ast) => {
+                let inner = format!("{}    ", ind);
+                let mut out = format!("{}if {} {{\n", ind, self.expr(&if_ast.condition));
+                out.push_str(&self.stmt(&if_ast.then_branch, &inner)?);
+                out.push_str(&format!("{}}}", ind));
+                if let Some(else_b) = &if_ast.else_branch {
+                    out.push_str(" else {\n");
+                    out.push_str(&self.stmt(else_b, &inner)?);
+                    out.push_str(&format!("{}}}\n", ind));
+                } else {
+                    out.push('\n');
+                }
+                Ok(out)
+            }
+            Statement::Block(blk) => {
+                let mut out = String::new();
+                for st in &blk.statements {
+                    out.push_str(&self.stmt(st, ind)?);
+                }
+                Ok(out)
+            }
+            other => Err(format!(
+                "statement {:?} not supported in @@fsm action blocks by the Rust backend",
+                std::mem::discriminant(other)
+            )),
+        }
+    }
+
+    /// Emit the per-stage DFA as a `const DFA_<sid>` inside the state
+    /// method (sid-suffixed so a multi-stage state has distinct consts).
     fn emit_dfa_const(&self, out: &mut String, sid: usize) {
         let dfa = &self.stage_dfas[sid];
         let states: Vec<String> = dfa
@@ -388,7 +507,8 @@ impl<'a> Generator<'a> {
             .collect();
         writeln!(
             out,
-            "        const DFA: &[(&[(u32, u32, usize)], bool)] = &[{}];",
+            "        const DFA_{}: &[(&[(u32, u32, usize)], bool)] = &[{}];",
+            sid,
             states.join(", ")
         )
         .ok();
@@ -454,7 +574,11 @@ impl<'a> Generator<'a> {
                 "@@:matched" => "self.matched.clone()".to_string(),
                 "@@:cursor" => "(self.cursor as i64)".to_string(),
                 "@@:return" => "self.return_value".to_string(),
-                _ => name.clone(),
+                // `$state.label` reads a stage capture (the matched slice).
+                _ => match name.strip_prefix('$').and_then(|c| c.split_once('.')) {
+                    Some((state, label)) => format!("self.{}.clone()", cap_field(state, label)),
+                    None => name.clone(),
+                },
             },
             Expression::Binary { left, op, right } => {
                 format!("({} {} {})", self.expr(left), binop(op), self.expr(right))
@@ -488,6 +612,11 @@ impl<'a> Generator<'a> {
             _ => format!("self.{}({})", func, a.join(", ")),
         }
     }
+}
+
+/// Struct field name holding a stage capture: `$state.label` → `cap_state_label`.
+fn cap_field(state: &str, label: &str) -> String {
+    format!("cap_{}_{}", state, label)
 }
 
 fn binop(op: &BinaryOp) -> &'static str {
@@ -605,6 +734,40 @@ mod tests {
             return;
         };
         assert_eq!(ret, "3");
+    }
+
+    /// Stage capture: `.n/[0-9]+/` captures the matched slice as `$s.n`.
+    #[test]
+    fn rust_stage_capture() {
+        let src = "@@fsm M(text: bytes) : int = 0 { $s: .n/[0-9]+/ to_int($s.n) }";
+        let Some((acc, ret)) = run(src, "M", "42", "cap_a") else {
+            return;
+        };
+        assert_eq!((acc.as_str(), ret.as_str()), ("true", "42"));
+    }
+
+    /// Action block mutating a domain field, returned by a bare expression.
+    #[test]
+    fn rust_action_block() {
+        let src = "@@fsm M(text: bytes) : int = 0 { \
+                   /[0-9]/ { self.count = self.count + 1 } self.count \
+                   domain: count: int = 0 }";
+        let Some((_, ret)) = run(src, "M", "5", "act_a") else {
+            return;
+        };
+        assert_eq!(ret, "1");
+    }
+
+    /// Declared `actions:` helper callable from a match, with a return value.
+    #[test]
+    fn rust_declared_action() {
+        let src = "@@fsm M(text: bytes) : int = 0 { \
+                   /[0-9]+/ parse_int(@@:matched) \
+                   actions: parse_int(s: bytes): int { to_int(s) } }";
+        let Some((_, ret)) = run(src, "M", "42", "decl_a") else {
+            return;
+        };
+        assert_eq!(ret, "42");
     }
 
     /// A construct outside the v0.1 Rust cut errors clearly.
