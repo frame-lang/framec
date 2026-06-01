@@ -26,14 +26,15 @@
 //! statements), declared `actions:` helpers (emitted as methods), and
 //! static, conditional (`when`), and stage-ref (`-> $S.stage`) success/
 //! failure transitions (including failure-only clauses `: -> $Err`), and
-//! multi-match (`|`) ordered-choice states, over the `bytes`/`char`
-//! alphabets. Constructs not yet handled — embedding actions, the token
-//! alphabet, and a `|` alternative with elements before its first stage —
-//! produce a clear `Unsupported` error rather than a silent miscompile.
+//! multi-match (`|`) ordered-choice states, and embedding actions
+//! (`>{}`/`@{}`/`${}`/`%{}`/`@eof{}`, §3.5.5/§5.4), over the `bytes`/`char`
+//! alphabets. Constructs not yet handled — the token alphabet and a `|`
+//! alternative with elements before its first stage — produce a clear
+//! `Unsupported` error rather than a silent miscompile.
 
 use crate::frame_c::compiler::frame_ast::{
-    BinaryOp, BlockAst, Expression, FsmDeclAst, FsmStateAst, FsmTransitionTarget, Literal,
-    MatchAst, MatchElement, Statement, Type, UnaryOp,
+    BinaryOp, BlockAst, EmbeddingOp, Expression, FsmDeclAst, FsmStateAst, FsmTransitionTarget,
+    Literal, MatchAst, MatchElement, StageAst, Statement, Type, UnaryOp,
 };
 use crate::frame_c::compiler::fsm_regex::{
     self, size_check::DEFAULT_MAX_DFA_STATES, subset::DfaLabel, Alphabet, CompileError,
@@ -123,12 +124,6 @@ impl<'a> Generator<'a> {
             for m in &st.matches {
                 for el in &m.elements {
                     if let MatchElement::Stage(stage) = el {
-                        if !stage.embedding_actions.is_empty() {
-                            return Err(
-                                "embedding actions are not yet supported by the Python backend"
-                                    .into(),
-                            );
-                        }
                         let dfa = self.compile_one(&stage.regex)?;
                         self.stage_dfas.push(dfa);
                     }
@@ -187,6 +182,7 @@ impl<'a> Generator<'a> {
     fn emit_preamble(&self, out: &mut String) {
         out.push_str(
             "def _frame_to_int(s):\n    return int(s)\n\n\
+             def _frame_to_str(s):\n    return str(s)\n\n\
              def _frame_len(s):\n    return len(s)\n\n",
         );
     }
@@ -198,6 +194,7 @@ impl<'a> Generator<'a> {
         self.emit_dfa_tables(out);
         self.emit_ctor(out);
         self.emit_dfa_matcher(out);
+        self.emit_embed_matchers(out)?;
         self.emit_run(out);
         self.emit_state_methods(out)?;
         self.emit_action_methods(out)?;
@@ -353,6 +350,112 @@ impl<'a> Generator<'a> {
         );
     }
 
+    /// Emit a specialized matcher `_match_stage_<sid>` for each stage that
+    /// carries embedding actions (§3.5.5 / §5.4). Walks states → matches →
+    /// elements in the same order as `compile_stage_dfas`, so sids align.
+    fn emit_embed_matchers(&self, out: &mut String) -> Result<(), String> {
+        let mut sid = 0usize;
+        for st in &self.decl.states {
+            for m in &st.matches {
+                for el in &m.elements {
+                    if let MatchElement::Stage(stage) = el {
+                        if !stage.embedding_actions.is_empty() {
+                            self.emit_one_matcher(out, sid, stage)?;
+                        }
+                        sid += 1;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Emit one stage's embedding-aware matcher. Same greedy longest-match
+    /// scan as `_dfa_match`, but firing the embedding actions at their DFA
+    /// positions: `>{}` once at scan start, `${}` per consumed element,
+    /// `@{}` on entering an accepting state, `%{}` on leaving one, and
+    /// `@eof{}` at end-of-input while mid-match (non-accepting). `@@:cursor`
+    /// reflects the scan position during firing; it is restored to the
+    /// stage-entry position on return so the caller's slice/advance hold.
+    fn emit_one_matcher(
+        &self,
+        out: &mut String,
+        sid: usize,
+        stage: &StageAst,
+    ) -> Result<(), String> {
+        writeln!(out, "    def _match_stage_{}(self):", sid).ok();
+        writeln!(out, "        states, start = self._DFA_{}", sid).ok();
+        out.push_str(
+            "        _entry = self.cursor\n\
+             \x20       st = start\n\
+             \x20       pos = _entry\n\
+             \x20       n = len(self.text)\n\
+             \x20       last = pos if states[st][1] else -1\n\
+             \x20       self.cursor = pos\n",
+        );
+        // `>{}` — begin matching.
+        out.push_str(&self.embed_bodies(stage, EmbeddingOp::Start, "        ")?);
+        out.push_str(
+            "        prev = states[st][1]\n\
+             \x20       while pos < n:\n\
+             \x20           v = ord(self.text[pos])\n\
+             \x20           nxt = None\n\
+             \x20           for lo, hi, tgt in states[st][0]:\n\
+             \x20               if lo <= v <= hi:\n\
+             \x20                   nxt = tgt\n\
+             \x20                   break\n\
+             \x20           if nxt is None:\n\
+             \x20               break\n\
+             \x20           st = nxt\n\
+             \x20           pos += 1\n\
+             \x20           self.cursor = pos\n",
+        );
+        // `${}` — every consumed element.
+        out.push_str(&self.embed_bodies(stage, EmbeddingOp::EveryTransition, "            ")?);
+        out.push_str("            _now = states[st][1]\n");
+        // `@{}` — a transition into an accepting state (§3.5.5: every
+        // transition whose destination is final, not only the first entry).
+        let accept = self.embed_bodies(stage, EmbeddingOp::Accept, "                ")?;
+        if !accept.is_empty() {
+            out.push_str("            if _now:\n");
+            out.push_str(&accept);
+        }
+        // `%{}` — left an accepting state.
+        let leave = self.embed_bodies(stage, EmbeddingOp::LeaveAccept, "                ")?;
+        if !leave.is_empty() {
+            out.push_str("            if prev and not _now:\n");
+            out.push_str(&leave);
+        }
+        out.push_str(
+            "            if _now:\n\
+             \x20               last = pos\n\
+             \x20           prev = _now\n",
+        );
+        // `@eof{}` — end of input reached while mid-match (non-accepting).
+        let eof = self.embed_bodies(stage, EmbeddingOp::Eof, "            ")?;
+        if !eof.is_empty() {
+            out.push_str("        if pos >= n and not prev:\n");
+            out.push_str(&eof);
+        }
+        out.push_str("        self.cursor = _entry\n        return last\n\n");
+        Ok(())
+    }
+
+    /// Concatenated Python for every embedding-action body of `op` on
+    /// `stage`, each statement prefixed with `ind`. Empty when the stage
+    /// has no `op` action (so the caller can skip an empty guard block).
+    fn embed_bodies(&self, stage: &StageAst, op: EmbeddingOp, ind: &str) -> Result<String, String> {
+        let mut s = String::new();
+        for ea in &stage.embedding_actions {
+            if ea.op == op {
+                for st in &ea.body.statements {
+                    s.push_str(&stmt_to_py(st, ind)?);
+                }
+            }
+        }
+        Ok(s)
+    }
+
     fn emit_run(&self, out: &mut String) {
         // `_enter` carries the element index a stage-ref transition
         // (`-> $State.stage`) re-enters at; it is consumed (reset to 0)
@@ -439,7 +542,10 @@ impl<'a> Generator<'a> {
                     // Selector: try the first stage at the current cursor.
                     let my_sid = *sid;
                     *sid += 1;
-                    writeln!(out, "        _r = self._dfa_match(self._DFA_{})", my_sid).ok();
+                    let MatchElement::Stage(sel) = &m.elements[fs] else {
+                        unreachable!("first_stage indexes a Stage element")
+                    };
+                    writeln!(out, "        _r = {}", stage_call(sel, my_sid)).ok();
                     out.push_str("        if _r >= 0:\n");
                     // Committed: record the first stage's capture + advance.
                     out.push_str("            self._matched = self.text[self.cursor:_r]\n");
@@ -526,7 +632,7 @@ impl<'a> Generator<'a> {
             MatchElement::Stage(stage) => {
                 let my_sid = *sid;
                 *sid += 1;
-                writeln!(out, "{}_r = self._dfa_match(self._DFA_{})", ind, my_sid).ok();
+                writeln!(out, "{}_r = {}", ind, stage_call(stage, my_sid)).ok();
                 writeln!(out, "{}if _r < 0:", ind).ok();
                 // The stage failed: follow the failure branch (or §5.6).
                 // emit_failure records the rejection (accepted=False).
@@ -776,6 +882,7 @@ fn call_to_py(func: &str, args: &[Expression]) -> String {
     match func {
         // RFC-0042 built-ins.
         "to_int" => format!("_frame_to_int({})", rendered.join(", ")),
+        "to_str" => format!("_frame_to_str({})", rendered.join(", ")),
         "len" => format!("_frame_len({})", rendered.join(", ")),
         // Any other call names a declared `actions:` helper, emitted as a
         // method on the recognizer instance.
@@ -809,6 +916,17 @@ fn py_bool(b: bool) -> &'static str {
         "True"
     } else {
         "False"
+    }
+}
+
+/// The matcher invocation for a stage: the shared `_dfa_match` for a
+/// plain stage, or its specialized `_match_stage_<sid>` when the stage
+/// carries embedding actions that must fire during the scan.
+fn stage_call(stage: &StageAst, sid: usize) -> String {
+    if stage.embedding_actions.is_empty() {
+        format!("self._dfa_match(self._DFA_{})", sid)
+    } else {
+        format!("self._match_stage_{}()", sid)
     }
 }
 
@@ -1170,6 +1288,51 @@ mod tests {
         // "xab" would NOT match: re-entry at .rest expects /b/ at the cursor
         // after x, but sees 'a'.
         assert_eq!(run(src, "xab", "tsr_b").unwrap().accepted, "False");
+    }
+
+    /// FSM-TEST-123 — `${...}` embedding action fires once per consumed
+    /// element; a declared action is callable from inside it.
+    #[test]
+    fn fsm_test_123_every_transition_embed() {
+        let src = "@@fsm M(text: bytes) : int = 0 { \
+                   /[0-9]+/ ${ tally() } \
+                   self.count \
+                   actions: tally() { self.count = self.count + 1 } \
+                   domain: count: int = 0 }";
+        let Some(v) = eval_py(src, "123", &["m.return_value"], "t123") else {
+            return;
+        };
+        assert_eq!(v, vec!["3"]); // three digits → ${} fires 3×
+    }
+
+    /// `>{...}` fires once at the start of the stage's scan; `@@:cursor`
+    /// there is the stage-entry position.
+    #[test]
+    fn embed_start_captures_entry_cursor() {
+        let src = "@@fsm M(text: bytes) : int = 0 { \
+                   /x/ /[0-9]+/ >{ self.start = @@:cursor } self.start \
+                   domain: start: int = -1 }";
+        // "x42": first stage /x/ consumes x (cursor->1); second stage's
+        // `>{}` fires at scan start, capturing cursor == 1.
+        let Some(v) = eval_py(src, "x42", &["m.return_value"], "tes_a") else {
+            return;
+        };
+        assert_eq!(v, vec!["1"]);
+    }
+
+    /// `@{...}` fires when the DFA enters an accepting state; for `/a+/`
+    /// over "aaa" that is once per `a` (each prefix is accepting).
+    #[test]
+    fn embed_accept_fires_on_accepting_states() {
+        let src = "@@fsm M(text: bytes) : int = 0 { \
+                   /a+/ @{ self.hits = self.hits + 1 } self.hits \
+                   domain: hits: int = 0 }";
+        let Some(v) = eval_py(src, "aaa", &["m.return_value"], "tea_a") else {
+            return;
+        };
+        // Each of the three `a` transitions lands in the accepting state,
+        // so `@{}` (transition into a final state, §3.5.5) fires 3 times.
+        assert_eq!(v, vec!["3"]);
     }
 
     /// Multi-match (`|`) ordered choice: the first alternative whose first
