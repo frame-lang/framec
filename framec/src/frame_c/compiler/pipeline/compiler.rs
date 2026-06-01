@@ -1812,6 +1812,83 @@ mod tests {
         assert_eq!(lines[1], "0 0", "non-digit input");
     }
 
+    /// Compile a multi-fsm module via the pipeline, construct `class`
+    /// over `input`, and return `(accepted, return_value, cursor)` as
+    /// Python `repr`/`str`. `None` if python3 is unavailable.
+    fn run_fsm_class(
+        src: &str,
+        class: &str,
+        input: &str,
+        tag: &str,
+    ) -> Option<(String, String, String)> {
+        use std::process::Command;
+        let r = compile_py(src);
+        assert!(r.errors.is_empty(), "compile errors: {:?}", r.errors);
+        let driver = format!(
+            "{}\nm = {}({:?})\nprint(m.accepted)\nprint(repr(m.return_value))\nprint(m.cursor)\n",
+            r.code, class, input
+        );
+        let path = std::env::temp_dir().join(format!("framec_{}.py", tag));
+        std::fs::write(&path, driver).expect("write temp py");
+        let out = Command::new("python3").arg(&path).output().ok()?;
+        assert!(
+            out.status.success(),
+            "python3 failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let text = String::from_utf8_lossy(&out.stdout);
+        let l: Vec<&str> = text.lines().collect();
+        Some((l[0].to_string(), l[1].to_string(), l[2].to_string()))
+    }
+
+    /// RFC-0042 §8.3 Mode C: a `/@Inner/` stage calls another fsm at the
+    /// cursor; `$state.label.return_value` reads the inner's return value
+    /// and the cursor advances by the inner's. (Single-value returns —
+    /// FSM-TEST-700/701's tuple return types are a separate parser gap.)
+    #[test]
+    fn fsm_mode_c_call_out() {
+        let src = "@@fsm Digit(input: char) : int = 0 { /[0-9]/ to_int(@@:matched) }\n\
+                   @@fsm Wrap(input: char) : int = 0 { $w: .d/@Digit/ $w.d.return_value }\n";
+        let Some((acc, ret, cur)) = run_fsm_class(src, "Wrap", "5", "mc_co_a") else {
+            return;
+        };
+        assert_eq!(
+            (acc.as_str(), ret.as_str(), cur.as_str()),
+            ("True", "5", "1")
+        );
+        // Inner rejects → the Mode C stage fails → outer rejects.
+        let (acc2, _, _) = run_fsm_class(src, "Wrap", "x", "mc_co_b").unwrap();
+        assert_eq!(acc2, "False");
+    }
+
+    /// Mode C `$state.label` (no `.return_value`) is the matched slice,
+    /// distinct from the inner's return value.
+    #[test]
+    fn fsm_mode_c_slice_access() {
+        let src = "@@fsm Digit(input: char) : int = 0 { /[0-9]/ to_int(@@:matched) }\n\
+                   @@fsm Echo(input: char) : int = 0 { $e: .d/@Digit/ to_int($e.d) }\n";
+        let Some((_, ret, _)) = run_fsm_class(src, "Echo", "5", "mc_sl") else {
+            return;
+        };
+        assert_eq!(ret, "5"); // to_int(slice "5") == 5
+    }
+
+    /// Chained Mode C with a regex stage between (FSM-TEST-700 structure,
+    /// summing instead of returning a tuple): `.a/@Digit/ /,/ .b/@Digit/`.
+    #[test]
+    fn fsm_mode_c_chained() {
+        let src = "@@fsm Digit(input: char) : int = 0 { /[0-9]/ to_int(@@:matched) }\n\
+                   @@fsm Sum(input: char) : int = 0 { \
+                   $p: .a/@Digit/ /,/ .b/@Digit/ ($p.a.return_value + $p.b.return_value) }\n";
+        let Some((acc, ret, _)) = run_fsm_class(src, "Sum", "3,7", "mc_ch_a") else {
+            return;
+        };
+        assert_eq!((acc.as_str(), ret.as_str()), ("True", "10"));
+        // "3-7": the `/,/` stage fails on '-' → reject.
+        let (acc2, _, _) = run_fsm_class(src, "Sum", "3-7", "mc_ch_b").unwrap();
+        assert_eq!(acc2, "False");
+    }
+
     /// `@@fsm` codegen for a non-Python target surfaces E740 (capability
     /// limitation) rather than silently dropping the block.
     #[test]

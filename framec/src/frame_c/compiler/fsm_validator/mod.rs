@@ -423,6 +423,15 @@ pub(crate) fn check_regexes(decl: &FsmDeclAst) -> Vec<FsmDiagnostic> {
                     has_stage = true;
                     let is_selector = multi && stage_idx == 0;
                     stage_idx += 1;
+                    // A Mode C stage (`/@Inner/`, §8.3) is a sub-fsm call-out,
+                    // not a regex: skip DFA compilation. It can fail (the
+                    // inner fsm may reject), so it is never nullable.
+                    if stage.regex.starts_with('@') {
+                        if !is_selector {
+                            can_fail = true;
+                        }
+                        continue;
+                    }
                     let nullable =
                         match fsm_regex::compile(&stage.regex, alphabet, DEFAULT_MAX_DFA_STATES) {
                             Ok(compiled) => {

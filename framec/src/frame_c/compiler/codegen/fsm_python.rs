@@ -27,13 +27,16 @@
 //! static, conditional (`when`), and stage-ref (`-> $S.stage`) success/
 //! failure transitions (including failure-only clauses `: -> $Err`), and
 //! multi-match (`|`) ordered-choice states, embedding actions
-//! (`>{}`/`@{}`/`${}`/`%{}`/`@eof{}`, §3.5.5/§5.4), and boundary anchors
-//! (leading `^`/`\A`, trailing `$`/`\z`, §6.6 — enforced by matcher
-//! position guards), over all three alphabets — `bytes`, `char`, and
-//! `token` (token kinds map to integer ids so they share the numeric
-//! range matcher). Not yet handled (clear `Unsupported` error, never a
-//! silent miscompile): mid-pattern anchors and `\b`/`\B`, and a `|`
-//! alternative with elements before its first stage.
+//! (`>{}`/`@{}`/`${}`/`%{}`/`@eof{}`, §3.5.5/§5.4), boundary anchors
+//! (leading `^`/`\A`, trailing `$`/`\z`, §6.6 — matcher position guards),
+//! and Mode C sub-fsm call-out (`/@Inner/`, §8.3 — constructs the inner
+//! fsm at the cursor, advances by its cursor, exposes the matched slice as
+//! `$state.label` and the inner instance as `$state.label.return_value`),
+//! over all three alphabets — `bytes`, `char`, `token` (token kinds map to
+//! integer ids so they share the numeric range matcher). Not yet handled
+//! (clear `Unsupported` error, never a silent miscompile): mid-pattern
+//! anchors and `\b`/`\B`, a `|` alternative with elements before its first
+//! stage, and a Mode C stage as a `|` selector.
 
 use crate::frame_c::compiler::frame_ast::{
     BinaryOp, BlockAst, EmbeddingOp, Expression, FsmDeclAst, FsmStateAst, FsmTransitionTarget,
@@ -55,13 +58,22 @@ pub fn generate(decl: &FsmDeclAst) -> Result<String, String> {
 /// Per-stage compiled DFA, flattened to the data the emitter needs.
 struct StageDfa {
     /// One entry per DFA state: `(transitions, is_accept)` where each
-    /// transition is `(low, high, target)`.
+    /// transition is `(low, high, target)`. Empty for a Mode C stage.
     states: Vec<(Vec<(u32, u32, usize)>, bool)>,
     start: usize,
     /// Leading `^`/`\A`: the match must start at the input start.
     requires_start: bool,
     /// Trailing `$`/`\z`: the match must end at the input end.
     requires_end: bool,
+    /// RFC-0042 §8.3 Mode C: when `Some(name)`, this stage is a call-out
+    /// to the `@@fsm` `name` rather than a regex DFA match.
+    mode_c: Option<String>,
+}
+
+/// A Mode C stage's regex body starts with `@`; the rest names the inner
+/// fsm (`/@Digit/` → `Some("Digit")`).
+fn mode_c_inner(regex: &str) -> Option<&str> {
+    regex.strip_prefix('@')
 }
 
 struct Generator<'a> {
@@ -138,7 +150,20 @@ impl<'a> Generator<'a> {
             for m in &st.matches {
                 for el in &m.elements {
                     if let MatchElement::Stage(stage) = el {
-                        dfas.push(Self::compile_one(alphabet, &stage.regex, &mut token_ids)?);
+                        if let Some(inner) = mode_c_inner(&stage.regex) {
+                            // Mode C: a sub-fsm call-out, no DFA. Push a
+                            // placeholder so stage-DFA indices stay aligned
+                            // with the emit walk.
+                            dfas.push(StageDfa {
+                                states: Vec::new(),
+                                start: 0,
+                                requires_start: false,
+                                requires_end: false,
+                                mode_c: Some(inner.to_string()),
+                            });
+                        } else {
+                            dfas.push(Self::compile_one(alphabet, &stage.regex, &mut token_ids)?);
+                        }
                     }
                 }
             }
@@ -181,6 +206,7 @@ impl<'a> Generator<'a> {
                     start: compiled.dfa.start,
                     requires_start: compiled.requires_start,
                     requires_end: compiled.requires_end,
+                    mode_c: None,
                 })
             }
             Err(CompileError::Diagnostics(ds)) => Err(format!(
@@ -366,6 +392,7 @@ impl<'a> Generator<'a> {
              \x20       self.cursor = 0\n\
              \x20       self._matched = {}\n\
              \x20       self._cap = {{}}\n\
+             \x20       self._cap_inst = {{}}\n\
              \x20       self._enter = 0\n\
              \x20       self._run()\n\
              \x20       if self.accepted:\n\
@@ -627,6 +654,13 @@ impl<'a> Generator<'a> {
                     // Selector: try the first stage at the current cursor.
                     let my_sid = *sid;
                     *sid += 1;
+                    if self.stage_dfas[my_sid].mode_c.is_some() {
+                        return Err(
+                            "a Mode C (`/@Fsm/`) stage as a `|` alternative selector is not yet \
+                             supported by the Python backend"
+                                .into(),
+                        );
+                    }
                     let MatchElement::Stage(sel) = &m.elements[fs] else {
                         unreachable!("first_stage indexes a Stage element")
                     };
@@ -742,6 +776,10 @@ impl<'a> Generator<'a> {
             MatchElement::Stage(stage) => {
                 let my_sid = *sid;
                 *sid += 1;
+                if let Some(inner) = self.stage_dfas[my_sid].mode_c.clone() {
+                    self.emit_mode_c(out, &inner, stage, m, state_label, ind, &ind4)?;
+                    return Ok(());
+                }
                 writeln!(out, "{}_r = {}", ind, stage_call(stage, my_sid)).ok();
                 self.emit_anchor_guards(out, my_sid, ind);
                 writeln!(out, "{}if _r < 0:", ind).ok();
@@ -777,6 +815,48 @@ impl<'a> Generator<'a> {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// Emit a Mode C stage (RFC-0042 §8.3 `/@Inner/`): construct the inner
+    /// fsm over the input at the cursor, run it to completion, and on accept
+    /// advance the outer cursor by the inner's. The stage fails (failure
+    /// branch / §5.6) when the inner rejects. A labeled stage records both
+    /// the matched slice (`$state.label`) and the inner instance
+    /// (`$state.label.return_value`).
+    #[allow(clippy::too_many_arguments)]
+    fn emit_mode_c(
+        &self,
+        out: &mut String,
+        inner: &str,
+        stage: &StageAst,
+        m: &MatchAst,
+        state_label: &str,
+        ind: &str,
+        ind4: &str,
+    ) -> Result<(), String> {
+        let input = self.input_field();
+        writeln!(
+            out,
+            "{}_inner = {}(self.{}[self.cursor:])",
+            ind, inner, input
+        )
+        .ok();
+        writeln!(out, "{}if not _inner.accepted:", ind).ok();
+        self.emit_failure(out, m, ind4)?;
+        writeln!(
+            out,
+            "{}self._matched = self.{}[self.cursor:self.cursor + _inner.cursor]",
+            ind, input
+        )
+        .ok();
+        if let Some(slabel) = &stage.label {
+            let key = format!("{}.{}", state_label, slabel);
+            writeln!(out, "{}self._cap[{:?}] = self._matched", ind, key).ok();
+            writeln!(out, "{}self._cap_inst[{:?}] = _inner", ind, key).ok();
+        }
+        writeln!(out, "{}self.cursor = self.cursor + _inner.cursor", ind).ok();
+        writeln!(out, "{}self.accepted = True", ind).ok();
         Ok(())
     }
 
@@ -953,6 +1033,19 @@ fn expr_to_py(e: &Expression) -> String {
         },
         Expression::Call { func, args } => call_to_py(func, args),
         Expression::Member { object, field } => {
+            // Mode C (§8.3): `$state.label.<fsm field>` reads the inner fsm
+            // instance recorded for that stage, not the matched slice.
+            // (`$state.label` alone is the slice — handled by `var_to_py`.)
+            if let Expression::Var(name) = object.as_ref() {
+                if let Some(cap) = name.strip_prefix('$') {
+                    if matches!(
+                        field.as_str(),
+                        "return_value" | "accepted" | "cursor" | "reject_position"
+                    ) {
+                        return format!("self._cap_inst[{:?}].{}", cap, field);
+                    }
+                }
+            }
             // `self.field` stays `self.field`; nested members chain.
             format!("{}.{}", expr_to_py(object), field)
         }
