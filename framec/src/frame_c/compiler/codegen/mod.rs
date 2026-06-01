@@ -170,6 +170,7 @@ pub mod codegen_utils;
 pub mod erlang_system;
 pub mod frame_expansion;
 pub mod fsm_erlang;
+pub mod fsm_javascript;
 pub mod fsm_python;
 pub mod fsm_rust;
 pub mod interface_gen;
