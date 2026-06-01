@@ -359,6 +359,10 @@ impl FrameValidator {
         // per-item `@@[name(args?)]` attachments.
         self.validate_attributes(system);
 
+        // E720: RFC-0043 hard cut — async members require `@@[async]`
+        // on the system header.
+        self.validate_async_attribute(system);
+
         // E815/E817/E818: RFC-0015 lifecycle attributes
         // (`@@[create]`, `@@[save]`, `@@[load]`) at system level.
         self.validate_rfc0015_lifecycle_attrs(system);
@@ -2156,5 +2160,118 @@ mod tests {
                 code
             );
         }
+    }
+
+    // ---- RFC-0043 E720: async members require @@[async] ----
+
+    /// E720 fires when a system declares an async interface method but
+    /// lacks the `@@[async]` system-header attribute. Hard cut — no
+    /// warning grace period.
+    #[test]
+    fn test_e720_async_interface_without_attribute() {
+        let source = r#"
+@@system NoAttr {
+    interface:
+        async fetch(key: String): String
+    machine:
+        $S { fetch(key: String): String { @@:(key) } }
+}
+"#;
+        let errs = validate_for_target(source, VTarget::Python3).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.code == "E720"),
+            "expected E720 on async-without-attribute; got: {:?}",
+            errs.iter().map(|e| &e.code).collect::<Vec<_>>()
+        );
+    }
+
+    /// E720 does NOT fire when `@@[async]` is present alongside async
+    /// members.
+    #[test]
+    fn test_e720_clean_with_attribute() {
+        let source = r#"
+@@[async]
+@@system WithAttr {
+    interface:
+        async fetch(key: String): String
+    machine:
+        $S { fetch(key: String): String { @@:(key) } }
+}
+"#;
+        let result = validate_for_target(source, VTarget::Python3);
+        if let Err(errs) = &result {
+            assert!(
+                !errs.iter().any(|e| e.code == "E720"),
+                "E720 must not fire when @@[async] is present; got: {:?}",
+                errs.iter().map(|e| &e.code).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// E720 does NOT fire on a sync system with no async members and
+    /// no attribute.
+    #[test]
+    fn test_e720_clean_on_sync_system() {
+        let source = r#"
+@@system PureSync {
+    interface:
+        bump()
+    machine:
+        $S { bump() {} }
+}
+"#;
+        let result = validate_for_target(source, VTarget::Python3);
+        if let Err(errs) = &result {
+            assert!(
+                !errs.iter().any(|e| e.code == "E720"),
+                "E720 must not fire on pure-sync system; got: {:?}",
+                errs.iter().map(|e| &e.code).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// `@@[async]` is permitted without any async members (a
+    /// sync-dispatch system opting into the layered architecture for
+    /// the concurrent-entry gate).
+    #[test]
+    fn test_e720_clean_when_attr_present_without_async_members() {
+        let source = r#"
+@@[async]
+@@system AsyncFlagOnly {
+    interface:
+        bump()
+    machine:
+        $S { bump() {} }
+}
+"#;
+        let result = validate_for_target(source, VTarget::Python3);
+        if let Err(errs) = &result {
+            assert!(
+                !errs.iter().any(|e| e.code == "E720"),
+                "E720 must not fire when only @@[async] is present (RFC permits it); got: {:?}",
+                errs.iter().map(|e| &e.code).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// E720 fires when an async action is declared without `@@[async]`.
+    #[test]
+    fn test_e720_async_action_without_attribute() {
+        let source = r#"
+@@system AsyncAction {
+    interface:
+        run()
+    machine:
+        $S { run() {} }
+    actions:
+        async io_call(): String { @@:("done") }
+}
+"#;
+        let errs = validate_for_target(source, VTarget::Python3).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.code == "E720"),
+            "expected E720 on async-action-without-attribute; got: {:?}",
+            errs.iter().map(|e| &e.code).collect::<Vec<_>>()
+        );
     }
 }

@@ -311,6 +311,39 @@ impl FrameValidator {
         self.errors.extend(errs);
     }
 
+    /// RFC-0043 validator: a system that declares one or more `async`
+    /// members on its interface, actions, or operations **MUST** carry
+    /// the `@@[async]` system-header attribute. Hard cut from the
+    /// implementing release — no warning grace period.
+    ///
+    /// `@@[async]` without any async members is permitted (it still
+    /// opts the system into the layered codegen architecture, even if
+    /// the dispatch path returns synchronously).
+    pub(super) fn validate_async_attribute(&mut self, system: &SystemAst) {
+        let has_async_attr = system.attributes.iter().any(|a| a.name == "async");
+        let has_async_member = system.interface.iter().any(|m| m.is_async)
+            || system.actions.iter().any(|a| a.is_async)
+            || system.operations.iter().any(|o| o.is_async);
+
+        if has_async_member && !has_async_attr {
+            self.errors.push(
+                ValidationError::new(
+                    "E720",
+                    format!(
+                        "@@system '{}' declares async member(s) but lacks the `@@[async]` \
+                         system-header attribute (RFC-0043).\n\
+                         Add `@@[async]` on a line immediately before `@@system`, or run \
+                         `framec project add-async-attr <path>` (or `migrate_async_attr` \
+                         from framec-wasm) to insert it mechanically across a tree. \
+                         RFC-0043 is a hard cut — there is no warning grace period.",
+                        system.name
+                    ),
+                )
+                .with_span(system.span.clone()),
+            );
+        }
+    }
+
     /// Cross-check the system header parameter list against the start
     /// state's parameter list, the start state's `$>()` enter handler,
     /// and the domain block:

@@ -359,6 +359,9 @@ fn parse_module_segments(
     // when the child lives in an imported file.
     let mut imported_new_contract_names: Vec<String> = Vec::new();
     let mut pending_main_attr_span: Option<crate::frame_c::compiler::frame_ast::Span> = None;
+    // RFC-0043: `@@[async]` accumulates here until the next @@system parses
+    // and we attach it to that system's attribute vec.
+    let mut pending_async_attr_span: Option<crate::frame_c::compiler::frame_ast::Span> = None;
     // Vec (not Option) so multiple occurrences of the same lifecycle
     // pragma — `@@[create(a)]` followed by `@@[create(b)]` — all
     // arrive at the validator and trigger E818 (at most one per
@@ -389,6 +392,17 @@ fn parse_module_segments(
         } = segment
         {
             pending_main_attr_span = Some(crate::frame_c::compiler::frame_ast::Span::new(
+                span.start, span.end,
+            ));
+            continue;
+        }
+        if let Segment::Pragma {
+            kind: crate::frame_c::compiler::segmenter::PragmaKind::Async,
+            span,
+            ..
+        } = segment
+        {
+            pending_async_attr_span = Some(crate::frame_c::compiler::frame_ast::Span::new(
                 span.start, span.end,
             ));
             continue;
@@ -619,6 +633,19 @@ fn parse_module_segments(
                         name: "main".to_string(),
                         args: None,
                         span: main_span,
+                    });
+            }
+
+            // RFC-0043: attach pending `@@[async]` attribute (if any).
+            // Resets after attachment so it can't bleed onto a later
+            // system.
+            if let Some(async_span) = pending_async_attr_span.take() {
+                system_ast
+                    .attributes
+                    .push(crate::frame_c::compiler::frame_ast::Attribute {
+                        name: "async".to_string(),
+                        args: None,
+                        span: async_span,
                     });
             }
 
