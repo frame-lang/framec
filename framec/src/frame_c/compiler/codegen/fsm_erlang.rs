@@ -21,11 +21,12 @@
 //! {RetVal, St2}` helpers; calls are hoisted out of expression position so
 //! the state map threads), and static + failure transitions over the
 //! `bytes`/`char` alphabets, with the `@@:matched` / `to_int` / `to_str` /
-//! `len` built-ins. Not yet handled (clear `Unsupported` error, never a
-//! silent miscompile): conditional / stage-ref transition targets,
-//! multi-match (`|`) states, embedding actions, Mode C call-out, the token
-//! alphabet, and anchors. These land in later increments, matching the Rust
-//! backend's build-out.
+//! `len` built-ins, plus conditional (`when`) transition targets (an ordered
+//! `case` chain, the failure branch as the no-`when` fallback). Not yet
+//! handled (clear `Unsupported` error, never a silent miscompile): stage-ref
+//! transition targets, multi-match (`|`) states, embedding actions, Mode C
+//! call-out, the token alphabet, and anchors. These land in later
+//! increments, matching the Rust backend's build-out.
 
 use crate::frame_c::compiler::frame_ast::{
     BinaryOp, Expression, FsmDeclAst, FsmStateAst, FsmTransitionTarget, Literal, MatchAst,
@@ -648,7 +649,7 @@ impl<'a> Generator<'a> {
             None => {
                 write!(out, "{}{{-1, {}}}", ind, st).ok();
             }
-            Some(target) => self.emit_target(out, target, st, ind),
+            Some(target) => self.emit_target(out, target, st, ind, m),
         }
     }
 
@@ -667,12 +668,22 @@ impl<'a> Generator<'a> {
             None => {
                 write!(out, "{}{{-1, {}}}", ind, stf).ok();
             }
-            Some(target) => self.emit_target(out, target, &stf, ind),
+            Some(target) => self.emit_target(out, target, &stf, ind, m),
         }
     }
 
-    /// Emit a static transition target as a `{Index, St}` tuple.
-    fn emit_target(&self, out: &mut String, target: &FsmTransitionTarget, st: &str, ind: &str) {
+    /// Emit a transition target. A static target is a `{Index, St}` tuple; a
+    /// conditional target is an ordered chain of `case <when> of` clauses, the
+    /// first satisfied `when` selecting its target, with the match's failure
+    /// branch (a reject) as the no-`when`-held fallback (§3.5.4).
+    fn emit_target(
+        &self,
+        out: &mut String,
+        target: &FsmTransitionTarget,
+        st: &str,
+        ind: &str,
+        m: &MatchAst,
+    ) {
         match target {
             FsmTransitionTarget::Static {
                 state, stage: None, ..
@@ -699,10 +710,38 @@ impl<'a> Generator<'a> {
             FsmTransitionTarget::Static { .. } => {
                 write!(out, "{}erlang:error(stage_ref_target_unsupported)", ind).ok();
             }
-            FsmTransitionTarget::Conditional(_) => {
-                write!(out, "{}erlang:error(conditional_target_unsupported)", ind).ok();
+            FsmTransitionTarget::Conditional(alts) => {
+                self.emit_conditional(out, alts, 0, st, ind, m);
             }
         }
+    }
+
+    /// Recursively emit the ordered `when` chain as nested `case`s; when no
+    /// `when` holds, the match's failure branch fires (a reject, §3.5.4).
+    fn emit_conditional(
+        &self,
+        out: &mut String,
+        alts: &[crate::frame_c::compiler::frame_ast::FsmCondAlt],
+        idx: usize,
+        st: &str,
+        ind: &str,
+        m: &MatchAst,
+    ) {
+        if idx == alts.len() {
+            self.emit_failure(out, m, st, ind);
+            return;
+        }
+        let alt = &alts[idx];
+        let ind4 = format!("{}    ", ind);
+        let ind8 = format!("{}        ", ind);
+        writeln!(out, "{}case {} of", ind, self.expr(&alt.condition, st)).ok();
+        writeln!(out, "{}true ->", ind4).ok();
+        self.emit_target(out, &alt.target, st, &ind8, m);
+        out.push_str(";\n");
+        writeln!(out, "{}false ->", ind4).ok();
+        self.emit_conditional(out, alts, idx + 1, st, &ind8, m);
+        writeln!(out).ok();
+        write!(out, "{}end", ind).ok();
     }
 
     /// Per-stage DFA helper: `dfa_<sid>() -> {StatesTuple, Start}.`
@@ -1101,6 +1140,54 @@ mod tests {
             return;
         };
         assert_eq!(ret, "1");
+    }
+
+    /// Conditional `when` target (FSM-TEST-402): the first satisfied `when`
+    /// selects its state; no `when` held → the failure branch (a reject).
+    #[test]
+    fn erl_conditional_target() {
+        let src = "@@fsm M(text: bytes, mode: int) : int = 0 { \
+                   /[01]/ -> ( $zero when self.mode == 0, $one when self.mode == 1 ) : -> $error \
+                   $zero: 0 \
+                   $one: 1 \
+                   $error: -1 }";
+        let decl = parse_fsm_block(src.as_bytes()).expect("parses");
+        let code = generate(&decl).expect("generates");
+        let run_mode = |inp: &str, mode: i64, tag: &str| -> Option<String> {
+            let dir = std::env::temp_dir().join(format!("framec_erl_{}", tag));
+            std::fs::create_dir_all(&dir).ok()?;
+            let erl_path = dir.join("m.erl");
+            std::fs::write(&erl_path, &code).ok()?;
+            let c = Command::new("erlc")
+                .arg("-o")
+                .arg(&dir)
+                .arg(&erl_path)
+                .output()
+                .ok()?;
+            assert!(c.status.success(), "{}", String::from_utf8_lossy(&c.stderr));
+            let eval = format!(
+                "R = m:recognize(\"{}\", {}), io:format(\"~p~n\", [maps:get(return_value, R)])",
+                inp, mode
+            );
+            let o = Command::new("erl")
+                .arg("-noshell")
+                .arg("-pa")
+                .arg(&dir)
+                .arg("-eval")
+                .arg(&eval)
+                .arg("-s")
+                .arg("init")
+                .arg("stop")
+                .output()
+                .expect("run erl");
+            Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+        };
+        let Some(z) = run_mode("0", 0, "cond_a") else {
+            return;
+        };
+        assert_eq!(z, "0");
+        assert_eq!(run_mode("1", 1, "cond_b").unwrap(), "1");
+        assert_eq!(run_mode("0", 2, "cond_c").unwrap(), "-1"); // no when → failure
     }
 
     /// A construct outside the first cut errors clearly.
