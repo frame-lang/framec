@@ -24,11 +24,11 @@
 //! Supports single-match states, match stages (with `.label` captures),
 //! bare-expression returns, action blocks (assignment / `if`-`else`
 //! statements), declared `actions:` helpers (emitted as methods), and
-//! static + conditional (`when`) success/failure transitions (including
-//! failure-only clauses `: -> $Err`) over the `bytes`/`char` alphabets.
-//! Constructs not yet handled — multi-match (`|`) states, stage-ref
-//! transition targets, embedding actions, and the token alphabet —
-//! produce a clear `Unsupported` error rather than a silent miscompile.
+//! static, conditional (`when`), and stage-ref (`-> $S.stage`) success/
+//! failure transitions (including failure-only clauses `: -> $Err`) over
+//! the `bytes`/`char` alphabets. Constructs not yet handled — multi-match
+//! (`|`) states, embedding actions, and the token alphabet — produce a
+//! clear `Unsupported` error rather than a silent miscompile.
 
 use crate::frame_c::compiler::frame_ast::{
     BinaryOp, BlockAst, Expression, FsmDeclAst, FsmStateAst, FsmTransitionTarget, Literal,
@@ -61,6 +61,9 @@ struct Generator<'a> {
     /// State label → dispatch index. Unlabeled start state has no entry
     /// but is index 0.
     label_to_index: HashMap<String, usize>,
+    /// `(state label, stage label)` → element index within that state, so
+    /// a stage-ref target `-> $State.stage` re-enters at the right element.
+    stage_entry: HashMap<(String, String), usize>,
     /// Compiled DFAs, one per stage, in traversal order; the state code
     /// references them by index as `self._DFA_<n>`.
     stage_dfas: Vec<StageDfa>,
@@ -77,11 +80,22 @@ impl<'a> Generator<'a> {
             _ => Alphabet::Bytes,
         };
 
-        // Map state labels to dispatch indices (declaration order).
+        // Map state labels to dispatch indices (declaration order), and
+        // each labeled stage to its element index within its state.
         let mut label_to_index = HashMap::new();
+        let mut stage_entry = HashMap::new();
         for (i, st) in decl.states.iter().enumerate() {
             if let Some(l) = &st.label {
                 label_to_index.insert(l.clone(), i);
+                if let Some(m) = st.matches.first() {
+                    for (ei, el) in m.elements.iter().enumerate() {
+                        if let MatchElement::Stage(stage) = el {
+                            if let Some(sl) = &stage.label {
+                                stage_entry.insert((l.clone(), sl.clone()), ei);
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -89,6 +103,7 @@ impl<'a> Generator<'a> {
             decl,
             alphabet,
             label_to_index,
+            stage_entry,
             stage_dfas: Vec::new(),
         };
         g.compile_stage_dfas()?;
@@ -303,6 +318,7 @@ impl<'a> Generator<'a> {
              \x20       self.cursor = 0\n\
              \x20       self._matched = \"\"\n\
              \x20       self._cap = {}\n\
+             \x20       self._enter = 0\n\
              \x20       self._run()\n\
              \x20       if self.accepted:\n\
              \x20           self.reject_position = 0\n\n",
@@ -338,12 +354,19 @@ impl<'a> Generator<'a> {
     }
 
     fn emit_run(&self, out: &mut String) {
-        out.push_str("    def _run(self):\n        state = 0\n        while state >= 0:\n");
+        // `_enter` carries the element index a stage-ref transition
+        // (`-> $State.stage`) re-enters at; it is consumed (reset to 0)
+        // each step so plain transitions start at the state's first element.
+        out.push_str(
+            "    def _run(self):\n        state = 0\n        while state >= 0:\n\
+             \x20           _enter = self._enter\n\
+             \x20           self._enter = 0\n",
+        );
         for i in 0..self.decl.states.len() {
             let kw = if i == 0 { "if" } else { "elif" };
             writeln!(
                 out,
-                "            {} state == {}:\n                state = self._state_{}()",
+                "            {} state == {}:\n                state = self._state_{}(_enter)",
                 kw, i, i
             )
             .ok();
@@ -361,7 +384,12 @@ impl<'a> Generator<'a> {
                 None => {
                     // A stateless state just halts (terminal, no change to
                     // accepted). Rare; emit a no-op method.
-                    writeln!(out, "    def _state_{}(self):\n        return -1\n", i).ok();
+                    writeln!(
+                        out,
+                        "    def _state_{}(self, _enter):\n        return -1\n",
+                        i
+                    )
+                    .ok();
                     continue;
                 }
             };
@@ -379,48 +407,68 @@ impl<'a> Generator<'a> {
         sid: &mut usize,
     ) -> Result<(), String> {
         let state_label = st.label.clone().unwrap_or_default();
-        writeln!(out, "    def _state_{}(self):", index).ok();
+        writeln!(out, "    def _state_{}(self, _enter):", index).ok();
 
-        for el in &m.elements {
-            match el {
-                MatchElement::Stage(stage) => {
-                    let my_sid = *sid;
-                    *sid += 1;
-                    writeln!(out, "        _r = self._dfa_match(self._DFA_{})", my_sid).ok();
-                    out.push_str("        if _r < 0:\n");
-                    // The stage failed: follow the failure branch (or §5.6).
-                    // emit_failure records the rejection (accepted=False).
-                    self.emit_failure(out, m, "            ")?;
-                    out.push_str("        self._matched = self.text[self.cursor:_r]\n");
-                    if let Some(slabel) = &stage.label {
-                        writeln!(
-                            out,
-                            "        self._cap[{:?}] = self._matched",
-                            format!("{}.{}", state_label, slabel)
-                        )
-                        .ok();
-                    }
-                    out.push_str("        self.cursor = _r\n");
-                    out.push_str("        self.accepted = True\n");
-                }
-                MatchElement::BareExpression { expr, .. } => {
-                    writeln!(out, "        self.return_value = {}", expr_to_py(expr)).ok();
-                }
-                MatchElement::ActionBlock(blk) => {
-                    // Action blocks consume no input and (in v0.1) cannot
-                    // fail; emit their statements inline at the method body
-                    // indent.
-                    for st in &blk.statements {
-                        out.push_str(&stmt_to_py(st, "        ")?);
-                    }
-                }
-            }
+        // Each element is guarded by `if _enter <= <idx>:` so a stage-ref
+        // re-entry (`-> $State.stage`) skips the leading elements. A plain
+        // entry has `_enter == 0`, so every guard passes.
+        for (idx, el) in m.elements.iter().enumerate() {
+            writeln!(out, "        if _enter <= {}:", idx).ok();
+            self.emit_element(out, el, m, &state_label, "            ", sid)?;
         }
 
         // All elements succeeded: follow the success branch (or halt at a
         // terminal). `accepted` already reflects the last stage.
         self.emit_success(out, m, "        ")?;
         out.push('\n');
+        Ok(())
+    }
+
+    /// Emit one match element at `ind`. A stage runs its DFA, routes to the
+    /// failure branch on no-match, and records the capture / advances the
+    /// cursor on success. `ind4` is `ind` + 4 spaces (the failure block).
+    fn emit_element(
+        &self,
+        out: &mut String,
+        el: &MatchElement,
+        m: &MatchAst,
+        state_label: &str,
+        ind: &str,
+        sid: &mut usize,
+    ) -> Result<(), String> {
+        let ind4 = format!("{}    ", ind);
+        match el {
+            MatchElement::Stage(stage) => {
+                let my_sid = *sid;
+                *sid += 1;
+                writeln!(out, "{}_r = self._dfa_match(self._DFA_{})", ind, my_sid).ok();
+                writeln!(out, "{}if _r < 0:", ind).ok();
+                // The stage failed: follow the failure branch (or §5.6).
+                // emit_failure records the rejection (accepted=False).
+                self.emit_failure(out, m, &ind4)?;
+                writeln!(out, "{}self._matched = self.text[self.cursor:_r]", ind).ok();
+                if let Some(slabel) = &stage.label {
+                    writeln!(
+                        out,
+                        "{}self._cap[{:?}] = self._matched",
+                        ind,
+                        format!("{}.{}", state_label, slabel)
+                    )
+                    .ok();
+                }
+                writeln!(out, "{}self.cursor = _r", ind).ok();
+                writeln!(out, "{}self.accepted = True", ind).ok();
+            }
+            MatchElement::BareExpression { expr, .. } => {
+                writeln!(out, "{}self.return_value = {}", ind, expr_to_py(expr)).ok();
+            }
+            MatchElement::ActionBlock(blk) => {
+                // Action blocks consume no input and (in v0.1) cannot fail.
+                for st in &blk.statements {
+                    out.push_str(&stmt_to_py(st, ind)?);
+                }
+            }
+        }
         Ok(())
     }
 
@@ -477,39 +525,58 @@ impl<'a> Generator<'a> {
         on_none: &dyn Fn(&mut String, &str) -> Result<(), String>,
     ) -> Result<(), String> {
         match target {
-            FsmTransitionTarget::Static { .. } => {
-                let idx = self.static_index(target)?;
-                writeln!(out, "{}return {}", indent, idx).ok();
-                Ok(())
-            }
+            FsmTransitionTarget::Static { .. } => self.emit_goto(out, target, indent),
             FsmTransitionTarget::Conditional(alts) => {
                 let inner = format!("{}    ", indent);
                 for alt in alts {
                     writeln!(out, "{}if {}:", indent, expr_to_py(&alt.condition)).ok();
-                    let idx = self.static_index(&alt.target)?;
-                    writeln!(out, "{}return {}", inner, idx).ok();
+                    self.emit_goto(out, &alt.target, &inner)?;
                 }
                 on_none(out, indent)
             }
         }
     }
 
-    /// Dispatch index for a static (state-only) target. Stage-ref targets
-    /// are not yet supported.
-    fn static_index(&self, t: &FsmTransitionTarget) -> Result<usize, String> {
+    /// Emit the dispatch jump for a static target: `return <state_index>`.
+    /// A stage-ref target (`$State.stage`) also sets `self._enter` to the
+    /// stage's element index so the state re-enters mid-match.
+    fn emit_goto(
+        &self,
+        out: &mut String,
+        t: &FsmTransitionTarget,
+        indent: &str,
+    ) -> Result<(), String> {
         match t {
             FsmTransitionTarget::Static {
                 state, stage: None, ..
-            } => self
-                .label_to_index
-                .get(state)
-                .copied()
-                .ok_or_else(|| format!("transition to undeclared state `${}`", state)),
-            FsmTransitionTarget::Static { stage: Some(_), .. } => Err(
-                "stage-ref transition targets (`$State.stage`) are not yet supported \
-                 by the Python backend"
-                    .into(),
-            ),
+            } => {
+                let idx = self
+                    .label_to_index
+                    .get(state)
+                    .copied()
+                    .ok_or_else(|| format!("transition to undeclared state `${}`", state))?;
+                writeln!(out, "{}return {}", indent, idx).ok();
+                Ok(())
+            }
+            FsmTransitionTarget::Static {
+                state,
+                stage: Some(s),
+                ..
+            } => {
+                let idx = self
+                    .label_to_index
+                    .get(state)
+                    .copied()
+                    .ok_or_else(|| format!("transition to undeclared state `${}`", state))?;
+                let entry = self
+                    .stage_entry
+                    .get(&(state.clone(), s.clone()))
+                    .copied()
+                    .ok_or_else(|| format!("transition to undeclared stage `${}.{}`", state, s))?;
+                writeln!(out, "{}self._enter = {}", indent, entry).ok();
+                writeln!(out, "{}return {}", indent, idx).ok();
+                Ok(())
+            }
             FsmTransitionTarget::Conditional(_) => {
                 Err("a conditional target may not nest another conditional target".into())
             }
@@ -976,6 +1043,48 @@ mod tests {
         assert_eq!(ax.accepted, "False");
         assert_eq!(ax.return_value, "False");
         assert_eq!(run(src, "x", "t400c").unwrap().accepted, "False");
+    }
+
+    /// FSM-TEST-401 — stage-address transition target: a transition names
+    /// a labeled stage within a state and re-enters there.
+    ///
+    /// NOTE: the RFC fixture asserts `"xabc"` reaches `$other`, but `$0` is
+    /// the start state (§3.4) and nothing transitions *to* `$other`, so it
+    /// is unreachable — `"xabc"` starts at `$0`, fails `/a/` on `x`, and
+    /// routes to `$error`. We assert the correct semantics; the stage-ref
+    /// re-entry mechanism is exercised by `stage_ref_skips_leading_stage`.
+    #[test]
+    fn fsm_test_401_stage_ref_target() {
+        let src = "@@fsm M(text: bytes) : bool = false { \
+                   $0: .start/a/ /b/ /c/ true : -> $error \
+                   $other: /x/ -> $0.start : -> $error \
+                   $error: false }";
+        let Some(abc) = run(src, "abc", "t401a") else {
+            return;
+        };
+        assert_eq!(abc.accepted, "True");
+        assert_eq!(abc.return_value, "True");
+        // `$0` is the start state; `$other` is unreachable.
+        let xabc = run(src, "xabc", "t401b").unwrap();
+        assert_eq!(xabc.accepted, "False");
+    }
+
+    /// Stage-ref re-entry that genuinely skips a leading stage: entering
+    /// `$s.rest` runs only the `.rest` element, not the prior one.
+    #[test]
+    fn stage_ref_skips_leading_stage() {
+        let src = "@@fsm M(text: bytes) : bool = false { \
+                   /x/ -> $s.rest : -> $err \
+                   $s: /a/ .rest/b/ true : -> $err \
+                   $err: false }";
+        // "xb": $0 matches x -> $s.rest, which runs only /b/ (skipping /a/).
+        let Some(xb) = run(src, "xb", "tsr_a") else {
+            return;
+        };
+        assert_eq!(xb.accepted, "True");
+        // "xab" would NOT match: re-entry at .rest expects /b/ at the cursor
+        // after x, but sees 'a'.
+        assert_eq!(run(src, "xab", "tsr_b").unwrap().accepted, "False");
     }
 
     /// A standalone failure-only clause on an implicit-terminal match:
