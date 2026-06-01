@@ -12,10 +12,11 @@
 //!
 //! Supports single-match states, match stages with `.label` captures,
 //! bare-expression returns, action blocks (assignment / `if`-`else`),
-//! declared `actions:` helpers, and static + failure transitions over the
-//! `bytes`/`char` alphabets, with the `@@:matched` / `to_int` / `to_str` /
-//! `len` built-ins. Not yet handled (clear `Unsupported` error, never a
-//! silent miscompile): conditional / stage-ref transition targets,
+//! declared `actions:` helpers, and all transition forms — static,
+//! conditional (`when`), stage-ref (`-> $S.stage`, via a `self.enter`
+//! re-entry index), and failure-only — over the `bytes`/`char` alphabets,
+//! with the `@@:matched` / `to_int` / `to_str` / `len` built-ins. Not yet
+//! handled (clear `Unsupported` error, never a silent miscompile):
 //! multi-match (`|`) states, embedding actions, Mode C call-out, the token
 //! alphabet, and anchors.
 
@@ -44,6 +45,9 @@ struct Generator<'a> {
     decl: &'a FsmDeclAst,
     alphabet: Alphabet,
     label_to_index: std::collections::HashMap<String, usize>,
+    /// `(state label, stage label)` → element index, for stage-ref
+    /// re-entry (`-> $State.stage`). Single-match states only.
+    stage_entry: std::collections::HashMap<(String, String), usize>,
     stage_dfas: Vec<StageDfa>,
 }
 
@@ -57,15 +61,26 @@ impl<'a> Generator<'a> {
             _ => Alphabet::Bytes,
         };
         let mut label_to_index = std::collections::HashMap::new();
+        let mut stage_entry = std::collections::HashMap::new();
         for (i, st) in decl.states.iter().enumerate() {
             if let Some(l) = &st.label {
                 label_to_index.insert(l.clone(), i);
+                if st.matches.len() == 1 {
+                    for (ei, el) in st.matches[0].elements.iter().enumerate() {
+                        if let MatchElement::Stage(stage) = el {
+                            if let Some(sl) = &stage.label {
+                                stage_entry.insert((l.clone(), sl.clone()), ei);
+                            }
+                        }
+                    }
+                }
             }
         }
         let mut g = Generator {
             decl,
             alphabet,
             label_to_index,
+            stage_entry,
             stage_dfas: Vec::new(),
         };
         g.compile_stage_dfas()?;
@@ -205,6 +220,9 @@ impl<'a> Generator<'a> {
             }
         }
         out.push_str("    matched: String,\n");
+        // Stage-ref re-entry point (`-> $State.stage` sets it; the dispatch
+        // loop consumes it). 0 = enter at the state's first element.
+        out.push_str("    enter: usize,\n");
         // One owned field per labeled stage in a labeled state, holding the
         // matched slice for `$state.label` reads.
         for f in self.capture_fields() {
@@ -326,6 +344,7 @@ impl<'a> Generator<'a> {
             }
         }
         out.push_str("            matched: String::new(),\n");
+        out.push_str("            enter: 0,\n");
         for f in self.capture_fields() {
             writeln!(out, "            {}: String::new(),", f).ok();
         }
@@ -367,9 +386,11 @@ impl<'a> Generator<'a> {
 
     fn emit_run(&self, out: &mut String) {
         out.push_str("    fn run(&mut self) {\n        let mut state: i64 = 0;\n");
-        out.push_str("        while state >= 0 {\n            state = match state {\n");
+        out.push_str("        while state >= 0 {\n");
+        out.push_str("            let _enter = self.enter;\n            self.enter = 0;\n");
+        out.push_str("            state = match state {\n");
         for i in 0..self.decl.states.len() {
-            writeln!(out, "                {} => self.state_{}(),", i, i).ok();
+            writeln!(out, "                {} => self.state_{}(_enter),", i, i).ok();
         }
         out.push_str("                _ => return,\n            };\n        }\n    }\n\n");
     }
@@ -379,7 +400,12 @@ impl<'a> Generator<'a> {
         for (i, st) in self.decl.states.iter().enumerate() {
             match st.matches.first() {
                 None => {
-                    writeln!(out, "    fn state_{}(&mut self) -> i64 {{ -1 }}\n", i).ok();
+                    writeln!(
+                        out,
+                        "    fn state_{}(&mut self, _enter: usize) -> i64 {{ -1 }}\n",
+                        i
+                    )
+                    .ok();
                 }
                 Some(m) => self.emit_one_state(out, i, st, m, &mut sid)?,
             }
@@ -395,61 +421,169 @@ impl<'a> Generator<'a> {
         m: &MatchAst,
         sid: &mut usize,
     ) -> Result<(), String> {
-        let input = &self.decl.params[0].name;
-        let (success, failure) = self.resolve_targets(m)?;
         let state_label = st.label.clone().unwrap_or_default();
-        writeln!(out, "    fn state_{}(&mut self) -> i64 {{", index).ok();
+        writeln!(
+            out,
+            "    fn state_{}(&mut self, _enter: usize) -> i64 {{",
+            index
+        )
+        .ok();
+        // Each element is guarded by `if _enter <= <idx>` so a stage-ref
+        // re-entry skips leading elements (plain entry has `_enter == 0`).
+        for (idx, el) in m.elements.iter().enumerate() {
+            writeln!(out, "        if _enter <= {} {{", idx).ok();
+            self.emit_element(out, el, m, &state_label, "            ", sid)?;
+            out.push_str("        }\n");
+        }
+        self.emit_success(out, m, "        ")?;
+        out.push_str("    }\n\n");
+        Ok(())
+    }
 
-        for el in &m.elements {
-            match el {
-                MatchElement::Stage(stage) => {
-                    let my_sid = *sid;
-                    *sid += 1;
-                    self.emit_dfa_const(out, my_sid);
-                    writeln!(
-                        out,
-                        "        let _r = self.dfa_match(DFA_{}, {});",
-                        my_sid, self.stage_dfas[my_sid].start
-                    )
-                    .ok();
-                    out.push_str("        if _r < 0 {\n");
-                    out.push_str("            self.accepted = false;\n");
-                    out.push_str("            self.reject_position = self.cursor;\n");
-                    writeln!(out, "            return {};", failure).ok();
-                    out.push_str("        }\n");
-                    writeln!(
-                        out,
-                        "        self.matched = self.{}[self.cursor..(_r as usize)].iter().collect();",
-                        input
-                    )
-                    .ok();
-                    if let Some(lbl) = &stage.label {
-                        if st.label.is_some() {
-                            writeln!(
-                                out,
-                                "        self.{} = self.matched.clone();",
-                                cap_field(&state_label, lbl)
-                            )
-                            .ok();
-                        }
+    fn emit_element(
+        &self,
+        out: &mut String,
+        el: &MatchElement,
+        m: &MatchAst,
+        state_label: &str,
+        ind: &str,
+        sid: &mut usize,
+    ) -> Result<(), String> {
+        let input = &self.decl.params[0].name;
+        let ind4 = format!("{}    ", ind);
+        match el {
+            MatchElement::Stage(stage) => {
+                let my_sid = *sid;
+                *sid += 1;
+                self.emit_dfa_const(out, my_sid, ind);
+                writeln!(
+                    out,
+                    "{}let _r = self.dfa_match(DFA_{}, {});",
+                    ind, my_sid, self.stage_dfas[my_sid].start
+                )
+                .ok();
+                writeln!(out, "{}if _r < 0 {{", ind).ok();
+                self.emit_failure(out, m, &ind4)?;
+                writeln!(out, "{}}}", ind).ok();
+                writeln!(
+                    out,
+                    "{}self.matched = self.{}[self.cursor..(_r as usize)].iter().collect();",
+                    ind, input
+                )
+                .ok();
+                if let Some(lbl) = &stage.label {
+                    if !state_label.is_empty() {
+                        writeln!(
+                            out,
+                            "{}self.{} = self.matched.clone();",
+                            ind,
+                            cap_field(state_label, lbl)
+                        )
+                        .ok();
                     }
-                    out.push_str("        self.cursor = _r as usize;\n");
-                    out.push_str("        self.accepted = true;\n");
                 }
-                MatchElement::BareExpression { expr, .. } => {
-                    writeln!(out, "        self.return_value = {};", self.expr(expr)).ok();
-                }
-                MatchElement::ActionBlock(blk) => {
-                    // Action blocks consume no input and (in v0.1) cannot
-                    // fail; emit their statements at the method-body indent.
-                    for s in &blk.statements {
-                        out.push_str(&self.stmt(s, "        ")?);
-                    }
+                writeln!(out, "{}self.cursor = _r as usize;", ind).ok();
+                writeln!(out, "{}self.accepted = true;", ind).ok();
+            }
+            MatchElement::BareExpression { expr, .. } => {
+                writeln!(out, "{}self.return_value = {};", ind, self.expr(expr)).ok();
+            }
+            MatchElement::ActionBlock(blk) => {
+                for s in &blk.statements {
+                    out.push_str(&self.stmt(s, ind)?);
                 }
             }
         }
-        writeln!(out, "        {}", success).ok();
-        out.push_str("    }\n\n");
+        Ok(())
+    }
+
+    /// Emit the success-branch transition after a match completes.
+    fn emit_success(&self, out: &mut String, m: &MatchAst, ind: &str) -> Result<(), String> {
+        match m.transition.as_ref().and_then(|c| c.success.as_ref()) {
+            None => {
+                writeln!(out, "{}-1", ind).ok();
+                Ok(())
+            }
+            Some(success) => self.emit_target(out, success, ind, m, /*tail*/ true),
+        }
+    }
+
+    /// Emit the failure-branch resolution (sets `accepted = false` and the
+    /// reject position, then routes to the failure target or §5.6 halt).
+    fn emit_failure(&self, out: &mut String, m: &MatchAst, ind: &str) -> Result<(), String> {
+        writeln!(out, "{}self.accepted = false;", ind).ok();
+        writeln!(out, "{}self.reject_position = self.cursor;", ind).ok();
+        match m.transition.as_ref().and_then(|c| c.failure.as_ref()) {
+            None => {
+                writeln!(out, "{}return -1;", ind).ok();
+                Ok(())
+            }
+            Some(target) => self.emit_target(out, target, ind, m, /*tail*/ false),
+        }
+    }
+
+    /// Emit a target. A static target is a single goto; a conditional emits
+    /// an ordered `if <when> {{ goto }}` chain, then the failure branch as
+    /// the no-match fallback. `tail` selects the success (bare `expr`) vs
+    /// failure (`return expr;`) form for the dispatch loop.
+    fn emit_target(
+        &self,
+        out: &mut String,
+        target: &FsmTransitionTarget,
+        ind: &str,
+        m: &MatchAst,
+        tail: bool,
+    ) -> Result<(), String> {
+        match target {
+            FsmTransitionTarget::Static { .. } => self.emit_goto(out, target, ind, tail),
+            FsmTransitionTarget::Conditional(alts) => {
+                let inner = format!("{}    ", ind);
+                for alt in alts {
+                    writeln!(out, "{}if {} {{", ind, self.expr(&alt.condition)).ok();
+                    // Inside an `if`, a goto is always a `return`.
+                    self.emit_goto(out, &alt.target, &inner, false)?;
+                    writeln!(out, "{}}}", ind).ok();
+                }
+                // No `when` held → the failure branch fires.
+                self.emit_failure(out, m, ind)
+            }
+        }
+    }
+
+    /// Emit the dispatch jump for a static target. In `tail` position (the
+    /// state method's last expression) it's a bare `idx`; otherwise a
+    /// `return idx;`. A stage-ref sets `self.enter` first.
+    fn emit_goto(
+        &self,
+        out: &mut String,
+        t: &FsmTransitionTarget,
+        ind: &str,
+        tail: bool,
+    ) -> Result<(), String> {
+        let (state, stage) = match t {
+            FsmTransitionTarget::Static { state, stage, .. } => (state, stage),
+            FsmTransitionTarget::Conditional(_) => {
+                return Err("a conditional target may not nest another conditional".into())
+            }
+        };
+        let idx = self
+            .label_to_index
+            .get(state)
+            .copied()
+            .ok_or_else(|| format!("transition to undeclared state `${}`", state))?;
+        if let Some(s) = stage {
+            let entry = self
+                .stage_entry
+                .get(&(state.clone(), s.clone()))
+                .copied()
+                .ok_or_else(|| format!("transition to undeclared stage `${}.{}`", state, s))?;
+            writeln!(out, "{}self.enter = {};", ind, entry).ok();
+        }
+        if tail {
+            writeln!(out, "{}{}", ind, idx).ok();
+        } else {
+            writeln!(out, "{}return {};", ind, idx).ok();
+        }
         Ok(())
     }
 
@@ -490,9 +624,9 @@ impl<'a> Generator<'a> {
         }
     }
 
-    /// Emit the per-stage DFA as a `const DFA_<sid>` inside the state
-    /// method (sid-suffixed so a multi-stage state has distinct consts).
-    fn emit_dfa_const(&self, out: &mut String, sid: usize) {
+    /// Emit the per-stage DFA as a `const DFA_<sid>` (sid-suffixed so a
+    /// multi-stage state has distinct consts), at indent `ind`.
+    fn emit_dfa_const(&self, out: &mut String, sid: usize, ind: &str) {
         let dfa = &self.stage_dfas[sid];
         let states: Vec<String> = dfa
             .states
@@ -507,46 +641,12 @@ impl<'a> Generator<'a> {
             .collect();
         writeln!(
             out,
-            "        const DFA_{}: &[(&[(u32, u32, usize)], bool)] = &[{}];",
+            "{}const DFA_{}: &[(&[(u32, u32, usize)], bool)] = &[{}];",
+            ind,
             sid,
             states.join(", ")
         )
         .ok();
-    }
-
-    /// Resolve a match's success/failure targets to `i64` dispatch
-    /// expressions (`-1` halts). Only static state targets in v0.1.
-    fn resolve_targets(&self, m: &MatchAst) -> Result<(String, String), String> {
-        let Some(clause) = &m.transition else {
-            return Ok(("-1".into(), "-1".into()));
-        };
-        let success = match &clause.success {
-            None => "-1".to_string(),
-            Some(t) => self.target_index(t)?.to_string(),
-        };
-        let failure = match &clause.failure {
-            None => "-1".to_string(),
-            Some(t) => self.target_index(t)?.to_string(),
-        };
-        Ok((success, failure))
-    }
-
-    fn target_index(&self, t: &FsmTransitionTarget) -> Result<i64, String> {
-        match t {
-            FsmTransitionTarget::Static {
-                state, stage: None, ..
-            } => self
-                .label_to_index
-                .get(state)
-                .map(|i| *i as i64)
-                .ok_or_else(|| format!("transition to undeclared state `${}`", state)),
-            FsmTransitionTarget::Static { stage: Some(_), .. } => {
-                Err("stage-ref transition targets are not yet supported by the Rust backend".into())
-            }
-            FsmTransitionTarget::Conditional(_) => Err(
-                "conditional transition targets are not yet supported by the Rust backend".into(),
-            ),
-        }
     }
 
     /// Map a raw default token to a Rust expression of the field's type.
@@ -768,6 +868,60 @@ mod tests {
             return;
         };
         assert_eq!(ret, "42");
+    }
+
+    /// FSM-TEST-006 in Rust: labeled states, static success + failure
+    /// transitions, capture read across states.
+    #[test]
+    fn rust_transitions_and_capture() {
+        let src = "@@fsm M(text: bytes) : int = 0 { \
+                   $0: /[a-z]/ -> $digits : -> $error \
+                   $digits: .n/[0-9]+/ to_int($digits.n) \
+                   $error: -1 }";
+        let Some((acc, ret)) = run(src, "M", "x42", "tr_a") else {
+            return;
+        };
+        assert_eq!((acc.as_str(), ret.as_str()), ("true", "42"));
+        // 'X' fails /[a-z]/ → failure branch → $error → -1.
+        assert_eq!(run(src, "M", "X", "tr_b").unwrap().1, "-1");
+    }
+
+    /// Conditional `when` target (FSM-TEST-402) in Rust.
+    #[test]
+    fn rust_conditional_target() {
+        let src = "@@fsm M(text: bytes, mode: int) : int = 0 { \
+                   /[01]/ -> ( $zero when self.mode == 0, $one when self.mode == 1 ) : -> $error \
+                   $zero: 0 \
+                   $one: 1 \
+                   $error: -1 }";
+        let decl = parse_fsm_block(src.as_bytes()).expect("parses");
+        let code = generate(&decl).expect("generates");
+        let run_mode = |inp: &str, mode: i64, tag: &str| -> Option<String> {
+            let driver = format!(
+                "{code}\nfn main() {{ let m = M::new(\"{inp}\".chars().collect(), {mode}); println!(\"{{}}\", m.return_value); }}\n",
+                code = code, inp = inp, mode = mode
+            );
+            let dir = std::env::temp_dir();
+            let s = dir.join(format!("framec_rs_{}.rs", tag));
+            let b = dir.join(format!("framec_rs_{}", tag));
+            std::fs::write(&s, driver).ok()?;
+            let c = Command::new("rustc")
+                .arg("--edition=2021")
+                .arg(&s)
+                .arg("-o")
+                .arg(&b)
+                .output()
+                .ok()?;
+            assert!(c.status.success(), "{}", String::from_utf8_lossy(&c.stderr));
+            let o = Command::new(&b).output().expect("run");
+            Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+        };
+        let Some(z) = run_mode("0", 0, "cond_a") else {
+            return;
+        };
+        assert_eq!(z, "0");
+        assert_eq!(run_mode("1", 1, "cond_b").unwrap(), "1");
+        assert_eq!(run_mode("0", 2, "cond_c").unwrap(), "-1"); // no when → failure
     }
 
     /// A construct outside the v0.1 Rust cut errors clearly.
