@@ -66,6 +66,7 @@ pub(crate) fn should_emit_layered(lang: TargetLanguage) -> bool {
             | TargetLanguage::Kotlin
             | TargetLanguage::Swift
             | TargetLanguage::Dart
+            | TargetLanguage::GDScript
     )
 }
 
@@ -287,6 +288,39 @@ fn generate_casing_fields(machine_name: &str, lang: TargetLanguage) -> Vec<Field
                 leading_comments: vec![],
             },
         ],
+        TargetLanguage::GDScript => vec![
+            // GDScript: dynamically typed; the Class emitter ignores
+            // type_annotation and emits `var name`. No access modifiers
+            // either — the `_`-prefix convention does not affect the
+            // class-level field. Constructor body assigns the three.
+            Field {
+                name: "machine".to_string(),
+                type_annotation: None,
+                visibility: Visibility::Public,
+                is_static: false,
+                is_const: false,
+                initializer: None,
+                leading_comments: vec![],
+            },
+            Field {
+                name: "busy".to_string(),
+                type_annotation: None,
+                visibility: Visibility::Public,
+                is_static: false,
+                is_const: false,
+                initializer: None,
+                leading_comments: vec![],
+            },
+            Field {
+                name: "in_flight".to_string(),
+                type_annotation: None,
+                visibility: Visibility::Public,
+                is_static: false,
+                is_const: false,
+                initializer: None,
+                leading_comments: vec![],
+            },
+        ],
         TargetLanguage::Dart => vec![
             // Dart's `Visibility::Private` would prepend an `_` to the field
             // name (library-private convention). To keep the field names
@@ -462,6 +496,15 @@ fn generate_casing_constructor(machine_name: &str, lang: TargetLanguage) -> Code
              this.in_flight = null;",
             m = machine_name
         ),
+        TargetLanguage::GDScript => format!(
+            // GDScript: `<Class>.new()` is the constructor call. No
+            // semicolons; `null` instead of `nil`. The Constructor
+            // arm emits this body inside `func _init():`.
+            "self.machine = {m}.new()\n\
+             self.busy = false\n\
+             self.in_flight = null",
+            m = machine_name
+        ),
         _ => String::new(),
     };
 
@@ -576,6 +619,42 @@ fn generate_casing_interface_wrapper(ifm: &InterfaceMethod, lang: TargetLanguage
                 name = ifm.name,
                 delegate = delegate_line
             )
+        }
+        TargetLanguage::GDScript => {
+            let arg_list: Vec<String> = ifm.params.iter().map(|p| p.name.clone()).collect();
+            let arg_str = arg_list.join(", ");
+            // GDScript has no try/finally — manual cleanup before / after
+            // the await. `assert(cond, msg)` fails fast in debug builds
+            // (matches the "programming error, terminate" semantics other
+            // backends get from throw/panic). Void vs value-returning
+            // split: value awaits into `__result`, then clears the gate,
+            // then returns; void just awaits and clears.
+            let has_return = !matches!(ifm.return_type, None | Some(FrameType::Unknown));
+            let body = if has_return {
+                format!(
+                    "assert(not self.busy, \"E703: system busy: cannot enter '{name}' while '%s' is in flight\" % str(self.in_flight))\n\
+                     self.busy = true\n\
+                     self.in_flight = \"{name}\"\n\
+                     var __result = await self.machine.{name}({args})\n\
+                     self.busy = false\n\
+                     self.in_flight = null\n\
+                     return __result",
+                    name = ifm.name,
+                    args = arg_str
+                )
+            } else {
+                format!(
+                    "assert(not self.busy, \"E703: system busy: cannot enter '{name}' while '%s' is in flight\" % str(self.in_flight))\n\
+                     self.busy = true\n\
+                     self.in_flight = \"{name}\"\n\
+                     await self.machine.{name}({args})\n\
+                     self.busy = false\n\
+                     self.in_flight = null",
+                    name = ifm.name,
+                    args = arg_str
+                )
+            };
+            body
         }
         TargetLanguage::Dart => {
             let arg_list: Vec<String> = ifm.params.iter().map(|p| p.name.clone()).collect();
@@ -759,6 +838,18 @@ fn generate_casing_operation_delegate(op: &OperationAst, lang: TargetLanguage) -
                 )
             }
         }
+        TargetLanguage::GDScript => {
+            let arg_list: Vec<String> = op.params.iter().map(|p| p.name.clone()).collect();
+            let arg_str = arg_list.join(", ");
+            // GDScript: void/value distinction is loose; `return X` works
+            // even when the caller doesn't use the value. Keep the form
+            // consistent regardless of declared return type.
+            format!(
+                "return self.machine.{name}({args})",
+                name = op.name,
+                args = arg_str
+            )
+        }
         TargetLanguage::Dart => {
             let arg_list: Vec<String> = op.params.iter().map(|p| p.name.clone()).collect();
             let arg_str = arg_list.join(", ");
@@ -843,6 +934,7 @@ fn generate_casing_save_delegate(system: &SystemAst, lang: TargetLanguage) -> Op
         TargetLanguage::Kotlin => format!("return this.machine.{name}()", name = save_name),
         TargetLanguage::Swift => format!("return self.machine.{name}()", name = save_name),
         TargetLanguage::Dart => format!("return this.machine.{name}();", name = save_name),
+        TargetLanguage::GDScript => format!("return self.machine.{name}()", name = save_name),
         _ => String::new(),
     };
     Some(CodegenNode::Method {
@@ -876,6 +968,7 @@ fn generate_casing_restore_delegate(
         TargetLanguage::Kotlin => format!("this.machine.{name}(data)", name = load_name),
         TargetLanguage::Swift => format!("self.machine.{name}(data)", name = load_name),
         TargetLanguage::Dart => format!("this.machine.{name}(data);", name = load_name),
+        TargetLanguage::GDScript => format!("self.machine.{name}(data)", name = load_name),
         _ => String::new(),
     };
     Some(CodegenNode::Method {
@@ -961,6 +1054,7 @@ fn generate_casing_init_delegate(lang: TargetLanguage) -> CodegenNode {
         // resolves through the casing.
         TargetLanguage::Swift => "await self.machine.initAsync()".to_string(),
         TargetLanguage::Dart => "await this.machine.init();".to_string(),
+        TargetLanguage::GDScript => "await self.machine.init()".to_string(),
         _ => String::new(),
     };
     let init_name = match lang {
