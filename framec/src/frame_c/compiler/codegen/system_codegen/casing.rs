@@ -22,17 +22,43 @@
 //! one at a time in Phase 6 of the RFC-0043 arc.
 
 use super::super::ast::{CodegenNode, Field, Param, Visibility};
+use crate::frame_c::compiler::frame_ast::Type as FrameType;
 use crate::frame_c::compiler::frame_ast::{InterfaceMethod, OperationAst, SystemAst};
 use crate::frame_c::visitors::TargetLanguage;
+
+/// For typed targets (TypeScript / Java / etc.), surface the user's
+/// declared type string verbatim so the backend's `convert_type` can
+/// translate to the native type. For dynamic targets (Python), no
+/// annotation is emitted.
+fn type_annotation_for(t: &FrameType, lang: TargetLanguage) -> Option<String> {
+    match (lang, t) {
+        (TargetLanguage::Python3, _) => None,
+        (_, FrameType::Unknown) => None,
+        (_, FrameType::Custom(s)) => Some(s.clone()),
+    }
+}
+
+/// Same as [`type_annotation_for`] but for `Option<Type>` return-type
+/// positions.
+fn return_type_for(t: Option<&FrameType>, lang: TargetLanguage) -> Option<String> {
+    match (lang, t) {
+        (TargetLanguage::Python3, _) => None,
+        (_, None) => None,
+        (_, Some(FrameType::Unknown)) => None,
+        (_, Some(FrameType::Custom(s))) => Some(s.clone()),
+    }
+}
 
 /// Per-backend opt-in to layered emission. Returns `true` only for
 /// backends where the casing/machine shape has been verified end-to-end.
 /// Phase 4 wires Python; Phase 5 wires Rust (its emission lives in
-/// `rust_system/casing.rs` but shares this predicate); subsequent
-/// phases flip the remaining 8 async-capable backends as their
-/// integrations land.
+/// `rust_system/casing.rs` but shares this predicate); Phase 6 flips
+/// the shared-pipeline backends one at a time as each is verified.
 pub(crate) fn should_emit_layered(lang: TargetLanguage) -> bool {
-    matches!(lang, TargetLanguage::Python3 | TargetLanguage::Rust)
+    matches!(
+        lang,
+        TargetLanguage::Python3 | TargetLanguage::Rust | TargetLanguage::TypeScript
+    )
 }
 
 /// Given the machine class node (the post-`make_system_async` dispatch
@@ -58,11 +84,50 @@ pub(crate) fn wrap_in_casing(
         *visibility = Visibility::Private;
     }
 
+    // Some backends emit the original system name verbatim inside
+    // NativeBlock method bodies (e.g. TypeScript's `AsyncBasic._HSM_CHAIN[leaf]`
+    // in `__prepareEnter`). After rename those references would point at
+    // the casing class instead of the machine. Rewrite them.
+    rewrite_class_name_refs_in_machine(&mut machine_class, &system.name, &machine_name);
+
     let casing = generate_casing(system, &machine_name, lang);
 
     CodegenNode::Module {
         imports: vec![],
         items: vec![casing, machine_class],
+    }
+}
+
+/// Substitute `<original>.` → `<machine>.` in every `NativeBlock` body
+/// inside the machine class's methods. The trailing dot anchors the
+/// match to member-access syntax (e.g. `Counter._HSM_CHAIN`,
+/// `Counter.staticHelper()`) and avoids rewriting bare occurrences in
+/// string literals.
+fn rewrite_class_name_refs_in_machine(
+    machine_class: &mut CodegenNode,
+    original_name: &str,
+    machine_name: &str,
+) {
+    if let CodegenNode::Class { methods, .. } = machine_class {
+        let from = format!("{}.", original_name);
+        let to = format!("{}.", machine_name);
+        for method in methods.iter_mut() {
+            rewrite_native_blocks(method, &from, &to);
+        }
+    }
+}
+
+fn rewrite_native_blocks(node: &mut CodegenNode, from: &str, to: &str) {
+    match node {
+        CodegenNode::NativeBlock { code, .. } if code.contains(from) => {
+            *code = code.replace(from, to);
+        }
+        CodegenNode::Method { body, .. } | CodegenNode::Constructor { body, .. } => {
+            for child in body.iter_mut() {
+                rewrite_native_blocks(child, from, to);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -112,11 +177,40 @@ fn generate_casing(system: &SystemAst, machine_name: &str, lang: TargetLanguage)
 // Per-backend casing emission. Phase 4 = Python only.
 // ---------------------------------------------------------------------------
 
-fn generate_casing_fields(_machine_name: &str, lang: TargetLanguage) -> Vec<Field> {
+fn generate_casing_fields(machine_name: &str, lang: TargetLanguage) -> Vec<Field> {
     match lang {
         // Python uses dynamic attributes; field decls are documentation
         // only. The constructor's NativeBlock assigns them.
         TargetLanguage::Python3 => vec![],
+        TargetLanguage::TypeScript => vec![
+            Field {
+                name: "machine".to_string(),
+                type_annotation: Some(machine_name.to_string()),
+                visibility: Visibility::Private,
+                is_static: false,
+                is_const: false,
+                initializer: None,
+                leading_comments: vec![],
+            },
+            Field {
+                name: "busy".to_string(),
+                type_annotation: Some("boolean".to_string()),
+                visibility: Visibility::Private,
+                is_static: false,
+                is_const: false,
+                initializer: None,
+                leading_comments: vec![],
+            },
+            Field {
+                name: "in_flight".to_string(),
+                type_annotation: Some("string | null".to_string()),
+                visibility: Visibility::Private,
+                is_static: false,
+                is_const: false,
+                initializer: None,
+                leading_comments: vec![],
+            },
+        ],
         _ => vec![],
     }
 }
@@ -127,6 +221,12 @@ fn generate_casing_constructor(machine_name: &str, lang: TargetLanguage) -> Code
             "self._machine = {m}()\n\
              self._busy = False\n\
              self._in_flight = None",
+            m = machine_name
+        ),
+        TargetLanguage::TypeScript => format!(
+            "this.machine = new {m}();\n\
+             this.busy = false;\n\
+             this.in_flight = null;",
             m = machine_name
         ),
         _ => String::new(),
@@ -164,6 +264,27 @@ fn generate_casing_interface_wrapper(ifm: &InterfaceMethod, lang: TargetLanguage
                 args = arg_str
             )
         }
+        TargetLanguage::TypeScript => {
+            let arg_list: Vec<String> = ifm.params.iter().map(|p| p.name.clone()).collect();
+            let arg_str = arg_list.join(", ");
+            format!(
+                "if (this.busy) {{\n\
+                 \x20   throw new Error(\n\
+                 \x20       `E703: system busy: cannot enter '{name}' while '${{this.in_flight}}' is in flight`\n\
+                 \x20   );\n\
+                 }}\n\
+                 this.busy = true;\n\
+                 this.in_flight = \"{name}\";\n\
+                 try {{\n\
+                 \x20   return await this.machine.{name}({args});\n\
+                 }} finally {{\n\
+                 \x20   this.busy = false;\n\
+                 \x20   this.in_flight = null;\n\
+                 }}",
+                name = ifm.name,
+                args = arg_str
+            )
+        }
         _ => String::new(),
     };
 
@@ -172,7 +293,7 @@ fn generate_casing_interface_wrapper(ifm: &InterfaceMethod, lang: TargetLanguage
         .iter()
         .map(|p| Param {
             name: p.name.clone(),
-            type_annotation: None,
+            type_annotation: type_annotation_for(&p.param_type, lang),
             default_value: None,
         })
         .collect();
@@ -180,7 +301,7 @@ fn generate_casing_interface_wrapper(ifm: &InterfaceMethod, lang: TargetLanguage
     CodegenNode::Method {
         name: ifm.name.clone(),
         params,
-        return_type: None,
+        return_type: return_type_for(ifm.return_type.as_ref(), lang),
         body: vec![CodegenNode::NativeBlock {
             code: body_code,
             span: None,
@@ -205,6 +326,15 @@ fn generate_casing_operation_delegate(op: &OperationAst, lang: TargetLanguage) -
                 args = arg_str
             )
         }
+        TargetLanguage::TypeScript => {
+            let arg_list: Vec<String> = op.params.iter().map(|p| p.name.clone()).collect();
+            let arg_str = arg_list.join(", ");
+            format!(
+                "return this.machine.{name}({args});",
+                name = op.name,
+                args = arg_str
+            )
+        }
         _ => String::new(),
     };
 
@@ -213,7 +343,7 @@ fn generate_casing_operation_delegate(op: &OperationAst, lang: TargetLanguage) -
         .iter()
         .map(|p| Param {
             name: p.name.clone(),
-            type_annotation: None,
+            type_annotation: type_annotation_for(&p.param_type, lang),
             default_value: None,
         })
         .collect();
@@ -221,7 +351,7 @@ fn generate_casing_operation_delegate(op: &OperationAst, lang: TargetLanguage) -
     CodegenNode::Method {
         name: op.name.clone(),
         params,
-        return_type: None,
+        return_type: type_annotation_for(&op.return_type, lang),
         body: vec![CodegenNode::NativeBlock {
             code: body_code,
             span: None,
@@ -240,6 +370,9 @@ fn generate_casing_save_delegate(system: &SystemAst, lang: TargetLanguage) -> Op
     let save_name = system.save_op_name_rfc0015()?;
     let body_code = match lang {
         TargetLanguage::Python3 => format!("return self._machine.{name}()", name = save_name),
+        TargetLanguage::TypeScript => {
+            format!("return this.machine.{name}();", name = save_name)
+        }
         _ => String::new(),
     };
     Some(CodegenNode::Method {
@@ -264,6 +397,7 @@ fn generate_casing_restore_delegate(
     let load_name = system.load_op_name_rfc0015()?;
     let body_code = match lang {
         TargetLanguage::Python3 => format!("self._machine.{name}(data)", name = load_name),
+        TargetLanguage::TypeScript => format!("this.machine.{name}(data);", name = load_name),
         _ => String::new(),
     };
     Some(CodegenNode::Method {
@@ -288,6 +422,7 @@ fn generate_casing_restore_delegate(
 fn generate_casing_init_delegate(lang: TargetLanguage) -> CodegenNode {
     let body_code = match lang {
         TargetLanguage::Python3 => "await self._machine.init()".to_string(),
+        TargetLanguage::TypeScript => "await this.machine.init();".to_string(),
         _ => String::new(),
     };
     CodegenNode::Method {
