@@ -25,10 +25,11 @@
 //! bare-expression returns, action blocks (assignment / `if`-`else`
 //! statements), declared `actions:` helpers (emitted as methods), and
 //! static, conditional (`when`), and stage-ref (`-> $S.stage`) success/
-//! failure transitions (including failure-only clauses `: -> $Err`) over
-//! the `bytes`/`char` alphabets. Constructs not yet handled — multi-match
-//! (`|`) states, embedding actions, and the token alphabet — produce a
-//! clear `Unsupported` error rather than a silent miscompile.
+//! failure transitions (including failure-only clauses `: -> $Err`), and
+//! multi-match (`|`) ordered-choice states, over the `bytes`/`char`
+//! alphabets. Constructs not yet handled — embedding actions, the token
+//! alphabet, and a `|` alternative with elements before its first stage —
+//! produce a clear `Unsupported` error rather than a silent miscompile.
 
 use crate::frame_c::compiler::frame_ast::{
     BinaryOp, BlockAst, Expression, FsmDeclAst, FsmStateAst, FsmTransitionTarget, Literal,
@@ -81,14 +82,17 @@ impl<'a> Generator<'a> {
         };
 
         // Map state labels to dispatch indices (declaration order), and
-        // each labeled stage to its element index within its state.
+        // each labeled stage to its element index within its state. Stage
+        // re-entry (`_enter`) is only meaningful for single-match states;
+        // multi-match states select by first stage, so their stage labels
+        // are not registered as re-entry points.
         let mut label_to_index = HashMap::new();
         let mut stage_entry = HashMap::new();
         for (i, st) in decl.states.iter().enumerate() {
             if let Some(l) = &st.label {
                 label_to_index.insert(l.clone(), i);
-                if let Some(m) = st.matches.first() {
-                    for (ei, el) in m.elements.iter().enumerate() {
+                if st.matches.len() == 1 {
+                    for (ei, el) in st.matches[0].elements.iter().enumerate() {
                         if let MatchElement::Stage(stage) = el {
                             if let Some(sl) = &stage.label {
                                 stage_entry.insert((l.clone(), sl.clone()), ei);
@@ -111,27 +115,23 @@ impl<'a> Generator<'a> {
     }
 
     /// Compile every stage regex up-front so codegen can reference DFA
-    /// tables by index and reject unsupported constructs early.
+    /// tables by index and reject unsupported constructs early. Stages are
+    /// numbered across all states and all `|` alternatives in traversal
+    /// order; `emit` walks the same order so `_DFA_<n>` indices line up.
     fn compile_stage_dfas(&mut self) -> Result<(), String> {
         for st in &self.decl.states {
-            if st.matches.len() > 1 {
-                return Err(format!(
-                    "multi-match (`|`) states are not yet supported (state `{}`)",
-                    st.label.as_deref().unwrap_or("<start>")
-                ));
-            }
-            let Some(m) = st.matches.first() else {
-                continue;
-            };
-            for el in &m.elements {
-                if let MatchElement::Stage(stage) = el {
-                    if !stage.embedding_actions.is_empty() {
-                        return Err(
-                            "embedding actions are not yet supported by the Python backend".into(),
-                        );
+            for m in &st.matches {
+                for el in &m.elements {
+                    if let MatchElement::Stage(stage) = el {
+                        if !stage.embedding_actions.is_empty() {
+                            return Err(
+                                "embedding actions are not yet supported by the Python backend"
+                                    .into(),
+                            );
+                        }
+                        let dfa = self.compile_one(&stage.regex)?;
+                        self.stage_dfas.push(dfa);
                     }
-                    let dfa = self.compile_one(&stage.regex)?;
-                    self.stage_dfas.push(dfa);
                 }
             }
         }
@@ -379,9 +379,8 @@ impl<'a> Generator<'a> {
     fn emit_state_methods(&self, out: &mut String) -> Result<(), String> {
         let mut sid = 0usize; // running global stage-DFA index
         for (i, st) in self.decl.states.iter().enumerate() {
-            let m = match st.matches.first() {
-                Some(m) => m,
-                None => {
+            match st.matches.len() {
+                0 => {
                     // A stateless state just halts (terminal, no change to
                     // accepted). Rare; emit a no-op method.
                     writeln!(
@@ -390,11 +389,97 @@ impl<'a> Generator<'a> {
                         i
                     )
                     .ok();
-                    continue;
                 }
-            };
-            self.emit_one_state(out, i, st, m, &mut sid)?;
+                1 => self.emit_one_state(out, i, st, &st.matches[0], &mut sid)?,
+                _ => self.emit_multi_match(out, i, st, &mut sid)?,
+            }
         }
+        Ok(())
+    }
+
+    /// Emit a multi-match (`|`) state as ordered choice (RFC-0042 §3.4).
+    /// Each alternative's first stage is tried at the state-entry cursor;
+    /// the first that matches commits and runs to its transition. A
+    /// first-stage miss falls through to the next alternative (cursor
+    /// unchanged); a *committed* alternative's later-stage failure follows
+    /// that alternative's failure branch. A stageless alternative is an
+    /// unconditional catch-all. If no alternative matches, the input is not
+    /// in the language and recognition rejects (§5.6).
+    ///
+    /// `_enter` re-entry is not applied here (selection is by first stage);
+    /// stage-ref targets into a multi-match state are not registered.
+    fn emit_multi_match(
+        &self,
+        out: &mut String,
+        index: usize,
+        st: &FsmStateAst,
+        sid: &mut usize,
+    ) -> Result<(), String> {
+        let state_label = st.label.clone().unwrap_or_default();
+        writeln!(out, "    def _state_{}(self, _enter):", index).ok();
+
+        for m in &st.matches {
+            let first_stage = m
+                .elements
+                .iter()
+                .position(|e| matches!(e, MatchElement::Stage(_)));
+            match first_stage {
+                Some(fs) => {
+                    if fs > 0 {
+                        // Elements before the first stage would run during
+                        // selection (before this alternative is chosen),
+                        // which has ambiguous side-effect semantics. Reject
+                        // rather than silently drop or misorder them.
+                        return Err(
+                            "a `|` alternative with elements before its first stage is not yet \
+                             supported by the Python backend"
+                                .into(),
+                        );
+                    }
+                    // Selector: try the first stage at the current cursor.
+                    let my_sid = *sid;
+                    *sid += 1;
+                    writeln!(out, "        _r = self._dfa_match(self._DFA_{})", my_sid).ok();
+                    out.push_str("        if _r >= 0:\n");
+                    // Committed: record the first stage's capture + advance.
+                    out.push_str("            self._matched = self.text[self.cursor:_r]\n");
+                    if let MatchElement::Stage(stage) = &m.elements[fs] {
+                        if let Some(slabel) = &stage.label {
+                            writeln!(
+                                out,
+                                "            self._cap[{:?}] = self._matched",
+                                format!("{}.{}", state_label, slabel)
+                            )
+                            .ok();
+                        }
+                    }
+                    out.push_str("            self.cursor = _r\n");
+                    out.push_str("            self.accepted = True\n");
+                    // Remaining elements run inside the commit; a later stage
+                    // failure follows this alternative's failure branch.
+                    for el in &m.elements[fs + 1..] {
+                        self.emit_element(out, el, m, &state_label, "            ", sid)?;
+                    }
+                    self.emit_success(out, m, "            ")?;
+                    // First-stage miss: fall through to the next alternative.
+                }
+                None => {
+                    // Stageless alternative: an unconditional catch-all. It
+                    // matches with no stage, so it accepts (a prior selector
+                    // miss leaves `accepted` untouched, unlike single-match).
+                    out.push_str("        self.accepted = True\n");
+                    for el in &m.elements {
+                        self.emit_element(out, el, m, &state_label, "        ", sid)?;
+                    }
+                    self.emit_success(out, m, "        ")?;
+                }
+            }
+        }
+
+        // No alternative's first stage matched: not in the language (§5.6).
+        out.push_str("        self.accepted = False\n");
+        out.push_str("        self.reject_position = self.cursor\n");
+        out.push_str("        return -1\n\n");
         Ok(())
     }
 
@@ -1085,6 +1170,69 @@ mod tests {
         // "xab" would NOT match: re-entry at .rest expects /b/ at the cursor
         // after x, but sees 'a'.
         assert_eq!(run(src, "xab", "tsr_b").unwrap().accepted, "False");
+    }
+
+    /// Multi-match (`|`) ordered choice: the first alternative whose first
+    /// stage matches wins; distinct first stages route to distinct targets.
+    #[test]
+    fn multi_match_ordered_choice() {
+        let src = "@@fsm M(text: bytes) : int = 0 { \
+                   /[0-9]/ -> $num | /[a-z]/ -> $word \
+                   $num: 1 \
+                   $word: 2 }";
+        let Some(d) = run(src, "5", "tmm_a") else {
+            return;
+        };
+        assert_eq!(d.accepted, "True");
+        assert_eq!(d.return_value, "1");
+        let w = run(src, "a", "tmm_b").unwrap();
+        assert_eq!(w.accepted, "True");
+        assert_eq!(w.return_value, "2");
+        // Neither alternative's first stage matches → reject.
+        let bang = run(src, "!", "tmm_c").unwrap();
+        assert_eq!(bang.accepted, "False");
+        assert_eq!(bang.return_value, "0");
+    }
+
+    /// Selection commits on the first stage: when two alternatives share a
+    /// first stage, the earlier one wins even if a later stage then fails —
+    /// no backtracking to the other alternative.
+    #[test]
+    fn multi_match_commits_on_first_stage() {
+        let src = "@@fsm M(text: bytes) : int = 0 { \
+                   /a/ /b/ -> $ab : -> $err | /a/ /c/ -> $ac \
+                   $ab: 1 \
+                   $ac: 2 \
+                   $err: -1 }";
+        // "ab": commit alt0, /b/ matches -> $ab.
+        let Some(ab) = run(src, "ab", "tmc_a") else {
+            return;
+        };
+        assert_eq!(ab.return_value, "1");
+        // "ac": commit alt0 (first stage /a/ matched); /b/ fails on 'c' →
+        // alt0's failure branch ($err), NOT alt1. Demonstrates commit.
+        let ac = run(src, "ac", "tmc_b").unwrap();
+        assert_eq!(ac.return_value, "-1");
+        assert_eq!(ac.accepted, "False");
+        // "xy": neither alternative's first stage (/a/) matches → reject.
+        assert_eq!(run(src, "xy", "tmc_c").unwrap().accepted, "False");
+    }
+
+    /// A stageless final alternative is an unconditional catch-all.
+    #[test]
+    fn multi_match_catch_all() {
+        let src = "@@fsm M(text: bytes) : int = 0 { \
+                   /[0-9]/ -> $num | 99 \
+                   $num: 1 }";
+        let Some(num) = run(src, "5", "tca_a") else {
+            return;
+        };
+        assert_eq!(num.return_value, "1");
+        assert_eq!(num.accepted, "True");
+        // "a": digit alternative misses → catch-all matches unconditionally.
+        let other = run(src, "a", "tca_b").unwrap();
+        assert_eq!(other.return_value, "99");
+        assert_eq!(other.accepted, "True");
     }
 
     /// A standalone failure-only clause on an implicit-terminal match:

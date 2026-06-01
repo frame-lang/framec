@@ -405,49 +405,60 @@ pub(crate) fn check_regexes(decl: &FsmDeclAst) -> Vec<FsmDiagnostic> {
     let mut out = Vec::new();
 
     for st in &decl.states {
+        // In a multi-match (`|`) state the first stage of each alternative
+        // is the ordered-choice selector: a first-stage miss falls through
+        // to the next alternative rather than to §5.6, so it does not make
+        // the match "fail" for the E701 exhaustiveness check (RFC-0042 §3.4).
+        let multi = st.matches.len() > 1;
         for m in &st.matches {
             let mut has_stage = false;
-            // A match is provably non-failing only if every stage's regex
-            // accepts the empty string. A regex that fails to compile or
-            // uses anchors can fail, so it does not establish nullability.
-            let mut all_nullable = true;
+            // Can this match reach §5.6 (an unhandled failure)? True once a
+            // fallible stage exists whose failure isn't absorbed by ordered
+            // choice. A regex that fails to compile or uses anchors can fail.
+            let mut can_fail = false;
+            let mut stage_idx = 0usize;
 
             for el in &m.elements {
                 if let MatchElement::Stage(stage) = el {
                     has_stage = true;
-                    match fsm_regex::compile(&stage.regex, alphabet, DEFAULT_MAX_DFA_STATES) {
-                        Ok(compiled) => {
-                            if !compiled.dfa.states[compiled.dfa.start].is_accept {
-                                all_nullable = false;
+                    let is_selector = multi && stage_idx == 0;
+                    stage_idx += 1;
+                    let nullable =
+                        match fsm_regex::compile(&stage.regex, alphabet, DEFAULT_MAX_DFA_STATES) {
+                            Ok(compiled) => {
+                                for w in compiled.warnings {
+                                    out.push(FsmDiagnostic {
+                                        code: w.code,
+                                        span: stage.span.clone(),
+                                        message: w.message,
+                                    });
+                                }
+                                compiled.dfa.states[compiled.dfa.start].is_accept
                             }
-                            for w in compiled.warnings {
+                            Err(CompileError::Diagnostics(ds)) => {
+                                for d in ds {
+                                    out.push(FsmDiagnostic {
+                                        code: d.code,
+                                        span: stage.span.clone(),
+                                        message: d.message,
+                                    });
+                                }
+                                false
+                            }
+                            Err(CompileError::UnsupportedAnchors(_)) => {
                                 out.push(FsmDiagnostic {
-                                    code: w.code,
+                                    code: "E722",
                                     span: stage.span.clone(),
-                                    message: w.message,
-                                });
-                            }
-                        }
-                        Err(CompileError::Diagnostics(ds)) => {
-                            all_nullable = false;
-                            for d in ds {
-                                out.push(FsmDiagnostic {
-                                    code: d.code,
-                                    span: stage.span.clone(),
-                                    message: d.message,
-                                });
-                            }
-                        }
-                        Err(CompileError::UnsupportedAnchors(_)) => {
-                            all_nullable = false;
-                            out.push(FsmDiagnostic {
-                                code: "E722",
-                                span: stage.span.clone(),
-                                message: "zero-width anchors are not yet supported by the v0.1 \
+                                    message:
+                                        "zero-width anchors are not yet supported by the v0.1 \
                                           DFA engine (tracked); use a non-anchored pattern"
-                                    .to_string(),
-                            });
-                        }
+                                            .to_string(),
+                                });
+                                false
+                            }
+                        };
+                    if !nullable && !is_selector {
+                        can_fail = true;
                     }
                 }
             }
@@ -455,7 +466,7 @@ pub(crate) fn check_regexes(decl: &FsmDeclAst) -> Vec<FsmDiagnostic> {
             // E701 — success transition with no failure branch on a match
             // that can fail.
             if let Some(clause) = &m.transition {
-                if clause.failure.is_none() && has_stage && !all_nullable {
+                if clause.failure.is_none() && has_stage && can_fail {
                     out.push(FsmDiagnostic {
                         code: "E701",
                         span: m.span.clone(),
@@ -835,6 +846,26 @@ mod tests {
     fn e701_not_fired_for_nullable_match() {
         let d = diags(b"@@fsm M(text: bytes) : int = 0 { /a*/ -> $x  $x: 1 }");
         assert!(!d.iter().any(|x| x.code == "E701"), "got {:?}", d);
+    }
+
+    /// No E701 for a multi-match (`|`) alternative whose only fallible
+    /// stage is the ordered-choice selector — a first-stage miss falls
+    /// through to the next alternative, not §5.6.
+    #[test]
+    fn e701_not_fired_multi_match_selector() {
+        let d = diags(
+            b"@@fsm M(text: bytes) : int = 0 { /[0-9]/ -> $a | /[a-z]/ -> $b  $a: 1  $b: 2 }",
+        );
+        assert!(!d.iter().any(|x| x.code == "E701"), "got {:?}", d);
+    }
+
+    /// E701 still fires for a multi-match alternative whose *later* stage is
+    /// fallible and has no failure branch (that failure reaches §5.6).
+    #[test]
+    fn e701_fired_multi_match_later_stage() {
+        let d =
+            diags(b"@@fsm M(text: bytes) : int = 0 { /a/ /b/ -> $x | /c/ -> $y  $x: 1  $y: 2 }");
+        assert!(d.iter().any(|x| x.code == "E701"), "got {:?}", d);
     }
 
     /// No E701 when a failure branch is present, even for a fallible regex.
