@@ -44,9 +44,11 @@ methods are generated in the host language's asynchronous form
 (`async`/`await`, `CompletableFuture`, `Future`, …). On Erlang the
 `gen_statem` actor model already provides single-driver semantics; the
 layered shape is not emitted there. Async members in a system without
-`@@[async]` are an `E710` validator error (with a one-release `W710`
-grace period). See [RFC-0043](rfcs/rfc-0043.md) and
-[language reference § Async](frame_language.md#async).
+`@@[async]` are an `E720` validator error from the implementing
+release — hard cut, no grace period; the codemod
+`framec project --add-async-attr` (CLI) and `migrate_async_attr` (WASM)
+mechanically insert the attribute. See [RFC-0043](rfcs/rfc-0043.md)
+and [language reference § Async](frame_language.md#async).
 
 ### backbone
 
