@@ -1749,6 +1749,69 @@ mod tests {
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "True");
     }
 
+    /// RFC-0042 Mode A/B: a `@@system` handler invokes an `@@fsm` via
+    /// `@@FsmName(args)` (a plain constructor, not the `._create` factory)
+    /// and reads its instance fields. Compiles both into one module and
+    /// runs the system driving the fsm. (Only `int` domain fields are used:
+    /// a `@@system` `bool = false` default emits Python `false`, an
+    /// unrelated pre-existing @@system codegen behavior.)
+    #[test]
+    fn fsm_mode_a_called_from_system() {
+        use std::process::Command;
+        // `@@system` statements/fields are newline-separated (unlike the
+        // whitespace-agnostic `@@fsm` body), so use a real multi-line source.
+        let src = r#"
+@@fsm Digits(text: bytes) : int = 0 { /[0-9]+/ to_int(@@:matched) }
+
+@@system Parser {
+    interface:
+        parse(buf: bytes)
+    machine:
+        $Start {
+            parse(buf) {
+                m = @@Digits(buf)
+                self.value = m.return_value
+                self.cur = m.cursor
+            }
+        }
+    domain:
+        value: int = 0
+        cur: int = 0
+}
+"#;
+        let r = compile_py(src);
+        assert!(r.errors.is_empty(), "got {:?}", r.errors);
+        // The fsm call site is a plain constructor, not the `._create`
+        // factory used for `@@system` instantiation.
+        assert!(
+            r.code.contains("m = Digits(buf)"),
+            "expected plain fsm constructor, got:\n{}",
+            r.code
+        );
+        let driver = format!(
+            "{}\np = Parser._create()\np.parse(\"123\")\nprint(p.value, p.cur)\n\
+             q = Parser._create()\nq.parse(\"xy\")\nprint(q.value, q.cur)\n",
+            r.code
+        );
+        let path = std::env::temp_dir().join("framec_fsm_mode_a.py");
+        std::fs::write(&path, driver).expect("write temp py");
+        let out = match Command::new("python3").arg(&path).output() {
+            Ok(o) => o,
+            Err(_) => return,
+        };
+        assert!(
+            out.status.success(),
+            "python3 failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let text = String::from_utf8_lossy(&out.stdout);
+        let lines: Vec<&str> = text.lines().collect();
+        // "123": fsm matches → return_value 3-digit int, cursor 3.
+        assert_eq!(lines[0], "123 3", "digits input read back through Mode A");
+        // "xy": fsm rejects → return_value stays at its default 0, cursor 0.
+        assert_eq!(lines[1], "0 0", "non-digit input");
+    }
+
     /// `@@fsm` codegen for a non-Python target surfaces E740 (capability
     /// limitation) rather than silently dropping the block.
     #[test]
