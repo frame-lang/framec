@@ -31,9 +31,12 @@
 //! tuple; token kinds map to small integer ids via a generated `tok_id/1`).
 //! Mode C sub-fsm call-out (`/@Inner/`, §8.3) constructs the inner module
 //! (`inner:recognize/1`) over the input at the cursor, advancing by what it
-//! consumed and exposing it via `$state.label.return_value`. Not yet handled
-//! (clear `Unsupported` error, never a silent miscompile): anchors (deferred
-//! to the next increment).
+//! consumed and exposing it via `$state.label.return_value`. Boundary anchors
+//! (a leading `^`/`\A`, a trailing `$`/`\z`, §6.6) are enforced by a
+//! post-match position guard. This is full parity with the Python reference
+//! backend. Not yet handled (clear `Unsupported` error, never a silent
+//! miscompile): mid-pattern anchors and `\b`/`\B` (deferred to v0.2 in both
+//! backends).
 
 use crate::frame_c::compiler::frame_ast::{
     BinaryOp, EmbeddingOp, Expression, FsmDeclAst, FsmStateAst, FsmTransitionTarget, Literal,
@@ -54,6 +57,10 @@ pub fn generate(decl: &FsmDeclAst) -> Result<String, String> {
 struct StageDfa {
     states: Vec<(Vec<(u32, u32, usize)>, bool)>,
     start: usize,
+    /// Leading `^`/`\A`: the match must start at the input start (cursor 0).
+    requires_start: bool,
+    /// Trailing `$`/`\z`: the match must end at the input end.
+    requires_end: bool,
     /// RFC-0042 §8.3 Mode C: when `Some(name)`, this stage is a call-out to
     /// the `@@fsm` `name` rather than a regex DFA match (no DFA; a
     /// placeholder keeps stage indices aligned with the emit walk).
@@ -143,6 +150,8 @@ impl<'a> Generator<'a> {
                             self.stage_dfas.push(StageDfa {
                                 states: Vec::new(),
                                 start: 0,
+                                requires_start: false,
+                                requires_end: false,
                                 mode_c: Some(inner.to_string()),
                             });
                             self.stage_sid.insert((si, ai, ei), sid);
@@ -173,12 +182,6 @@ impl<'a> Generator<'a> {
     ) -> Result<StageDfa, String> {
         match fsm_regex::compile(regex, alphabet, DEFAULT_MAX_DFA_STATES) {
             Ok(compiled) => {
-                if compiled.requires_start || compiled.requires_end {
-                    return Err(
-                        "anchors are not yet supported by the Erlang backend (v0.1 first cut)"
-                            .into(),
-                    );
-                }
                 let mut states = Vec::with_capacity(compiled.dfa.states.len());
                 for s in &compiled.dfa.states {
                     let mut trans = Vec::new();
@@ -203,6 +206,8 @@ impl<'a> Generator<'a> {
                 Ok(StageDfa {
                     states,
                     start: compiled.dfa.start,
+                    requires_start: compiled.requires_start,
+                    requires_end: compiled.requires_end,
                     mode_c: None,
                 })
             }
@@ -718,7 +723,31 @@ impl<'a> Generator<'a> {
                     .ok();
                     se
                 };
-                writeln!(out, "{}case {} >= 0 of", ind, r).ok();
+                // Boundary anchors (§6.6) on the selector, as for single-match.
+                let dfa = &self.stage_dfas[my_sid];
+                let reff = if dfa.requires_start || dfa.requires_end {
+                    let rg = fresh("R", ctr);
+                    let sc = if dfa.requires_start {
+                        format!("(maps:get(cursor, {}) == 0)", sbase)
+                    } else {
+                        "true".to_string()
+                    };
+                    let ec = if dfa.requires_end {
+                        format!("({} == maps:get(fsm_n, {}))", r, sbase)
+                    } else {
+                        "true".to_string()
+                    };
+                    writeln!(
+                        out,
+                        "{}{} = case {} andalso {} of true -> {}; false -> -1 end,",
+                        ind, rg, sc, ec, r
+                    )
+                    .ok();
+                    rg
+                } else {
+                    r.clone()
+                };
+                writeln!(out, "{}case {} >= 0 of", ind, reff).ok();
                 let ind4 = format!("{}    ", ind);
                 let ind8 = format!("{}        ", ind);
                 writeln!(out, "{}true ->", ind4).ok();
@@ -727,7 +756,7 @@ impl<'a> Generator<'a> {
                 writeln!(
                     out,
                     "{}{} = lists:sublist(maps:get({}, {}), maps:get(cursor, {}) + 1, {} - maps:get(cursor, {})),",
-                    ind8, mtch, erl_key(&self.decl.params[0].name), sbase, sbase, r, sbase
+                    ind8, mtch, erl_key(&self.decl.params[0].name), sbase, sbase, reff, sbase
                 )
                 .ok();
                 let cap = match &sel.label {
@@ -740,7 +769,7 @@ impl<'a> Generator<'a> {
                 writeln!(
                     out,
                     "{}{} = {}#{{fsm_matched => {}, cursor => {}, accepted => true{}}},",
-                    ind8, committed, sbase, mtch, r, cap
+                    ind8, committed, sbase, mtch, reff, cap
                 )
                 .ok();
                 // Remaining elements + this alternative's success transition.
@@ -967,7 +996,34 @@ impl<'a> Generator<'a> {
                     .ok();
                     se
                 };
-                writeln!(out, "{}case {} < 0 of", ind, r).ok();
+                // Boundary anchors (§6.6): a leading `^`/`\A` requires the
+                // match to start at cursor 0; a trailing `$`/`\z` requires it
+                // to end at the input end. A violated anchor turns the match
+                // into a miss (`reff = -1`).
+                let dfa = &self.stage_dfas[my_sid];
+                let reff = if dfa.requires_start || dfa.requires_end {
+                    let rg = fresh("R", ctr);
+                    let sc = if dfa.requires_start {
+                        format!("(maps:get(cursor, {}) == 0)", base)
+                    } else {
+                        "true".to_string()
+                    };
+                    let ec = if dfa.requires_end {
+                        format!("({} == maps:get(fsm_n, {}))", r, base)
+                    } else {
+                        "true".to_string()
+                    };
+                    writeln!(
+                        out,
+                        "{}{} = case {} andalso {} of true -> {}; false -> -1 end,",
+                        ind, rg, sc, ec, r
+                    )
+                    .ok();
+                    rg
+                } else {
+                    r.clone()
+                };
+                writeln!(out, "{}case {} < 0 of", ind, reff).ok();
                 let ind2 = format!("{}    ", ind);
                 writeln!(out, "{}true ->", ind2).ok();
                 self.emit_failure(out, m, &base, &format!("{}    ", ind2));
@@ -981,7 +1037,7 @@ impl<'a> Generator<'a> {
                 writeln!(
                     out,
                     "{}{} = lists:sublist(maps:get({}, {}), maps:get(cursor, {}) + 1, {} - maps:get(cursor, {})),",
-                    ind3, mtch, erl_key(&self.decl.params[0].name), base, base, r, base
+                    ind3, mtch, erl_key(&self.decl.params[0].name), base, base, reff, base
                 )
                 .ok();
                 let st2 = fresh("St", ctr);
@@ -994,7 +1050,7 @@ impl<'a> Generator<'a> {
                 writeln!(
                     out,
                     "{}{} = {}#{{fsm_matched => {}, cursor => {}, accepted => true{}}},",
-                    ind3, st2, base, mtch, r, cap
+                    ind3, st2, base, mtch, reff, cap
                 )
                 .ok();
                 self.emit_seq(
@@ -2060,12 +2116,37 @@ mod tests {
         assert_eq!(run_outer("x", "modec_b").unwrap().0, "false");
     }
 
-    /// A construct outside the first cut errors clearly. Anchors are deferred
-    /// to a later increment.
+    /// FSM-TEST-312 — leading `^` matches only at cursor 0. `/^foo/` accepts
+    /// "foo", rejects "xfoo" and "".
+    #[test]
+    fn erl_start_anchor() {
+        let src = "@@fsm M(text: bytes) : bool = false { /^foo/ true }";
+        let Some((acc, _)) = run(src, "m", "foo", "anc_a") else {
+            return;
+        };
+        assert_eq!(acc, "true");
+        assert_eq!(run(src, "m", "xfoo", "anc_b").unwrap().0, "false");
+        assert_eq!(run(src, "m", "", "anc_c").unwrap().0, "false");
+    }
+
+    /// A trailing `$` requires the match to reach the end of input.
+    #[test]
+    fn erl_end_anchor() {
+        let src = "@@fsm M(text: bytes) : bool = false { /[0-9]+$/ true }";
+        let Some((acc, _)) = run(src, "m", "123", "anc_e") else {
+            return;
+        };
+        assert_eq!(acc, "true");
+        // "123x": digits don't reach end-of-input → `$` fails → reject.
+        assert_eq!(run(src, "m", "123x", "anc_f").unwrap().0, "false");
+    }
+
+    /// A mid-pattern anchor is outside the v0.1 cut and errors clearly.
     #[test]
     fn erl_unsupported_errors() {
         let decl =
-            parse_fsm_block(b"@@fsm M(text: bytes) : bool = false { /^a/ true }").expect("parses");
-        assert!(generate(&decl).is_err());
+            parse_fsm_block(b"@@fsm M(text: bytes) : bool = false { /a$b/ true }").expect("parses");
+        let err = generate(&decl).unwrap_err();
+        assert!(err.contains("anchor"), "got {err}");
     }
 }
