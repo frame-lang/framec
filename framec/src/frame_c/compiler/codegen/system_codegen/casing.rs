@@ -61,6 +61,7 @@ pub(crate) fn should_emit_layered(lang: TargetLanguage) -> bool {
             | TargetLanguage::Rust
             | TargetLanguage::TypeScript
             | TargetLanguage::JavaScript
+            | TargetLanguage::Java
     )
 }
 
@@ -214,6 +215,38 @@ fn generate_casing_fields(machine_name: &str, lang: TargetLanguage) -> Vec<Field
                 leading_comments: vec![],
             },
         ],
+        TargetLanguage::Java => vec![
+            Field {
+                name: "machine".to_string(),
+                type_annotation: Some(machine_name.to_string()),
+                visibility: Visibility::Private,
+                is_static: false,
+                is_const: false,
+                initializer: None,
+                leading_comments: vec![],
+            },
+            Field {
+                name: "busy".to_string(),
+                type_annotation: Some("boolean".to_string()),
+                visibility: Visibility::Private,
+                is_static: false,
+                is_const: false,
+                initializer: None,
+                leading_comments: vec![],
+            },
+            Field {
+                name: "in_flight".to_string(),
+                // Java's String is a reference type, nullable. `null`
+                // is the unset state matching the other backends'
+                // `None` / `null`.
+                type_annotation: Some("String".to_string()),
+                visibility: Visibility::Private,
+                is_static: false,
+                is_const: false,
+                initializer: None,
+                leading_comments: vec![],
+            },
+        ],
         _ => vec![],
     }
 }
@@ -228,6 +261,19 @@ fn generate_casing_constructor(machine_name: &str, lang: TargetLanguage) -> Code
         ),
         TargetLanguage::TypeScript | TargetLanguage::JavaScript => format!(
             "this.machine = new {m}();\n\
+             this.busy = false;\n\
+             this.in_flight = null;",
+            m = machine_name
+        ),
+        TargetLanguage::Java => format!(
+            // Java's async boundary is CompletableFuture, but the machine's
+            // internals are sync — `make_java_interface_async` makes the
+            // machine fire $> synchronously in its `__create()` factory and
+            // emit `init()` as a no-op completedFuture. The casing's
+            // constructor mirrors that by calling the machine's `__create()`
+            // so $> fires synchronously during casing construction; the
+            // casing's `init()` delegates to the machine's no-op future.
+            "this.machine = {m}.__create();\n\
              this.busy = false;\n\
              this.in_flight = null;",
             m = machine_name
@@ -288,6 +334,36 @@ fn generate_casing_interface_wrapper(ifm: &InterfaceMethod, lang: TargetLanguage
                 args = arg_str
             )
         }
+        TargetLanguage::Java => {
+            let arg_list: Vec<String> = ifm.params.iter().map(|p| p.name.clone()).collect();
+            let arg_str = arg_list.join(", ");
+            // The machine's interface method (post-`make_java_interface_async`)
+            // already returns `CompletableFuture<T>` (already-completed because
+            // Java's internals are sync). The casing returns the machine's
+            // future directly; no extra `completedFuture` wrap needed.
+            // The gate-clear runs in `finally` so it executes whether the
+            // machine call returns normally or throws (Java's evaluation
+            // order: machine call returns → return value captured → finally
+            // runs → captured value returned, so the future the user
+            // receives is well-defined).
+            format!(
+                "if (this.busy) {{\n\
+                 \x20   throw new RuntimeException(\n\
+                 \x20       \"E703: system busy: cannot enter '{name}' while '\" + this.in_flight + \"' is in flight\"\n\
+                 \x20   );\n\
+                 }}\n\
+                 this.busy = true;\n\
+                 this.in_flight = \"{name}\";\n\
+                 try {{\n\
+                 \x20   return this.machine.{name}({args});\n\
+                 }} finally {{\n\
+                 \x20   this.busy = false;\n\
+                 \x20   this.in_flight = null;\n\
+                 }}",
+                name = ifm.name,
+                args = arg_str
+            )
+        }
         _ => String::new(),
     };
 
@@ -329,7 +405,7 @@ fn generate_casing_operation_delegate(op: &OperationAst, lang: TargetLanguage) -
                 args = arg_str
             )
         }
-        TargetLanguage::TypeScript | TargetLanguage::JavaScript => {
+        TargetLanguage::TypeScript | TargetLanguage::JavaScript | TargetLanguage::Java => {
             let arg_list: Vec<String> = op.params.iter().map(|p| p.name.clone()).collect();
             let arg_str = arg_list.join(", ");
             format!(
@@ -373,7 +449,7 @@ fn generate_casing_save_delegate(system: &SystemAst, lang: TargetLanguage) -> Op
     let save_name = system.save_op_name_rfc0015()?;
     let body_code = match lang {
         TargetLanguage::Python3 => format!("return self._machine.{name}()", name = save_name),
-        TargetLanguage::TypeScript | TargetLanguage::JavaScript => {
+        TargetLanguage::TypeScript | TargetLanguage::JavaScript | TargetLanguage::Java => {
             format!("return this.machine.{name}();", name = save_name)
         }
         _ => String::new(),
@@ -400,7 +476,7 @@ fn generate_casing_restore_delegate(
     let load_name = system.load_op_name_rfc0015()?;
     let body_code = match lang {
         TargetLanguage::Python3 => format!("self._machine.{name}(data)", name = load_name),
-        TargetLanguage::TypeScript | TargetLanguage::JavaScript => {
+        TargetLanguage::TypeScript | TargetLanguage::JavaScript | TargetLanguage::Java => {
             format!("this.machine.{name}(data);", name = load_name)
         }
         _ => String::new(),
@@ -429,6 +505,13 @@ fn generate_casing_init_delegate(lang: TargetLanguage) -> CodegenNode {
         TargetLanguage::Python3 => "await self._machine.init()".to_string(),
         TargetLanguage::TypeScript | TargetLanguage::JavaScript => {
             "await this.machine.init();".to_string()
+        }
+        TargetLanguage::Java => {
+            // Java's `init()` returns CompletableFuture<Void>. The machine's
+            // init() is a no-op already-completed future per the existing
+            // make_java_interface_async pattern; the casing delegates to it
+            // directly, no extra wrapping needed.
+            "return this.machine.init();".to_string()
         }
         _ => String::new(),
     };
