@@ -28,11 +28,11 @@ use crate::frame_c::visitors::TargetLanguage;
 
 /// For typed targets (TypeScript / Java / etc.), surface the user's
 /// declared type string verbatim so the backend's `convert_type` can
-/// translate to the native type. For dynamic targets (Python), no
-/// annotation is emitted.
+/// translate to the native type. For dynamic targets (Python,
+/// JavaScript), no annotation is emitted.
 fn type_annotation_for(t: &FrameType, lang: TargetLanguage) -> Option<String> {
     match (lang, t) {
-        (TargetLanguage::Python3, _) => None,
+        (TargetLanguage::Python3 | TargetLanguage::JavaScript, _) => None,
         (_, FrameType::Unknown) => None,
         (_, FrameType::Custom(s)) => Some(s.clone()),
     }
@@ -42,7 +42,7 @@ fn type_annotation_for(t: &FrameType, lang: TargetLanguage) -> Option<String> {
 /// positions.
 fn return_type_for(t: Option<&FrameType>, lang: TargetLanguage) -> Option<String> {
     match (lang, t) {
-        (TargetLanguage::Python3, _) => None,
+        (TargetLanguage::Python3 | TargetLanguage::JavaScript, _) => None,
         (_, None) => None,
         (_, Some(FrameType::Unknown)) => None,
         (_, Some(FrameType::Custom(s))) => Some(s.clone()),
@@ -57,7 +57,10 @@ fn return_type_for(t: Option<&FrameType>, lang: TargetLanguage) -> Option<String
 pub(crate) fn should_emit_layered(lang: TargetLanguage) -> bool {
     matches!(
         lang,
-        TargetLanguage::Python3 | TargetLanguage::Rust | TargetLanguage::TypeScript
+        TargetLanguage::Python3
+            | TargetLanguage::Rust
+            | TargetLanguage::TypeScript
+            | TargetLanguage::JavaScript
     )
 }
 
@@ -223,7 +226,7 @@ fn generate_casing_constructor(machine_name: &str, lang: TargetLanguage) -> Code
              self._in_flight = None",
             m = machine_name
         ),
-        TargetLanguage::TypeScript => format!(
+        TargetLanguage::TypeScript | TargetLanguage::JavaScript => format!(
             "this.machine = new {m}();\n\
              this.busy = false;\n\
              this.in_flight = null;",
@@ -264,7 +267,7 @@ fn generate_casing_interface_wrapper(ifm: &InterfaceMethod, lang: TargetLanguage
                 args = arg_str
             )
         }
-        TargetLanguage::TypeScript => {
+        TargetLanguage::TypeScript | TargetLanguage::JavaScript => {
             let arg_list: Vec<String> = ifm.params.iter().map(|p| p.name.clone()).collect();
             let arg_str = arg_list.join(", ");
             format!(
@@ -326,7 +329,7 @@ fn generate_casing_operation_delegate(op: &OperationAst, lang: TargetLanguage) -
                 args = arg_str
             )
         }
-        TargetLanguage::TypeScript => {
+        TargetLanguage::TypeScript | TargetLanguage::JavaScript => {
             let arg_list: Vec<String> = op.params.iter().map(|p| p.name.clone()).collect();
             let arg_str = arg_list.join(", ");
             format!(
@@ -370,7 +373,7 @@ fn generate_casing_save_delegate(system: &SystemAst, lang: TargetLanguage) -> Op
     let save_name = system.save_op_name_rfc0015()?;
     let body_code = match lang {
         TargetLanguage::Python3 => format!("return self._machine.{name}()", name = save_name),
-        TargetLanguage::TypeScript => {
+        TargetLanguage::TypeScript | TargetLanguage::JavaScript => {
             format!("return this.machine.{name}();", name = save_name)
         }
         _ => String::new(),
@@ -397,7 +400,9 @@ fn generate_casing_restore_delegate(
     let load_name = system.load_op_name_rfc0015()?;
     let body_code = match lang {
         TargetLanguage::Python3 => format!("self._machine.{name}(data)", name = load_name),
-        TargetLanguage::TypeScript => format!("this.machine.{name}(data);", name = load_name),
+        TargetLanguage::TypeScript | TargetLanguage::JavaScript => {
+            format!("this.machine.{name}(data);", name = load_name)
+        }
         _ => String::new(),
     };
     Some(CodegenNode::Method {
@@ -422,7 +427,9 @@ fn generate_casing_restore_delegate(
 fn generate_casing_init_delegate(lang: TargetLanguage) -> CodegenNode {
     let body_code = match lang {
         TargetLanguage::Python3 => "await self._machine.init()".to_string(),
-        TargetLanguage::TypeScript => "await this.machine.init();".to_string(),
+        TargetLanguage::TypeScript | TargetLanguage::JavaScript => {
+            "await this.machine.init();".to_string()
+        }
         _ => String::new(),
     };
     CodegenNode::Method {
