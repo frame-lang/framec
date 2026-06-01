@@ -6,6 +6,79 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+Ships RFC-0043: the `@@[async]` system-header attribute and a layered
+casing/machine codegen architecture for every async-capable backend. Async
+systems are now emitted as a public **casing** (user-declared name) that gates
+external entry against concurrent dispatch, and a private **machine**
+(`_<Name>Machine`) holding the existing async dispatch core. Hard cut from
+the previous release: async members now **require** the `@@[async]` header.
+
+### Added
+
+- **`@@[async]` system-header attribute (RFC-0043).** Opts a system into the
+  layered codegen architecture. Required for any system declaring an `async`
+  interface method, action, or operation. Permitted without async members
+  (a sync-dispatch system that still wants the single-driver gate).
+- **Layered casing/machine emission across 11 async-capable backends.**
+  Python, Rust, TypeScript, JavaScript, Java, C#, Kotlin, Swift, Dart,
+  GDScript, C++. Each casing wrapper enforces a single-flight gate; the
+  embedded machine carries the existing async dispatch core unchanged.
+  Operations and persist save/load bypass the gate (they're non-dispatching).
+- **`E703` — concurrent external dispatch.** Runtime error raised when an
+  external caller enters an async system while a dispatch is in flight.
+  Per-backend idiomatic raise: `RuntimeError` / `Error` / `panic!` /
+  `RuntimeException` / `InvalidOperationException` /
+  `IllegalStateException` / `fatalError` / `StateError` / `assert` /
+  `std::runtime_error`. The gate is single-driver — at most one external
+  dispatch in flight at a time. Internal self-calls (RFC-0006) bypass the
+  gate by going directly to the machine.
+- **`E720` — async members require `@@[async]`** (validator, hard cut).
+  An `async` interface method, action, or operation without the
+  `@@[async]` system-header attribute is now an error. No warning grace
+  period.
+- **`E721` — sync system composes async system as domain field** (validator,
+  same-file). A non-`@@[async]` system declaring a domain field whose type
+  names an `@@[async]` system in the same compilation unit is now an error.
+  Detection tokenizes the type text on non-identifier characters so direct
+  (`f: Fetcher`), nullable (`f: Fetcher?`), and container-wrapped
+  (`Vec<Fetcher>`, `Option<Fetcher>`, `List<Fetcher>`) cases all fire.
+  Same-file scope only — cross-file resolution arrives with RFC-0040's
+  follow-up.
+- **`framec project add-async-attr <path>` codemod** + **`migrate_async_attr`
+  WASM export.** Purely textual migration: inserts `@@[async]` above each
+  `@@system` header whose body declares an async member. Recognizes
+  `.frm`, `.frame`, and target-suffixed `.f<ext>` source files.
+
+### Changed
+
+- **C++ `Class` arm now exposes the current class name as `ctx.system_name`**
+  for the scope of its emission. Previously the C++ emitter left
+  `system_name` untouched, so the Constructor arm reused the outer scope's
+  value across every class in a multi-class module — producing the wrong
+  factory name when more than one class appears in a single emission. The
+  fix mirrors the established Java / Kotlin / Swift pattern.
+- **`<stdexcept>` added to the C++ runtime imports** for
+  `std::runtime_error` used by the casing's E703 gate.
+
+### Migration
+
+If your code has async systems without `@@[async]`, run the codemod once
+before upgrading and the validator stays quiet:
+
+```bash
+framec project add-async-attr path/to/source-tree
+```
+
+The codemod is purely additive — it inserts the now-required attribute and
+changes nothing else. Sources that already carry `@@[async]` (or that
+declare no async members) generate byte-identical output to 4.3.x for those
+systems.
+
+If your code has a sync system holding an async system as a domain field,
+E721 surfaces it at compile time. The two fixes are: (1) add `@@[async]`
+to the holder, or (2) restructure so the async child is held by an async
+parent.
+
 ## [4.3.0] - 2026-05-27
 
 Re-introduces the `@@import` directive (removed in 4.2.0 by RFC-0024) in a
