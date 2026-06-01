@@ -19,10 +19,13 @@
 //! (`>{}`/`@{}`/`${}`/`%{}`/`@eof{}`, §3.5.5/§5.4) — over all three alphabets
 //! (`bytes`/`char` as a `Vec<char>`; `token` as a `Vec<String>` mapped to
 //! small integer ids), with the `@@:matched` / `to_int` / `to_str` / `len`
-//! built-ins, and Mode C sub-fsm call-out (`/@Inner/`, §8.3 — constructs the
+//! built-ins, Mode C sub-fsm call-out (`/@Inner/`, §8.3 — constructs the
 //! inner fsm over the input at the cursor, exposing it via
-//! `$state.label.return_value`). Not yet handled (clear `Unsupported` error,
-//! never a silent miscompile): anchors (deferred to v0.2).
+//! `$state.label.return_value`), and boundary anchors (a leading `^`/`\A`,
+//! a trailing `$`/`\z`, §6.6). This is full parity with the Python reference
+//! backend. Not yet handled (clear `Unsupported` error, never a silent
+//! miscompile): mid-pattern anchors and `\b`/`\B` (deferred to v0.2 in both
+//! backends).
 
 use crate::frame_c::compiler::frame_ast::{
     BinaryOp, EmbeddingOp, Expression, FsmDeclAst, FsmStateAst, FsmTransitionTarget, Literal,
@@ -43,6 +46,10 @@ pub fn generate(decl: &FsmDeclAst) -> Result<String, String> {
 struct StageDfa {
     states: Vec<(Vec<(u32, u32, usize)>, bool)>,
     start: usize,
+    /// Leading `^`/`\A`: the match must start at the input start (cursor 0).
+    requires_start: bool,
+    /// Trailing `$`/`\z`: the match must end at the input end.
+    requires_end: bool,
     /// RFC-0042 §8.3 Mode C: when `Some(name)`, this stage is a call-out to
     /// the `@@fsm` `name` rather than a regex DFA match (no DFA; a
     /// placeholder keeps stage indices aligned with the emit walk).
@@ -122,6 +129,8 @@ impl<'a> Generator<'a> {
                             self.stage_dfas.push(StageDfa {
                                 states: Vec::new(),
                                 start: 0,
+                                requires_start: false,
+                                requires_end: false,
                                 mode_c: Some(inner.to_string()),
                             });
                             continue;
@@ -148,11 +157,6 @@ impl<'a> Generator<'a> {
     ) -> Result<StageDfa, String> {
         match fsm_regex::compile(regex, alphabet, DEFAULT_MAX_DFA_STATES) {
             Ok(compiled) => {
-                if compiled.requires_start || compiled.requires_end {
-                    return Err(
-                        "anchors are not yet supported by the Rust backend (v0.1 first cut)".into(),
-                    );
-                }
                 let mut states = Vec::with_capacity(compiled.dfa.states.len());
                 for s in &compiled.dfa.states {
                     let mut trans = Vec::new();
@@ -177,6 +181,8 @@ impl<'a> Generator<'a> {
                 Ok(StageDfa {
                     states,
                     start: compiled.dfa.start,
+                    requires_start: compiled.requires_start,
+                    requires_end: compiled.requires_end,
                     mode_c: None,
                 })
             }
@@ -770,17 +776,19 @@ impl<'a> Generator<'a> {
                     let MatchElement::Stage(sel) = &m.elements[fs] else {
                         unreachable!("first_stage indexes a Stage element")
                     };
+                    let bind = self.r_binding(my_sid);
                     if sel.embedding_actions.is_empty() {
                         self.emit_dfa_const(out, my_sid, "        ");
                         writeln!(
                             out,
-                            "        let _r = self.dfa_match(DFA_{}, {});",
-                            my_sid, self.stage_dfas[my_sid].start
+                            "        {} = self.dfa_match(DFA_{}, {});",
+                            bind, my_sid, self.stage_dfas[my_sid].start
                         )
                         .ok();
                     } else {
-                        writeln!(out, "        let _r = self.match_stage_{}();", my_sid).ok();
+                        writeln!(out, "        {} = self.match_stage_{}();", bind, my_sid).ok();
                     }
+                    self.emit_anchor_guards(out, my_sid, "        ");
                     out.push_str("        if _r >= 0 {\n");
                     // Committed: record the selector's capture + advance.
                     writeln!(out, "            self.matched = {};", self.matched_slice()).ok();
@@ -828,6 +836,37 @@ impl<'a> Generator<'a> {
         Ok(())
     }
 
+    /// The `let` binding for a stage's match result `_r`. It is `mut` only
+    /// when boundary anchors may rewrite it to `-1` (else `let mut` would
+    /// draw an `unused_mut` warning in the generated code).
+    fn r_binding(&self, sid: usize) -> &'static str {
+        let dfa = &self.stage_dfas[sid];
+        if dfa.requires_start || dfa.requires_end {
+            "let mut _r"
+        } else {
+            "let _r"
+        }
+    }
+
+    /// After a stage's match result `_r` is computed, enforce its boundary
+    /// anchors (§6.6): a leading `^`/`\A` requires the match to start at the
+    /// input start (cursor 0); a trailing `$`/`\z` requires it to end at the
+    /// input end. A violated anchor turns the match into a miss (`_r = -1`).
+    fn emit_anchor_guards(&self, out: &mut String, sid: usize, ind: &str) {
+        let dfa = &self.stage_dfas[sid];
+        if dfa.requires_start {
+            writeln!(out, "{ind}if self.cursor != 0 {{ _r = -1; }}").ok();
+        }
+        if dfa.requires_end {
+            let input = &self.decl.params[0].name;
+            writeln!(
+                out,
+                "{ind}if _r != self.{input}.len() as i64 {{ _r = -1; }}"
+            )
+            .ok();
+        }
+    }
+
     fn emit_element(
         &self,
         out: &mut String,
@@ -849,18 +888,21 @@ impl<'a> Generator<'a> {
                 // A stage carrying embedding actions matches via its
                 // specialized `match_stage_<sid>` (which fires the actions at
                 // their DFA positions); a plain stage uses the shared DFA
-                // executor over an inline `DFA_<sid>` const.
+                // executor over an inline `DFA_<sid>` const. `_r` is `mut`
+                // only when boundary anchors may turn the match into a miss.
+                let bind = self.r_binding(my_sid);
                 if stage.embedding_actions.is_empty() {
                     self.emit_dfa_const(out, my_sid, ind);
                     writeln!(
                         out,
-                        "{}let _r = self.dfa_match(DFA_{}, {});",
-                        ind, my_sid, self.stage_dfas[my_sid].start
+                        "{}{} = self.dfa_match(DFA_{}, {});",
+                        ind, bind, my_sid, self.stage_dfas[my_sid].start
                     )
                     .ok();
                 } else {
-                    writeln!(out, "{}let _r = self.match_stage_{}();", ind, my_sid).ok();
+                    writeln!(out, "{}{} = self.match_stage_{}();", ind, bind, my_sid).ok();
                 }
+                self.emit_anchor_guards(out, my_sid, ind);
                 writeln!(out, "{}if _r < 0 {{", ind).ok();
                 self.emit_failure(out, m, &ind4)?;
                 writeln!(out, "{}}}", ind).ok();
@@ -1617,12 +1659,37 @@ mod tests {
         );
     }
 
-    /// A construct outside the v0.1 Rust cut errors clearly. Anchors are
-    /// deferred to v0.2 (a leading `^` requires the boundary model).
+    /// FSM-TEST-312 — leading `^` matches only at cursor 0. `/^foo/` accepts
+    /// "foo", rejects "xfoo" and "".
+    #[test]
+    fn rust_start_anchor() {
+        let src = "@@fsm M(text: bytes) : bool = false { /^foo/ true }";
+        let Some((acc, _)) = run(src, "M", "foo", "anc_a") else {
+            return;
+        };
+        assert_eq!(acc, "true");
+        assert_eq!(run(src, "M", "xfoo", "anc_b").unwrap().0, "false");
+        assert_eq!(run(src, "M", "", "anc_c").unwrap().0, "false");
+    }
+
+    /// A trailing `$` requires the match to reach the end of input.
+    #[test]
+    fn rust_end_anchor() {
+        let src = "@@fsm M(text: bytes) : bool = false { /[0-9]+$/ true }";
+        let Some((acc, _)) = run(src, "M", "123", "anc_e") else {
+            return;
+        };
+        assert_eq!(acc, "true");
+        // "123x": digits don't reach end-of-input → `$` fails → reject.
+        assert_eq!(run(src, "M", "123x", "anc_f").unwrap().0, "false");
+    }
+
+    /// A mid-pattern anchor is outside the v0.1 cut and errors clearly.
     #[test]
     fn rust_unsupported_errors() {
         let decl =
-            parse_fsm_block(b"@@fsm M(text: bytes) : bool = false { /^a/ true }").expect("parses");
-        assert!(generate(&decl).is_err());
+            parse_fsm_block(b"@@fsm M(text: bytes) : bool = false { /a$b/ true }").expect("parses");
+        let err = generate(&decl).unwrap_err();
+        assert!(err.contains("anchor"), "got {err}");
     }
 }
