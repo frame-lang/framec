@@ -62,6 +62,7 @@ pub(crate) fn should_emit_layered(lang: TargetLanguage) -> bool {
             | TargetLanguage::TypeScript
             | TargetLanguage::JavaScript
             | TargetLanguage::Java
+            | TargetLanguage::CSharp
     )
 }
 
@@ -247,6 +248,38 @@ fn generate_casing_fields(machine_name: &str, lang: TargetLanguage) -> Vec<Field
                 leading_comments: vec![],
             },
         ],
+        TargetLanguage::CSharp => vec![
+            Field {
+                name: "machine".to_string(),
+                type_annotation: Some(machine_name.to_string()),
+                visibility: Visibility::Private,
+                is_static: false,
+                is_const: false,
+                initializer: None,
+                leading_comments: vec![],
+            },
+            Field {
+                name: "busy".to_string(),
+                type_annotation: Some("bool".to_string()),
+                visibility: Visibility::Private,
+                is_static: false,
+                is_const: false,
+                initializer: None,
+                leading_comments: vec![],
+            },
+            Field {
+                // C# 8+ nullable-reference annotation: `string?` for a
+                // nullable string. Matches the existing C# codegen's
+                // `AsyncWorkerCompartment? __next_compartment;` pattern.
+                name: "in_flight".to_string(),
+                type_annotation: Some("string?".to_string()),
+                visibility: Visibility::Private,
+                is_static: false,
+                is_const: false,
+                initializer: None,
+                leading_comments: vec![],
+            },
+        ],
         _ => vec![],
     }
 }
@@ -274,6 +307,12 @@ fn generate_casing_constructor(machine_name: &str, lang: TargetLanguage) -> Code
             // so $> fires synchronously during casing construction; the
             // casing's `init()` delegates to the machine's no-op future.
             "this.machine = {m}.__create();\n\
+             this.busy = false;\n\
+             this.in_flight = null;",
+            m = machine_name
+        ),
+        TargetLanguage::CSharp => format!(
+            "this.machine = new {m}();\n\
              this.busy = false;\n\
              this.in_flight = null;",
             m = machine_name
@@ -332,6 +371,35 @@ fn generate_casing_interface_wrapper(ifm: &InterfaceMethod, lang: TargetLanguage
                  }}",
                 name = ifm.name,
                 args = arg_str
+            )
+        }
+        TargetLanguage::CSharp => {
+            let arg_list: Vec<String> = ifm.params.iter().map(|p| p.name.clone()).collect();
+            let arg_str = arg_list.join(", ");
+            // C# distinguishes `async Task` (void) from `async Task<T>` —
+            // a void async method body cannot use `return await ...`.
+            let has_return = !matches!(ifm.return_type, None | Some(FrameType::Unknown));
+            let delegate_line = if has_return {
+                format!("return await this.machine.{}({});", ifm.name, arg_str)
+            } else {
+                format!("await this.machine.{}({});", ifm.name, arg_str)
+            };
+            format!(
+                "if (this.busy) {{\n\
+                 \x20   throw new System.InvalidOperationException(\n\
+                 \x20       $\"E703: system busy: cannot enter '{name}' while '{{this.in_flight}}' is in flight\"\n\
+                 \x20   );\n\
+                 }}\n\
+                 this.busy = true;\n\
+                 this.in_flight = \"{name}\";\n\
+                 try {{\n\
+                 \x20   {delegate}\n\
+                 }} finally {{\n\
+                 \x20   this.busy = false;\n\
+                 \x20   this.in_flight = null;\n\
+                 }}",
+                name = ifm.name,
+                delegate = delegate_line
             )
         }
         TargetLanguage::Java => {
@@ -414,6 +482,24 @@ fn generate_casing_operation_delegate(op: &OperationAst, lang: TargetLanguage) -
                 args = arg_str
             )
         }
+        TargetLanguage::CSharp => {
+            let arg_list: Vec<String> = op.params.iter().map(|p| p.name.clone()).collect();
+            let arg_str = arg_list.join(", ");
+            // C# void ops can't `return X();` — emit a bare call.
+            if matches!(op.return_type, FrameType::Unknown) {
+                format!(
+                    "this.machine.{name}({args});",
+                    name = op.name,
+                    args = arg_str
+                )
+            } else {
+                format!(
+                    "return this.machine.{name}({args});",
+                    name = op.name,
+                    args = arg_str
+                )
+            }
+        }
         _ => String::new(),
     };
 
@@ -449,7 +535,10 @@ fn generate_casing_save_delegate(system: &SystemAst, lang: TargetLanguage) -> Op
     let save_name = system.save_op_name_rfc0015()?;
     let body_code = match lang {
         TargetLanguage::Python3 => format!("return self._machine.{name}()", name = save_name),
-        TargetLanguage::TypeScript | TargetLanguage::JavaScript | TargetLanguage::Java => {
+        TargetLanguage::TypeScript
+        | TargetLanguage::JavaScript
+        | TargetLanguage::Java
+        | TargetLanguage::CSharp => {
             format!("return this.machine.{name}();", name = save_name)
         }
         _ => String::new(),
@@ -476,7 +565,10 @@ fn generate_casing_restore_delegate(
     let load_name = system.load_op_name_rfc0015()?;
     let body_code = match lang {
         TargetLanguage::Python3 => format!("self._machine.{name}(data)", name = load_name),
-        TargetLanguage::TypeScript | TargetLanguage::JavaScript | TargetLanguage::Java => {
+        TargetLanguage::TypeScript
+        | TargetLanguage::JavaScript
+        | TargetLanguage::Java
+        | TargetLanguage::CSharp => {
             format!("this.machine.{name}(data);", name = load_name)
         }
         _ => String::new(),
@@ -513,6 +605,7 @@ fn generate_casing_init_delegate(lang: TargetLanguage) -> CodegenNode {
             // directly, no extra wrapping needed.
             "return this.machine.init();".to_string()
         }
+        TargetLanguage::CSharp => "await this.machine.init();".to_string(),
         _ => String::new(),
     };
     CodegenNode::Method {
