@@ -636,9 +636,11 @@ fn parse_module_segments(
                     });
             }
 
-            // RFC-0043: attach pending `@@[async]` attribute (if any).
-            // Resets after attachment so it can't bleed onto a later
-            // system.
+            // RFC-0043: attach pending `@@[async]` attribute (if any),
+            // and set the `is_async_layered` flag so downstream codegen
+            // can read it directly without re-scanning attributes or
+            // members. Resets after attachment so the pragma can't
+            // bleed onto a later system.
             if let Some(async_span) = pending_async_attr_span.take() {
                 system_ast
                     .attributes
@@ -647,6 +649,7 @@ fn parse_module_segments(
                         args: None,
                         span: async_span,
                     });
+                system_ast.is_async_layered = true;
             }
 
             // RFC-0015: attach pending lifecycle attributes (`@@[create]`,
@@ -1221,11 +1224,12 @@ pub(crate) fn do_validate_codegen(c: &mut PipelineCtx) -> Option<CompileResult> 
         // validators so attribute-shape errors fire first.
         filter_by_target_attribute(system_ast, config.target);
 
-        // Warn if async is used with C target (no native async support)
-        let has_async = system_ast.interface.iter().any(|m| m.is_async)
-            || system_ast.actions.iter().any(|a| a.is_async)
-            || system_ast.operations.iter().any(|o| o.is_async);
-        if has_async && matches!(config.target, TargetLanguage::C) {
+        // Warn if async is used with C target (no native async support).
+        // Reads the RFC-0043 `is_async_layered` flag set during the
+        // attribute-attach pass; equivalent post-validation to scanning
+        // members for `is_async` because E720 makes async members
+        // without `@@[async]` impossible past the validator.
+        if system_ast.is_async_layered && matches!(config.target, TargetLanguage::C) {
             eprintln!("Warning: async is not supported for C — async keyword ignored");
         }
 
