@@ -26,12 +26,14 @@
 //! statements), declared `actions:` helpers (emitted as methods), and
 //! static, conditional (`when`), and stage-ref (`-> $S.stage`) success/
 //! failure transitions (including failure-only clauses `: -> $Err`), and
-//! multi-match (`|`) ordered-choice states, and embedding actions
-//! (`>{}`/`@{}`/`${}`/`%{}`/`@eof{}`, §3.5.5/§5.4), over all three
-//! alphabets — `bytes`, `char`, and `token` (token kinds map to integer
-//! ids so they share the numeric range matcher). The one construct not
-//! yet handled — a `|` alternative with elements before its first stage —
-//! produces a clear `Unsupported` error rather than a silent miscompile.
+//! multi-match (`|`) ordered-choice states, embedding actions
+//! (`>{}`/`@{}`/`${}`/`%{}`/`@eof{}`, §3.5.5/§5.4), and boundary anchors
+//! (leading `^`/`\A`, trailing `$`/`\z`, §6.6 — enforced by matcher
+//! position guards), over all three alphabets — `bytes`, `char`, and
+//! `token` (token kinds map to integer ids so they share the numeric
+//! range matcher). Not yet handled (clear `Unsupported` error, never a
+//! silent miscompile): mid-pattern anchors and `\b`/`\B`, and a `|`
+//! alternative with elements before its first stage.
 
 use crate::frame_c::compiler::frame_ast::{
     BinaryOp, BlockAst, EmbeddingOp, Expression, FsmDeclAst, FsmStateAst, FsmTransitionTarget,
@@ -56,6 +58,10 @@ struct StageDfa {
     /// transition is `(low, high, target)`.
     states: Vec<(Vec<(u32, u32, usize)>, bool)>,
     start: usize,
+    /// Leading `^`/`\A`: the match must start at the input start.
+    requires_start: bool,
+    /// Trailing `$`/`\z`: the match must end at the input end.
+    requires_end: bool,
 }
 
 struct Generator<'a> {
@@ -173,6 +179,8 @@ impl<'a> Generator<'a> {
                 Ok(StageDfa {
                     states,
                     start: compiled.dfa.start,
+                    requires_start: compiled.requires_start,
+                    requires_end: compiled.requires_end,
                 })
             }
             Err(CompileError::Diagnostics(ds)) => Err(format!(
@@ -181,7 +189,8 @@ impl<'a> Generator<'a> {
                 ds.first().map(|d| d.message.as_str()).unwrap_or("")
             )),
             Err(CompileError::UnsupportedAnchors(_)) => Err(format!(
-                "regex `/{}/` uses anchors, which the v0.1 DFA engine does not yet support",
+                "regex `/{}/` uses a mid-pattern or word-boundary anchor; only a leading \
+                 `^`/`\\A` or trailing `$`/`\\z` is supported in v0.1",
                 regex
             )),
         }
@@ -622,6 +631,7 @@ impl<'a> Generator<'a> {
                         unreachable!("first_stage indexes a Stage element")
                     };
                     writeln!(out, "        _r = {}", stage_call(sel, my_sid)).ok();
+                    self.emit_anchor_guards(out, my_sid, "        ");
                     out.push_str("        if _r >= 0:\n");
                     // Committed: record the first stage's capture + advance.
                     writeln!(
@@ -696,6 +706,25 @@ impl<'a> Generator<'a> {
         Ok(())
     }
 
+    /// After a stage's match result `_r` is computed, enforce its boundary
+    /// anchors (§6.6): a leading `^`/`\A` requires the match to start at the
+    /// input start (cursor 0); a trailing `$`/`\z` requires it to end at the
+    /// input end. A violated anchor turns the match into a miss (`_r = -1`).
+    fn emit_anchor_guards(&self, out: &mut String, sid: usize, ind: &str) {
+        let dfa = &self.stage_dfas[sid];
+        if dfa.requires_start {
+            writeln!(out, "{ind}if self.cursor != 0:\n{ind}    _r = -1").ok();
+        }
+        if dfa.requires_end {
+            writeln!(
+                out,
+                "{ind}if _r != len(self.{}):\n{ind}    _r = -1",
+                self.input_field()
+            )
+            .ok();
+        }
+    }
+
     /// Emit one match element at `ind`. A stage runs its DFA, routes to the
     /// failure branch on no-match, and records the capture / advances the
     /// cursor on success. `ind4` is `ind` + 4 spaces (the failure block).
@@ -714,6 +743,7 @@ impl<'a> Generator<'a> {
                 let my_sid = *sid;
                 *sid += 1;
                 writeln!(out, "{}_r = {}", ind, stage_call(stage, my_sid)).ok();
+                self.emit_anchor_guards(out, my_sid, ind);
                 writeln!(out, "{}if _r < 0:", ind).ok();
                 // The stage failed: follow the failure branch (or §5.6).
                 // emit_failure records the rejection (accepted=False).
@@ -1537,12 +1567,39 @@ mod tests {
         assert_eq!(b.return_value, "False");
     }
 
-    /// A construct outside the v0.1 backend cut errors clearly rather than
-    /// miscompiling.
+    /// FSM-TEST-312 — the start-of-input anchor `^` matches only at cursor
+    /// 0. `/^foo/` accepts "foo", rejects "xfoo" (reject at 0) and "".
     #[test]
-    fn unsupported_anchor_errors() {
+    fn fsm_test_312_start_anchor() {
+        let src = "@@fsm M(text: bytes) : bool = false { /^foo/ true }";
+        let Some(foo) = run(src, "foo", "t312a") else {
+            return;
+        };
+        assert_eq!(foo.accepted, "True");
+        assert_eq!(foo.return_value, "True");
+        let xfoo = run(src, "xfoo", "t312b").unwrap();
+        assert_eq!(xfoo.accepted, "False");
+        assert_eq!(xfoo.reject, "0");
+        assert_eq!(run(src, "", "t312c").unwrap().accepted, "False");
+    }
+
+    /// A trailing `$` requires the match to reach the end of input.
+    #[test]
+    fn end_anchor() {
+        let src = "@@fsm M(text: bytes) : bool = false { /[0-9]+$/ true }";
+        let Some(ok) = run(src, "123", "tea_end_a") else {
+            return;
+        };
+        assert_eq!(ok.accepted, "True");
+        // "123x": digits don't reach end-of-input → `$` fails → reject.
+        assert_eq!(run(src, "123x", "tea_end_b").unwrap().accepted, "False");
+    }
+
+    /// A mid-pattern anchor is outside the v0.1 cut and errors clearly.
+    #[test]
+    fn unsupported_mid_anchor_errors() {
         let decl =
-            parse_fsm_block(b"@@fsm M(text: bytes) : bool = false { /^a/ true }").expect("parses");
+            parse_fsm_block(b"@@fsm M(text: bytes) : bool = false { /a$b/ true }").expect("parses");
         let err = generate(&decl).unwrap_err();
         assert!(err.contains("anchor"), "got {err}");
     }

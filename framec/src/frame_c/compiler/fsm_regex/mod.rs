@@ -21,9 +21,10 @@
 //! Lazy quantifiers, lookaround, Unicode general-category classes, named
 //! captures, backreferences, and recursion are all rejected by
 //! `restrictions::check`. Their handling is deferred to v0.2 per RFC-0042
-//! §11. Zero-width anchors are recognized but not yet folded into the DFA
-//! ([`CompileError::UnsupportedAnchors`]; tracked follow-up — see the
-//! [`subset`] module note).
+//! §11. Boundary anchors — a leading `^`/`\A` or trailing `$`/`\z` — are
+//! extracted into [`CompiledRegex::requires_start`]/`requires_end` (§6.6);
+//! mid-pattern anchors and `\b`/`\B` are deferred
+//! ([`CompileError::UnsupportedAnchors`]).
 //!
 //! # Entry point
 //!
@@ -83,6 +84,13 @@ pub struct CompiledRegex {
     pub dfa: subset::Dfa,
     pub metrics: metrics::DfaMetrics,
     pub warnings: Vec<EngineDiagnostic>,
+    /// A leading `^`/`\A` anchor was present: the match must begin at the
+    /// input start (cursor 0). The anchor is stripped from `dfa`; the
+    /// matcher enforces the position (RFC-0042 §6.6).
+    pub requires_start: bool,
+    /// A trailing `$`/`\z` anchor was present: the match must end at the
+    /// input end. Stripped from `dfa`; enforced by the matcher.
+    pub requires_end: bool,
 }
 
 /// Why a regex failed to compile.
@@ -90,10 +98,11 @@ pub struct CompiledRegex {
 pub enum CompileError {
     /// One or more dialect/syntax/size diagnostics (E720–E723).
     Diagnostics(Vec<EngineDiagnostic>),
-    /// The regex uses zero-width anchors, which the v0.1 DFA engine does
-    /// not yet fold in (tracked follow-up; see [`subset`] module note).
-    /// Surfaced as a clear compiler limitation rather than a silent
-    /// miscompile or a fabricated spec code.
+    /// The regex uses an anchor the v0.1 engine does not fold into the DFA:
+    /// a mid-pattern `^`/`$`/`\A`/`\z`, or any `\b`/`\B` word boundary.
+    /// (Leading `^`/`\A` and trailing `$`/`\z` *are* supported — extracted
+    /// into [`CompiledRegex::requires_start`]/`requires_end`.) Surfaced as a
+    /// clear limitation rather than a silent miscompile.
     UnsupportedAnchors(Span),
 }
 
@@ -137,12 +146,18 @@ pub fn compile(
         ));
     }
 
-    // 3. Thompson NFA.
-    let nfa = thompson::build(&ast, alphabet);
+    // 3. Boundary anchors (§6.6). A leading `^`/`\A` and/or trailing
+    //    `$`/`\z` are extracted into position requirements the matcher
+    //    enforces; the core is anchor-free. Anchors anywhere else, and
+    //    `\b`/`\B`, are not yet folded into the DFA (deferred to v0.2) —
+    //    they survive into the NFA and trip the gate below.
+    let span = ast.root.span;
+    let (requires_start, requires_end, ast) = extract_boundary_anchors(ast);
 
-    // 4. Anchors are not yet folded into the DFA (tracked follow-up).
+    // 4. Thompson NFA over the anchor-free core.
+    let nfa = thompson::build(&ast, alphabet);
     if subset::nfa_has_anchors(&nfa) {
-        return Err(CompileError::UnsupportedAnchors(ast.root.span));
+        return Err(CompileError::UnsupportedAnchors(span));
     }
 
     // 5. Subset construction + minimization.
@@ -178,7 +193,79 @@ pub fn compile(
         dfa,
         metrics,
         warnings,
+        requires_start,
+        requires_end,
     })
+}
+
+/// Strip a leading `^`/`\A` and/or trailing `$`/`\z` from the regex,
+/// returning `(requires_start, requires_end, core)`. The core is the
+/// remaining pattern; any anchor it still contains (mid-pattern, or
+/// `\b`/`\B`) survives and is rejected downstream (v0.2 work).
+fn extract_boundary_anchors(regex: ast::RegexAst) -> (bool, bool, ast::RegexAst) {
+    use ast::{Anchor, RegexAst, RegexNode, SpannedNode};
+
+    fn is_start(a: Anchor) -> bool {
+        matches!(a, Anchor::LineStart | Anchor::InputStart)
+    }
+    fn is_end(a: Anchor) -> bool {
+        matches!(a, Anchor::LineEnd | Anchor::InputEnd)
+    }
+
+    let span = regex.root.span;
+    let (mut requires_start, mut requires_end) = (false, false);
+
+    let root_node = match regex.root.node {
+        RegexNode::Concat(mut items) => {
+            if let Some(SpannedNode {
+                node: RegexNode::Anchor(a),
+                ..
+            }) = items.first()
+            {
+                if is_start(*a) {
+                    requires_start = true;
+                }
+            }
+            if requires_start {
+                items.remove(0);
+            }
+            if let Some(SpannedNode {
+                node: RegexNode::Anchor(a),
+                ..
+            }) = items.last()
+            {
+                if is_end(*a) {
+                    requires_end = true;
+                }
+            }
+            if requires_end {
+                items.pop();
+            }
+            RegexNode::Concat(items)
+        }
+        // A bare anchor regex (`/^/`, `/$/`) is an empty core with the
+        // position requirement.
+        RegexNode::Anchor(a) if is_start(a) => {
+            requires_start = true;
+            RegexNode::Concat(Vec::new())
+        }
+        RegexNode::Anchor(a) if is_end(a) => {
+            requires_end = true;
+            RegexNode::Concat(Vec::new())
+        }
+        other => other,
+    };
+
+    (
+        requires_start,
+        requires_end,
+        RegexAst {
+            root: SpannedNode {
+                node: root_node,
+                span,
+            },
+        },
+    )
 }
 
 fn diag_code_str(code: restrictions::DiagCode) -> &'static str {
@@ -235,9 +322,36 @@ mod engine_tests {
     }
 
     #[test]
-    fn defers_anchors() {
-        let err = compile("^a", Alphabet::Bytes, size_check::DEFAULT_MAX_DFA_STATES).unwrap_err();
+    fn boundary_anchors_compile() {
+        // Leading `^` → requires_start; the core DFA is anchor-free.
+        let r = compile("^foo", Alphabet::Bytes, size_check::DEFAULT_MAX_DFA_STATES)
+            .expect("^foo compiles");
+        assert!(r.requires_start);
+        assert!(!r.requires_end);
+        // Trailing `$` → requires_end.
+        let r2 = compile("foo$", Alphabet::Bytes, size_check::DEFAULT_MAX_DFA_STATES)
+            .expect("foo$ compiles");
+        assert!(!r2.requires_start);
+        assert!(r2.requires_end);
+        // Both.
+        let r3 = compile("^foo$", Alphabet::Bytes, size_check::DEFAULT_MAX_DFA_STATES)
+            .expect("^foo$ compiles");
+        assert!(r3.requires_start && r3.requires_end);
+    }
+
+    #[test]
+    fn defers_mid_pattern_anchors() {
+        // A `$` in the middle is not a boundary anchor → deferred (v0.2).
+        let err = compile("a$b", Alphabet::Bytes, size_check::DEFAULT_MAX_DFA_STATES).unwrap_err();
         assert!(matches!(err, CompileError::UnsupportedAnchors(_)));
+        // Word boundaries are deferred regardless of position.
+        let wb = compile(
+            "\\bfoo",
+            Alphabet::Bytes,
+            size_check::DEFAULT_MAX_DFA_STATES,
+        )
+        .unwrap_err();
+        assert!(matches!(wb, CompileError::UnsupportedAnchors(_)));
     }
 
     #[test]

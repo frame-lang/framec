@@ -450,8 +450,9 @@ pub(crate) fn check_regexes(decl: &FsmDeclAst) -> Vec<FsmDiagnostic> {
                                     code: "E722",
                                     span: stage.span.clone(),
                                     message:
-                                        "zero-width anchors are not yet supported by the v0.1 \
-                                          DFA engine (tracked); use a non-anchored pattern"
+                                        "only a leading `^`/`\\A` or trailing `$`/`\\z` anchor is \
+                                          supported in v0.1; mid-pattern anchors and `\\b`/`\\B` \
+                                          are deferred to v0.2"
                                             .to_string(),
                                 });
                                 false
@@ -819,11 +820,18 @@ mod tests {
         assert!(d.iter().any(|x| x.code == "E722"), "got {:?}", d);
     }
 
-    /// A zero-width anchor is reported as the tracked engine limitation
-    /// (E722, message mentions anchors) rather than miscompiled.
+    /// A boundary anchor (`^a`) is supported and produces no diagnostic.
     #[test]
-    fn regex_anchor_is_deferred() {
+    fn regex_boundary_anchor_ok() {
         let d = diags(b"@@fsm M(text: bytes) : bool = false { /^a/ true }");
+        assert!(!d.iter().any(|x| x.code == "E722"), "got {:?}", d);
+    }
+
+    /// A mid-pattern anchor (`a$b`) is deferred — reported as E722 with an
+    /// anchor message, not miscompiled.
+    #[test]
+    fn regex_mid_anchor_is_deferred() {
+        let d = diags(b"@@fsm M(text: bytes) : bool = false { /a$b/ true }");
         assert!(
             d.iter()
                 .any(|x| x.code == "E722" && x.message.contains("anchor")),
