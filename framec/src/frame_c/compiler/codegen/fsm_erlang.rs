@@ -17,10 +17,12 @@
 //!
 //! Supports single-match states, plain regex stages with `.label` captures,
 //! bare-expression returns, action blocks (`self.X = …` assignment /
-//! `if`-`else`), and static + failure transitions over the `bytes`/`char`
-//! alphabets, with the `@@:matched` / `to_int` / `to_str` / `len` built-ins.
-//! Not yet handled (clear `Unsupported` error, never a silent miscompile):
-//! declared `actions:`, conditional / stage-ref transition targets,
+//! `if`-`else`), declared `actions:` (functional `act_<name>(St, …) ->
+//! {RetVal, St2}` helpers; calls are hoisted out of expression position so
+//! the state map threads), and static + failure transitions over the
+//! `bytes`/`char` alphabets, with the `@@:matched` / `to_int` / `to_str` /
+//! `len` built-ins. Not yet handled (clear `Unsupported` error, never a
+//! silent miscompile): conditional / stage-ref transition targets,
 //! multi-match (`|`) states, embedding actions, Mode C call-out, the token
 //! alphabet, and anchors. These land in later increments, matching the Rust
 //! backend's build-out.
@@ -168,9 +170,107 @@ impl<'a> Generator<'a> {
         self.emit_run(&mut out);
         self.emit_state_dispatch(&mut out);
         self.emit_state_functions(&mut out)?;
+        self.emit_action_functions(&mut out)?;
         self.emit_dfa_helpers(&mut out);
         self.emit_dfa_runtime(&mut out);
         Ok(out)
+    }
+
+    /// Is `name` a declared `actions:` helper? Declared-action calls thread
+    /// the state map (`{Value, St2}`), so they are hoisted out of expression
+    /// position rather than emitted inline.
+    fn is_action(&self, name: &str) -> bool {
+        self.decl
+            .actions
+            .as_ref()
+            .map(|b| b.actions.iter().any(|a| a.name == name))
+            .unwrap_or(false)
+    }
+
+    /// If `e` is a call to a declared action, its `(name, args)`.
+    fn as_action_call<'e>(&self, e: &'e Expression) -> Option<(&'e str, &'e [Expression])> {
+        if let Expression::Call { func, args } = e {
+            if self.is_action(func) {
+                return Some((func.as_str(), args));
+            }
+        }
+        None
+    }
+
+    /// Emit `{Value, St2} = act_<name>(St, Args...),` and return the fresh
+    /// `(value var, threaded-state var)`. Declared actions both read/mutate
+    /// the state map and yield a value, so the call threads `St`.
+    fn emit_action_call(
+        &self,
+        out: &mut String,
+        name: &str,
+        args: &[Expression],
+        st: &str,
+        ind: &str,
+        ctr: &mut usize,
+    ) -> (String, String) {
+        let v = fresh("V", ctr);
+        let st2 = fresh("St", ctr);
+        let a: Vec<String> = args.iter().map(|e| self.expr(e, st)).collect();
+        let arglist = if a.is_empty() {
+            String::new()
+        } else {
+            format!(", {}", a.join(", "))
+        };
+        writeln!(
+            out,
+            "{}{{{}, {}}} = act_{}({}{}),",
+            ind, v, st2, name, st, arglist
+        )
+        .ok();
+        (v, st2)
+    }
+
+    /// Emit each declared `actions:` helper as `act_<name>(St, Params...) ->
+    /// {RetVal, St2}.` The body threads the state map; a trailing bare
+    /// expression (when the action has a return type) is the `RetVal`, else
+    /// `RetVal` is the atom `ok`.
+    fn emit_action_functions(&self, out: &mut String) -> Result<(), String> {
+        let Some(block) = &self.decl.actions else {
+            return Ok(());
+        };
+        for act in &block.actions {
+            let mut sig = String::from("St");
+            for p in &act.params {
+                write!(sig, ", {}", erl_var(&p.name)).ok();
+            }
+            writeln!(out, "act_{}({}) ->", act.name, sig).ok();
+            let mut ctr = 0usize;
+            let stmts = &act.body.statements;
+            let has_ret = act.return_type.is_some();
+            // A trailing bare (non-assignment) expression is the return value.
+            let (init, tail) = match (has_ret, stmts.last()) {
+                (true, Some(crate::frame_c::compiler::frame_ast::Statement::Expression(e)))
+                    if !matches!(e.expr, Expression::Assign { .. }) =>
+                {
+                    (&stmts[..stmts.len() - 1], Some(&e.expr))
+                }
+                _ => (&stmts[..], None),
+            };
+            let final_st = self.emit_block(out, init, "St", "    ", &mut ctr)?;
+            match tail {
+                Some(e) => {
+                    // The tail value may itself be a declared-action call.
+                    if let Some((name, args)) = self.as_action_call(e) {
+                        let (v, st2) =
+                            self.emit_action_call(out, name, args, &final_st, "    ", &mut ctr);
+                        writeln!(out, "    {{{}, {}}}.", v, st2).ok();
+                    } else {
+                        writeln!(out, "    {{{}, {}}}.", self.expr(e, &final_st), final_st).ok();
+                    }
+                }
+                None => {
+                    writeln!(out, "    {{ok, {}}}.", final_st).ok();
+                }
+            }
+            out.push('\n');
+        }
+        Ok(())
     }
 
     /// `recognize/<arity>`: build the initial state map, run the dispatch
@@ -363,14 +463,20 @@ impl<'a> Generator<'a> {
                 write!(out, "{}end", ind).ok();
             }
             MatchElement::BareExpression { expr, .. } => {
+                // A declared-action call as the return expression threads the
+                // state map first (`{V, StA} = act_…`), then sets the value.
+                let (value, base) = match self.as_action_call(expr) {
+                    Some((name, args)) => {
+                        let (v, sta) = self.emit_action_call(out, name, args, st, ind, ctr);
+                        (v, sta)
+                    }
+                    None => (self.expr(expr, st), st.to_string()),
+                };
                 let st2 = fresh("St", ctr);
                 writeln!(
                     out,
                     "{}{} = {}#{{return_value => {}}},",
-                    ind,
-                    st2,
-                    st,
-                    self.expr(expr, st)
+                    ind, st2, base, value
                 )
                 .ok();
                 self.emit_seq(out, elements, idx + 1, &st2, m, state_label, ind, sid, ctr)?;
@@ -416,6 +522,23 @@ impl<'a> Generator<'a> {
             Statement::Expression(e) => match &e.expr {
                 Expression::Assign { target, value } => {
                     let field = self.assign_field(target)?;
+                    // `self.X = action(...)` hoists the call (which threads
+                    // the state map) before the field update.
+                    if let Some((name, args)) = self.as_action_call(value) {
+                        let (v, sta) = self.emit_action_call(out, name, args, st, ind, ctr);
+                        let st2 = fresh("St", ctr);
+                        writeln!(
+                            out,
+                            "{}{} = {}#{{{} => {}}},",
+                            ind,
+                            st2,
+                            sta,
+                            erl_key(&field),
+                            v
+                        )
+                        .ok();
+                        return Ok(st2);
+                    }
                     let st2 = fresh("St", ctr);
                     writeln!(
                         out,
@@ -429,9 +552,28 @@ impl<'a> Generator<'a> {
                     .ok();
                     Ok(st2)
                 }
+                // A bare declared-action call (`tally()`) is invoked for its
+                // state-map effect; the returned value is discarded (`_`).
+                _ if self.as_action_call(&e.expr).is_some() => {
+                    let (name, args) = self.as_action_call(&e.expr).unwrap();
+                    let st2 = fresh("St", ctr);
+                    let a: Vec<String> = args.iter().map(|x| self.expr(x, st)).collect();
+                    let arglist = if a.is_empty() {
+                        String::new()
+                    } else {
+                        format!(", {}", a.join(", "))
+                    };
+                    writeln!(
+                        out,
+                        "{}{{_, {}}} = act_{}({}{}),",
+                        ind, st2, name, st, arglist
+                    )
+                    .ok();
+                    Ok(st2)
+                }
                 _ => Err(
-                    "only `self.X = ...` assignments are supported in @@fsm action blocks by the \
-                     Erlang backend"
+                    "only `self.X = ...` assignments and declared-action calls are supported in \
+                     @@fsm action blocks by the Erlang backend"
                         .into(),
                 ),
             },
@@ -932,6 +1074,33 @@ mod tests {
             return;
         };
         assert_eq!(ret, "2"); // flag is false → else branch
+    }
+
+    /// Declared `actions:` helper, callable from a match (with a return
+    /// value) and threading the state map.
+    #[test]
+    fn erl_declared_action() {
+        let src = "@@fsm M(text: bytes) : int = 0 { \
+                   /[0-9]+/ parse_int(@@:matched) \
+                   actions: parse_int(s: bytes): int { to_int(s) } }";
+        let Some((_, ret)) = run(src, "m", "42", "decl_a") else {
+            return;
+        };
+        assert_eq!(ret, "42");
+    }
+
+    /// A declared action that mutates state (no return value), invoked for
+    /// effect from an action block, then read back.
+    #[test]
+    fn erl_declared_action_effect() {
+        let src = "@@fsm M(text: bytes) : int = 0 { \
+                   /[0-9]/ { tally() } self.count \
+                   actions: tally() { self.count = self.count + 1 } \
+                   domain: count: int = 0 }";
+        let Some((_, ret)) = run(src, "m", "7", "decl_b") else {
+            return;
+        };
+        assert_eq!(ret, "1");
     }
 
     /// A construct outside the first cut errors clearly.
