@@ -15,14 +15,15 @@
 //!
 //! # v0.1 scope (first cut)
 //!
-//! Supports single-match states, plain regex stages, bare-expression
-//! returns, and static + failure transitions over the `bytes`/`char`
+//! Supports single-match states, plain regex stages with `.label` captures,
+//! bare-expression returns, action blocks (`self.X = …` assignment /
+//! `if`-`else`), and static + failure transitions over the `bytes`/`char`
 //! alphabets, with the `@@:matched` / `to_int` / `to_str` / `len` built-ins.
 //! Not yet handled (clear `Unsupported` error, never a silent miscompile):
-//! `.label` captures, action blocks, declared `actions:`, conditional /
-//! stage-ref transition targets, multi-match (`|`) states, embedding
-//! actions, Mode C call-out, the token alphabet, and anchors. These land in
-//! later increments, matching the Rust backend's build-out.
+//! declared `actions:`, conditional / stage-ref transition targets,
+//! multi-match (`|`) states, embedding actions, Mode C call-out, the token
+//! alphabet, and anchors. These land in later increments, matching the Rust
+//! backend's build-out.
 
 use crate::frame_c::compiler::frame_ast::{
     BinaryOp, Expression, FsmDeclAst, FsmStateAst, FsmTransitionTarget, Literal, MatchAst,
@@ -99,12 +100,6 @@ impl<'a> Generator<'a> {
                     if stage.regex.starts_with('@') {
                         return Err(
                             "Mode C (`/@Fsm/`) is not yet supported by the Erlang backend".into(),
-                        );
-                    }
-                    if stage.label.is_some() {
-                        return Err(
-                            "stage `.label` captures are not yet supported by the Erlang backend"
-                                .into(),
                         );
                     }
                     self.stage_dfas.push(self.compile_one(&stage.regex)?);
@@ -186,8 +181,10 @@ impl<'a> Generator<'a> {
         writeln!(out, "recognize({}) ->", params.join(", ")).ok();
         writeln!(out, "    Input = list_to_tuple({}),", erl_var(input)).ok();
         out.push_str("    St0 = #{\n");
-        out.push_str("        input => Input,\n");
-        writeln!(out, "        n => tuple_size(Input),").ok();
+        // Internal scratch keys are `fsm_`-prefixed so they never collide
+        // with a user domain field (e.g. a field literally named `n`).
+        out.push_str("        fsm_input => Input,\n");
+        writeln!(out, "        fsm_n => tuple_size(Input),").ok();
         out.push_str("        cursor => 0,\n");
         out.push_str("        accepted => false,\n");
         out.push_str("        reject_position => 0,\n");
@@ -197,8 +194,8 @@ impl<'a> Generator<'a> {
             erl_default(&self.decl.return_type, &self.decl.default_expr)
         )
         .ok();
-        writeln!(out, "        matched => {},", self.matched_empty()).ok();
-        out.push_str("        enter => 0");
+        writeln!(out, "        fsm_matched => {},", self.matched_empty()).ok();
+        out.push_str("        fsm_enter => 0");
         // Auto-promoted params become state keys.
         for p in &self.decl.params {
             write!(
@@ -235,8 +232,8 @@ impl<'a> Generator<'a> {
     fn emit_run(&self, out: &mut String) {
         out.push_str("run(St, State) when State < 0 -> St;\n");
         out.push_str("run(St, State) ->\n");
-        out.push_str("    Enter = maps:get(enter, St),\n");
-        out.push_str("    {Next, St2} = state_dispatch(State, St#{enter => 0}, Enter),\n");
+        out.push_str("    Enter = maps:get(fsm_enter, St),\n");
+        out.push_str("    {Next, St2} = state_dispatch(State, St#{fsm_enter => 0}, Enter),\n");
         out.push_str("    run(St2, Next).\n\n");
     }
 
@@ -259,7 +256,7 @@ impl<'a> Generator<'a> {
                 None => {
                     writeln!(out, "state_{}(St, _Enter) -> {{-1, St}}.\n", i).ok();
                 }
-                Some(m) => self.emit_one_state(out, i, m, &mut sid)?,
+                Some(m) => self.emit_one_state(out, i, st, m, &mut sid)?,
             }
         }
         Ok(())
@@ -269,6 +266,7 @@ impl<'a> Generator<'a> {
         &self,
         out: &mut String,
         index: usize,
+        st: &FsmStateAst,
         m: &MatchAst,
         sid: &mut usize,
     ) -> Result<(), String> {
@@ -276,7 +274,18 @@ impl<'a> Generator<'a> {
         // fresh name never collides with (and rebinds) the parameter.
         writeln!(out, "state_{}(St, _Enter) ->", index).ok();
         let mut ctr = 0usize;
-        self.emit_seq(out, &m.elements, 0, "St", m, "    ", sid, &mut ctr)?;
+        let state_label = st.label.clone().unwrap_or_default();
+        self.emit_seq(
+            out,
+            &m.elements,
+            0,
+            "St",
+            m,
+            &state_label,
+            "    ",
+            sid,
+            &mut ctr,
+        )?;
         out.push_str(".\n\n");
         Ok(())
     }
@@ -294,6 +303,7 @@ impl<'a> Generator<'a> {
         idx: usize,
         st: &str,
         m: &MatchAst,
+        state_label: &str,
         ind: &str,
         sid: &mut usize,
         ctr: &mut usize,
@@ -303,7 +313,7 @@ impl<'a> Generator<'a> {
             return Ok(());
         }
         match &elements[idx] {
-            MatchElement::Stage(_) => {
+            MatchElement::Stage(stage) => {
                 let my_sid = *sid;
                 *sid += 1;
                 let r = fresh("R", ctr);
@@ -315,7 +325,9 @@ impl<'a> Generator<'a> {
                 out.push_str(";\n");
                 writeln!(out, "{}false ->", ind2).ok();
                 let ind3 = format!("{}    ", ind2);
-                // Commit: matched slice + cursor advance + accepted.
+                // Commit: matched slice + cursor advance + accepted, plus the
+                // `.label` capture (`$state.label`) for a labeled stage in a
+                // labeled state.
                 let mtch = fresh("M", ctr);
                 writeln!(
                     out,
@@ -324,13 +336,29 @@ impl<'a> Generator<'a> {
                 )
                 .ok();
                 let st2 = fresh("St", ctr);
+                let cap = match &stage.label {
+                    Some(lbl) if !state_label.is_empty() => {
+                        format!(", {} => {}", erl_key(&cap_key(state_label, lbl)), mtch)
+                    }
+                    _ => String::new(),
+                };
                 writeln!(
                     out,
-                    "{}{} = {}#{{matched => {}, cursor => {}, accepted => true}},",
-                    ind3, st2, st, mtch, r
+                    "{}{} = {}#{{fsm_matched => {}, cursor => {}, accepted => true{}}},",
+                    ind3, st2, st, mtch, r, cap
                 )
                 .ok();
-                self.emit_seq(out, elements, idx + 1, &st2, m, &ind3, sid, ctr)?;
+                self.emit_seq(
+                    out,
+                    elements,
+                    idx + 1,
+                    &st2,
+                    m,
+                    state_label,
+                    &ind3,
+                    sid,
+                    ctr,
+                )?;
                 writeln!(out).ok();
                 write!(out, "{}end", ind).ok();
             }
@@ -345,13 +373,130 @@ impl<'a> Generator<'a> {
                     self.expr(expr, st)
                 )
                 .ok();
-                self.emit_seq(out, elements, idx + 1, &st2, m, ind, sid, ctr)?;
+                self.emit_seq(out, elements, idx + 1, &st2, m, state_label, ind, sid, ctr)?;
             }
-            MatchElement::ActionBlock(_) => {
-                return Err("action blocks are not yet supported by the Erlang backend".into());
+            MatchElement::ActionBlock(blk) => {
+                let st2 = self.emit_block(out, &blk.statements, st, ind, ctr)?;
+                self.emit_seq(out, elements, idx + 1, &st2, m, state_label, ind, sid, ctr)?;
             }
         }
         Ok(())
+    }
+
+    /// Emit a sequence of action-block statements, threading the state map
+    /// from `st` through each; returns the final state-map variable name.
+    fn emit_block(
+        &self,
+        out: &mut String,
+        statements: &[crate::frame_c::compiler::frame_ast::Statement],
+        st: &str,
+        ind: &str,
+        ctr: &mut usize,
+    ) -> Result<String, String> {
+        let mut cur = st.to_string();
+        for s in statements {
+            cur = self.emit_stmt(out, s, &cur, ind, ctr)?;
+        }
+        Ok(cur)
+    }
+
+    /// Emit one action-block statement, returning the threaded state-map var.
+    /// A `self.X = V` assignment updates the map; an `if`/`else` binds the
+    /// branch's resulting map via a `case`.
+    fn emit_stmt(
+        &self,
+        out: &mut String,
+        s: &crate::frame_c::compiler::frame_ast::Statement,
+        st: &str,
+        ind: &str,
+        ctr: &mut usize,
+    ) -> Result<String, String> {
+        use crate::frame_c::compiler::frame_ast::Statement;
+        match s {
+            Statement::Expression(e) => match &e.expr {
+                Expression::Assign { target, value } => {
+                    let field = self.assign_field(target)?;
+                    let st2 = fresh("St", ctr);
+                    writeln!(
+                        out,
+                        "{}{} = {}#{{{} => {}}},",
+                        ind,
+                        st2,
+                        st,
+                        erl_key(&field),
+                        self.expr(value, st)
+                    )
+                    .ok();
+                    Ok(st2)
+                }
+                _ => Err(
+                    "only `self.X = ...` assignments are supported in @@fsm action blocks by the \
+                     Erlang backend"
+                        .into(),
+                ),
+            },
+            Statement::If(if_ast) => {
+                let st2 = fresh("St", ctr);
+                writeln!(
+                    out,
+                    "{}{} = case {} of",
+                    ind,
+                    st2,
+                    self.expr(&if_ast.condition, st)
+                )
+                .ok();
+                let ind2 = format!("{}    ", ind);
+                // then-branch
+                writeln!(out, "{}true ->", ind2).ok();
+                let then_st =
+                    self.emit_branch(out, &if_ast.then_branch, st, &format!("{}    ", ind2), ctr)?;
+                writeln!(out, "{}    {};", ind2, then_st).ok();
+                // else-branch (or pass-through)
+                writeln!(out, "{}false ->", ind2).ok();
+                match &if_ast.else_branch {
+                    Some(else_b) => {
+                        let else_st =
+                            self.emit_branch(out, else_b, st, &format!("{}    ", ind2), ctr)?;
+                        writeln!(out, "{}    {}", ind2, else_st).ok();
+                    }
+                    None => {
+                        writeln!(out, "{}    {}", ind2, st).ok();
+                    }
+                }
+                writeln!(out, "{}end,", ind).ok();
+                Ok(st2)
+            }
+            Statement::Block(blk) => self.emit_block(out, &blk.statements, st, ind, ctr),
+            other => Err(format!(
+                "statement {:?} not supported in @@fsm action blocks by the Erlang backend",
+                std::mem::discriminant(other)
+            )),
+        }
+    }
+
+    /// Emit a branch (the `then`/`else` of an `if`) and return its final
+    /// state-map variable (the value the enclosing `case` clause yields).
+    fn emit_branch(
+        &self,
+        out: &mut String,
+        s: &crate::frame_c::compiler::frame_ast::Statement,
+        st: &str,
+        ind: &str,
+        ctr: &mut usize,
+    ) -> Result<String, String> {
+        self.emit_stmt(out, s, st, ind, ctr)
+    }
+
+    /// The state-map field name a `self.X` assignment target writes.
+    fn assign_field(&self, target: &Expression) -> Result<String, String> {
+        if let Expression::Member { object, field } = target {
+            if let Expression::Var(name) = object.as_ref() {
+                if name == "self" {
+                    return Ok(field.clone());
+                }
+            }
+        }
+        Err("@@fsm action-block assignment target must be `self.<field>` (Erlang backend)".into())
     }
 
     /// Emit the success-branch transition tuple `{Target, St}` (the tail of a
@@ -452,8 +597,8 @@ impl<'a> Generator<'a> {
     fn emit_dfa_runtime(&self, out: &mut String) {
         out.push_str(
             "dfa_match(St, {States, Start}) ->\n\
-             \x20   Input = maps:get(input, St),\n\
-             \x20   N = maps:get(n, St),\n\
+             \x20   Input = maps:get(fsm_input, St),\n\
+             \x20   N = maps:get(fsm_n, St),\n\
              \x20   Pos = maps:get(cursor, St),\n\
              \x20   {_, Acc} = element(Start + 1, States),\n\
              \x20   Last = case Acc of true -> Pos; false -> -1 end,\n\
@@ -500,7 +645,7 @@ impl<'a> Generator<'a> {
                 Literal::Null => "undefined".to_string(),
             },
             Expression::Var(name) => match name.as_str() {
-                "@@:matched" => format!("maps:get(matched, {})", st),
+                "@@:matched" => format!("maps:get(fsm_matched, {})", st),
                 "@@:cursor" => format!("maps:get(cursor, {})", st),
                 "@@:return" => format!("maps:get(return_value, {})", st),
                 _ => match name.strip_prefix('$').and_then(|c| c.split_once('.')) {
@@ -753,6 +898,40 @@ mod tests {
         assert_eq!((acc.as_str(), ret.as_str()), ("true", "42"));
         // 'X' fails /[a-z]/ → failure branch → $error → -1.
         assert_eq!(run(src, "m", "X", "tr_b").unwrap().1, "-1");
+    }
+
+    /// Stage capture: `.n/[0-9]+/` captures the matched slice as `$s.n`.
+    #[test]
+    fn erl_stage_capture() {
+        let src = "@@fsm M(text: bytes) : int = 0 { $s: .n/[0-9]+/ to_int($s.n) }";
+        let Some((acc, ret)) = run(src, "m", "42", "cap_a") else {
+            return;
+        };
+        assert_eq!((acc.as_str(), ret.as_str()), ("true", "42"));
+    }
+
+    /// Action block mutating a domain field, returned by a bare expression.
+    #[test]
+    fn erl_action_block() {
+        let src = "@@fsm M(text: bytes) : int = 0 { \
+                   /[0-9]/ { self.count = self.count + 1 } self.count \
+                   domain: count: int = 0 }";
+        let Some((_, ret)) = run(src, "m", "5", "act_a") else {
+            return;
+        };
+        assert_eq!(ret, "1");
+    }
+
+    /// Action block with an `if`/`else` that threads the state map.
+    #[test]
+    fn erl_action_if_else() {
+        let src = "@@fsm M(text: bytes) : int = 0 { \
+                   /[0-9]/ { if self.flag { self.n = 1 } else { self.n = 2 } } self.n \
+                   domain: flag: bool = false n: int = 0 }";
+        let Some((_, ret)) = run(src, "m", "5", "if_a") else {
+            return;
+        };
+        assert_eq!(ret, "2"); // flag is false → else branch
     }
 
     /// A construct outside the first cut errors clearly.
