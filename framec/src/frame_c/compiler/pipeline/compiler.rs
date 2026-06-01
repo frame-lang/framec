@@ -365,6 +365,9 @@ pub(crate) fn do_segment(c: &mut PipelineCtx) -> Option<CompileResult> {
                             TargetLanguage::JavaScript => Some(
                                 crate::frame_c::compiler::codegen::fsm_javascript::generate(&ast),
                             ),
+                            TargetLanguage::TypeScript => Some(
+                                crate::frame_c::compiler::codegen::fsm_typescript::generate(&ast),
+                            ),
                             _ => None,
                         };
                         match generated {
@@ -377,8 +380,8 @@ pub(crate) fn do_segment(c: &mut PipelineCtx) -> Option<CompileResult> {
                                 "E740",
                                 &format!(
                                     "@@fsm {}: code generation for the {:?} target is not yet \
-                                     implemented (v0.1 supports python_3, rust, erlang, and \
-                                     javascript)",
+                                     implemented (v0.1 supports python_3, rust, erlang, \
+                                     javascript, and typescript)",
                                     name, c.config.target
                                 ),
                             )),
