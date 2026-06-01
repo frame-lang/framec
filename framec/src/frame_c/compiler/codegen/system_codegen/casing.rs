@@ -67,6 +67,7 @@ pub(crate) fn should_emit_layered(lang: TargetLanguage) -> bool {
             | TargetLanguage::Swift
             | TargetLanguage::Dart
             | TargetLanguage::GDScript
+            | TargetLanguage::Cpp
     )
 }
 
@@ -101,9 +102,20 @@ pub(crate) fn wrap_in_casing(
 
     let casing = generate_casing(system, &machine_name, lang);
 
+    // C++ requires the machine type to be complete before the casing's
+    // `_<Name>Machine machine;` field declaration. Every other backend
+    // either has dynamic dispatch (Python/JS), class hoisting
+    // (Kotlin/Swift/Dart/GDScript), or compiles classes in any order
+    // (Java/C#/TS) — so casing-first works there.
+    let items = if matches!(lang, TargetLanguage::Cpp) {
+        vec![machine_class, casing]
+    } else {
+        vec![casing, machine_class]
+    };
+
     CodegenNode::Module {
         imports: vec![],
-        items: vec![casing, machine_class],
+        items,
     }
 }
 
@@ -281,6 +293,41 @@ fn generate_casing_fields(machine_name: &str, lang: TargetLanguage) -> Vec<Field
                 // `AsyncWorkerCompartment? __next_compartment;` pattern.
                 name: "in_flight".to_string(),
                 type_annotation: Some("string?".to_string()),
+                visibility: Visibility::Private,
+                is_static: false,
+                is_const: false,
+                initializer: None,
+                leading_comments: vec![],
+            },
+        ],
+        TargetLanguage::Cpp => vec![
+            // C++: by-value fields with default-construction. The
+            // machine type must be complete at this point (wrap_in_casing
+            // emits machine BEFORE casing for C++). `bool` is POD so it
+            // requires explicit initialization — emit `bool busy = false`
+            // via the field's initializer NativeBlock. `std::string`
+            // default-constructs to empty so no initializer needed.
+            Field {
+                name: "machine".to_string(),
+                type_annotation: Some(machine_name.to_string()),
+                visibility: Visibility::Private,
+                is_static: false,
+                is_const: false,
+                initializer: None,
+                leading_comments: vec![],
+            },
+            Field {
+                name: "busy".to_string(),
+                type_annotation: Some("bool".to_string()),
+                visibility: Visibility::Private,
+                is_static: false,
+                is_const: false,
+                initializer: None,
+                leading_comments: vec![],
+            },
+            Field {
+                name: "in_flight".to_string(),
+                type_annotation: Some("std::string".to_string()),
                 visibility: Visibility::Private,
                 is_static: false,
                 is_const: false,
@@ -505,6 +552,15 @@ fn generate_casing_constructor(machine_name: &str, lang: TargetLanguage) -> Code
              self.in_flight = null",
             m = machine_name
         ),
+        // C++: `_<Name>Machine machine` and `std::string in_flight` are
+        // auto-default-constructed; only `bool busy` (POD) needs explicit
+        // initialization. Assigning in the constructor body keeps it
+        // straightforward — both the bare `<Name>()` ctor and the
+        // `__create()` factory run this. `this->` prefix is optional in
+        // C++ but used here for parity with the wrapper bodies and to
+        // suppress any name-shadowing surprise from member-initializer
+        // syntax.
+        TargetLanguage::Cpp => "this->busy = false;".to_string(),
         _ => String::new(),
     };
 
@@ -618,6 +674,61 @@ fn generate_casing_interface_wrapper(ifm: &InterfaceMethod, lang: TargetLanguage
                  }}",
                 name = ifm.name,
                 delegate = delegate_line
+            )
+        }
+        TargetLanguage::Cpp => {
+            let arg_list: Vec<String> = ifm.params.iter().map(|p| p.name.clone()).collect();
+            let arg_str = arg_list.join(", ");
+            // C++ has no `finally`, so wrap the `co_await` in a
+            // try/catch(...) that clears the gate, rethrows. The
+            // happy-path also clears the gate before `co_return`.
+            // `std::runtime_error` for E703 — analogous to the
+            // unchecked-throw on neighbouring backends; thrown from
+            // the casing's coroutine body BEFORE any `co_await`, so
+            // the coroutine never suspends and the FrameTask delivers
+            // the exception to the caller's `await_resume`.
+            //
+            // Coroutine + try/catch: the body that contains `co_await`
+            // is fine inside a try block in modern C++ (g++ 11+ /
+            // clang 14+). The catch(...)+throw idiom is the canonical
+            // "finally" emulation.
+            let has_return = !matches!(ifm.return_type, None | Some(FrameType::Unknown));
+            let success_block = if has_return {
+                format!(
+                    "auto __result = co_await this->machine.{name}({args});\n\
+                     this->busy = false;\n\
+                     this->in_flight.clear();\n\
+                     co_return __result;",
+                    name = ifm.name,
+                    args = arg_str
+                )
+            } else {
+                format!(
+                    "co_await this->machine.{name}({args});\n\
+                     this->busy = false;\n\
+                     this->in_flight.clear();\n\
+                     co_return;",
+                    name = ifm.name,
+                    args = arg_str
+                )
+            };
+            format!(
+                "if (this->busy) {{\n\
+                 \x20   throw std::runtime_error(\n\
+                 \x20       \"E703: system busy: cannot enter '{name}' while '\" + this->in_flight + \"' is in flight\"\n\
+                 \x20   );\n\
+                 }}\n\
+                 this->busy = true;\n\
+                 this->in_flight = \"{name}\";\n\
+                 try {{\n\
+                 \x20   {success}\n\
+                 }} catch (...) {{\n\
+                 \x20   this->busy = false;\n\
+                 \x20   this->in_flight.clear();\n\
+                 \x20   throw;\n\
+                 }}",
+                name = ifm.name,
+                success = success_block.replace('\n', "\n    ")
             )
         }
         TargetLanguage::GDScript => {
@@ -838,6 +949,26 @@ fn generate_casing_operation_delegate(op: &OperationAst, lang: TargetLanguage) -
                 )
             }
         }
+        TargetLanguage::Cpp => {
+            let arg_list: Vec<String> = op.params.iter().map(|p| p.name.clone()).collect();
+            let arg_str = arg_list.join(", ");
+            // C++: void/value split. Operations bypass the gate and
+            // stay sync (non-coroutine) — they delegate to the
+            // machine's operation method.
+            if matches!(op.return_type, FrameType::Unknown) {
+                format!(
+                    "this->machine.{name}({args});",
+                    name = op.name,
+                    args = arg_str
+                )
+            } else {
+                format!(
+                    "return this->machine.{name}({args});",
+                    name = op.name,
+                    args = arg_str
+                )
+            }
+        }
         TargetLanguage::GDScript => {
             let arg_list: Vec<String> = op.params.iter().map(|p| p.name.clone()).collect();
             let arg_str = arg_list.join(", ");
@@ -935,6 +1066,7 @@ fn generate_casing_save_delegate(system: &SystemAst, lang: TargetLanguage) -> Op
         TargetLanguage::Swift => format!("return self.machine.{name}()", name = save_name),
         TargetLanguage::Dart => format!("return this.machine.{name}();", name = save_name),
         TargetLanguage::GDScript => format!("return self.machine.{name}()", name = save_name),
+        TargetLanguage::Cpp => format!("return this->machine.{name}();", name = save_name),
         _ => String::new(),
     };
     Some(CodegenNode::Method {
@@ -969,6 +1101,7 @@ fn generate_casing_restore_delegate(
         TargetLanguage::Swift => format!("self.machine.{name}(data)", name = load_name),
         TargetLanguage::Dart => format!("this.machine.{name}(data);", name = load_name),
         TargetLanguage::GDScript => format!("self.machine.{name}(data)", name = load_name),
+        TargetLanguage::Cpp => format!("this->machine.{name}(data);", name = load_name),
         _ => String::new(),
     };
     Some(CodegenNode::Method {
@@ -1055,6 +1188,10 @@ fn generate_casing_init_delegate(lang: TargetLanguage) -> CodegenNode {
         TargetLanguage::Swift => "await self.machine.initAsync()".to_string(),
         TargetLanguage::Dart => "await this.machine.init();".to_string(),
         TargetLanguage::GDScript => "await self.machine.init()".to_string(),
+        // C++ coroutine: `co_await` the machine's `init()` FrameTask
+        // and `co_return;` (void coroutine). The casing's init is a
+        // coroutine itself (is_async=true) so it returns FrameTask<void>.
+        TargetLanguage::Cpp => "co_await this->machine.init();\nco_return;".to_string(),
         _ => String::new(),
     };
     let init_name = match lang {
