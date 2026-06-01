@@ -2,28 +2,32 @@
 //!
 //! Generates a self-contained JavaScript `class` from a validated
 //! `FsmDeclAst`, mirroring the Python reference backend
-//! ([`super::fsm_python`]). JavaScript is class-based with mutable fields and
-//! dynamic typing, so the recognition model is a near-transliteration of the
-//! Python generator: per-stage minimal DFAs + a per-state dispatch loop over
-//! mutable instance state. The observable result (§5.1) is the constructed
-//! instance's `accepted`, `return_value`, `cursor`, and `reject_position`.
+//! ([`super::fsm_python`]) and the Rust backend ([`super::fsm_rust`]).
+//! JavaScript is class-based with mutable fields and dynamic typing, so the
+//! recognition model is a near-transliteration of those: per-stage minimal
+//! DFAs (emitted as nested array literals) + a per-state dispatch loop
+//! (`run()` switch) over mutable instance state. The observable result
+//! (§5.1) is the constructed instance's `accepted`, `return_value`,
+//! `cursor`, and `reject_position`.
 //!
-//! # v0.1 scope (first cut)
+//! # v0.1 scope
 //!
-//! Supports single-match states, match stages with `.label` captures,
+//! Full parity with the Python reference backend: single-match and
+//! multi-match (`|`) ordered-choice states, stages with `.label` captures,
 //! bare-expression returns, action blocks (assignment / `if`-`else`),
-//! declared `actions:` helpers, and all transition forms — static,
-//! conditional (`when`), stage-ref (`-> $S.stage`, via a `this.enter`
-//! re-entry index), and failure-only — over the `bytes`/`char` alphabets,
-//! with the `@@:matched` / `to_int` / `to_str` / `len` built-ins. Not yet
-//! handled (clear `Unsupported` error, never a silent miscompile):
-//! multi-match (`|`) states, embedding actions, Mode C call-out, the token
-//! alphabet, and anchors. These land in later increments, matching the Rust
-//! backend's build-out.
+//! declared `actions:` methods, all transition forms (static / conditional
+//! `when` / stage-ref `-> $S.stage` / failure-only), embedding actions
+//! (`>{}`/`@{}`/`${}`/`%{}`/`@eof{}`), Mode C sub-fsm call-out (`/@Inner/`),
+//! all three alphabets (`bytes`/`char` as a string; `token` as an array of
+//! token-kind names mapped to small integer ids), and boundary anchors
+//! (a leading `^`/`\A`, a trailing `$`/`\z`). Not yet handled (clear
+//! `Unsupported` error, never a silent miscompile): mid-pattern anchors and
+//! `\b`/`\B`, a Mode C stage as a `|` selector, and a `|` alternative with
+//! elements before its first stage (all deferred to v0.2).
 
 use crate::frame_c::compiler::frame_ast::{
-    BinaryOp, Expression, FsmDeclAst, FsmStateAst, FsmTransitionTarget, Literal, MatchAst,
-    MatchElement, Type, UnaryOp,
+    BinaryOp, EmbeddingOp, Expression, FsmDeclAst, FsmStateAst, FsmTransitionTarget, Literal,
+    MatchAst, MatchElement, StageAst, Type, UnaryOp,
 };
 use crate::frame_c::compiler::fsm_regex::{
     self, size_check::DEFAULT_MAX_DFA_STATES, subset::DfaLabel, Alphabet, CompileError,
@@ -40,6 +44,20 @@ pub fn generate(decl: &FsmDeclAst) -> Result<String, String> {
 struct StageDfa {
     states: Vec<(Vec<(u32, u32, usize)>, bool)>,
     start: usize,
+    /// Leading `^`/`\A`: the match must start at the input start (cursor 0).
+    requires_start: bool,
+    /// Trailing `$`/`\z`: the match must end at the input end.
+    requires_end: bool,
+    /// RFC-0042 §8.3 Mode C: when `Some(name)`, this stage is a call-out to
+    /// the `@@fsm` `name` rather than a regex DFA match (no DFA; a
+    /// placeholder keeps stage indices aligned with the emit walk).
+    mode_c: Option<String>,
+}
+
+/// A Mode C stage's regex body starts with `@`; the rest names the inner
+/// fsm (`/@Digit/` → `Some("Digit")`).
+fn mode_c_inner(regex: &str) -> Option<&str> {
+    regex.strip_prefix('@')
 }
 
 struct Generator<'a> {
@@ -49,6 +67,8 @@ struct Generator<'a> {
     /// `(state label, stage label)` → element index, for stage-ref re-entry
     /// (`-> $State.stage`). Single-match states only.
     stage_entry: std::collections::HashMap<(String, String), usize>,
+    /// Token-alphabet only: each token-kind name → a small integer id.
+    token_ids: std::collections::HashMap<String, u32>,
     stage_dfas: Vec<StageDfa>,
 }
 
@@ -56,11 +76,7 @@ impl<'a> Generator<'a> {
     fn new(decl: &'a FsmDeclAst) -> Result<Self, String> {
         let alphabet = match decl.params.first().map(|p| &p.param_type) {
             Some(Type::Custom(t)) if t == "char" => Alphabet::Char,
-            Some(Type::Custom(t)) if t == "token" => {
-                return Err(
-                    "the token alphabet is not yet supported by the JavaScript backend".into(),
-                )
-            }
+            Some(Type::Custom(t)) if t == "token" => Alphabet::Token,
             _ => Alphabet::Bytes,
         };
         let mut label_to_index = std::collections::HashMap::new();
@@ -84,55 +100,54 @@ impl<'a> Generator<'a> {
             alphabet,
             label_to_index,
             stage_entry,
+            token_ids: std::collections::HashMap::new(),
             stage_dfas: Vec::new(),
         };
         g.compile_stage_dfas()?;
         Ok(g)
     }
 
-    /// Compile every stage's DFA in traversal order, so the emitted `DFA_<n>`
-    /// consts line up with the index the state emitters advance.
+    /// Compile every stage's DFA across all states and `|` alternatives, in
+    /// traversal order, so the emitted `DFA_<n>` consts line up with the
+    /// `sid` counter the state emitters advance.
     fn compile_stage_dfas(&mut self) -> Result<(), String> {
+        let mut token_ids = std::mem::take(&mut self.token_ids);
         for st in &self.decl.states {
-            if st.matches.len() > 1 {
-                return Err(
-                    "multi-match (`|`) states are not yet supported by the JavaScript backend"
-                        .into(),
-                );
-            }
-            let Some(m) = st.matches.first() else {
-                continue;
-            };
-            for el in &m.elements {
-                if let MatchElement::Stage(stage) = el {
-                    if !stage.embedding_actions.is_empty() {
-                        return Err(
-                            "embedding actions are not yet supported by the JavaScript backend"
-                                .into(),
-                        );
+            for m in &st.matches {
+                for el in &m.elements {
+                    if let MatchElement::Stage(stage) = el {
+                        if let Some(inner) = mode_c_inner(&stage.regex) {
+                            self.stage_dfas.push(StageDfa {
+                                states: Vec::new(),
+                                start: 0,
+                                requires_start: false,
+                                requires_end: false,
+                                mode_c: Some(inner.to_string()),
+                            });
+                            continue;
+                        }
+                        match Self::compile_one(self.alphabet, &stage.regex, &mut token_ids) {
+                            Ok(dfa) => self.stage_dfas.push(dfa),
+                            Err(e) => {
+                                self.token_ids = token_ids;
+                                return Err(e);
+                            }
+                        }
                     }
-                    if stage.regex.starts_with('@') {
-                        return Err(
-                            "Mode C (`/@Fsm/`) is not yet supported by the JavaScript backend"
-                                .into(),
-                        );
-                    }
-                    self.stage_dfas.push(self.compile_one(&stage.regex)?);
                 }
             }
         }
+        self.token_ids = token_ids;
         Ok(())
     }
 
-    fn compile_one(&self, regex: &str) -> Result<StageDfa, String> {
-        match fsm_regex::compile(regex, self.alphabet, DEFAULT_MAX_DFA_STATES) {
+    fn compile_one(
+        alphabet: Alphabet,
+        regex: &str,
+        token_ids: &mut std::collections::HashMap<String, u32>,
+    ) -> Result<StageDfa, String> {
+        match fsm_regex::compile(regex, alphabet, DEFAULT_MAX_DFA_STATES) {
             Ok(compiled) => {
-                if compiled.requires_start || compiled.requires_end {
-                    return Err(
-                        "anchors are not yet supported by the JavaScript backend (v0.1 first cut)"
-                            .into(),
-                    );
-                }
                 let mut states = Vec::with_capacity(compiled.dfa.states.len());
                 for s in &compiled.dfa.states {
                     let mut trans = Vec::new();
@@ -142,8 +157,10 @@ impl<'a> Generator<'a> {
                             DfaLabel::ByteRange { low, high } => (*low as u32, *high as u32),
                             DfaLabel::CodePoint(c) => (*c as u32, *c as u32),
                             DfaLabel::CodePointRange { low, high } => (*low as u32, *high as u32),
-                            DfaLabel::Token(_) => {
-                                return Err("token-alphabet DFA is not supported here".into())
+                            DfaLabel::Token(name) => {
+                                let next = token_ids.len() as u32;
+                                let id = *token_ids.entry(name.clone()).or_insert(next);
+                                (id, id)
                             }
                         };
                         trans.push((lo, hi, t.to));
@@ -153,6 +170,9 @@ impl<'a> Generator<'a> {
                 Ok(StageDfa {
                     states,
                     start: compiled.dfa.start,
+                    requires_start: compiled.requires_start,
+                    requires_end: compiled.requires_end,
+                    mode_c: None,
                 })
             }
             Err(CompileError::Diagnostics(ds)) => Err(format!(
@@ -161,9 +181,29 @@ impl<'a> Generator<'a> {
                 ds.first().map(|d| d.message.as_str()).unwrap_or("")
             )),
             Err(CompileError::UnsupportedAnchors(_)) => Err(format!(
-                "regex `/{}/` uses anchors, not yet supported by the JavaScript backend",
+                "regex `/{}/` uses a mid-pattern or word-boundary anchor, not yet supported by the \
+                 JavaScript backend",
                 regex
             )),
+        }
+    }
+
+    /// The per-element read as a number: a byte/char by code point, a token by
+    /// its small integer id (`-1` for an unknown token, matching no range).
+    fn element_read(&self) -> String {
+        let inp = &self.decl.params[0].name;
+        match self.alphabet {
+            Alphabet::Token => format!("this._tokId(this.{}[pos])", inp),
+            _ => format!("this.{}.charCodeAt(pos)", inp),
+        }
+    }
+
+    /// The empty `matched` value: an empty array for tokens, else an empty
+    /// string. (`slice` produces the same kind for both alphabets.)
+    fn matched_empty(&self) -> &'static str {
+        match self.alphabet {
+            Alphabet::Token => "[]",
+            _ => "\"\"",
         }
     }
 
@@ -172,9 +212,11 @@ impl<'a> Generator<'a> {
         out.push_str("// Generated by framec — RFC-0042 @@fsm (JavaScript backend).\n\n");
         writeln!(out, "class {} {{", self.decl.name).ok();
         self.emit_ctor(&mut out);
+        self.emit_tok_id(&mut out);
         self.emit_dfa_matcher(&mut out);
         self.emit_run(&mut out);
         self.emit_state_methods(&mut out)?;
+        self.emit_embed_matchers(&mut out)?;
         self.emit_action_methods(&mut out)?;
         out.push_str("}\n");
         Ok(out)
@@ -192,32 +234,28 @@ impl<'a> Generator<'a> {
             js_default(&self.decl.default_expr)
         )
         .ok();
-        // Auto-promote each parameter to an instance field (§5.2).
         for p in &self.decl.params {
             writeln!(out, "    this.{} = {};", p.name, p.name).ok();
         }
-        // Explicit domain fields (auto fields already in scope).
         if let Some(domain) = &self.decl.domain {
             for v in &domain.vars {
                 writeln!(out, "    this.{} = {};", v.name, self.expr(&v.default)).ok();
             }
         }
-        out.push_str("    this.matched = \"\";\n");
-        // Stage-ref re-entry point (`-> $State.stage` sets it; the dispatch
-        // loop consumes it). 0 = enter at the state's first element.
+        writeln!(out, "    this.matched = {};", self.matched_empty()).ok();
         out.push_str("    this.enter = 0;\n");
-        // One field per labeled stage in a labeled state, holding the matched
-        // slice for `$state.label` reads.
         for f in self.capture_fields() {
-            writeln!(out, "    this.{} = \"\";", f).ok();
+            writeln!(out, "    this.{} = {};", f, self.matched_empty()).ok();
+        }
+        for (f, _) in self.mode_c_inst_fields() {
+            writeln!(out, "    this.{} = null;", f).ok();
         }
         out.push_str("    this.run();\n");
         out.push_str("    if (this.accepted) this.reject_position = 0;\n");
         out.push_str("  }\n\n");
     }
 
-    /// Field names for every labeled stage in a labeled state (the targets of
-    /// `$state.label` capture reads).
+    /// Field names for every labeled stage in a labeled state.
     fn capture_fields(&self) -> Vec<String> {
         let mut out = Vec::new();
         for st in &self.decl.states {
@@ -235,9 +273,47 @@ impl<'a> Generator<'a> {
         out
     }
 
+    /// `(field name, inner fsm name)` for each labeled Mode C stage in a
+    /// labeled state — the instance fields holding `$state.label`'s inner fsm.
+    fn mode_c_inst_fields(&self) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        for st in &self.decl.states {
+            let Some(slabel) = &st.label else { continue };
+            for m in &st.matches {
+                for el in &m.elements {
+                    if let MatchElement::Stage(stage) = el {
+                        if let (Some(lbl), Some(inner)) = (&stage.label, mode_c_inner(&stage.regex))
+                        {
+                            out.push((cap_inst_field(slabel, lbl), inner.to_string()));
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Token alphabet: emit the `_tokId(t)` atom → id lookup (unknown → -1).
+    fn emit_tok_id(&self, out: &mut String) {
+        if self.alphabet != Alphabet::Token {
+            return;
+        }
+        let mut entries: Vec<(&String, &u32)> = self.token_ids.iter().collect();
+        entries.sort_by_key(|(_, id)| **id);
+        let items: Vec<String> = entries
+            .iter()
+            .map(|(name, id)| format!("{:?}: {}", name, id))
+            .collect();
+        writeln!(out, "  _tokId(t) {{").ok();
+        writeln!(out, "    const T = {{{}}};", items.join(", ")).ok();
+        out.push_str("    return (t in T) ? T[t] : -1;\n");
+        out.push_str("  }\n\n");
+    }
+
     /// Greedy longest-match DFA executor (mirrors `_dfa_match` in Python).
     fn emit_dfa_matcher(&self, out: &mut String) {
         let input = &self.decl.params[0].name;
+        let read = self.element_read();
         writeln!(
             out,
             "  _dfaMatch(states, start) {{\n\
@@ -246,7 +322,7 @@ impl<'a> Generator<'a> {
              \x20   const n = this.{input}.length;\n\
              \x20   let last = states[st][1] ? pos : -1;\n\
              \x20   while (pos < n) {{\n\
-             \x20     const v = this.{input}.charCodeAt(pos);\n\
+             \x20     const v = {read};\n\
              \x20     let nxt = null;\n\
              \x20     for (const [lo, hi, tgt] of states[st][0]) {{ if (lo <= v && v <= hi) {{ nxt = tgt; break; }} }}\n\
              \x20     if (nxt === null) break;\n\
@@ -255,7 +331,8 @@ impl<'a> Generator<'a> {
              \x20   }}\n\
              \x20   return last;\n\
              \x20 }}\n\n",
-            input = input
+            input = input,
+            read = read
         )
         .ok();
     }
@@ -279,11 +356,12 @@ impl<'a> Generator<'a> {
     fn emit_state_methods(&self, out: &mut String) -> Result<(), String> {
         let mut sid = 0usize;
         for (i, st) in self.decl.states.iter().enumerate() {
-            match st.matches.first() {
-                None => {
+            match st.matches.len() {
+                0 => {
                     writeln!(out, "  state_{}(_enter) {{ return -1; }}\n", i).ok();
                 }
-                Some(m) => self.emit_one_state(out, i, st, m, &mut sid)?,
+                1 => self.emit_one_state(out, i, st, &st.matches[0], &mut sid)?,
+                _ => self.emit_multi_match(out, i, st, &mut sid)?,
             }
         }
         Ok(())
@@ -299,14 +377,103 @@ impl<'a> Generator<'a> {
     ) -> Result<(), String> {
         let state_label = st.label.clone().unwrap_or_default();
         writeln!(out, "  state_{}(_enter) {{", index).ok();
-        // Each element is guarded by `if (_enter <= idx)` so a stage-ref
-        // re-entry skips leading elements (plain entry has `_enter === 0`).
         for (idx, el) in m.elements.iter().enumerate() {
             writeln!(out, "    if (_enter <= {}) {{", idx).ok();
             self.emit_element(out, el, m, &state_label, "      ", sid)?;
             out.push_str("    }\n");
         }
         self.emit_success(out, m, "    ");
+        out.push_str("  }\n\n");
+        Ok(())
+    }
+
+    /// Emit a multi-match (`|`) state as ordered choice (RFC-0042 §3.4).
+    fn emit_multi_match(
+        &self,
+        out: &mut String,
+        index: usize,
+        st: &FsmStateAst,
+        sid: &mut usize,
+    ) -> Result<(), String> {
+        let state_label = st.label.clone().unwrap_or_default();
+        let input = &self.decl.params[0].name;
+        writeln!(out, "  state_{}(_enter) {{", index).ok();
+        let mut catch_all = false;
+        for m in &st.matches {
+            let first_stage = m
+                .elements
+                .iter()
+                .position(|e| matches!(e, MatchElement::Stage(_)));
+            match first_stage {
+                Some(fs) => {
+                    if fs > 0 {
+                        return Err(
+                            "a `|` alternative with elements before its first stage is not yet \
+                             supported by the JavaScript backend"
+                                .into(),
+                        );
+                    }
+                    let my_sid = *sid;
+                    *sid += 1;
+                    if self.stage_dfas[my_sid].mode_c.is_some() {
+                        return Err(
+                            "a Mode C (`/@Fsm/`) stage as a `|` alternative selector is not yet \
+                             supported by the JavaScript backend"
+                                .into(),
+                        );
+                    }
+                    let MatchElement::Stage(sel) = &m.elements[fs] else {
+                        unreachable!("first_stage indexes a Stage element")
+                    };
+                    self.emit_dfa_const(out, my_sid, "    ");
+                    writeln!(
+                        out,
+                        "    let _r{} = this._dfaMatch(DFA_{}, {});",
+                        my_sid, my_sid, self.stage_dfas[my_sid].start
+                    )
+                    .ok();
+                    self.emit_anchor_guards(out, my_sid, "    ");
+                    writeln!(out, "    if (_r{} >= 0) {{", my_sid).ok();
+                    writeln!(
+                        out,
+                        "      this.matched = this.{}.slice(this.cursor, _r{});",
+                        input, my_sid
+                    )
+                    .ok();
+                    if let Some(lbl) = &sel.label {
+                        if !state_label.is_empty() {
+                            writeln!(
+                                out,
+                                "      this.{} = this.matched;",
+                                cap_field(&state_label, lbl)
+                            )
+                            .ok();
+                        }
+                    }
+                    writeln!(out, "      this.cursor = _r{};", my_sid).ok();
+                    out.push_str("      this.accepted = true;\n");
+                    for el in &m.elements[fs + 1..] {
+                        self.emit_element(out, el, m, &state_label, "      ", sid)?;
+                    }
+                    self.emit_success(out, m, "      ");
+                    out.push_str("    }\n");
+                }
+                None => {
+                    out.push_str("    this.accepted = true;\n");
+                    for el in &m.elements {
+                        self.emit_element(out, el, m, &state_label, "    ", sid)?;
+                    }
+                    self.emit_success(out, m, "    ");
+                    catch_all = true;
+                    break;
+                }
+            }
+        }
+        if !catch_all {
+            out.push_str("    this.accepted = false;\n");
+            out.push_str("    this.reject_position = this.cursor;\n");
+            out.push_str("    return -1;\n");
+        }
         out.push_str("  }\n\n");
         Ok(())
     }
@@ -326,20 +493,37 @@ impl<'a> Generator<'a> {
             MatchElement::Stage(stage) => {
                 let my_sid = *sid;
                 *sid += 1;
-                self.emit_dfa_const(out, my_sid, ind);
-                writeln!(
-                    out,
-                    "{}const _r = this._dfaMatch(DFA_{}, {});",
-                    ind, my_sid, self.stage_dfas[my_sid].start
-                )
-                .ok();
-                writeln!(out, "{}if (_r < 0) {{", ind).ok();
+                if let Some(inner) = self.stage_dfas[my_sid].mode_c.clone() {
+                    self.emit_mode_c(out, &inner, stage, m, state_label, my_sid, ind, &ind2);
+                    return Ok(());
+                }
+                // An embedding stage matches via `_matchStage_<sid>` (which
+                // fires its actions during the scan); a plain stage uses the
+                // shared `_dfaMatch` executor.
+                if stage.embedding_actions.is_empty() {
+                    self.emit_dfa_const(out, my_sid, ind);
+                    writeln!(
+                        out,
+                        "{}let _r{} = this._dfaMatch(DFA_{}, {});",
+                        ind, my_sid, my_sid, self.stage_dfas[my_sid].start
+                    )
+                    .ok();
+                } else {
+                    writeln!(
+                        out,
+                        "{}let _r{} = this._matchStage_{}();",
+                        ind, my_sid, my_sid
+                    )
+                    .ok();
+                }
+                self.emit_anchor_guards(out, my_sid, ind);
+                writeln!(out, "{}if (_r{} < 0) {{", ind, my_sid).ok();
                 self.emit_failure(out, m, &ind2);
                 writeln!(out, "{}}}", ind).ok();
                 writeln!(
                     out,
-                    "{}this.matched = this.{}.slice(this.cursor, _r);",
-                    ind, input
+                    "{}this.matched = this.{}.slice(this.cursor, _r{});",
+                    ind, input, my_sid
                 )
                 .ok();
                 if let Some(lbl) = &stage.label {
@@ -353,7 +537,7 @@ impl<'a> Generator<'a> {
                         .ok();
                     }
                 }
-                writeln!(out, "{}this.cursor = _r;", ind).ok();
+                writeln!(out, "{}this.cursor = _r{};", ind, my_sid).ok();
                 writeln!(out, "{}this.accepted = true;", ind).ok();
             }
             MatchElement::BareExpression { expr, .. } => {
@@ -368,6 +552,174 @@ impl<'a> Generator<'a> {
         Ok(())
     }
 
+    /// Emit a Mode C stage (RFC-0042 §8.3 `/@Inner/`): construct the inner
+    /// fsm over the input at the cursor; on accept advance by the inner's
+    /// cursor; on reject follow the failure branch (§5.6).
+    #[allow(clippy::too_many_arguments)]
+    fn emit_mode_c(
+        &self,
+        out: &mut String,
+        inner: &str,
+        stage: &StageAst,
+        m: &MatchAst,
+        state_label: &str,
+        my_sid: usize,
+        ind: &str,
+        ind2: &str,
+    ) {
+        let input = &self.decl.params[0].name;
+        let iv = format!("_inner{}", my_sid);
+        writeln!(
+            out,
+            "{}const {} = new {}(this.{}.slice(this.cursor));",
+            ind, iv, inner, input
+        )
+        .ok();
+        writeln!(out, "{}if (!{}.accepted) {{", ind, iv).ok();
+        self.emit_failure(out, m, ind2);
+        writeln!(out, "{}}}", ind).ok();
+        writeln!(
+            out,
+            "{}this.matched = this.{}.slice(this.cursor, this.cursor + {}.cursor);",
+            ind, input, iv
+        )
+        .ok();
+        if let Some(lbl) = &stage.label {
+            if !state_label.is_empty() {
+                writeln!(
+                    out,
+                    "{}this.{} = this.matched;",
+                    ind,
+                    cap_field(state_label, lbl)
+                )
+                .ok();
+                writeln!(
+                    out,
+                    "{}this.{} = {};",
+                    ind,
+                    cap_inst_field(state_label, lbl),
+                    iv
+                )
+                .ok();
+            }
+        }
+        writeln!(out, "{}this.cursor = this.cursor + {}.cursor;", ind, iv).ok();
+        writeln!(out, "{}this.accepted = true;", ind).ok();
+    }
+
+    /// Emit a specialized matcher `_matchStage_<sid>()` for each stage that
+    /// carries embedding actions (§3.5.5 / §5.4).
+    fn emit_embed_matchers(&self, out: &mut String) -> Result<(), String> {
+        let mut sid = 0usize;
+        for st in &self.decl.states {
+            for m in &st.matches {
+                for el in &m.elements {
+                    if let MatchElement::Stage(stage) = el {
+                        if !stage.embedding_actions.is_empty() {
+                            self.emit_one_matcher(out, sid, stage)?;
+                        }
+                        sid += 1;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn emit_one_matcher(
+        &self,
+        out: &mut String,
+        sid: usize,
+        stage: &StageAst,
+    ) -> Result<(), String> {
+        let input = &self.decl.params[0].name;
+        let read = self.element_read();
+        writeln!(out, "  _matchStage_{}() {{", sid).ok();
+        self.emit_dfa_const(out, sid, "    ");
+        writeln!(
+            out,
+            "    const _entry = this.cursor;\n\
+             \x20   let st = {start};\n\
+             \x20   let pos = _entry;\n\
+             \x20   const n = this.{input}.length;\n\
+             \x20   let last = DFA_{sid}[st][1] ? pos : -1;\n\
+             \x20   this.cursor = pos;",
+            start = self.stage_dfas[sid].start,
+            input = input,
+            sid = sid
+        )
+        .ok();
+        out.push_str(&self.embed_body(stage, EmbeddingOp::Start, "    ")?);
+        writeln!(out, "    let prev = DFA_{}[st][1];", sid).ok();
+        writeln!(
+            out,
+            "    while (pos < n) {{\n\
+             \x20     const v = {read};\n\
+             \x20     let nxt = null;\n\
+             \x20     for (const [lo, hi, tgt] of DFA_{sid}[st][0]) {{ if (lo <= v && v <= hi) {{ nxt = tgt; break; }} }}\n\
+             \x20     if (nxt === null) break;\n\
+             \x20     st = nxt; pos++;\n\
+             \x20     this.cursor = pos;",
+            read = read,
+            sid = sid
+        )
+        .ok();
+        out.push_str(&self.embed_body(stage, EmbeddingOp::EveryTransition, "      ")?);
+        writeln!(out, "      const _now = DFA_{}[st][1];", sid).ok();
+        let accept = self.embed_body(stage, EmbeddingOp::Accept, "        ")?;
+        if !accept.is_empty() {
+            out.push_str("      if (_now) {\n");
+            out.push_str(&accept);
+            out.push_str("      }\n");
+        }
+        let leave = self.embed_body(stage, EmbeddingOp::LeaveAccept, "        ")?;
+        if !leave.is_empty() {
+            out.push_str("      if (prev && !_now) {\n");
+            out.push_str(&leave);
+            out.push_str("      }\n");
+        }
+        out.push_str("      if (_now) last = pos;\n      prev = _now;\n");
+        out.push_str("    }\n");
+        let eof = self.embed_body(stage, EmbeddingOp::Eof, "      ")?;
+        if !eof.is_empty() {
+            out.push_str("    if (pos >= n && !prev) {\n");
+            out.push_str(&eof);
+            out.push_str("    }\n");
+        }
+        out.push_str("    this.cursor = _entry;\n    return last;\n  }\n\n");
+        Ok(())
+    }
+
+    /// Concatenated JavaScript for every embedding-action body of `op`.
+    fn embed_body(&self, stage: &StageAst, op: EmbeddingOp, ind: &str) -> Result<String, String> {
+        let mut s = String::new();
+        for ea in &stage.embedding_actions {
+            if ea.op == op {
+                for st in &ea.body.statements {
+                    s.push_str(&self.stmt(st, ind)?);
+                }
+            }
+        }
+        Ok(s)
+    }
+
+    /// Enforce a stage's boundary anchors (§6.6) on its match result `_r<sid>`.
+    fn emit_anchor_guards(&self, out: &mut String, sid: usize, ind: &str) {
+        let dfa = &self.stage_dfas[sid];
+        let input = &self.decl.params[0].name;
+        if dfa.requires_start {
+            writeln!(out, "{}if (this.cursor !== 0) _r{} = -1;", ind, sid).ok();
+        }
+        if dfa.requires_end {
+            writeln!(
+                out,
+                "{}if (_r{} !== this.{}.length) _r{} = -1;",
+                ind, sid, input, sid
+            )
+            .ok();
+        }
+    }
+
     /// Emit the success-branch transition after a match completes.
     fn emit_success(&self, out: &mut String, m: &MatchAst, ind: &str) {
         match m.transition.as_ref().and_then(|c| c.success.as_ref()) {
@@ -378,8 +730,8 @@ impl<'a> Generator<'a> {
         }
     }
 
-    /// Emit the failure-branch resolution (sets `accepted = false` and the
-    /// reject position, then routes to the failure target or §5.6 halt).
+    /// Emit the failure-branch resolution (sets `accepted = false` + reject
+    /// position, then routes to the failure target or §5.6 halt).
     fn emit_failure(&self, out: &mut String, m: &MatchAst, ind: &str) {
         writeln!(out, "{}this.accepted = false;", ind).ok();
         writeln!(out, "{}this.reject_position = this.cursor;", ind).ok();
@@ -391,9 +743,9 @@ impl<'a> Generator<'a> {
         }
     }
 
-    /// Emit a transition target. A static target returns its state index; a
-    /// conditional target is an ordered `if (<when>) return <idx>;` chain, the
-    /// match's failure branch as the no-`when` fallback (§3.5.4).
+    /// Emit a transition target. Static → `return <idx>;`; conditional → an
+    /// ordered `if (<when>) { return <idx>; }` chain with the failure branch
+    /// as the no-`when` fallback (§3.5.4).
     fn emit_target(&self, out: &mut String, target: &FsmTransitionTarget, ind: &str, m: &MatchAst) {
         match target {
             FsmTransitionTarget::Static { state, stage, .. } => {
@@ -407,7 +759,6 @@ impl<'a> Generator<'a> {
                     }
                     writeln!(out, "{}}}", ind).ok();
                 }
-                // No `when` held → the failure branch fires (a reject).
                 self.emit_failure(out, m, ind);
             }
         }
@@ -490,8 +841,8 @@ impl<'a> Generator<'a> {
         }
     }
 
-    /// Emit declared `actions:` helpers as methods. A trailing bare
-    /// expression is the action's return value (§3.7 implicit tail).
+    /// Emit declared `actions:` helpers as methods (trailing bare expression
+    /// is the return value, §3.7).
     fn emit_action_methods(&self, out: &mut String) -> Result<(), String> {
         let Some(block) = &self.decl.actions else {
             return Ok(());
@@ -518,8 +869,7 @@ impl<'a> Generator<'a> {
         Ok(())
     }
 
-    /// Emit the per-stage DFA as a `const DFA_<sid>` (sid-suffixed so a
-    /// multi-stage state has distinct consts), at indent `ind`.
+    /// Emit the per-stage DFA as a `const DFA_<sid>` at indent `ind`.
     fn emit_dfa_const(&self, out: &mut String, sid: usize, ind: &str) {
         let dfa = &self.stage_dfas[sid];
         let states: Vec<String> = dfa
@@ -550,7 +900,6 @@ impl<'a> Generator<'a> {
                 "@@:matched" => "this.matched".to_string(),
                 "@@:cursor" => "this.cursor".to_string(),
                 "@@:return" => "this.return_value".to_string(),
-                // `$state.label` reads a stage capture (the matched slice).
                 _ => match name.strip_prefix('$').and_then(|c| c.split_once('.')) {
                     Some((state, label)) => format!("this.{}", cap_field(state, label)),
                     None => name.clone(),
@@ -566,8 +915,19 @@ impl<'a> Generator<'a> {
             },
             Expression::Call { func, args } => self.call(func, args),
             Expression::Member { object, field } => {
-                // `self.field` reads an instance field.
                 if let Expression::Var(name) = object.as_ref() {
+                    // Mode C (§8.3): `$state.label.<fsm field>` reads the
+                    // inner fsm instance recorded for that stage.
+                    if let Some((state, label)) =
+                        name.strip_prefix('$').and_then(|c| c.split_once('.'))
+                    {
+                        if matches!(
+                            field.as_str(),
+                            "return_value" | "accepted" | "cursor" | "reject_position"
+                        ) {
+                            return format!("this.{}.{}", cap_inst_field(state, label), field);
+                        }
+                    }
                     if name == "self" {
                         return format!("this.{}", field);
                     }
@@ -599,6 +959,11 @@ impl<'a> Generator<'a> {
 /// `cap_state_label`.
 fn cap_field(state: &str, label: &str) -> String {
     format!("cap_{}_{}", state, label)
+}
+
+/// Instance field name holding a Mode C inner fsm: `cap_inst_state_label`.
+fn cap_inst_field(state: &str, label: &str) -> String {
+    format!("cap_inst_{}_{}", state, label)
 }
 
 fn binop(op: &BinaryOp) -> &'static str {
@@ -640,33 +1005,34 @@ mod tests {
     use std::process::Command;
 
     /// Generate JS for `src`, append a driver that constructs the fsm over
-    /// `input` and prints `accepted` + `return_value`, run via `node`, and
-    /// return `(accepted, return_value)`. `None` if `node` is unavailable.
-    fn run(src: &str, class: &str, input: &str, tag: &str) -> Option<(String, String)> {
-        let decl = parse_fsm_block(src.as_bytes()).expect("fixture must parse");
-        let code = generate(&decl).expect("fixture must generate");
+    /// `input` (a JS expression) and prints `accepted` + `return_value`, run
+    /// via `node`. `None` if `node` is unavailable.
+    fn run_js(code: &str, ctor_args: &str, tag: &str) -> Option<(String, String)> {
         let driver = format!(
-            "{code}\nconst m = new {class}({input:?});\nconsole.log(String(m.accepted));\nconsole.log(String(m.return_value));\n",
+            "{code}\nconst m = new M({ctor_args});\nconsole.log(String(m.accepted));\nconsole.log(String(m.return_value));\n",
             code = code,
-            class = class,
-            input = input
+            ctor_args = ctor_args
         );
-        let dir = std::env::temp_dir();
-        let path = dir.join(format!("framec_js_{}.js", tag));
+        let path = std::env::temp_dir().join(format!("framec_js_{}.js", tag));
         std::fs::write(&path, driver).expect("write js");
         let out = match Command::new("node").arg(&path).output() {
             Ok(o) => o,
-            Err(_) => return None, // node absent — skip
+            Err(_) => return None,
         };
         assert!(
             out.status.success(),
-            "node failed for {:?}:\n{}",
-            src,
+            "node failed:\n{}",
             String::from_utf8_lossy(&out.stderr)
         );
         let text = String::from_utf8_lossy(&out.stdout);
         let lines: Vec<&str> = text.lines().collect();
         Some((lines[0].to_string(), lines[1].to_string()))
+    }
+
+    fn run(src: &str, _class: &str, input: &str, tag: &str) -> Option<(String, String)> {
+        let decl = parse_fsm_block(src.as_bytes()).expect("fixture must parse");
+        let code = generate(&decl).expect("fixture must generate");
+        run_js(&code, &format!("{:?}", input), tag)
     }
 
     #[test]
@@ -698,7 +1064,6 @@ mod tests {
         assert_eq!(ret, "3");
     }
 
-    /// Stage capture: `.n/[0-9]+/` captures the matched slice as `$s.n`.
     #[test]
     fn js_stage_capture() {
         let src = "@@fsm M(text: bytes) : int = 0 { $s: .n/[0-9]+/ to_int($s.n) }";
@@ -708,7 +1073,6 @@ mod tests {
         assert_eq!((acc.as_str(), ret.as_str()), ("true", "42"));
     }
 
-    /// Action block mutating a domain field, returned by a bare expression.
     #[test]
     fn js_action_block() {
         let src = "@@fsm M(text: bytes) : int = 0 { \
@@ -720,7 +1084,6 @@ mod tests {
         assert_eq!(ret, "1");
     }
 
-    /// Declared `actions:` helper, callable from a match with a return value.
     #[test]
     fn js_declared_action() {
         let src = "@@fsm M(text: bytes) : int = 0 { \
@@ -732,8 +1095,6 @@ mod tests {
         assert_eq!(ret, "42");
     }
 
-    /// FSM-TEST-006: labeled states, static success + failure transitions,
-    /// capture read across states.
     #[test]
     fn js_transitions_and_capture() {
         let src = "@@fsm M(text: bytes) : int = 0 { \
@@ -747,7 +1108,6 @@ mod tests {
         assert_eq!(run(src, "M", "X", "tr_b").unwrap().1, "-1");
     }
 
-    /// Conditional `when` target (FSM-TEST-402).
     #[test]
     fn js_conditional_target() {
         let src = "@@fsm M(text: bytes, mode: int) : int = 0 { \
@@ -775,14 +1135,107 @@ mod tests {
         };
         assert_eq!(z, "0");
         assert_eq!(run_mode("1", 1, "cond_b").unwrap(), "1");
-        assert_eq!(run_mode("0", 2, "cond_c").unwrap(), "-1"); // no when → failure
+        assert_eq!(run_mode("0", 2, "cond_c").unwrap(), "-1");
     }
 
-    /// A construct outside the first cut errors clearly.
+    /// Multi-match (`|`) ordered choice + stageless catch-all.
+    #[test]
+    fn js_multi_match() {
+        let src = "@@fsm M(text: bytes) : int = 0 { \
+                   /[0-9]/ -> $num | 99 \
+                   $num: 1 }";
+        let Some((acc, ret)) = run(src, "M", "5", "mm_a") else {
+            return;
+        };
+        assert_eq!((acc.as_str(), ret.as_str()), ("true", "1"));
+        let (acc2, ret2) = run(src, "M", "a", "mm_b").unwrap();
+        assert_eq!((acc2.as_str(), ret2.as_str()), ("true", "99"));
+    }
+
+    /// `${...}` embedding action fires once per consumed element.
+    #[test]
+    fn js_embed_every_transition() {
+        let src = "@@fsm M(text: bytes) : int = 0 { \
+                   /[0-9]+/ ${ this_count() } \
+                   self.count \
+                   actions: this_count() { self.count = self.count + 1 } \
+                   domain: count: int = 0 }";
+        let Some((_, ret)) = run(src, "M", "123", "emb_e") else {
+            return;
+        };
+        assert_eq!(ret, "3");
+    }
+
+    /// Token alphabet: input is an array of token-kind names.
+    #[test]
+    fn js_token_alphabet() {
+        let src = "@@fsm M(toks: token) : bool = false { /IDENT LPAREN RPAREN/ true }";
+        let decl = parse_fsm_block(src.as_bytes()).expect("parses");
+        let code = generate(&decl).expect("generates");
+        let ok = run_js(&code, "[\"IDENT\", \"LPAREN\", \"RPAREN\"]", "tok_seq");
+        let Some((acc, _)) = ok else {
+            return;
+        };
+        assert_eq!(acc, "true");
+        assert_eq!(
+            run_js(&code, "[\"IDENT\", \"RPAREN\"]", "tok_bad")
+                .unwrap()
+                .0,
+            "false"
+        );
+        assert_eq!(
+            run_js(&code, "[\"IDENT\", \"WAT\"]", "tok_unk").unwrap().0,
+            "false"
+        );
+    }
+
+    /// Mode C call-out: `/@Inner/` constructs the inner class.
+    #[test]
+    fn js_mode_c_callout() {
+        let inner_src = "@@fsm Digits(text: bytes) : int = 0 { /[0-9]+/ to_int(@@:matched) }";
+        let outer_src = "@@fsm Outer(text: bytes) : int = 0 { $s: .d/@Digits/ $s.d.return_value }";
+        let inner = generate(&parse_fsm_block(inner_src.as_bytes()).expect("inner")).unwrap();
+        let outer = generate(&parse_fsm_block(outer_src.as_bytes()).expect("outer")).unwrap();
+        let run_outer = |inp: &str, tag: &str| -> Option<(String, String)> {
+            let driver = format!(
+                "{inner}\n{outer}\nconst m = new Outer({inp:?});\nconsole.log(String(m.accepted));\nconsole.log(String(m.return_value));\n",
+                inner = inner, outer = outer, inp = inp
+            );
+            let path = std::env::temp_dir().join(format!("framec_js_{}.js", tag));
+            std::fs::write(&path, driver).ok()?;
+            let o = Command::new("node").arg(&path).output().ok()?;
+            assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+            let text = String::from_utf8_lossy(&o.stdout);
+            let lines: Vec<&str> = text.lines().collect();
+            Some((lines[0].to_string(), lines[1].to_string()))
+        };
+        let Some((acc, ret)) = run_outer("42", "modec_a") else {
+            return;
+        };
+        assert_eq!((acc.as_str(), ret.as_str()), ("true", "42"));
+        assert_eq!(run_outer("x", "modec_b").unwrap().0, "false");
+    }
+
+    /// Boundary anchors: leading `^` and trailing `$`.
+    #[test]
+    fn js_anchors() {
+        let start = "@@fsm M(text: bytes) : bool = false { /^foo/ true }";
+        let Some((acc, _)) = run(start, "M", "foo", "anc_a") else {
+            return;
+        };
+        assert_eq!(acc, "true");
+        assert_eq!(run(start, "M", "xfoo", "anc_b").unwrap().0, "false");
+        let end = "@@fsm M(text: bytes) : bool = false { /[0-9]+$/ true }";
+        assert_eq!(run(end, "M", "123", "anc_c").unwrap().0, "true");
+        assert_eq!(run(end, "M", "123x", "anc_d").unwrap().0, "false");
+    }
+
+    /// A construct outside the v0.1 cut errors clearly.
     #[test]
     fn js_unsupported_errors() {
         let decl =
-            parse_fsm_block(b"@@fsm M(toks: token) : bool = false { /A/ true }").expect("parses");
-        assert!(generate(&decl).is_err());
+            parse_fsm_block(b"@@fsm M(text: bytes) : bool = false { /a$b/ true }").expect("parses");
+        let err = generate(&decl).unwrap_err();
+        assert!(err.contains("anchor"), "got {err}");
     }
 }
