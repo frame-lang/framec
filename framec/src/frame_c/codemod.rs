@@ -27,10 +27,12 @@ pub struct MigrationReport {
 }
 
 /// Default Frame source extensions handled by the codemod tree walker.
-/// Mirrors the file-extension table in the project README.
+/// Mirrors the file-extension table in the project README, plus the
+/// generic `.frame` extension used by framec-test-env's fuzz harness
+/// for target-agnostic test sources.
 pub const FRAME_SOURCE_EXTENSIONS: &[&str] = &[
     "fpy", "frs", "fts", "fjs", "fjava", "fkt", "fswift", "fdart", "fgd", "flua", "fphp", "frb",
-    "fc", "fcpp", "fcs", "fgo", "ferl", "frm",
+    "fc", "fcpp", "fcs", "fgo", "ferl", "frm", "frame",
 ];
 
 /// Insert `@@[async]` before any `@@system` whose body declares async
