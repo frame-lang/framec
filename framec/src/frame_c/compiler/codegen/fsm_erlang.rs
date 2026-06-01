@@ -26,10 +26,12 @@
 //! targets, multi-match (`|`) ordered-choice states (commit-on-first-stage,
 //! stageless catch-all), and embedding actions (`>{}`/`@{}`/`${}`/`%{}`/
 //! `@eof{}`, §3.5.5/§5.4 — a specialized `match_stage_<sid>(St) -> {Last,
-//! St2}` that threads the mutated state map through the scan). Not yet
-//! handled (clear `Unsupported` error, never a silent miscompile): Mode C
-//! call-out, the token alphabet, and anchors. These land in later
-//! increments, matching the Rust backend's build-out.
+//! St2}` that threads the mutated state map through the scan). Alphabets:
+//! `bytes`/`char` (a code-point list → tuple) and `token` (an atom list →
+//! tuple; token kinds map to small integer ids via a generated `tok_id/1`).
+//! Not yet handled (clear `Unsupported` error, never a silent miscompile):
+//! Mode C call-out and anchors. These land in later increments, matching the
+//! Rust backend's build-out.
 
 use crate::frame_c::compiler::frame_ast::{
     BinaryOp, EmbeddingOp, Expression, FsmDeclAst, FsmStateAst, FsmTransitionTarget, Literal,
@@ -65,6 +67,10 @@ struct Generator<'a> {
     /// `(state label, stage label)` → element index, for stage-ref re-entry
     /// (`-> $State.stage`).
     stage_entry: std::collections::HashMap<(String, String), usize>,
+    /// Token-alphabet only: each token-kind name → a small integer id, so
+    /// token transitions reuse the same numeric range matcher (the
+    /// per-element read maps a token atom to its id; unknown → -1).
+    token_ids: std::collections::HashMap<String, u32>,
     stage_dfas: Vec<StageDfa>,
 }
 
@@ -72,9 +78,7 @@ impl<'a> Generator<'a> {
     fn new(decl: &'a FsmDeclAst) -> Result<Self, String> {
         let alphabet = match decl.params.first().map(|p| &p.param_type) {
             Some(Type::Custom(t)) if t == "char" => Alphabet::Char,
-            Some(Type::Custom(t)) if t == "token" => {
-                return Err("the token alphabet is not yet supported by the Erlang backend".into())
-            }
+            Some(Type::Custom(t)) if t == "token" => Alphabet::Token,
             _ => Alphabet::Bytes,
         };
         let mut label_to_index = std::collections::HashMap::new();
@@ -101,6 +105,7 @@ impl<'a> Generator<'a> {
             label_to_index,
             stage_sid: std::collections::HashMap::new(),
             stage_entry,
+            token_ids: std::collections::HashMap::new(),
             stage_dfas: Vec::new(),
         };
         g.compile_stage_dfas()?;
@@ -112,30 +117,44 @@ impl<'a> Generator<'a> {
     /// `dfa_<n>` helpers line up with the references regardless of how many
     /// `_Enter` entry points re-emit a state body.
     fn compile_stage_dfas(&mut self) -> Result<(), String> {
+        // `token_ids` is taken out so `compile_one` can be a borrow-free
+        // associated function (it both reads the regex and grows the map).
+        let mut token_ids = std::mem::take(&mut self.token_ids);
         let mut sid = 0usize;
         for (si, st) in self.decl.states.iter().enumerate() {
             for (ai, m) in st.matches.iter().enumerate() {
                 for (ei, el) in m.elements.iter().enumerate() {
                     if let MatchElement::Stage(stage) = el {
                         if stage.regex.starts_with('@') {
+                            self.token_ids = token_ids;
                             return Err(
                                 "Mode C (`/@Fsm/`) is not yet supported by the Erlang backend"
                                     .into(),
                             );
                         }
-                        let dfa = self.compile_one(&stage.regex)?;
-                        self.stage_dfas.push(dfa);
+                        match Self::compile_one(self.alphabet, &stage.regex, &mut token_ids) {
+                            Ok(dfa) => self.stage_dfas.push(dfa),
+                            Err(e) => {
+                                self.token_ids = token_ids;
+                                return Err(e);
+                            }
+                        }
                         self.stage_sid.insert((si, ai, ei), sid);
                         sid += 1;
                     }
                 }
             }
         }
+        self.token_ids = token_ids;
         Ok(())
     }
 
-    fn compile_one(&self, regex: &str) -> Result<StageDfa, String> {
-        match fsm_regex::compile(regex, self.alphabet, DEFAULT_MAX_DFA_STATES) {
+    fn compile_one(
+        alphabet: Alphabet,
+        regex: &str,
+        token_ids: &mut std::collections::HashMap<String, u32>,
+    ) -> Result<StageDfa, String> {
+        match fsm_regex::compile(regex, alphabet, DEFAULT_MAX_DFA_STATES) {
             Ok(compiled) => {
                 if compiled.requires_start || compiled.requires_end {
                     return Err(
@@ -152,8 +171,12 @@ impl<'a> Generator<'a> {
                             DfaLabel::ByteRange { low, high } => (*low as u32, *high as u32),
                             DfaLabel::CodePoint(c) => (*c as u32, *c as u32),
                             DfaLabel::CodePointRange { low, high } => (*low as u32, *high as u32),
-                            DfaLabel::Token(_) => {
-                                return Err("token-alphabet DFA is not supported here".into())
+                            DfaLabel::Token(name) => {
+                                // Map the token kind to a small integer id so
+                                // it reuses the numeric range matcher.
+                                let next = token_ids.len() as u32;
+                                let id = *token_ids.entry(name.clone()).or_insert(next);
+                                (id, id)
                             }
                         };
                         trans.push((lo, hi, t.to));
@@ -195,9 +218,34 @@ impl<'a> Generator<'a> {
         self.emit_state_functions(&mut out)?;
         self.emit_embed_matchers(&mut out)?;
         self.emit_action_functions(&mut out)?;
+        self.emit_tok_id(&mut out);
         self.emit_dfa_helpers(&mut out);
         self.emit_dfa_runtime(&mut out);
         Ok(out)
+    }
+
+    /// The per-element read as an integer: a byte/char by code point, a token
+    /// by its small integer id (`-1` for an unknown token, matching no
+    /// range). This is the only point where the scan differs across alphabets.
+    fn element_read_expr(&self) -> &'static str {
+        match self.alphabet {
+            Alphabet::Token => "tok_id(element(Pos + 1, Input))",
+            _ => "element(Pos + 1, Input)",
+        }
+    }
+
+    /// Token alphabet: emit the `tok_id/1` atom → id lookup (unknown → -1).
+    /// Emitted only when a stage matcher exists to call it.
+    fn emit_tok_id(&self, out: &mut String) {
+        if self.alphabet != Alphabet::Token || self.stage_dfas.is_empty() {
+            return;
+        }
+        let mut entries: Vec<(&String, &u32)> = self.token_ids.iter().collect();
+        entries.sort_by_key(|(_, id)| **id);
+        for (name, id) in entries {
+            writeln!(out, "tok_id({}) -> {};", erl_atom(name), id).ok();
+        }
+        out.push_str("tok_id(_) -> -1.\n\n");
     }
 
     /// Emit a specialized matcher `match_stage_<sid>(St) -> {Last, St2}` for
@@ -299,7 +347,7 @@ impl<'a> Generator<'a> {
         out.push_str("    case Pos < N of\n");
         out.push_str("        false -> {Last, Pos, Prev, St};\n");
         out.push_str("        true ->\n");
-        out.push_str("            V = element(Pos + 1, Input),\n");
+        writeln!(out, "            V = {},", self.element_read_expr()).ok();
         out.push_str("            {Trans, _} = element(S + 1, States),\n");
         out.push_str("            case dfa_find(Trans, V) of\n");
         out.push_str("                none -> {Last, Pos, Prev, St};\n");
@@ -1256,29 +1304,32 @@ impl<'a> Generator<'a> {
     /// of the longest match, or -1 for no match.
     fn emit_dfa_runtime(&self, out: &mut String) {
         if self.has_plain_stage() {
-            out.push_str(
-                "dfa_match(St, {States, Start}) ->\n\
+            writeln!(
+                out,
+                "dfa_match(St, {{States, Start}}) ->\n\
                  \x20   Input = maps:get(fsm_input, St),\n\
                  \x20   N = maps:get(fsm_n, St),\n\
                  \x20   Pos = maps:get(cursor, St),\n\
-                 \x20   {_, Acc} = element(Start + 1, States),\n\
+                 \x20   {{_, Acc}} = element(Start + 1, States),\n\
                  \x20   Last = case Acc of true -> Pos; false -> -1 end,\n\
                  \x20   dfa_loop(Input, N, States, Start, Pos, Last).\n\n\
                  dfa_loop(Input, N, States, S, Pos, Last) ->\n\
                  \x20   case Pos < N of\n\
                  \x20       false -> Last;\n\
                  \x20       true ->\n\
-                 \x20           V = element(Pos + 1, Input),\n\
-                 \x20           {Trans, _} = element(S + 1, States),\n\
+                 \x20           V = {read},\n\
+                 \x20           {{Trans, _}} = element(S + 1, States),\n\
                  \x20           case dfa_find(Trans, V) of\n\
                  \x20               none -> Last;\n\
-                 \x20               {ok, Tgt} ->\n\
-                 \x20                   {_, Acc} = element(Tgt + 1, States),\n\
+                 \x20               {{ok, Tgt}} ->\n\
+                 \x20                   {{_, Acc}} = element(Tgt + 1, States),\n\
                  \x20                   Last2 = case Acc of true -> Pos + 1; false -> Last end,\n\
                  \x20                   dfa_loop(Input, N, States, Tgt, Pos + 1, Last2)\n\
                  \x20           end\n\
-                 \x20   end.\n\n",
-            );
+                 \x20   end.\n",
+                read = self.element_read_expr()
+            )
+            .ok();
         }
         out.push_str(
             "dfa_find([], _) -> none;\n\
@@ -1781,11 +1832,61 @@ mod tests {
         assert_eq!(ret, "1");
     }
 
-    /// A construct outside the first cut errors clearly.
+    /// Token alphabet (FSM-TEST-253): the input is a list of token-kind
+    /// atoms; regex identifiers reference token kinds, not characters.
+    #[test]
+    fn erl_token_alphabet() {
+        let src = "@@fsm M(toks: token) : bool = false { /IDENT LPAREN RPAREN/ true }";
+        let decl = parse_fsm_block(src.as_bytes()).expect("parses");
+        let code = generate(&decl).expect("generates");
+        let run_toks = |toks: &str, tag: &str| -> Option<String> {
+            let dir = std::env::temp_dir().join(format!("framec_erl_{}", tag));
+            std::fs::create_dir_all(&dir).ok()?;
+            let erl_path = dir.join("m.erl");
+            std::fs::write(&erl_path, &code).ok()?;
+            let c = Command::new("erlc")
+                .arg("-o")
+                .arg(&dir)
+                .arg(&erl_path)
+                .output()
+                .ok()?;
+            assert!(c.status.success(), "{}", String::from_utf8_lossy(&c.stderr));
+            let eval = format!(
+                "R = m:recognize([{}]), io:format(\"~p~n\", [maps:get(accepted, R)])",
+                toks
+            );
+            let o = Command::new("erl")
+                .arg("-noshell")
+                .arg("-pa")
+                .arg(&dir)
+                .arg("-eval")
+                .arg(&eval)
+                .arg("-s")
+                .arg("init")
+                .arg("stop")
+                .output()
+                .expect("run erl");
+            Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+        };
+        let Some(ok) = run_toks("'IDENT', 'LPAREN', 'RPAREN'", "tok_seq") else {
+            return;
+        };
+        assert_eq!(ok, "true");
+        // Wrong token sequence → not in the language.
+        assert_eq!(run_toks("'IDENT', 'RPAREN'", "tok_bad").unwrap(), "false");
+        // An unknown token kind never matches a transition.
+        assert_eq!(
+            run_toks("'IDENT', 'WAT', 'RPAREN'", "tok_unk").unwrap(),
+            "false"
+        );
+    }
+
+    /// A construct outside the first cut errors clearly. Anchors are deferred
+    /// to a later increment.
     #[test]
     fn erl_unsupported_errors() {
         let decl =
-            parse_fsm_block(b"@@fsm M(toks: token) : bool = false { /A/ true }").expect("parses");
+            parse_fsm_block(b"@@fsm M(text: bytes) : bool = false { /^a/ true }").expect("parses");
         assert!(generate(&decl).is_err());
     }
 }
