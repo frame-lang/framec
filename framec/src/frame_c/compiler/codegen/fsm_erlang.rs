@@ -23,15 +23,17 @@
 //! `bytes`/`char` alphabets, with the `@@:matched` / `to_int` / `to_str` /
 //! `len` built-ins, conditional (`when`) and stage-ref (`-> $S.stage`, via a
 //! `fsm_enter` re-entry index a per-state `case Enter of` honors) transition
-//! targets, and multi-match (`|`) ordered-choice states (commit-on-first-
-//! stage, stageless catch-all). Not yet handled (clear `Unsupported` error,
-//! never a silent miscompile): embedding actions, Mode C call-out, the token
-//! alphabet, and anchors. These land in later increments, matching the Rust
-//! backend's build-out.
+//! targets, multi-match (`|`) ordered-choice states (commit-on-first-stage,
+//! stageless catch-all), and embedding actions (`>{}`/`@{}`/`${}`/`%{}`/
+//! `@eof{}`, §3.5.5/§5.4 — a specialized `match_stage_<sid>(St) -> {Last,
+//! St2}` that threads the mutated state map through the scan). Not yet
+//! handled (clear `Unsupported` error, never a silent miscompile): Mode C
+//! call-out, the token alphabet, and anchors. These land in later
+//! increments, matching the Rust backend's build-out.
 
 use crate::frame_c::compiler::frame_ast::{
-    BinaryOp, Expression, FsmDeclAst, FsmStateAst, FsmTransitionTarget, Literal, MatchAst,
-    MatchElement, Type, UnaryOp,
+    BinaryOp, EmbeddingOp, Expression, FsmDeclAst, FsmStateAst, FsmTransitionTarget, Literal,
+    MatchAst, MatchElement, StageAst, Statement, Type, UnaryOp,
 };
 use crate::frame_c::compiler::fsm_regex::{
     self, size_check::DEFAULT_MAX_DFA_STATES, subset::DfaLabel, Alphabet, CompileError,
@@ -115,12 +117,6 @@ impl<'a> Generator<'a> {
             for (ai, m) in st.matches.iter().enumerate() {
                 for (ei, el) in m.elements.iter().enumerate() {
                     if let MatchElement::Stage(stage) = el {
-                        if !stage.embedding_actions.is_empty() {
-                            return Err(
-                                "embedding actions are not yet supported by the Erlang backend"
-                                    .into(),
-                            );
-                        }
                         if stage.regex.starts_with('@') {
                             return Err(
                                 "Mode C (`/@Fsm/`) is not yet supported by the Erlang backend"
@@ -197,10 +193,187 @@ impl<'a> Generator<'a> {
         self.emit_run(&mut out);
         self.emit_state_dispatch(&mut out);
         self.emit_state_functions(&mut out)?;
+        self.emit_embed_matchers(&mut out)?;
         self.emit_action_functions(&mut out)?;
         self.emit_dfa_helpers(&mut out);
         self.emit_dfa_runtime(&mut out);
         Ok(out)
+    }
+
+    /// Emit a specialized matcher `match_stage_<sid>(St) -> {Last, St2}` for
+    /// each stage that carries embedding actions (§3.5.5 / §5.4). Same greedy
+    /// longest-match scan as `dfa_match`, but firing the embedding actions at
+    /// their DFA positions and threading the (mutated) state map: `>{}` at
+    /// scan start, `${}` per consumed element, `@{}` on entering an accepting
+    /// state, `%{}` on leaving one, `@eof{}` at end-of-input while mid-match.
+    /// `@@:cursor` reflects the scan position during firing; it is restored to
+    /// the stage-entry position before returning.
+    fn emit_embed_matchers(&self, out: &mut String) -> Result<(), String> {
+        let mut sid = 0usize;
+        for st in &self.decl.states {
+            for m in &st.matches {
+                for el in &m.elements {
+                    if let MatchElement::Stage(stage) = el {
+                        if !stage.embedding_actions.is_empty() {
+                            self.emit_one_matcher(out, sid, stage)?;
+                        }
+                        sid += 1;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Statements of `stage`'s embedding actions with op `op`, concatenated.
+    fn embed_stmts(&self, stage: &StageAst, op: EmbeddingOp) -> Vec<Statement> {
+        let mut out = Vec::new();
+        for ea in &stage.embedding_actions {
+            if ea.op == op {
+                out.extend(ea.body.statements.iter().cloned());
+            }
+        }
+        out
+    }
+
+    fn emit_one_matcher(
+        &self,
+        out: &mut String,
+        sid: usize,
+        stage: &StageAst,
+    ) -> Result<(), String> {
+        let mut ctr = 0usize;
+        writeln!(out, "match_stage_{}(St) ->", sid).ok();
+        writeln!(out, "    {{States, Start}} = dfa_{}(),", sid).ok();
+        out.push_str("    Entry = maps:get(cursor, St),\n");
+        out.push_str("    Input = maps:get(fsm_input, St),\n");
+        out.push_str("    N = maps:get(fsm_n, St),\n");
+        out.push_str("    {_, A0} = element(Start + 1, States),\n");
+        out.push_str("    Last0 = case A0 of true -> Entry; false -> -1 end,\n");
+        out.push_str("    StA = St#{cursor => Entry},\n");
+        // `>{}` — begin matching.
+        let start_b = self.emit_block(
+            out,
+            &self.embed_stmts(stage, EmbeddingOp::Start),
+            "StA",
+            "    ",
+            &mut ctr,
+        )?;
+        // The final position/accepting flag are only needed for `@eof{}`;
+        // bind them to `_` otherwise so erlc does not warn.
+        let eof = self.embed_stmts(stage, EmbeddingOp::Eof);
+        let (pf, prf) = if eof.is_empty() {
+            ("_", "_")
+        } else {
+            ("PosF", "PrevF")
+        };
+        writeln!(
+            out,
+            "    {{Last, {}, {}, StZ}} = embed_loop_{}(Input, N, States, Start, Entry, Last0, A0, {}),",
+            pf, prf, sid, start_b
+        )
+        .ok();
+        // `@eof{}` — end of input reached while mid-match (non-accepting).
+        let final_st = if eof.is_empty() {
+            "StZ".to_string()
+        } else {
+            let v = fresh("St", &mut ctr);
+            writeln!(out, "    {} = case (PosF >= N) andalso (not PrevF) of", v).ok();
+            out.push_str("        true ->\n");
+            let b = self.emit_block(out, &eof, "StZ", "            ", &mut ctr)?;
+            writeln!(out, "            {};", b).ok();
+            out.push_str("        false -> StZ\n");
+            out.push_str("    end,\n");
+            v
+        };
+        writeln!(out, "    {{Last, {}#{{cursor => Entry}}}}.", final_st).ok();
+        out.push('\n');
+
+        // The per-step loop.
+        writeln!(
+            out,
+            "embed_loop_{}(Input, N, States, S, Pos, Last, Prev, St) ->",
+            sid
+        )
+        .ok();
+        out.push_str("    case Pos < N of\n");
+        out.push_str("        false -> {Last, Pos, Prev, St};\n");
+        out.push_str("        true ->\n");
+        out.push_str("            V = element(Pos + 1, Input),\n");
+        out.push_str("            {Trans, _} = element(S + 1, States),\n");
+        out.push_str("            case dfa_find(Trans, V) of\n");
+        out.push_str("                none -> {Last, Pos, Prev, St};\n");
+        out.push_str("                {ok, Tgt} ->\n");
+        out.push_str("                    Pos2 = Pos + 1,\n");
+        out.push_str("                    StC = St#{cursor => Pos2},\n");
+        let ind = "                    ";
+        // `${}` — every consumed element.
+        let after_every = self.emit_block(
+            out,
+            &self.embed_stmts(stage, EmbeddingOp::EveryTransition),
+            "StC",
+            ind,
+            &mut ctr,
+        )?;
+        writeln!(out, "{}{{_, Now}} = element(Tgt + 1, States),", ind).ok();
+        // `@{}` — a transition into an accepting state.
+        let accept = self.embed_stmts(stage, EmbeddingOp::Accept);
+        let after_accept = if accept.is_empty() {
+            after_every.clone()
+        } else {
+            self.emit_gated_body(out, "Now", &accept, &after_every, ind, &mut ctr)?
+        };
+        // `%{}` — left an accepting state.
+        let leave = self.embed_stmts(stage, EmbeddingOp::LeaveAccept);
+        let after_leave = if leave.is_empty() {
+            after_accept.clone()
+        } else {
+            self.emit_gated_body(
+                out,
+                "Prev andalso (not Now)",
+                &leave,
+                &after_accept,
+                ind,
+                &mut ctr,
+            )?
+        };
+        writeln!(
+            out,
+            "{}Last2 = case Now of true -> Pos2; false -> Last end,",
+            ind
+        )
+        .ok();
+        writeln!(
+            out,
+            "{}embed_loop_{}(Input, N, States, Tgt, Pos2, Last2, Now, {})",
+            ind, sid, after_leave
+        )
+        .ok();
+        out.push_str("            end\n    end.\n\n");
+        Ok(())
+    }
+
+    /// Emit `V = case <cond> of true -> <body threaded from st_in> Final;
+    /// false -> st_in end,` and return the fresh `V`. Used for the gated
+    /// embedding actions (`@{}`/`%{}`).
+    fn emit_gated_body(
+        &self,
+        out: &mut String,
+        cond: &str,
+        stmts: &[Statement],
+        st_in: &str,
+        ind: &str,
+        ctr: &mut usize,
+    ) -> Result<String, String> {
+        let v = fresh("St", ctr);
+        let inner = format!("{}        ", ind);
+        writeln!(out, "{}{} = case {} of", ind, v, cond).ok();
+        writeln!(out, "{}    true ->", ind).ok();
+        let b = self.emit_block(out, stmts, st_in, &inner, ctr)?;
+        writeln!(out, "{}        {};", ind, b).ok();
+        writeln!(out, "{}    false -> {}", ind, st_in).ok();
+        writeln!(out, "{}end,", ind).ok();
+        Ok(v)
     }
 
     /// Is `name` a declared `actions:` helper? Declared-action calls thread
@@ -458,7 +631,20 @@ impl<'a> Generator<'a> {
                 };
                 let my_sid = self.stage_sid[&(index, ai, fs)];
                 let r = fresh("R", ctr);
-                writeln!(out, "{}{} = dfa_match({}, dfa_{}()),", ind, r, sv, my_sid).ok();
+                // An embedding selector threads its (mutated) state map.
+                let sbase = if sel.embedding_actions.is_empty() {
+                    writeln!(out, "{}{} = dfa_match({}, dfa_{}()),", ind, r, sv, my_sid).ok();
+                    sv.to_string()
+                } else {
+                    let se = fresh("St", ctr);
+                    writeln!(
+                        out,
+                        "{}{{{}, {}}} = match_stage_{}({}),",
+                        ind, r, se, my_sid, sv
+                    )
+                    .ok();
+                    se
+                };
                 writeln!(out, "{}case {} >= 0 of", ind, r).ok();
                 let ind4 = format!("{}    ", ind);
                 let ind8 = format!("{}        ", ind);
@@ -468,7 +654,7 @@ impl<'a> Generator<'a> {
                 writeln!(
                     out,
                     "{}{} = lists:sublist(maps:get({}, {}), maps:get(cursor, {}) + 1, {} - maps:get(cursor, {})),",
-                    ind8, mtch, erl_key(&self.decl.params[0].name), sv, sv, r, sv
+                    ind8, mtch, erl_key(&self.decl.params[0].name), sbase, sbase, r, sbase
                 )
                 .ok();
                 let cap = match &sel.label {
@@ -481,7 +667,7 @@ impl<'a> Generator<'a> {
                 writeln!(
                     out,
                     "{}{} = {}#{{fsm_matched => {}, cursor => {}, accepted => true{}}},",
-                    ind8, committed, sv, mtch, r, cap
+                    ind8, committed, sbase, mtch, r, cap
                 )
                 .ok();
                 // Remaining elements + this alternative's success transition.
@@ -499,7 +685,9 @@ impl<'a> Generator<'a> {
                 )?;
                 out.push_str(";\n");
                 writeln!(out, "{}false ->", ind4).ok();
-                self.emit_alt(out, st, index, ai + 1, sv, state_label, &ind8, ctr)?;
+                // A selector miss falls through to the next alternative; an
+                // embedding selector's mutations (cursor restored) carry over.
+                self.emit_alt(out, st, index, ai + 1, &sbase, state_label, &ind8, ctr)?;
                 writeln!(out).ok();
                 write!(out, "{}end", ind).ok();
             }
@@ -627,11 +815,28 @@ impl<'a> Generator<'a> {
             MatchElement::Stage(stage) => {
                 let my_sid = self.stage_sid[&(state_idx, ai, idx)];
                 let r = fresh("R", ctr);
-                writeln!(out, "{}{} = dfa_match({}, dfa_{}()),", ind, r, st, my_sid).ok();
+                // An embedding stage matches via `match_stage_<sid>`, which
+                // fires its actions and returns the (mutated) state map; a
+                // plain stage uses the shared `dfa_match` executor. `base` is
+                // the state to commit / fail from (the threaded map for an
+                // embedding stage, else the incoming `st`).
+                let base = if stage.embedding_actions.is_empty() {
+                    writeln!(out, "{}{} = dfa_match({}, dfa_{}()),", ind, r, st, my_sid).ok();
+                    st.to_string()
+                } else {
+                    let se = fresh("St", ctr);
+                    writeln!(
+                        out,
+                        "{}{{{}, {}}} = match_stage_{}({}),",
+                        ind, r, se, my_sid, st
+                    )
+                    .ok();
+                    se
+                };
                 writeln!(out, "{}case {} < 0 of", ind, r).ok();
                 let ind2 = format!("{}    ", ind);
                 writeln!(out, "{}true ->", ind2).ok();
-                self.emit_failure(out, m, st, &format!("{}    ", ind2));
+                self.emit_failure(out, m, &base, &format!("{}    ", ind2));
                 out.push_str(";\n");
                 writeln!(out, "{}false ->", ind2).ok();
                 let ind3 = format!("{}    ", ind2);
@@ -642,7 +847,7 @@ impl<'a> Generator<'a> {
                 writeln!(
                     out,
                     "{}{} = lists:sublist(maps:get({}, {}), maps:get(cursor, {}) + 1, {} - maps:get(cursor, {})),",
-                    ind3, mtch, erl_key(&self.decl.params[0].name), st, st, r, st
+                    ind3, mtch, erl_key(&self.decl.params[0].name), base, base, r, base
                 )
                 .ok();
                 let st2 = fresh("St", ctr);
@@ -655,7 +860,7 @@ impl<'a> Generator<'a> {
                 writeln!(
                     out,
                     "{}{} = {}#{{fsm_matched => {}, cursor => {}, accepted => true{}}},",
-                    ind3, st2, st, mtch, r, cap
+                    ind3, st2, base, mtch, r, cap
                 )
                 .ok();
                 self.emit_seq(
@@ -750,7 +955,6 @@ impl<'a> Generator<'a> {
         ind: &str,
         ctr: &mut usize,
     ) -> Result<String, String> {
-        use crate::frame_c::compiler::frame_ast::Statement;
         match s {
             Statement::Expression(e) => match &e.expr {
                 Expression::Assign { target, value } => {
@@ -1033,33 +1237,51 @@ impl<'a> Generator<'a> {
         }
     }
 
+    /// Does any stage match via the shared `dfa_match` executor (a regex
+    /// stage with no embedding actions)? When every stage is embedding-aware,
+    /// `dfa_match`/`dfa_loop` are never called and must not be emitted (dead
+    /// code). `dfa_find` is always emitted — the embedding matcher uses it.
+    fn has_plain_stage(&self) -> bool {
+        self.decl.states.iter().any(|st| {
+            st.matches.iter().any(|m| {
+                m.elements.iter().any(
+                    |el| matches!(el, MatchElement::Stage(s) if s.embedding_actions.is_empty()),
+                )
+            })
+        })
+    }
+
     /// The shared greedy longest-match DFA executor (identical in every
     /// generated module). Reads the cursor from `St`; returns the end index
     /// of the longest match, or -1 for no match.
     fn emit_dfa_runtime(&self, out: &mut String) {
+        if self.has_plain_stage() {
+            out.push_str(
+                "dfa_match(St, {States, Start}) ->\n\
+                 \x20   Input = maps:get(fsm_input, St),\n\
+                 \x20   N = maps:get(fsm_n, St),\n\
+                 \x20   Pos = maps:get(cursor, St),\n\
+                 \x20   {_, Acc} = element(Start + 1, States),\n\
+                 \x20   Last = case Acc of true -> Pos; false -> -1 end,\n\
+                 \x20   dfa_loop(Input, N, States, Start, Pos, Last).\n\n\
+                 dfa_loop(Input, N, States, S, Pos, Last) ->\n\
+                 \x20   case Pos < N of\n\
+                 \x20       false -> Last;\n\
+                 \x20       true ->\n\
+                 \x20           V = element(Pos + 1, Input),\n\
+                 \x20           {Trans, _} = element(S + 1, States),\n\
+                 \x20           case dfa_find(Trans, V) of\n\
+                 \x20               none -> Last;\n\
+                 \x20               {ok, Tgt} ->\n\
+                 \x20                   {_, Acc} = element(Tgt + 1, States),\n\
+                 \x20                   Last2 = case Acc of true -> Pos + 1; false -> Last end,\n\
+                 \x20                   dfa_loop(Input, N, States, Tgt, Pos + 1, Last2)\n\
+                 \x20           end\n\
+                 \x20   end.\n\n",
+            );
+        }
         out.push_str(
-            "dfa_match(St, {States, Start}) ->\n\
-             \x20   Input = maps:get(fsm_input, St),\n\
-             \x20   N = maps:get(fsm_n, St),\n\
-             \x20   Pos = maps:get(cursor, St),\n\
-             \x20   {_, Acc} = element(Start + 1, States),\n\
-             \x20   Last = case Acc of true -> Pos; false -> -1 end,\n\
-             \x20   dfa_loop(Input, N, States, Start, Pos, Last).\n\n\
-             dfa_loop(Input, N, States, S, Pos, Last) ->\n\
-             \x20   case Pos < N of\n\
-             \x20       false -> Last;\n\
-             \x20       true ->\n\
-             \x20           V = element(Pos + 1, Input),\n\
-             \x20           {Trans, _} = element(S + 1, States),\n\
-             \x20           case dfa_find(Trans, V) of\n\
-             \x20               none -> Last;\n\
-             \x20               {ok, Tgt} ->\n\
-             \x20                   {_, Acc} = element(Tgt + 1, States),\n\
-             \x20                   Last2 = case Acc of true -> Pos + 1; false -> Last end,\n\
-             \x20                   dfa_loop(Input, N, States, Tgt, Pos + 1, Last2)\n\
-             \x20           end\n\
-             \x20   end.\n\n\
-             dfa_find([], _) -> none;\n\
+            "dfa_find([], _) -> none;\n\
              dfa_find([{Lo, Hi, Tgt} | T], V) ->\n\
              \x20   case (Lo =< V) andalso (V =< Hi) of\n\
              \x20       true -> {ok, Tgt};\n\
@@ -1516,6 +1738,47 @@ mod tests {
         // 'a': digit alternative misses → catch-all matches unconditionally.
         let (acc2, ret2) = run(src, "m", "a", "mma_b").unwrap();
         assert_eq!((acc2.as_str(), ret2.as_str()), ("true", "99"));
+    }
+
+    /// `${...}` fires once per consumed element (FSM-TEST-123); a declared
+    /// action is callable from inside it, threading the state map.
+    #[test]
+    fn erl_embed_every_transition() {
+        let src = "@@fsm M(text: bytes) : int = 0 { \
+                   /[0-9]+/ ${ tally() } \
+                   self.count \
+                   actions: tally() { self.count = self.count + 1 } \
+                   domain: count: int = 0 }";
+        let Some((_, ret)) = run(src, "m", "123", "emb_e") else {
+            return;
+        };
+        assert_eq!(ret, "3"); // three digits → ${} fires 3×
+    }
+
+    /// `@{...}` fires on each transition into an accepting state; for `/a+/`
+    /// over "aaa" that is once per `a`.
+    #[test]
+    fn erl_embed_accept() {
+        let src = "@@fsm M(text: bytes) : int = 0 { \
+                   /a+/ @{ self.hits = self.hits + 1 } self.hits \
+                   domain: hits: int = 0 }";
+        let Some((_, ret)) = run(src, "m", "aaa", "emb_a") else {
+            return;
+        };
+        assert_eq!(ret, "3");
+    }
+
+    /// `>{...}` fires once at scan start; `@@:cursor` there is the
+    /// stage-entry position (after the prior stage consumed `x`).
+    #[test]
+    fn erl_embed_start_cursor() {
+        let src = "@@fsm M(text: bytes) : int = 0 { \
+                   /x/ /[0-9]+/ >{ self.start = @@:cursor } self.start \
+                   domain: start: int = -1 }";
+        let Some((_, ret)) = run(src, "m", "x42", "emb_s") else {
+            return;
+        };
+        assert_eq!(ret, "1");
     }
 
     /// A construct outside the first cut errors clearly.
