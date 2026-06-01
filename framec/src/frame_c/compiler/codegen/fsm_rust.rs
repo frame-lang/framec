@@ -14,10 +14,11 @@
 //! bare-expression returns, action blocks (assignment / `if`-`else`),
 //! declared `actions:` helpers, and all transition forms — static,
 //! conditional (`when`), stage-ref (`-> $S.stage`, via a `self.enter`
-//! re-entry index), and failure-only — over the `bytes`/`char` alphabets,
-//! with the `@@:matched` / `to_int` / `to_str` / `len` built-ins. Not yet
-//! handled (clear `Unsupported` error, never a silent miscompile):
-//! multi-match (`|`) states, embedding actions, Mode C call-out, the token
+//! re-entry index), and failure-only — plus multi-match (`|`) ordered-choice
+//! states (commit-on-first-stage, stageless catch-all) — over the
+//! `bytes`/`char` alphabets, with the `@@:matched` / `to_int` / `to_str` /
+//! `len` built-ins. Not yet handled (clear `Unsupported` error, never a
+//! silent miscompile): embedding actions, Mode C call-out, the token
 //! alphabet, and anchors.
 
 use crate::frame_c::compiler::frame_ast::{
@@ -87,29 +88,27 @@ impl<'a> Generator<'a> {
         Ok(g)
     }
 
+    /// Compile every stage's DFA across all states and all `|` alternatives,
+    /// in traversal order, so the emitted `DFA_<sid>` consts line up with the
+    /// `sid` counter the state emitters advance.
     fn compile_stage_dfas(&mut self) -> Result<(), String> {
         for st in &self.decl.states {
-            if st.matches.len() > 1 {
-                return Err(
-                    "multi-match (`|`) states are not yet supported by the Rust backend".into(),
-                );
-            }
-            let Some(m) = st.matches.first() else {
-                continue;
-            };
-            for el in &m.elements {
-                if let MatchElement::Stage(stage) = el {
-                    if !stage.embedding_actions.is_empty() {
-                        return Err(
-                            "embedding actions are not yet supported by the Rust backend".into(),
-                        );
+            for m in &st.matches {
+                for el in &m.elements {
+                    if let MatchElement::Stage(stage) = el {
+                        if !stage.embedding_actions.is_empty() {
+                            return Err(
+                                "embedding actions are not yet supported by the Rust backend"
+                                    .into(),
+                            );
+                        }
+                        if stage.regex.starts_with('@') {
+                            return Err(
+                                "Mode C (`/@Fsm/`) is not yet supported by the Rust backend".into(),
+                            );
+                        }
+                        self.stage_dfas.push(self.compile_one(&stage.regex)?);
                     }
-                    if stage.regex.starts_with('@') {
-                        return Err(
-                            "Mode C (`/@Fsm/`) is not yet supported by the Rust backend".into()
-                        );
-                    }
-                    self.stage_dfas.push(self.compile_one(&stage.regex)?);
                 }
             }
         }
@@ -398,8 +397,8 @@ impl<'a> Generator<'a> {
     fn emit_state_methods(&self, out: &mut String) -> Result<(), String> {
         let mut sid = 0usize;
         for (i, st) in self.decl.states.iter().enumerate() {
-            match st.matches.first() {
-                None => {
+            match st.matches.len() {
+                0 => {
                     writeln!(
                         out,
                         "    fn state_{}(&mut self, _enter: usize) -> i64 {{ -1 }}\n",
@@ -407,7 +406,8 @@ impl<'a> Generator<'a> {
                     )
                     .ok();
                 }
-                Some(m) => self.emit_one_state(out, i, st, m, &mut sid)?,
+                1 => self.emit_one_state(out, i, st, &st.matches[0], &mut sid)?,
+                _ => self.emit_multi_match(out, i, st, &mut sid)?,
             }
         }
         Ok(())
@@ -435,7 +435,118 @@ impl<'a> Generator<'a> {
             self.emit_element(out, el, m, &state_label, "            ", sid)?;
             out.push_str("        }\n");
         }
-        self.emit_success(out, m, "        ")?;
+        self.emit_success(out, m, "        ", /*tail*/ true)?;
+        out.push_str("    }\n\n");
+        Ok(())
+    }
+
+    /// Emit a multi-match (`|`) state as ordered choice (RFC-0042 §3.4).
+    /// Each alternative's first stage is tried at the state-entry cursor; the
+    /// first that matches commits and runs to its transition (a committed
+    /// alternative's later-stage failure follows its own failure branch). A
+    /// first-stage miss falls through to the next alternative with the cursor
+    /// unchanged. A stageless alternative is an unconditional catch-all. If no
+    /// alternative matches, the input is not in the language (§5.6).
+    ///
+    /// `_enter` re-entry is not applied here (selection is by first stage);
+    /// stage-ref targets into a multi-match state are not registered.
+    fn emit_multi_match(
+        &self,
+        out: &mut String,
+        index: usize,
+        st: &FsmStateAst,
+        sid: &mut usize,
+    ) -> Result<(), String> {
+        let state_label = st.label.clone().unwrap_or_default();
+        let input = &self.decl.params[0].name;
+        writeln!(
+            out,
+            "    fn state_{}(&mut self, _enter: usize) -> i64 {{",
+            index
+        )
+        .ok();
+
+        // A stageless catch-all returns unconditionally; once one is emitted
+        // the §5.6 fallback (and any later alternative) is unreachable.
+        let mut catch_all = false;
+        for m in &st.matches {
+            let first_stage = m
+                .elements
+                .iter()
+                .position(|e| matches!(e, MatchElement::Stage(_)));
+            match first_stage {
+                Some(fs) => {
+                    if fs > 0 {
+                        // Elements before the first stage would run during
+                        // selection (before this alternative is chosen), which
+                        // has ambiguous side-effect semantics. Reject rather
+                        // than silently drop or misorder them.
+                        return Err(
+                            "a `|` alternative with elements before its first stage is not yet \
+                             supported by the Rust backend"
+                                .into(),
+                        );
+                    }
+                    let my_sid = *sid;
+                    *sid += 1;
+                    let MatchElement::Stage(sel) = &m.elements[fs] else {
+                        unreachable!("first_stage indexes a Stage element")
+                    };
+                    self.emit_dfa_const(out, my_sid, "        ");
+                    writeln!(
+                        out,
+                        "        let _r = self.dfa_match(DFA_{}, {});",
+                        my_sid, self.stage_dfas[my_sid].start
+                    )
+                    .ok();
+                    out.push_str("        if _r >= 0 {\n");
+                    // Committed: record the selector's capture + advance.
+                    writeln!(
+                        out,
+                        "            self.matched = self.{}[self.cursor..(_r as usize)].iter().collect();",
+                        input
+                    )
+                    .ok();
+                    if let Some(slabel) = &sel.label {
+                        if !state_label.is_empty() {
+                            writeln!(
+                                out,
+                                "            self.{} = self.matched.clone();",
+                                cap_field(&state_label, slabel)
+                            )
+                            .ok();
+                        }
+                    }
+                    out.push_str("            self.cursor = _r as usize;\n");
+                    out.push_str("            self.accepted = true;\n");
+                    // Remaining elements run inside the commit; a later stage
+                    // failure follows this alternative's failure branch.
+                    for el in &m.elements[fs + 1..] {
+                        self.emit_element(out, el, m, &state_label, "            ", sid)?;
+                    }
+                    self.emit_success(out, m, "            ", /*tail*/ false)?;
+                    out.push_str("        }\n");
+                    // First-stage miss: fall through to the next alternative.
+                }
+                None => {
+                    // Stageless alternative: an unconditional catch-all.
+                    out.push_str("        self.accepted = true;\n");
+                    for el in &m.elements {
+                        self.emit_element(out, el, m, &state_label, "        ", sid)?;
+                    }
+                    self.emit_success(out, m, "        ", /*tail*/ false)?;
+                    catch_all = true;
+                    break;
+                }
+            }
+        }
+
+        if !catch_all {
+            // No alternative's first stage matched: not in the language (§5.6).
+            out.push_str("        self.accepted = false;\n");
+            out.push_str("        self.reject_position = self.cursor;\n");
+            out.push_str("        -1\n");
+        }
         out.push_str("    }\n\n");
         Ok(())
     }
@@ -497,14 +608,27 @@ impl<'a> Generator<'a> {
         Ok(())
     }
 
-    /// Emit the success-branch transition after a match completes.
-    fn emit_success(&self, out: &mut String, m: &MatchAst, ind: &str) -> Result<(), String> {
+    /// Emit the success-branch transition after a match completes. `tail`
+    /// selects the dispatch-loop tail form (bare `idx`) versus a `return idx;`
+    /// — single-match states emit in tail position, a committed `|`
+    /// alternative emits inside an `if` and must `return`.
+    fn emit_success(
+        &self,
+        out: &mut String,
+        m: &MatchAst,
+        ind: &str,
+        tail: bool,
+    ) -> Result<(), String> {
         match m.transition.as_ref().and_then(|c| c.success.as_ref()) {
             None => {
-                writeln!(out, "{}-1", ind).ok();
+                if tail {
+                    writeln!(out, "{}-1", ind).ok();
+                } else {
+                    writeln!(out, "{}return -1;", ind).ok();
+                }
                 Ok(())
             }
-            Some(success) => self.emit_target(out, success, ind, m, /*tail*/ true),
+            Some(success) => self.emit_target(out, success, ind, m, tail),
         }
     }
 
@@ -922,6 +1046,57 @@ mod tests {
         assert_eq!(z, "0");
         assert_eq!(run_mode("1", 1, "cond_b").unwrap(), "1");
         assert_eq!(run_mode("0", 2, "cond_c").unwrap(), "-1"); // no when → failure
+    }
+
+    /// Multi-match (`|`) ordered choice: the first alternative whose first
+    /// stage matches wins; distinct first stages route to distinct targets.
+    #[test]
+    fn rust_multi_match_ordered_choice() {
+        let src = "@@fsm M(text: bytes) : int = 0 { \
+                   /[0-9]/ -> $num | /[a-z]/ -> $word \
+                   $num: 1 \
+                   $word: 2 }";
+        let Some((acc, ret)) = run(src, "M", "5", "mmc_a") else {
+            return;
+        };
+        assert_eq!((acc.as_str(), ret.as_str()), ("true", "1"));
+        assert_eq!(run(src, "M", "a", "mmc_b").unwrap().1, "2");
+        // Neither alternative's first stage matches → reject.
+        assert_eq!(run(src, "M", "!", "mmc_c").unwrap().0, "false");
+    }
+
+    /// Selection commits on the first stage: a committed alternative's later
+    /// stage failure follows *its* failure branch, no backtracking.
+    #[test]
+    fn rust_multi_match_commits_on_first_stage() {
+        let src = "@@fsm M(text: bytes) : int = 0 { \
+                   /a/ /b/ -> $ab : -> $err | /a/ /c/ -> $ac \
+                   $ab: 1 \
+                   $ac: 2 \
+                   $err: -1 }";
+        let Some((_, ret)) = run(src, "M", "ab", "mmk_a") else {
+            return;
+        };
+        assert_eq!(ret, "1");
+        // "ac": alt0 commits on /a/; /b/ fails on 'c' → alt0's failure ($err).
+        let (acc, ret) = run(src, "M", "ac", "mmk_b").unwrap();
+        assert_eq!((acc.as_str(), ret.as_str()), ("false", "-1"));
+        assert_eq!(run(src, "M", "xy", "mmk_c").unwrap().0, "false");
+    }
+
+    /// A stageless final alternative is an unconditional catch-all.
+    #[test]
+    fn rust_multi_match_catch_all() {
+        let src = "@@fsm M(text: bytes) : int = 0 { \
+                   /[0-9]/ -> $num | 99 \
+                   $num: 1 }";
+        let Some((acc, ret)) = run(src, "M", "5", "mma_a") else {
+            return;
+        };
+        assert_eq!((acc.as_str(), ret.as_str()), ("true", "1"));
+        // 'a': digit alternative misses → catch-all matches unconditionally.
+        let (acc2, ret2) = run(src, "M", "a", "mma_b").unwrap();
+        assert_eq!((acc2.as_str(), ret2.as_str()), ("true", "99"));
     }
 
     /// A construct outside the v0.1 Rust cut errors clearly.
