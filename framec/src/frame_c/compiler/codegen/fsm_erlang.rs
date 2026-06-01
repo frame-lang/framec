@@ -21,12 +21,13 @@
 //! {RetVal, St2}` helpers; calls are hoisted out of expression position so
 //! the state map threads), and static + failure transitions over the
 //! `bytes`/`char` alphabets, with the `@@:matched` / `to_int` / `to_str` /
-//! `len` built-ins, plus conditional (`when`) and stage-ref (`-> $S.stage`,
-//! via a `fsm_enter` re-entry index a per-state `case Enter of` honors)
-//! transition targets. Not yet handled (clear `Unsupported` error, never a
-//! silent miscompile): multi-match (`|`) states, embedding actions, Mode C
-//! call-out, the token alphabet, and anchors. These land in later
-//! increments, matching the Rust backend's build-out.
+//! `len` built-ins, conditional (`when`) and stage-ref (`-> $S.stage`, via a
+//! `fsm_enter` re-entry index a per-state `case Enter of` honors) transition
+//! targets, and multi-match (`|`) ordered-choice states (commit-on-first-
+//! stage, stageless catch-all). Not yet handled (clear `Unsupported` error,
+//! never a silent miscompile): embedding actions, Mode C call-out, the token
+//! alphabet, and anchors. These land in later increments, matching the Rust
+//! backend's build-out.
 
 use crate::frame_c::compiler::frame_ast::{
     BinaryOp, Expression, FsmDeclAst, FsmStateAst, FsmTransitionTarget, Literal, MatchAst,
@@ -53,11 +54,12 @@ struct Generator<'a> {
     decl: &'a FsmDeclAst,
     alphabet: Alphabet,
     label_to_index: std::collections::HashMap<String, usize>,
-    /// `(state index, element index)` → stage-DFA index. Precomputed so a
-    /// stage's DFA reference is fixed by position, letting a state body be
-    /// emitted from multiple `_Enter` entry points without a running counter
-    /// drifting out of sync with `stage_dfas`.
-    stage_sid: std::collections::HashMap<(usize, usize), usize>,
+    /// `(state index, alternative index, element index)` → stage-DFA index.
+    /// Precomputed so a stage's DFA reference is fixed by position, letting a
+    /// state body be emitted from multiple `_Enter` entry points (and each
+    /// `|` alternative) without a running counter drifting out of sync with
+    /// `stage_dfas`.
+    stage_sid: std::collections::HashMap<(usize, usize, usize), usize>,
     /// `(state label, stage label)` → element index, for stage-ref re-entry
     /// (`-> $State.stage`).
     stage_entry: std::collections::HashMap<(String, String), usize>,
@@ -78,8 +80,10 @@ impl<'a> Generator<'a> {
         for (i, st) in decl.states.iter().enumerate() {
             if let Some(l) = &st.label {
                 label_to_index.insert(l.clone(), i);
-                if let Some(m) = st.matches.first() {
-                    for (ei, el) in m.elements.iter().enumerate() {
+                // Stage-ref re-entry is registered only for single-match
+                // states; selection in a multi-match state is by first stage.
+                if st.matches.len() == 1 {
+                    for (ei, el) in st.matches[0].elements.iter().enumerate() {
                         if let MatchElement::Stage(stage) = el {
                             if let Some(sl) = &stage.label {
                                 stage_entry.insert((l.clone(), sl.clone()), ei);
@@ -108,30 +112,26 @@ impl<'a> Generator<'a> {
     fn compile_stage_dfas(&mut self) -> Result<(), String> {
         let mut sid = 0usize;
         for (si, st) in self.decl.states.iter().enumerate() {
-            if st.matches.len() > 1 {
-                return Err(
-                    "multi-match (`|`) states are not yet supported by the Erlang backend".into(),
-                );
-            }
-            let Some(m) = st.matches.first() else {
-                continue;
-            };
-            for (ei, el) in m.elements.iter().enumerate() {
-                if let MatchElement::Stage(stage) = el {
-                    if !stage.embedding_actions.is_empty() {
-                        return Err(
-                            "embedding actions are not yet supported by the Erlang backend".into(),
-                        );
+            for (ai, m) in st.matches.iter().enumerate() {
+                for (ei, el) in m.elements.iter().enumerate() {
+                    if let MatchElement::Stage(stage) = el {
+                        if !stage.embedding_actions.is_empty() {
+                            return Err(
+                                "embedding actions are not yet supported by the Erlang backend"
+                                    .into(),
+                            );
+                        }
+                        if stage.regex.starts_with('@') {
+                            return Err(
+                                "Mode C (`/@Fsm/`) is not yet supported by the Erlang backend"
+                                    .into(),
+                            );
+                        }
+                        let dfa = self.compile_one(&stage.regex)?;
+                        self.stage_dfas.push(dfa);
+                        self.stage_sid.insert((si, ai, ei), sid);
+                        sid += 1;
                     }
-                    if stage.regex.starts_with('@') {
-                        return Err(
-                            "Mode C (`/@Fsm/`) is not yet supported by the Erlang backend".into(),
-                        );
-                    }
-                    let dfa = self.compile_one(&stage.regex)?;
-                    self.stage_dfas.push(dfa);
-                    self.stage_sid.insert((si, ei), sid);
-                    sid += 1;
                 }
             }
         }
@@ -378,11 +378,147 @@ impl<'a> Generator<'a> {
 
     fn emit_state_functions(&self, out: &mut String) -> Result<(), String> {
         for (i, st) in self.decl.states.iter().enumerate() {
-            match st.matches.first() {
-                None => {
+            match st.matches.len() {
+                0 => {
                     writeln!(out, "state_{}(St, _Enter) -> {{-1, St}}.\n", i).ok();
                 }
-                Some(m) => self.emit_one_state(out, i, st, m)?,
+                1 => self.emit_one_state(out, i, st, &st.matches[0])?,
+                _ => self.emit_multi_match(out, i, st)?,
+            }
+        }
+        Ok(())
+    }
+
+    /// Emit a multi-match (`|`) state as ordered choice (RFC-0042 §3.4): each
+    /// alternative's first stage is tried at the state-entry cursor; the
+    /// first that matches commits and runs to its transition (a committed
+    /// alternative's later-stage failure follows its own failure branch). A
+    /// first-stage miss falls through to the next alternative; a stageless
+    /// alternative is an unconditional catch-all. If none matches, the input
+    /// is not in the language (§5.6). `_Enter` re-entry is not applied here.
+    fn emit_multi_match(
+        &self,
+        out: &mut String,
+        index: usize,
+        st: &FsmStateAst,
+    ) -> Result<(), String> {
+        let state_label = st.label.clone().unwrap_or_default();
+        writeln!(out, "state_{}(St, _Enter) ->", index).ok();
+        let mut ctr = 0usize;
+        self.emit_alt(out, st, index, 0, "St", &state_label, "    ", &mut ctr)?;
+        out.push_str(".\n\n");
+        Ok(())
+    }
+
+    /// Recursively emit one `|` alternative and the fall-through chain. The
+    /// alternative's first stage is the selector: on match it commits and
+    /// runs the alternative body; on miss it falls through to the next
+    /// alternative (cursor unchanged). A stageless alternative is an
+    /// unconditional catch-all.
+    #[allow(clippy::too_many_arguments)]
+    fn emit_alt(
+        &self,
+        out: &mut String,
+        st: &FsmStateAst,
+        index: usize,
+        ai: usize,
+        sv: &str,
+        state_label: &str,
+        ind: &str,
+        ctr: &mut usize,
+    ) -> Result<(), String> {
+        if ai == st.matches.len() {
+            // No alternative matched: not in the language (§5.6).
+            writeln!(
+                out,
+                "{ind}{sv}r = {sv}#{{accepted => false, reject_position => maps:get(cursor, {sv})}},",
+                ind = ind,
+                sv = sv
+            )
+            .ok();
+            write!(out, "{}{{-1, {}r}}", ind, sv).ok();
+            return Ok(());
+        }
+        let m = &st.matches[ai];
+        let fs = m
+            .elements
+            .iter()
+            .position(|e| matches!(e, MatchElement::Stage(_)));
+        match fs {
+            Some(fs) => {
+                if fs > 0 {
+                    return Err(
+                        "a `|` alternative with elements before its first stage is not yet \
+                         supported by the Erlang backend"
+                            .into(),
+                    );
+                }
+                let MatchElement::Stage(sel) = &m.elements[fs] else {
+                    unreachable!("first_stage indexes a Stage element")
+                };
+                let my_sid = self.stage_sid[&(index, ai, fs)];
+                let r = fresh("R", ctr);
+                writeln!(out, "{}{} = dfa_match({}, dfa_{}()),", ind, r, sv, my_sid).ok();
+                writeln!(out, "{}case {} >= 0 of", ind, r).ok();
+                let ind4 = format!("{}    ", ind);
+                let ind8 = format!("{}        ", ind);
+                writeln!(out, "{}true ->", ind4).ok();
+                // Commit the selector: matched slice + capture + advance.
+                let mtch = fresh("M", ctr);
+                writeln!(
+                    out,
+                    "{}{} = lists:sublist(maps:get({}, {}), maps:get(cursor, {}) + 1, {} - maps:get(cursor, {})),",
+                    ind8, mtch, erl_key(&self.decl.params[0].name), sv, sv, r, sv
+                )
+                .ok();
+                let cap = match &sel.label {
+                    Some(lbl) if !state_label.is_empty() => {
+                        format!(", {} => {}", erl_key(&cap_key(state_label, lbl)), mtch)
+                    }
+                    _ => String::new(),
+                };
+                let committed = fresh("St", ctr);
+                writeln!(
+                    out,
+                    "{}{} = {}#{{fsm_matched => {}, cursor => {}, accepted => true{}}},",
+                    ind8, committed, sv, mtch, r, cap
+                )
+                .ok();
+                // Remaining elements + this alternative's success transition.
+                self.emit_seq(
+                    out,
+                    &m.elements,
+                    fs + 1,
+                    &committed,
+                    m,
+                    index,
+                    state_label,
+                    &ind8,
+                    ctr,
+                    ai,
+                )?;
+                out.push_str(";\n");
+                writeln!(out, "{}false ->", ind4).ok();
+                self.emit_alt(out, st, index, ai + 1, sv, state_label, &ind8, ctr)?;
+                writeln!(out).ok();
+                write!(out, "{}end", ind).ok();
+            }
+            None => {
+                // Stageless catch-all: matches unconditionally.
+                let committed = fresh("St", ctr);
+                writeln!(out, "{}{} = {}#{{accepted => true}},", ind, committed, sv).ok();
+                self.emit_seq(
+                    out,
+                    &m.elements,
+                    0,
+                    &committed,
+                    m,
+                    index,
+                    state_label,
+                    ind,
+                    ctr,
+                    ai,
+                )?;
             }
         }
         Ok(())
@@ -422,6 +558,7 @@ impl<'a> Generator<'a> {
                 &state_label,
                 "    ",
                 &mut ctr,
+                0,
             )?;
             out.push_str(".\n\n");
             return Ok(());
@@ -441,6 +578,7 @@ impl<'a> Generator<'a> {
                 &state_label,
                 "            ",
                 &mut ctr,
+                0,
             )?;
             out.push_str(";\n");
         }
@@ -456,6 +594,7 @@ impl<'a> Generator<'a> {
             &state_label,
             "            ",
             &mut ctr,
+            0,
         )?;
         out.push_str("\n    end.\n\n");
         Ok(())
@@ -478,6 +617,7 @@ impl<'a> Generator<'a> {
         state_label: &str,
         ind: &str,
         ctr: &mut usize,
+        ai: usize,
     ) -> Result<(), String> {
         if idx == elements.len() {
             self.emit_success(out, m, st, ind);
@@ -485,7 +625,7 @@ impl<'a> Generator<'a> {
         }
         match &elements[idx] {
             MatchElement::Stage(stage) => {
-                let my_sid = self.stage_sid[&(state_idx, idx)];
+                let my_sid = self.stage_sid[&(state_idx, ai, idx)];
                 let r = fresh("R", ctr);
                 writeln!(out, "{}{} = dfa_match({}, dfa_{}()),", ind, r, st, my_sid).ok();
                 writeln!(out, "{}case {} < 0 of", ind, r).ok();
@@ -528,6 +668,7 @@ impl<'a> Generator<'a> {
                     state_label,
                     &ind3,
                     ctr,
+                    ai,
                 )?;
                 writeln!(out).ok();
                 write!(out, "{}end", ind).ok();
@@ -559,6 +700,7 @@ impl<'a> Generator<'a> {
                     state_label,
                     ind,
                     ctr,
+                    ai,
                 )?;
             }
             MatchElement::ActionBlock(blk) => {
@@ -573,6 +715,7 @@ impl<'a> Generator<'a> {
                     state_label,
                     ind,
                     ctr,
+                    ai,
                 )?;
             }
         }
@@ -1323,6 +1466,56 @@ mod tests {
             return;
         };
         assert_eq!((acc.as_str(), ret.as_str()), ("true", "42"));
+    }
+
+    /// Multi-match (`|`) ordered choice: the first alternative whose first
+    /// stage matches wins; distinct first stages route to distinct targets.
+    #[test]
+    fn erl_multi_match_ordered_choice() {
+        let src = "@@fsm M(text: bytes) : int = 0 { \
+                   /[0-9]/ -> $num | /[a-z]/ -> $word \
+                   $num: 1 \
+                   $word: 2 }";
+        let Some((acc, ret)) = run(src, "m", "5", "mmc_a") else {
+            return;
+        };
+        assert_eq!((acc.as_str(), ret.as_str()), ("true", "1"));
+        assert_eq!(run(src, "m", "a", "mmc_b").unwrap().1, "2");
+        // Neither alternative's first stage matches → reject.
+        assert_eq!(run(src, "m", "!", "mmc_c").unwrap().0, "false");
+    }
+
+    /// Selection commits on the first stage: a committed alternative's later
+    /// stage failure follows *its* failure branch, no backtracking.
+    #[test]
+    fn erl_multi_match_commits() {
+        let src = "@@fsm M(text: bytes) : int = 0 { \
+                   /a/ /b/ -> $ab : -> $err | /a/ /c/ -> $ac \
+                   $ab: 1 \
+                   $ac: 2 \
+                   $err: -1 }";
+        let Some((_, ret)) = run(src, "m", "ab", "mmk_a") else {
+            return;
+        };
+        assert_eq!(ret, "1");
+        // "ac": alt0 commits on /a/; /b/ fails on 'c' → alt0's failure ($err).
+        let (acc, ret) = run(src, "m", "ac", "mmk_b").unwrap();
+        assert_eq!((acc.as_str(), ret.as_str()), ("false", "-1"));
+    }
+
+    /// A stageless final alternative is an unconditional catch-all.
+    #[test]
+    fn erl_multi_match_catch_all() {
+        let src = "@@fsm M(text: bytes) : int = 0 { \
+                   /[0-9]/ -> $num | 99 \
+                   $num: 1 }";
+        let Some((acc, ret)) = run(src, "m", "5", "mma_a") else {
+            return;
+        };
+        assert_eq!((acc.as_str(), ret.as_str()), ("true", "1"));
+        // 'a': digit alternative misses → catch-all matches unconditionally.
+        let (acc2, ret2) = run(src, "m", "a", "mma_b").unwrap();
+        assert_eq!((acc2.as_str(), ret2.as_str()), ("true", "99"));
     }
 
     /// A construct outside the first cut errors clearly.
