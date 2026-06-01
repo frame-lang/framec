@@ -7,7 +7,7 @@
 //! are replaced with generated code using the splicer.
 
 mod async_wrap;
-mod casing;
+pub(crate) mod casing;
 mod expand_system;
 mod factory;
 mod fields;

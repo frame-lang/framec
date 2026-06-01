@@ -27,10 +27,12 @@ use crate::frame_c::visitors::TargetLanguage;
 
 /// Per-backend opt-in to layered emission. Returns `true` only for
 /// backends where the casing/machine shape has been verified end-to-end.
-/// Phase 4 wires Python; subsequent phases flip the other 9 async-capable
-/// backends as their integrations land.
+/// Phase 4 wires Python; Phase 5 wires Rust (its emission lives in
+/// `rust_system/casing.rs` but shares this predicate); subsequent
+/// phases flip the remaining 8 async-capable backends as their
+/// integrations land.
 pub(crate) fn should_emit_layered(lang: TargetLanguage) -> bool {
-    matches!(lang, TargetLanguage::Python3)
+    matches!(lang, TargetLanguage::Python3 | TargetLanguage::Rust)
 }
 
 /// Given the machine class node (the post-`make_system_async` dispatch
