@@ -15,15 +15,15 @@
 //! declared `actions:` helpers, and all transition forms — static,
 //! conditional (`when`), stage-ref (`-> $S.stage`, via a `self.enter`
 //! re-entry index), and failure-only — plus multi-match (`|`) ordered-choice
-//! states (commit-on-first-stage, stageless catch-all) — over the
-//! `bytes`/`char` alphabets, with the `@@:matched` / `to_int` / `to_str` /
-//! `len` built-ins. Not yet handled (clear `Unsupported` error, never a
-//! silent miscompile): embedding actions, Mode C call-out, the token
-//! alphabet, and anchors.
+//! states (commit-on-first-stage, stageless catch-all) and embedding actions
+//! (`>{}`/`@{}`/`${}`/`%{}`/`@eof{}`, §3.5.5/§5.4) — over the `bytes`/`char`
+//! alphabets, with the `@@:matched` / `to_int` / `to_str` / `len` built-ins.
+//! Not yet handled (clear `Unsupported` error, never a silent miscompile):
+//! Mode C call-out, the token alphabet, and anchors.
 
 use crate::frame_c::compiler::frame_ast::{
-    BinaryOp, Expression, FsmDeclAst, FsmStateAst, FsmTransitionTarget, Literal, MatchAst,
-    MatchElement, Type, UnaryOp,
+    BinaryOp, EmbeddingOp, Expression, FsmDeclAst, FsmStateAst, FsmTransitionTarget, Literal,
+    MatchAst, MatchElement, StageAst, Type, UnaryOp,
 };
 use crate::frame_c::compiler::fsm_regex::{
     self, size_check::DEFAULT_MAX_DFA_STATES, subset::DfaLabel, Alphabet, CompileError,
@@ -96,12 +96,6 @@ impl<'a> Generator<'a> {
             for m in &st.matches {
                 for el in &m.elements {
                     if let MatchElement::Stage(stage) = el {
-                        if !stage.embedding_actions.is_empty() {
-                            return Err(
-                                "embedding actions are not yet supported by the Rust backend"
-                                    .into(),
-                            );
-                        }
                         if stage.regex.starts_with('@') {
                             return Err(
                                 "Mode C (`/@Fsm/`) is not yet supported by the Rust backend".into(),
@@ -249,12 +243,28 @@ impl<'a> Generator<'a> {
         out
     }
 
+    /// Does any stage match via the shared DFA executor (i.e. carries no
+    /// embedding actions)? When every stage is embedding-aware, `dfa_match`
+    /// is never called and must not be emitted (dead code).
+    fn has_plain_stage(&self) -> bool {
+        self.decl.states.iter().any(|st| {
+            st.matches.iter().any(|m| {
+                m.elements.iter().any(
+                    |el| matches!(el, MatchElement::Stage(s) if s.embedding_actions.is_empty()),
+                )
+            })
+        })
+    }
+
     fn emit_impl(&self, out: &mut String) -> Result<(), String> {
         writeln!(out, "impl {} {{", self.decl.name).ok();
         self.emit_new(out);
-        self.emit_dfa_matcher(out);
+        if self.has_plain_stage() {
+            self.emit_dfa_matcher(out);
+        }
         self.emit_run(out);
         self.emit_state_methods(out)?;
+        self.emit_embed_matchers(out)?;
         self.emit_action_methods(out)?;
         out.push_str("}\n");
         Ok(())
@@ -296,7 +306,7 @@ impl<'a> Generator<'a> {
             if i + 1 == n && has_return {
                 if let Statement::Expression(e) = s {
                     if !matches!(e.expr, Expression::Assign { .. }) {
-                        writeln!(out, "        {}", self.expr(&e.expr)).ok();
+                        writeln!(out, "        {}", self.expr_top(&e.expr)).ok();
                         continue;
                     }
                 }
@@ -381,6 +391,129 @@ impl<'a> Generator<'a> {
             input = input
         )
         .ok();
+    }
+
+    /// Emit a specialized matcher `match_stage_<sid>` for each stage that
+    /// carries embedding actions (§3.5.5 / §5.4). Walks states → matches →
+    /// elements in the same order as `compile_stage_dfas`, so sids align.
+    fn emit_embed_matchers(&self, out: &mut String) -> Result<(), String> {
+        let mut sid = 0usize;
+        for st in &self.decl.states {
+            for m in &st.matches {
+                for el in &m.elements {
+                    if let MatchElement::Stage(stage) = el {
+                        if !stage.embedding_actions.is_empty() {
+                            self.emit_one_matcher(out, sid, stage)?;
+                        }
+                        sid += 1;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Emit one stage's embedding-aware matcher. Same greedy longest-match
+    /// scan as `dfa_match`, but firing the embedding actions at their DFA
+    /// positions: `>{}` once at scan start, `${}` per consumed element, `@{}`
+    /// on entering an accepting state, `%{}` on leaving one, and `@eof{}` at
+    /// end-of-input while mid-match (non-accepting). `@@:cursor` reflects the
+    /// scan position during firing; it is restored to the stage-entry
+    /// position on return so the caller's slice/advance hold.
+    fn emit_one_matcher(
+        &self,
+        out: &mut String,
+        sid: usize,
+        stage: &StageAst,
+    ) -> Result<(), String> {
+        let input = &self.decl.params[0].name;
+        // `prev` (the previous step's accepting flag) is only consumed by the
+        // `%{}` leave guard and the `@eof{}` mid-match guard; track it only
+        // when one of those is present (else it's a dead variable).
+        let leave = self.embed_bodies(stage, EmbeddingOp::LeaveAccept, "                ")?;
+        let eof = self.embed_bodies(stage, EmbeddingOp::Eof, "            ")?;
+        let needs_prev = !leave.is_empty() || !eof.is_empty();
+        writeln!(out, "    fn match_stage_{}(&mut self) -> i64 {{", sid).ok();
+        self.emit_dfa_const(out, sid, "        ");
+        writeln!(
+            out,
+            "        let _entry = self.cursor;\n\
+             \x20       let mut st = {start};\n\
+             \x20       let mut pos = _entry;\n\
+             \x20       let n = self.{input}.len();\n\
+             \x20       let mut last: i64 = if DFA_{sid}[st].1 {{ pos as i64 }} else {{ -1 }};\n\
+             \x20       self.cursor = pos;",
+            start = self.stage_dfas[sid].start,
+            input = input,
+            sid = sid
+        )
+        .ok();
+        // `>{}` — begin matching.
+        out.push_str(&self.embed_bodies(stage, EmbeddingOp::Start, "        ")?);
+        if needs_prev {
+            writeln!(out, "        let mut prev = DFA_{}[st].1;", sid).ok();
+        }
+        writeln!(
+            out,
+            "        while pos < n {{\n\
+             \x20           let v = self.{input}[pos] as u32;\n\
+             \x20           let mut nxt: Option<usize> = None;\n\
+             \x20           for &(lo, hi, tgt) in DFA_{sid}[st].0 {{\n\
+             \x20               if lo <= v && v <= hi {{ nxt = Some(tgt); break; }}\n\
+             \x20           }}\n\
+             \x20           let Some(t) = nxt else {{ break; }};\n\
+             \x20           st = t;\n\
+             \x20           pos += 1;\n\
+             \x20           self.cursor = pos;",
+            input = input,
+            sid = sid
+        )
+        .ok();
+        // `${}` — every consumed element.
+        out.push_str(&self.embed_bodies(stage, EmbeddingOp::EveryTransition, "            ")?);
+        writeln!(out, "            let _now = DFA_{}[st].1;", sid).ok();
+        // `@{}` — a transition into an accepting state (§3.5.5: every
+        // transition whose destination is final, not only the first entry).
+        let accept = self.embed_bodies(stage, EmbeddingOp::Accept, "                ")?;
+        if !accept.is_empty() {
+            out.push_str("            if _now {\n");
+            out.push_str(&accept);
+            out.push_str("            }\n");
+        }
+        // `%{}` — left an accepting state.
+        if !leave.is_empty() {
+            out.push_str("            if prev && !_now {\n");
+            out.push_str(&leave);
+            out.push_str("            }\n");
+        }
+        out.push_str("            if _now { last = pos as i64; }\n");
+        if needs_prev {
+            out.push_str("            prev = _now;\n");
+        }
+        out.push_str("        }\n");
+        // `@eof{}` — end of input reached while mid-match (non-accepting).
+        if !eof.is_empty() {
+            out.push_str("        if pos >= n && !prev {\n");
+            out.push_str(&eof);
+            out.push_str("        }\n");
+        }
+        out.push_str("        self.cursor = _entry;\n        last\n    }\n\n");
+        Ok(())
+    }
+
+    /// Concatenated Rust for every embedding-action body of `op` on `stage`,
+    /// each statement at indent `ind`. Empty when the stage has no `op`
+    /// action (so the caller can skip an empty guard block).
+    fn embed_bodies(&self, stage: &StageAst, op: EmbeddingOp, ind: &str) -> Result<String, String> {
+        let mut s = String::new();
+        for ea in &stage.embedding_actions {
+            if ea.op == op {
+                for st in &ea.body.statements {
+                    s.push_str(&self.stmt(st, ind)?);
+                }
+            }
+        }
+        Ok(s)
     }
 
     fn emit_run(&self, out: &mut String) {
@@ -492,13 +625,17 @@ impl<'a> Generator<'a> {
                     let MatchElement::Stage(sel) = &m.elements[fs] else {
                         unreachable!("first_stage indexes a Stage element")
                     };
-                    self.emit_dfa_const(out, my_sid, "        ");
-                    writeln!(
-                        out,
-                        "        let _r = self.dfa_match(DFA_{}, {});",
-                        my_sid, self.stage_dfas[my_sid].start
-                    )
-                    .ok();
+                    if sel.embedding_actions.is_empty() {
+                        self.emit_dfa_const(out, my_sid, "        ");
+                        writeln!(
+                            out,
+                            "        let _r = self.dfa_match(DFA_{}, {});",
+                            my_sid, self.stage_dfas[my_sid].start
+                        )
+                        .ok();
+                    } else {
+                        writeln!(out, "        let _r = self.match_stage_{}();", my_sid).ok();
+                    }
                     out.push_str("        if _r >= 0 {\n");
                     // Committed: record the selector's capture + advance.
                     writeln!(
@@ -566,13 +703,21 @@ impl<'a> Generator<'a> {
             MatchElement::Stage(stage) => {
                 let my_sid = *sid;
                 *sid += 1;
-                self.emit_dfa_const(out, my_sid, ind);
-                writeln!(
-                    out,
-                    "{}let _r = self.dfa_match(DFA_{}, {});",
-                    ind, my_sid, self.stage_dfas[my_sid].start
-                )
-                .ok();
+                // A stage carrying embedding actions matches via its
+                // specialized `match_stage_<sid>` (which fires the actions at
+                // their DFA positions); a plain stage uses the shared DFA
+                // executor over an inline `DFA_<sid>` const.
+                if stage.embedding_actions.is_empty() {
+                    self.emit_dfa_const(out, my_sid, ind);
+                    writeln!(
+                        out,
+                        "{}let _r = self.dfa_match(DFA_{}, {});",
+                        ind, my_sid, self.stage_dfas[my_sid].start
+                    )
+                    .ok();
+                } else {
+                    writeln!(out, "{}let _r = self.match_stage_{}();", ind, my_sid).ok();
+                }
                 writeln!(out, "{}if _r < 0 {{", ind).ok();
                 self.emit_failure(out, m, &ind4)?;
                 writeln!(out, "{}}}", ind).ok();
@@ -597,7 +742,7 @@ impl<'a> Generator<'a> {
                 writeln!(out, "{}self.accepted = true;", ind).ok();
             }
             MatchElement::BareExpression { expr, .. } => {
-                writeln!(out, "{}self.return_value = {};", ind, self.expr(expr)).ok();
+                writeln!(out, "{}self.return_value = {};", ind, self.expr_top(expr)).ok();
             }
             MatchElement::ActionBlock(blk) => {
                 for s in &blk.statements {
@@ -663,7 +808,7 @@ impl<'a> Generator<'a> {
             FsmTransitionTarget::Conditional(alts) => {
                 let inner = format!("{}    ", ind);
                 for alt in alts {
-                    writeln!(out, "{}if {} {{", ind, self.expr(&alt.condition)).ok();
+                    writeln!(out, "{}if {} {{", ind, self.expr_top(&alt.condition)).ok();
                     // Inside an `if`, a goto is always a `return`.
                     self.emit_goto(out, &alt.target, &inner, false)?;
                     writeln!(out, "{}}}", ind).ok();
@@ -722,7 +867,7 @@ impl<'a> Generator<'a> {
             Statement::Expression(e) => Ok(format!("{}{};\n", ind, self.expr(&e.expr))),
             Statement::If(if_ast) => {
                 let inner = format!("{}    ", ind);
-                let mut out = format!("{}if {} {{\n", ind, self.expr(&if_ast.condition));
+                let mut out = format!("{}if {} {{\n", ind, self.expr_top(&if_ast.condition));
                 out.push_str(&self.stmt(&if_ast.then_branch, &inner)?);
                 out.push_str(&format!("{}}}", ind));
                 if let Some(else_b) = &if_ast.else_branch {
@@ -820,9 +965,27 @@ impl<'a> Generator<'a> {
                 format!("{}[{}]", self.expr(object), self.expr(index))
             }
             Expression::Assign { target, value } => {
-                format!("{} = {}", self.expr(target), self.expr(value))
+                format!("{} = {}", self.expr(target), self.expr_top(value))
             }
             Expression::NativeExpr(s) => s.clone(),
+        }
+    }
+
+    /// Like [`Self::expr`], but for an expression in statement / condition /
+    /// assignment-value position, where Rust needs no enclosing parentheses
+    /// and `rustc`'s default `unused_parens` lint would flag them. Strips the
+    /// single outer layer for `Binary`/`Unary`; inner operands keep their
+    /// precedence-preserving parens via [`Self::expr`].
+    fn expr_top(&self, e: &Expression) -> String {
+        match e {
+            Expression::Binary { left, op, right } => {
+                format!("{} {} {}", self.expr(left), binop(op), self.expr(right))
+            }
+            Expression::Unary { op, expr } => match op {
+                UnaryOp::Not | UnaryOp::BitNot => format!("!{}", self.expr(expr)),
+                UnaryOp::Neg => format!("-{}", self.expr(expr)),
+            },
+            _ => self.expr(e),
         }
     }
 
@@ -1097,6 +1260,47 @@ mod tests {
         // 'a': digit alternative misses → catch-all matches unconditionally.
         let (acc2, ret2) = run(src, "M", "a", "mma_b").unwrap();
         assert_eq!((acc2.as_str(), ret2.as_str()), ("true", "99"));
+    }
+
+    /// `${...}` fires once per consumed element (FSM-TEST-123); a declared
+    /// action is callable from inside it.
+    #[test]
+    fn rust_embed_every_transition() {
+        let src = "@@fsm M(text: bytes) : int = 0 { \
+                   /[0-9]+/ ${ tally() } \
+                   self.count \
+                   actions: tally() { self.count = self.count + 1 } \
+                   domain: count: int = 0 }";
+        let Some((_, ret)) = run(src, "M", "123", "emb_e") else {
+            return;
+        };
+        assert_eq!(ret, "3"); // three digits → ${} fires 3×
+    }
+
+    /// `>{...}` fires once at scan start; `@@:cursor` there is the
+    /// stage-entry position (after the prior stage consumed `x`).
+    #[test]
+    fn rust_embed_start_captures_cursor() {
+        let src = "@@fsm M(text: bytes) : int = 0 { \
+                   /x/ /[0-9]+/ >{ self.start = @@:cursor } self.start \
+                   domain: start: int = -1 }";
+        let Some((_, ret)) = run(src, "M", "x42", "emb_s") else {
+            return;
+        };
+        assert_eq!(ret, "1");
+    }
+
+    /// `@{...}` fires on each transition into an accepting state; for `/a+/`
+    /// over "aaa" that is once per `a`.
+    #[test]
+    fn rust_embed_accept() {
+        let src = "@@fsm M(text: bytes) : int = 0 { \
+                   /a+/ @{ self.hits = self.hits + 1 } self.hits \
+                   domain: hits: int = 0 }";
+        let Some((_, ret)) = run(src, "M", "aaa", "emb_a") else {
+            return;
+        };
+        assert_eq!(ret, "3");
     }
 
     /// A construct outside the v0.1 Rust cut errors clearly.
