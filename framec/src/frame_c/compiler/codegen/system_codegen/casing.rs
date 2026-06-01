@@ -63,6 +63,7 @@ pub(crate) fn should_emit_layered(lang: TargetLanguage) -> bool {
             | TargetLanguage::JavaScript
             | TargetLanguage::Java
             | TargetLanguage::CSharp
+            | TargetLanguage::Kotlin
     )
 }
 
@@ -162,6 +163,10 @@ fn generate_casing(system: &SystemAst, machine_name: &str, lang: TargetLanguage)
     }
 
     methods.push(generate_casing_init_delegate(lang));
+
+    if let Some(factory) = generate_casing_factory(system, lang) {
+        methods.push(factory);
+    }
 
     CodegenNode::Class {
         name: system.name.clone(),
@@ -280,6 +285,42 @@ fn generate_casing_fields(machine_name: &str, lang: TargetLanguage) -> Vec<Field
                 leading_comments: vec![],
             },
         ],
+        TargetLanguage::Kotlin => vec![
+            // All three declared without inline initializers; assigned in
+            // the `init {}` block that the Kotlin Constructor render emits
+            // from the Constructor body. `var` (is_const: false) because
+            // busy / in_flight are mutated by the gate; machine reassignment
+            // never happens but we use `var` uniformly to match existing
+            // codegen style (see baseline `_state_stack` etc.).
+            Field {
+                name: "machine".to_string(),
+                type_annotation: Some(machine_name.to_string()),
+                visibility: Visibility::Private,
+                is_static: false,
+                is_const: false,
+                initializer: None,
+                leading_comments: vec![],
+            },
+            Field {
+                name: "busy".to_string(),
+                type_annotation: Some("Boolean".to_string()),
+                visibility: Visibility::Private,
+                is_static: false,
+                is_const: false,
+                initializer: None,
+                leading_comments: vec![],
+            },
+            Field {
+                name: "in_flight".to_string(),
+                // Kotlin nullable-string syntax: `String?`.
+                type_annotation: Some("String?".to_string()),
+                visibility: Visibility::Private,
+                is_static: false,
+                is_const: false,
+                initializer: None,
+                leading_comments: vec![],
+            },
+        ],
         _ => vec![],
     }
 }
@@ -315,6 +356,15 @@ fn generate_casing_constructor(machine_name: &str, lang: TargetLanguage) -> Code
             "this.machine = new {m}();\n\
              this.busy = false;\n\
              this.in_flight = null;",
+            m = machine_name
+        ),
+        TargetLanguage::Kotlin => format!(
+            // Kotlin's primary-constructor body lives in `init {}` (which
+            // the Kotlin Constructor render emits). No `new` keyword — a
+            // class call is the constructor invocation. No semicolons.
+            "this.machine = {m}()\n\
+             this.busy = false\n\
+             this.in_flight = null",
             m = machine_name
         ),
         _ => String::new(),
@@ -371,6 +421,36 @@ fn generate_casing_interface_wrapper(ifm: &InterfaceMethod, lang: TargetLanguage
                  }}",
                 name = ifm.name,
                 args = arg_str
+            )
+        }
+        TargetLanguage::Kotlin => {
+            let arg_list: Vec<String> = ifm.params.iter().map(|p| p.name.clone()).collect();
+            let arg_str = arg_list.join(", ");
+            // Kotlin: `suspend fun X()` — no explicit `await` keyword;
+            // calling a suspend fun from within one chains naturally.
+            // void return = no `return`; value return = `return`.
+            let has_return = !matches!(ifm.return_type, None | Some(FrameType::Unknown));
+            let delegate_line = if has_return {
+                format!("return this.machine.{}({})", ifm.name, arg_str)
+            } else {
+                format!("this.machine.{}({})", ifm.name, arg_str)
+            };
+            format!(
+                "if (this.busy) {{\n\
+                 \x20   throw IllegalStateException(\n\
+                 \x20       \"E703: system busy: cannot enter '{name}' while '${{this.in_flight}}' is in flight\"\n\
+                 \x20   )\n\
+                 }}\n\
+                 this.busy = true\n\
+                 this.in_flight = \"{name}\"\n\
+                 try {{\n\
+                 \x20   {delegate}\n\
+                 }} finally {{\n\
+                 \x20   this.busy = false\n\
+                 \x20   this.in_flight = null\n\
+                 }}",
+                name = ifm.name,
+                delegate = delegate_line
             )
         }
         TargetLanguage::CSharp => {
@@ -500,6 +580,24 @@ fn generate_casing_operation_delegate(op: &OperationAst, lang: TargetLanguage) -
                 )
             }
         }
+        TargetLanguage::Kotlin => {
+            let arg_list: Vec<String> = op.params.iter().map(|p| p.name.clone()).collect();
+            let arg_str = arg_list.join(", ");
+            // Kotlin: same void-vs-value split as C#; no semicolons.
+            if matches!(op.return_type, FrameType::Unknown) {
+                format!(
+                    "this.machine.{name}({args})",
+                    name = op.name,
+                    args = arg_str
+                )
+            } else {
+                format!(
+                    "return this.machine.{name}({args})",
+                    name = op.name,
+                    args = arg_str
+                )
+            }
+        }
         _ => String::new(),
     };
 
@@ -541,6 +639,7 @@ fn generate_casing_save_delegate(system: &SystemAst, lang: TargetLanguage) -> Op
         | TargetLanguage::CSharp => {
             format!("return this.machine.{name}();", name = save_name)
         }
+        TargetLanguage::Kotlin => format!("return this.machine.{name}()", name = save_name),
         _ => String::new(),
     };
     Some(CodegenNode::Method {
@@ -571,6 +670,7 @@ fn generate_casing_restore_delegate(
         | TargetLanguage::CSharp => {
             format!("this.machine.{name}(data);", name = load_name)
         }
+        TargetLanguage::Kotlin => format!("this.machine.{name}(data)", name = load_name),
         _ => String::new(),
     };
     Some(CodegenNode::Method {
@@ -592,6 +692,48 @@ fn generate_casing_restore_delegate(
     })
 }
 
+/// Kotlin requires the `__create` factory to live inside a
+/// `companion object` on the user-facing class. The machinery prelude
+/// emits one on the machine (now `_<Name>Machine`), but the user calls
+/// `<Name>.__create()` on the casing — so we emit a sibling factory
+/// here that constructs the casing.
+///
+/// Other backends (Java / C# / TypeScript / JavaScript / Python) derive
+/// their `__create` from the Constructor render via `ctx.system_name`,
+/// which is set per-Class — so each class (casing AND machine) ends up
+/// with its own correctly-typed factory automatically. Kotlin uniquely
+/// generates the factory from the machinery prelude using the original
+/// `system.name`, which the rename pass cannot easily target.
+fn generate_casing_factory(system: &SystemAst, lang: TargetLanguage) -> Option<CodegenNode> {
+    match lang {
+        TargetLanguage::Kotlin => {
+            use crate::frame_c::compiler::codegen::codegen_utils::{
+                kotlin_map_type, type_to_string,
+            };
+            let create_params: Vec<String> = system
+                .params
+                .iter()
+                .map(|p| {
+                    let ty = type_to_string(&p.param_type);
+                    format!("{}: {}", p.name, kotlin_map_type(&ty))
+                })
+                .collect();
+            let arg_pass: Vec<String> = system.params.iter().map(|p| p.name.clone()).collect();
+            let body = format!(
+                "@JvmStatic fun __create({params}): {sys} {{\n    val c = {sys}()\n    c.__frame_init({args})\n    return c\n}}",
+                sys = system.name,
+                params = create_params.join(", "),
+                args = arg_pass.join(", "),
+            );
+            Some(CodegenNode::NativeBlock {
+                code: body,
+                span: None,
+            })
+        }
+        _ => None,
+    }
+}
+
 fn generate_casing_init_delegate(lang: TargetLanguage) -> CodegenNode {
     let body_code = match lang {
         TargetLanguage::Python3 => "await self._machine.init()".to_string(),
@@ -606,6 +748,7 @@ fn generate_casing_init_delegate(lang: TargetLanguage) -> CodegenNode {
             "return this.machine.init();".to_string()
         }
         TargetLanguage::CSharp => "await this.machine.init();".to_string(),
+        TargetLanguage::Kotlin => "this.machine.init()".to_string(),
         _ => String::new(),
     };
     CodegenNode::Method {
