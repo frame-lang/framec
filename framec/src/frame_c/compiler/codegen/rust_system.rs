@@ -248,7 +248,7 @@ pub fn generate_rust_system(system: &SystemAst, arcanum: &Arcanum, source: &[u8]
     };
 
     if needs_async {
-        super::system_codegen::make_system_async(&mut class_node, &system.name, lang);
+        super::system_codegen::make_system_async(&mut class_node, &system.name, lang, system);
     }
 
     // Auto-clone non-Copy domain fields passed by value to Frame calls.

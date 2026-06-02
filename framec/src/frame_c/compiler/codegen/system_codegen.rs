@@ -341,7 +341,7 @@ pub fn generate_system_shared(
         if matches!(lang, TargetLanguage::Java) {
             make_java_interface_async(&mut class_node, system);
         } else {
-            make_system_async(&mut class_node, &system.name, lang);
+            make_system_async(&mut class_node, &system.name, lang, system);
         }
     }
 

@@ -23,7 +23,12 @@ the previous release: async members now **require** the `@@[async]` header.
   Python, Rust, TypeScript, JavaScript, Java, C#, Kotlin, Swift, Dart,
   GDScript, C++. Each casing wrapper enforces a single-flight gate; the
   embedded machine carries the existing async dispatch core unchanged.
-  Operations and persist save/load bypass the gate (they're non-dispatching).
+  Operations and persist save/load bypass the gate (they're
+  non-dispatching). Operations honor the user's `async` declaration —
+  a sync op produces a sync delegate; an `async` op produces a coroutine
+  delegate that awaits the machine. Previously every method on an async
+  system was coroutinized indiscriminately by `make_system_async`,
+  including user-sync operations.
 - **`E703` — concurrent external dispatch.** Runtime error raised when an
   external caller enters an async system while a dispatch is in flight.
   Per-backend idiomatic raise: `RuntimeError` / `Error` / `panic!` /

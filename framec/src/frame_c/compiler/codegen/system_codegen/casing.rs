@@ -894,19 +894,39 @@ fn generate_casing_interface_wrapper(ifm: &InterfaceMethod, lang: TargetLanguage
 }
 
 fn generate_casing_operation_delegate(op: &OperationAst, lang: TargetLanguage) -> CodegenNode {
+    // Operations bypass the gate — they're non-dispatching by declaration,
+    // never touch `__kernel` or the busy flag. The casing's delegate
+    // mirrors the user's `async` annotation: a user-sync op stays sync
+    // on the casing (and on the machine, per `make_system_async`'s
+    // skip-non-async-ops rule), and a user-async op becomes a coroutine
+    // that awaits the machine's coroutine.
+    let arg_list: Vec<String> = op.params.iter().map(|p| p.name.clone()).collect();
+    let arg_str = arg_list.join(", ");
+    let has_return = !matches!(op.return_type, FrameType::Unknown);
     let body_code = match lang {
         TargetLanguage::Python3 => {
-            let arg_list: Vec<String> = op.params.iter().map(|p| p.name.clone()).collect();
-            let arg_str = arg_list.join(", ");
+            // `await` keyword only when the user marked the op async.
+            let await_kw = if op.is_async { "await " } else { "" };
             format!(
-                "return self._machine.{name}({args})",
+                "return {a}self._machine.{name}({args})",
+                a = await_kw,
                 name = op.name,
                 args = arg_str
             )
         }
-        TargetLanguage::TypeScript | TargetLanguage::JavaScript | TargetLanguage::Java => {
-            let arg_list: Vec<String> = op.params.iter().map(|p| p.name.clone()).collect();
-            let arg_str = arg_list.join(", ");
+        TargetLanguage::TypeScript | TargetLanguage::JavaScript => {
+            let await_kw = if op.is_async { "await " } else { "" };
+            format!(
+                "return {a}this.machine.{name}({args});",
+                a = await_kw,
+                name = op.name,
+                args = arg_str
+            )
+        }
+        TargetLanguage::Java => {
+            // Java async returns CompletableFuture<T>; no `await` keyword,
+            // just return the machine's future directly. Sync ops are
+            // plain `return this.machine.X();`. Same form either way.
             format!(
                 "return this.machine.{name}({args});",
                 name = op.name,
@@ -914,108 +934,120 @@ fn generate_casing_operation_delegate(op: &OperationAst, lang: TargetLanguage) -
             )
         }
         TargetLanguage::CSharp => {
-            let arg_list: Vec<String> = op.params.iter().map(|p| p.name.clone()).collect();
-            let arg_str = arg_list.join(", ");
-            // C# void ops can't `return X();` — emit a bare call.
-            if matches!(op.return_type, FrameType::Unknown) {
+            // C# void async cannot `return await X()`; emit a bare
+            // `await ...;`. Sync void emits a bare call with no return.
+            let await_kw = if op.is_async { "await " } else { "" };
+            if has_return {
                 format!(
-                    "this.machine.{name}({args});",
+                    "return {a}this.machine.{name}({args});",
+                    a = await_kw,
                     name = op.name,
                     args = arg_str
                 )
             } else {
                 format!(
-                    "return this.machine.{name}({args});",
+                    "{a}this.machine.{name}({args});",
+                    a = await_kw,
                     name = op.name,
                     args = arg_str
                 )
             }
         }
         TargetLanguage::Kotlin => {
-            let arg_list: Vec<String> = op.params.iter().map(|p| p.name.clone()).collect();
-            let arg_str = arg_list.join(", ");
-            // Kotlin: same void-vs-value split as C#; no semicolons.
-            if matches!(op.return_type, FrameType::Unknown) {
+            // Kotlin suspend functions don't use an `await` keyword;
+            // calling a suspend fun from within one chains naturally.
+            // No semicolons.
+            if has_return {
                 format!(
-                    "this.machine.{name}({args})",
+                    "return this.machine.{name}({args})",
                     name = op.name,
                     args = arg_str
                 )
             } else {
                 format!(
-                    "return this.machine.{name}({args})",
+                    "this.machine.{name}({args})",
                     name = op.name,
                     args = arg_str
                 )
             }
         }
         TargetLanguage::Cpp => {
-            let arg_list: Vec<String> = op.params.iter().map(|p| p.name.clone()).collect();
-            let arg_str = arg_list.join(", ");
-            // C++: void/value split. Operations bypass the gate and
-            // stay sync (non-coroutine) — they delegate to the
-            // machine's operation method.
-            if matches!(op.return_type, FrameType::Unknown) {
+            // C++ coroutine: `co_return co_await ...` for value-returning
+            // async ops, `co_await ...; co_return;` for void. Sync ops
+            // use plain return/no-return.
+            if op.is_async {
+                if has_return {
+                    format!(
+                        "co_return co_await this->machine.{name}({args});",
+                        name = op.name,
+                        args = arg_str
+                    )
+                } else {
+                    format!(
+                        "co_await this->machine.{name}({args});\nco_return;",
+                        name = op.name,
+                        args = arg_str
+                    )
+                }
+            } else if has_return {
                 format!(
-                    "this->machine.{name}({args});",
+                    "return this->machine.{name}({args});",
                     name = op.name,
                     args = arg_str
                 )
             } else {
                 format!(
-                    "return this->machine.{name}({args});",
+                    "this->machine.{name}({args});",
                     name = op.name,
                     args = arg_str
                 )
             }
         }
         TargetLanguage::GDScript => {
-            let arg_list: Vec<String> = op.params.iter().map(|p| p.name.clone()).collect();
-            let arg_str = arg_list.join(", ");
-            // GDScript: void/value distinction is loose; `return X` works
-            // even when the caller doesn't use the value. Keep the form
-            // consistent regardless of declared return type.
+            let await_kw = if op.is_async { "await " } else { "" };
             format!(
-                "return self.machine.{name}({args})",
+                "return {a}self.machine.{name}({args})",
+                a = await_kw,
                 name = op.name,
                 args = arg_str
             )
         }
         TargetLanguage::Dart => {
-            let arg_list: Vec<String> = op.params.iter().map(|p| p.name.clone()).collect();
-            let arg_str = arg_list.join(", ");
-            // Dart: void operations cannot `return X();` — emit a bare
-            // call. Operations stay sync; no async on the casing's
-            // operation delegates.
-            if matches!(op.return_type, FrameType::Unknown) {
+            // Dart void async cannot `return await X();` — emit a bare
+            // `await ...;` instead.
+            let await_kw = if op.is_async { "await " } else { "" };
+            if has_return {
                 format!(
-                    "this.machine.{name}({args});",
+                    "return {a}this.machine.{name}({args});",
+                    a = await_kw,
                     name = op.name,
                     args = arg_str
                 )
             } else {
                 format!(
-                    "return this.machine.{name}({args});",
+                    "{a}this.machine.{name}({args});",
+                    a = await_kw,
                     name = op.name,
                     args = arg_str
                 )
             }
         }
         TargetLanguage::Swift => {
-            let arg_list: Vec<String> = op.params.iter().map(|p| p.name.clone()).collect();
-            let arg_str = arg_list.join(", ");
-            // Swift: same void-vs-value split. Calls are positional
-            // because the machine's emit_params prefixes every param
-            // with `_` (no call-site label).
-            if matches!(op.return_type, FrameType::Unknown) {
+            // Swift: `await` keyword required on the call; void vs value
+            // split. Positional call args (machine's emit_params prefixes
+            // every param with `_`).
+            let await_kw = if op.is_async { "await " } else { "" };
+            if has_return {
                 format!(
-                    "self.machine.{name}({args})",
+                    "return {a}self.machine.{name}({args})",
+                    a = await_kw,
                     name = op.name,
                     args = arg_str
                 )
             } else {
                 format!(
-                    "return self.machine.{name}({args})",
+                    "{a}self.machine.{name}({args})",
+                    a = await_kw,
                     name = op.name,
                     args = arg_str
                 )
@@ -1042,10 +1074,11 @@ fn generate_casing_operation_delegate(op: &OperationAst, lang: TargetLanguage) -
             code: body_code,
             span: None,
         }],
-        // Operations bypass the gate AND stay sync — they delegate to
-        // the machine's operation (which is non-dispatching) without
-        // awaiting.
-        is_async: false,
+        // Mirror the user's declaration: a sync op produces a sync
+        // delegate; an `async` op produces an async delegate that awaits
+        // the machine's coroutine. Either way, the gate is bypassed —
+        // operations are non-dispatching.
+        is_async: op.is_async,
         is_static: false,
         visibility: Visibility::Public,
         decorators: vec![],
