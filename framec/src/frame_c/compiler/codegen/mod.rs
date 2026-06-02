@@ -181,6 +181,7 @@ pub mod fsm_php;
 pub mod fsm_python;
 pub mod fsm_ruby;
 pub mod fsm_rust;
+pub mod fsm_swift;
 pub mod fsm_typescript;
 pub mod interface_gen;
 pub mod machinery;
