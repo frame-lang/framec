@@ -169,6 +169,7 @@ pub mod block_transform;
 pub mod codegen_utils;
 pub mod erlang_system;
 pub mod frame_expansion;
+pub mod fsm_dart;
 pub mod fsm_erlang;
 pub mod fsm_go;
 pub mod fsm_javascript;
