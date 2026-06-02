@@ -368,6 +368,9 @@ pub(crate) fn do_segment(c: &mut PipelineCtx) -> Option<CompileResult> {
                             TargetLanguage::TypeScript => Some(
                                 crate::frame_c::compiler::codegen::fsm_typescript::generate(&ast),
                             ),
+                            TargetLanguage::Go => {
+                                Some(crate::frame_c::compiler::codegen::fsm_go::generate(&ast))
+                            }
                             _ => None,
                         };
                         match generated {
@@ -381,7 +384,7 @@ pub(crate) fn do_segment(c: &mut PipelineCtx) -> Option<CompileResult> {
                                 &format!(
                                     "@@fsm {}: code generation for the {:?} target is not yet \
                                      implemented (v0.1 supports python_3, rust, erlang, \
-                                     javascript, and typescript)",
+                                     javascript, typescript, and go)",
                                     name, c.config.target
                                 ),
                             )),
