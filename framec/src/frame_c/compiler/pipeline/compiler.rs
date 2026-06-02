@@ -401,6 +401,10 @@ pub(crate) fn do_segment(c: &mut PipelineCtx) -> Option<CompileResult> {
                             TargetLanguage::C => {
                                 Some(crate::frame_c::compiler::codegen::fsm_c::generate(&ast))
                             }
+                            TargetLanguage::GDScript => Some(
+                                crate::frame_c::compiler::codegen::fsm_gdscript::generate(&ast),
+                            ),
+                            #[allow(unreachable_patterns)]
                             _ => None,
                         };
                         match generated {
@@ -409,13 +413,14 @@ pub(crate) fn do_segment(c: &mut PipelineCtx) -> Option<CompileResult> {
                                 "E740",
                                 &format!("@@fsm {}: {}", name, reason),
                             )),
+                            // All 17 targets now have an @@fsm backend, so
+                            // this arm is unreachable; it remains as a
+                            // defensive backstop should the target set grow.
                             None => fsm_errors.push(CompileError::new(
                                 "E740",
                                 &format!(
                                     "@@fsm {}: code generation for the {:?} target is not yet \
-                                     implemented (v0.1 supports python_3, rust, erlang, \
-                                     javascript, typescript, go, ruby, php, dart, lua, java, \
-                                     kotlin, csharp, swift, cpp, and c)",
+                                     implemented",
                                     name, c.config.target
                                 ),
                             )),
@@ -1939,23 +1944,9 @@ mod tests {
         assert_eq!(acc2, "False");
     }
 
-    /// `@@fsm` codegen for a target without an fsm backend yet surfaces E740
-    /// rather than silently dropping the block. (GDScript is not yet wired; as
-    /// backends land this should be switched to another pending target.)
-    #[test]
-    fn fsm_block_unsupported_target_e740() {
-        use crate::frame_c::compiler::pipeline_supervisor::run_pipeline;
-        let config = PipelineConfig::production(TargetLanguage::GDScript);
-        let r = run_pipeline(
-            b"@@fsm M(text: bytes) : bool = false { /a/ true }\n",
-            &config,
-        );
-        assert!(
-            r.errors.iter().any(|e| e.code == "E740"),
-            "expected E740, got {:?}",
-            r.errors
-        );
-    }
+    // (Removed `fsm_block_unsupported_target_e740`: all 17 targets now have
+    // an @@fsm backend, so no target reaches the E740 unsupported-target
+    // path. The defensive `None` arm in `do_segment` remains as a backstop.)
 
     /// A bad input-parameter type surfaces E713 through the pipeline.
     #[test]

@@ -174,6 +174,7 @@ pub mod fsm_cpp;
 pub mod fsm_csharp;
 pub mod fsm_dart;
 pub mod fsm_erlang;
+pub mod fsm_gdscript;
 pub mod fsm_go;
 pub mod fsm_java;
 pub mod fsm_javascript;
