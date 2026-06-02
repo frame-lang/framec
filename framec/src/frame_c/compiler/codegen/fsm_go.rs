@@ -2,35 +2,36 @@
 //!
 //! Generates a self-contained Go `struct` + methods from a validated
 //! `FsmDeclAst`. The recognition model mirrors the Python reference backend
-//! ([`super::fsm_python`]) — per-stage minimal DFAs + a per-state dispatch
-//! loop over a mutable struct (pointer receiver) — but with static types.
-//! Frame's abstract types map as `int` → `int`, `float` → `float64`, `bool`
-//! → `bool`, `str`/`bytes` → `string`. The input is held as a `[]rune` (so
-//! the cursor indexes code points) and the matched run materialized back to a
-//! `string`. The constructor is `New<Name>(...) *<Name>`; the observable
-//! result (§5.1) is the returned struct's `accepted`, `return_value`,
-//! `cursor`, and `reject_position` fields.
+//! ([`super::fsm_python`]) and the Rust backend ([`super::fsm_rust`]) —
+//! per-stage minimal DFAs + a per-state dispatch loop over a mutable struct
+//! (pointer receiver) — but with static types. Frame's abstract types map as
+//! `int` → `int`, `float` → `float64`, `bool` → `bool`, `str`/`bytes` →
+//! `string`. The `bytes`/`char` input is held as a `[]rune` (so the cursor
+//! indexes code points) and the matched run materialized back to a `string`;
+//! the `token` input is a `[]string` mapped to small integer ids. The
+//! constructor is `New<Name>(...) *<Name>`; the observable result (§5.1) is
+//! the returned struct's `accepted`, `return_value`, `cursor`, and
+//! `reject_position` fields.
 //!
 //! The generated recognizer is **import-free** (Go forbids unused imports and
-//! the code is substituted into a user file): the `to_int` built-in is a
-//! manual `_atoi` helper method, DFA tables use an inline anonymous struct
-//! type, and there are no top-level declarations besides the struct and its
-//! constructor (so several generated fsms compose in one file).
+//! the code is substituted into a user file): `to_int` is a manual `_atoi`
+//! helper method, DFA tables use an inline anonymous struct type, and there
+//! are no top-level declarations besides the struct + constructor (so several
+//! generated fsms compose in one file — needed for Mode C).
 //!
-//! # v0.1 scope (first cut)
+//! # v0.1 scope
 //!
-//! Single-match states, stages with `.label` captures, bare-expression
-//! returns, action blocks (assignment / `if`-`else`), declared `actions:`
-//! methods, and all transition forms — static, conditional (`when`),
-//! stage-ref (`-> $S.stage`, via an `enter` re-entry index), and failure-only
-//! — over the `bytes`/`char` alphabets, with the `@@:matched` / `to_int` /
-//! `to_str` / `len` built-ins. Not yet handled (clear `Unsupported` error,
-//! never a silent miscompile): multi-match (`|`) states, embedding actions,
-//! Mode C call-out, the token alphabet, and anchors.
+//! Full parity with the Python reference backend: single-match and
+//! multi-match (`|`) ordered-choice states, captures, bare-expression
+//! returns, action blocks, declared `actions:` methods, all transition forms,
+//! embedding actions, Mode C sub-fsm call-out, all three alphabets, and
+//! boundary anchors. Not yet handled (clear `Unsupported` error): mid-pattern
+//! anchors and `\b`/`\B`, a Mode C stage as a `|` selector, and a `|`
+//! alternative with elements before its first stage.
 
 use crate::frame_c::compiler::frame_ast::{
-    BinaryOp, Expression, FsmDeclAst, FsmStateAst, FsmTransitionTarget, Literal, MatchAst,
-    MatchElement, Type, UnaryOp,
+    BinaryOp, EmbeddingOp, Expression, FsmDeclAst, FsmStateAst, FsmTransitionTarget, Literal,
+    MatchAst, MatchElement, StageAst, Type, UnaryOp,
 };
 use crate::frame_c::compiler::fsm_regex::{
     self, size_check::DEFAULT_MAX_DFA_STATES, subset::DfaLabel, Alphabet, CompileError,
@@ -51,6 +52,14 @@ pub fn generate(decl: &FsmDeclAst) -> Result<String, String> {
 struct StageDfa {
     states: Vec<(Vec<(u32, u32, usize)>, bool)>,
     start: usize,
+    requires_start: bool,
+    requires_end: bool,
+    mode_c: Option<String>,
+}
+
+/// A Mode C stage's regex body starts with `@`; the rest names the inner fsm.
+fn mode_c_inner(regex: &str) -> Option<&str> {
+    regex.strip_prefix('@')
 }
 
 struct Generator<'a> {
@@ -58,6 +67,7 @@ struct Generator<'a> {
     alphabet: Alphabet,
     label_to_index: std::collections::HashMap<String, usize>,
     stage_entry: std::collections::HashMap<(String, String), usize>,
+    token_ids: std::collections::HashMap<String, u32>,
     stage_dfas: Vec<StageDfa>,
 }
 
@@ -65,9 +75,7 @@ impl<'a> Generator<'a> {
     fn new(decl: &'a FsmDeclAst) -> Result<Self, String> {
         let alphabet = match decl.params.first().map(|p| &p.param_type) {
             Some(Type::Custom(t)) if t == "char" => Alphabet::Char,
-            Some(Type::Custom(t)) if t == "token" => {
-                return Err("the token alphabet is not yet supported by the Go backend".into())
-            }
+            Some(Type::Custom(t)) if t == "token" => Alphabet::Token,
             _ => Alphabet::Bytes,
         };
         let mut label_to_index = std::collections::HashMap::new();
@@ -91,6 +99,7 @@ impl<'a> Generator<'a> {
             alphabet,
             label_to_index,
             stage_entry,
+            token_ids: std::collections::HashMap::new(),
             stage_dfas: Vec::new(),
         };
         g.compile_stage_dfas()?;
@@ -98,42 +107,43 @@ impl<'a> Generator<'a> {
     }
 
     fn compile_stage_dfas(&mut self) -> Result<(), String> {
+        let mut token_ids = std::mem::take(&mut self.token_ids);
         for st in &self.decl.states {
-            if st.matches.len() > 1 {
-                return Err(
-                    "multi-match (`|`) states are not yet supported by the Go backend".into(),
-                );
-            }
-            let Some(m) = st.matches.first() else {
-                continue;
-            };
-            for el in &m.elements {
-                if let MatchElement::Stage(stage) = el {
-                    if !stage.embedding_actions.is_empty() {
-                        return Err(
-                            "embedding actions are not yet supported by the Go backend".into()
-                        );
+            for m in &st.matches {
+                for el in &m.elements {
+                    if let MatchElement::Stage(stage) = el {
+                        if let Some(inner) = mode_c_inner(&stage.regex) {
+                            self.stage_dfas.push(StageDfa {
+                                states: Vec::new(),
+                                start: 0,
+                                requires_start: false,
+                                requires_end: false,
+                                mode_c: Some(inner.to_string()),
+                            });
+                            continue;
+                        }
+                        match Self::compile_one(self.alphabet, &stage.regex, &mut token_ids) {
+                            Ok(dfa) => self.stage_dfas.push(dfa),
+                            Err(e) => {
+                                self.token_ids = token_ids;
+                                return Err(e);
+                            }
+                        }
                     }
-                    if stage.regex.starts_with('@') {
-                        return Err(
-                            "Mode C (`/@Fsm/`) is not yet supported by the Go backend".into()
-                        );
-                    }
-                    self.stage_dfas.push(self.compile_one(&stage.regex)?);
                 }
             }
         }
+        self.token_ids = token_ids;
         Ok(())
     }
 
-    fn compile_one(&self, regex: &str) -> Result<StageDfa, String> {
-        match fsm_regex::compile(regex, self.alphabet, DEFAULT_MAX_DFA_STATES) {
+    fn compile_one(
+        alphabet: Alphabet,
+        regex: &str,
+        token_ids: &mut std::collections::HashMap<String, u32>,
+    ) -> Result<StageDfa, String> {
+        match fsm_regex::compile(regex, alphabet, DEFAULT_MAX_DFA_STATES) {
             Ok(compiled) => {
-                if compiled.requires_start || compiled.requires_end {
-                    return Err(
-                        "anchors are not yet supported by the Go backend (v0.1 first cut)".into(),
-                    );
-                }
                 let mut states = Vec::with_capacity(compiled.dfa.states.len());
                 for s in &compiled.dfa.states {
                     let mut trans = Vec::new();
@@ -143,8 +153,10 @@ impl<'a> Generator<'a> {
                             DfaLabel::ByteRange { low, high } => (*low as u32, *high as u32),
                             DfaLabel::CodePoint(c) => (*c as u32, *c as u32),
                             DfaLabel::CodePointRange { low, high } => (*low as u32, *high as u32),
-                            DfaLabel::Token(_) => {
-                                return Err("token-alphabet DFA is not supported here".into())
+                            DfaLabel::Token(name) => {
+                                let next = token_ids.len() as u32;
+                                let id = *token_ids.entry(name.clone()).or_insert(next);
+                                (id, id)
                             }
                         };
                         trans.push((lo, hi, t.to));
@@ -154,6 +166,9 @@ impl<'a> Generator<'a> {
                 Ok(StageDfa {
                     states,
                     start: compiled.dfa.start,
+                    requires_start: compiled.requires_start,
+                    requires_end: compiled.requires_end,
+                    mode_c: None,
                 })
             }
             Err(CompileError::Diagnostics(ds)) => Err(format!(
@@ -162,7 +177,8 @@ impl<'a> Generator<'a> {
                 ds.first().map(|d| d.message.as_str()).unwrap_or("")
             )),
             Err(CompileError::UnsupportedAnchors(_)) => Err(format!(
-                "regex `/{}/` uses anchors, not yet supported by the Go backend",
+                "regex `/{}/` uses a mid-pattern or word-boundary anchor, not yet supported by the \
+                 Go backend",
                 regex
             )),
         }
@@ -183,15 +199,63 @@ impl<'a> Generator<'a> {
         }
     }
 
+    /// The Go type of the input field: `[]string` for tokens, else `[]rune`.
+    fn input_type(&self) -> &'static str {
+        match self.alphabet {
+            Alphabet::Token => "[]string",
+            _ => "[]rune",
+        }
+    }
+
+    /// The Go type of the input constructor parameter (before materialization
+    /// into the `[]rune`/`[]string` field).
+    fn input_ctor_type(&self) -> &'static str {
+        match self.alphabet {
+            Alphabet::Token => "[]string",
+            _ => "string",
+        }
+    }
+
+    /// The Go type of `matched` / captures: `[]string` for tokens, else
+    /// `string`.
+    fn matched_type(&self) -> &'static str {
+        match self.alphabet {
+            Alphabet::Token => "[]string",
+            _ => "string",
+        }
+    }
+
+    /// Materialize the matched run `m.<input>[cursor..end]` into a value of
+    /// [`Self::matched_type`].
+    fn matched_slice(&self, end: &str) -> String {
+        let inp = &self.decl.params[0].name;
+        match self.alphabet {
+            Alphabet::Token => format!("m.{}[m.cursor:{}]", inp, end),
+            _ => format!("string(m.{}[m.cursor:{}])", inp, end),
+        }
+    }
+
+    /// The per-element read as an `int`: code point for byte/char, token id
+    /// for the token alphabet.
+    fn element_read(&self) -> String {
+        let inp = &self.decl.params[0].name;
+        match self.alphabet {
+            Alphabet::Token => format!("m.tokId(m.{}[pos])", inp),
+            _ => format!("int(m.{}[pos])", inp),
+        }
+    }
+
     fn emit(&self) -> Result<String, String> {
         let mut out = String::new();
         out.push_str("// Generated by framec — RFC-0042 @@fsm (Go backend).\n\n");
         self.emit_struct(&mut out);
         self.emit_ctor(&mut out);
         self.emit_atoi(&mut out);
+        self.emit_tok_id(&mut out);
         self.emit_dfa_matcher(&mut out);
         self.emit_run(&mut out);
         self.emit_state_methods(&mut out)?;
+        self.emit_embed_matchers(&mut out)?;
         self.emit_action_methods(&mut out)?;
         Ok(out)
     }
@@ -211,7 +275,7 @@ impl<'a> Generator<'a> {
         for (i, p) in self.decl.params.iter().enumerate() {
             seen.insert(p.name.clone());
             let ty = if i == 0 {
-                "[]rune".to_string()
+                self.input_type().to_string()
             } else {
                 Self::go_type(&p.param_type)
             };
@@ -225,10 +289,13 @@ impl<'a> Generator<'a> {
                 writeln!(out, "\t{} {}", v.name, Self::go_type(&v.var_type)).ok();
             }
         }
-        out.push_str("\tmatched string\n");
+        writeln!(out, "\tmatched {}", self.matched_type()).ok();
         out.push_str("\tenter int\n");
         for f in self.capture_fields() {
-            writeln!(out, "\t{} string", f).ok();
+            writeln!(out, "\t{} {}", f, self.matched_type()).ok();
+        }
+        for (f, inner) in self.mode_c_inst_fields() {
+            writeln!(out, "\t{} *{}", f, inner).ok();
         }
         out.push_str("}\n\n");
     }
@@ -250,6 +317,24 @@ impl<'a> Generator<'a> {
         out
     }
 
+    fn mode_c_inst_fields(&self) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        for st in &self.decl.states {
+            let Some(slabel) = &st.label else { continue };
+            for m in &st.matches {
+                for el in &m.elements {
+                    if let MatchElement::Stage(stage) = el {
+                        if let (Some(lbl), Some(inner)) = (&stage.label, mode_c_inner(&stage.regex))
+                        {
+                            out.push((cap_inst_field(slabel, lbl), inner.to_string()));
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
     fn emit_ctor(&self, out: &mut String) {
         let input = &self.decl.params[0].name;
         let sig: Vec<String> = self
@@ -259,7 +344,7 @@ impl<'a> Generator<'a> {
             .enumerate()
             .map(|(i, p)| {
                 let ty = if i == 0 {
-                    "string".to_string()
+                    self.input_ctor_type().to_string()
                 } else {
                     Self::go_type(&p.param_type)
                 };
@@ -281,10 +366,10 @@ impl<'a> Generator<'a> {
             go_default(&self.decl.return_type, &self.decl.default_expr)
         )
         .ok();
-        // The input parameter is materialized into a `[]rune` so the cursor
-        // indexes code points; other params bind directly.
         for (i, p) in self.decl.params.iter().enumerate() {
-            if i == 0 {
+            // The byte/char input is materialized into a `[]rune`; a token
+            // input is already a `[]string`; other params bind directly.
+            if i == 0 && self.alphabet != Alphabet::Token {
                 writeln!(out, "\tm.{} = []rune({})", p.name, p.name).ok();
             } else {
                 writeln!(out, "\tm.{} = {}", p.name, p.name).ok();
@@ -321,8 +406,24 @@ impl<'a> Generator<'a> {
         );
     }
 
+    /// Token alphabet: emit the `tokId` atom → id lookup (unknown → -1).
+    fn emit_tok_id(&self, out: &mut String) {
+        if self.alphabet != Alphabet::Token {
+            return;
+        }
+        let mut entries: Vec<(&String, &u32)> = self.token_ids.iter().collect();
+        entries.sort_by_key(|(_, id)| **id);
+        writeln!(out, "func (m *{}) tokId(t string) int {{", self.decl.name).ok();
+        out.push_str("\tswitch t {\n");
+        for (name, id) in entries {
+            writeln!(out, "\tcase {:?}:\n\t\treturn {}", name, id).ok();
+        }
+        out.push_str("\t}\n\treturn -1\n}\n\n");
+    }
+
     fn emit_dfa_matcher(&self, out: &mut String) {
         let input = &self.decl.params[0].name;
+        let read = self.element_read();
         writeln!(
             out,
             "func (m *{name}) dfaMatch(states {dfa}, start int) int {{\n\
@@ -332,7 +433,7 @@ impl<'a> Generator<'a> {
              \tlast := -1\n\
              \tif states[st].A {{\n\t\tlast = pos\n\t}}\n\
              \tfor pos < n {{\n\
-             \t\tv := int(m.{input}[pos])\n\
+             \t\tv := {read}\n\
              \t\tnxt := -1\n\
              \t\tfor _, tr := range states[st].T {{\n\
              \t\t\tif tr[0] <= v && v <= tr[1] {{\n\t\t\t\tnxt = tr[2]\n\t\t\t\tbreak\n\t\t\t}}\n\
@@ -344,7 +445,8 @@ impl<'a> Generator<'a> {
              \treturn last\n}}\n\n",
             name = self.decl.name,
             dfa = DFA_TYPE,
-            input = input
+            input = input,
+            read = read
         )
         .ok();
     }
@@ -363,8 +465,8 @@ impl<'a> Generator<'a> {
     fn emit_state_methods(&self, out: &mut String) -> Result<(), String> {
         let mut sid = 0usize;
         for (i, st) in self.decl.states.iter().enumerate() {
-            match st.matches.first() {
-                None => {
+            match st.matches.len() {
+                0 => {
                     writeln!(
                         out,
                         "func (m *{}) state{}(enter int) int {{ return -1 }}\n",
@@ -372,7 +474,8 @@ impl<'a> Generator<'a> {
                     )
                     .ok();
                 }
-                Some(m) => self.emit_one_state(out, i, st, m, &mut sid)?,
+                1 => self.emit_one_state(out, i, st, &st.matches[0], &mut sid)?,
+                _ => self.emit_multi_match(out, i, st, &mut sid)?,
             }
         }
         Ok(())
@@ -403,6 +506,99 @@ impl<'a> Generator<'a> {
         Ok(())
     }
 
+    fn emit_multi_match(
+        &self,
+        out: &mut String,
+        index: usize,
+        st: &FsmStateAst,
+        sid: &mut usize,
+    ) -> Result<(), String> {
+        let state_label = st.label.clone().unwrap_or_default();
+        writeln!(
+            out,
+            "func (m *{}) state{}(enter int) int {{",
+            self.decl.name, index
+        )
+        .ok();
+        // `enter` is unused for multi-match (selection is by first stage);
+        // discard it so Go does not flag an unused parameter — actually Go
+        // permits unused parameters, so no discard is needed.
+        let mut catch_all = false;
+        for mt in &st.matches {
+            let first_stage = mt
+                .elements
+                .iter()
+                .position(|e| matches!(e, MatchElement::Stage(_)));
+            match first_stage {
+                Some(fs) => {
+                    if fs > 0 {
+                        return Err(
+                            "a `|` alternative with elements before its first stage is not yet \
+                             supported by the Go backend"
+                                .into(),
+                        );
+                    }
+                    let my_sid = *sid;
+                    *sid += 1;
+                    if self.stage_dfas[my_sid].mode_c.is_some() {
+                        return Err(
+                            "a Mode C (`/@Fsm/`) stage as a `|` alternative selector is not yet \
+                             supported by the Go backend"
+                                .into(),
+                        );
+                    }
+                    let MatchElement::Stage(sel) = &mt.elements[fs] else {
+                        unreachable!("first_stage indexes a Stage element")
+                    };
+                    self.emit_dfa_var(out, my_sid, "\t");
+                    writeln!(
+                        out,
+                        "\tr{} := m.dfaMatch(dfa{}, {})",
+                        my_sid, my_sid, self.stage_dfas[my_sid].start
+                    )
+                    .ok();
+                    self.emit_anchor_guards(out, my_sid, "\t");
+                    writeln!(out, "\tif r{} >= 0 {{", my_sid).ok();
+                    writeln!(
+                        out,
+                        "\t\tm.matched = {}",
+                        self.matched_slice(&format!("r{}", my_sid))
+                    )
+                    .ok();
+                    if let Some(lbl) = &sel.label {
+                        if !state_label.is_empty() {
+                            writeln!(out, "\t\tm.{} = m.matched", cap_field(&state_label, lbl))
+                                .ok();
+                        }
+                    }
+                    writeln!(out, "\t\tm.cursor = r{}", my_sid).ok();
+                    out.push_str("\t\tm.accepted = true\n");
+                    for el in &mt.elements[fs + 1..] {
+                        self.emit_element(out, el, mt, &state_label, "\t\t", sid)?;
+                    }
+                    self.emit_success(out, mt, "\t\t");
+                    out.push_str("\t}\n");
+                }
+                None => {
+                    out.push_str("\tm.accepted = true\n");
+                    for el in &mt.elements {
+                        self.emit_element(out, el, mt, &state_label, "\t", sid)?;
+                    }
+                    self.emit_success(out, mt, "\t");
+                    catch_all = true;
+                    break;
+                }
+            }
+        }
+        if !catch_all {
+            out.push_str("\tm.accepted = false\n");
+            out.push_str("\tm.reject_position = m.cursor\n");
+            out.push_str("\treturn -1\n");
+        }
+        out.push_str("}\n\n");
+        Ok(())
+    }
+
     fn emit_element(
         &self,
         out: &mut String,
@@ -412,26 +608,35 @@ impl<'a> Generator<'a> {
         ind: &str,
         sid: &mut usize,
     ) -> Result<(), String> {
-        let input = &self.decl.params[0].name;
         let ind2 = format!("{}\t", ind);
         match el {
             MatchElement::Stage(stage) => {
                 let my_sid = *sid;
                 *sid += 1;
-                self.emit_dfa_var(out, my_sid, ind);
-                writeln!(
-                    out,
-                    "{}r{} := m.dfaMatch(dfa{}, {})",
-                    ind, my_sid, my_sid, self.stage_dfas[my_sid].start
-                )
-                .ok();
+                if let Some(inner) = self.stage_dfas[my_sid].mode_c.clone() {
+                    self.emit_mode_c(out, &inner, stage, m, state_label, my_sid, ind, &ind2);
+                    return Ok(());
+                }
+                if stage.embedding_actions.is_empty() {
+                    self.emit_dfa_var(out, my_sid, ind);
+                    writeln!(
+                        out,
+                        "{}r{} := m.dfaMatch(dfa{}, {})",
+                        ind, my_sid, my_sid, self.stage_dfas[my_sid].start
+                    )
+                    .ok();
+                } else {
+                    writeln!(out, "{}r{} := m.matchStage{}()", ind, my_sid, my_sid).ok();
+                }
+                self.emit_anchor_guards(out, my_sid, ind);
                 writeln!(out, "{}if r{} < 0 {{", ind, my_sid).ok();
                 self.emit_failure(out, m, &ind2);
                 writeln!(out, "{}}}", ind).ok();
                 writeln!(
                     out,
-                    "{}m.matched = string(m.{}[m.cursor:r{}])",
-                    ind, input, my_sid
+                    "{}m.matched = {}",
+                    ind,
+                    self.matched_slice(&format!("r{}", my_sid))
                 )
                 .ok();
                 if let Some(lbl) = &stage.label {
@@ -452,6 +657,175 @@ impl<'a> Generator<'a> {
             }
         }
         Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn emit_mode_c(
+        &self,
+        out: &mut String,
+        inner: &str,
+        stage: &StageAst,
+        m: &MatchAst,
+        state_label: &str,
+        my_sid: usize,
+        ind: &str,
+        ind2: &str,
+    ) {
+        let input = &self.decl.params[0].name;
+        let iv = format!("inner{}", my_sid);
+        // The inner fsm's input is the remaining run from the cursor — a
+        // `string` for byte/char, a `[]string` for tokens.
+        let sub = match self.alphabet {
+            Alphabet::Token => format!("m.{}[m.cursor:]", input),
+            _ => format!("string(m.{}[m.cursor:])", input),
+        };
+        writeln!(out, "{}{} := New{}({})", ind, iv, inner, sub).ok();
+        writeln!(out, "{}if !{}.accepted {{", ind, iv).ok();
+        self.emit_failure(out, m, ind2);
+        writeln!(out, "{}}}", ind).ok();
+        let end = format!("m.cursor + {}.cursor", iv);
+        writeln!(out, "{}m.matched = {}", ind, self.matched_slice(&end)).ok();
+        if let Some(lbl) = &stage.label {
+            if !state_label.is_empty() {
+                writeln!(out, "{}m.{} = m.matched", ind, cap_field(state_label, lbl)).ok();
+                writeln!(
+                    out,
+                    "{}m.{} = {}",
+                    ind,
+                    cap_inst_field(state_label, lbl),
+                    iv
+                )
+                .ok();
+            }
+        }
+        writeln!(out, "{}m.cursor = m.cursor + {}.cursor", ind, iv).ok();
+        writeln!(out, "{}m.accepted = true", ind).ok();
+    }
+
+    fn emit_embed_matchers(&self, out: &mut String) -> Result<(), String> {
+        let mut sid = 0usize;
+        for st in &self.decl.states {
+            for m in &st.matches {
+                for el in &m.elements {
+                    if let MatchElement::Stage(stage) = el {
+                        if !stage.embedding_actions.is_empty() {
+                            self.emit_one_matcher(out, sid, stage)?;
+                        }
+                        sid += 1;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn emit_one_matcher(
+        &self,
+        out: &mut String,
+        sid: usize,
+        stage: &StageAst,
+    ) -> Result<(), String> {
+        let input = &self.decl.params[0].name;
+        let read = self.element_read();
+        writeln!(
+            out,
+            "func (m *{}) matchStage{}() int {{",
+            self.decl.name, sid
+        )
+        .ok();
+        self.emit_dfa_var(out, sid, "\t");
+        writeln!(
+            out,
+            "\tentry := m.cursor\n\
+             \tst := {start}\n\
+             \tpos := entry\n\
+             \tn := len(m.{input})\n\
+             \tlast := -1\n\
+             \tif dfa{sid}[st].A {{\n\t\tlast = pos\n\t}}\n\
+             \tm.cursor = pos",
+            start = self.stage_dfas[sid].start,
+            input = input,
+            sid = sid
+        )
+        .ok();
+        out.push_str(&self.embed_body(stage, EmbeddingOp::Start, "\t")?);
+        writeln!(out, "\tprev := dfa{}[st].A", sid).ok();
+        writeln!(
+            out,
+            "\tfor pos < n {{\n\
+             \t\tv := {read}\n\
+             \t\tnxt := -1\n\
+             \t\tfor _, tr := range dfa{sid}[st].T {{\n\
+             \t\t\tif tr[0] <= v && v <= tr[1] {{\n\t\t\t\tnxt = tr[2]\n\t\t\t\tbreak\n\t\t\t}}\n\
+             \t\t}}\n\
+             \t\tif nxt < 0 {{\n\t\t\tbreak\n\t\t}}\n\
+             \t\tst = nxt\n\t\tpos++\n\
+             \t\tm.cursor = pos",
+            read = read,
+            sid = sid
+        )
+        .ok();
+        out.push_str(&self.embed_body(stage, EmbeddingOp::EveryTransition, "\t\t")?);
+        writeln!(out, "\t\tnow := dfa{}[st].A", sid).ok();
+        let accept = self.embed_body(stage, EmbeddingOp::Accept, "\t\t\t")?;
+        if !accept.is_empty() {
+            out.push_str("\t\tif now {\n");
+            out.push_str(&accept);
+            out.push_str("\t\t}\n");
+        }
+        let leave = self.embed_body(stage, EmbeddingOp::LeaveAccept, "\t\t\t")?;
+        if !leave.is_empty() {
+            out.push_str("\t\tif prev && !now {\n");
+            out.push_str(&leave);
+            out.push_str("\t\t}\n");
+        }
+        out.push_str("\t\tif now {\n\t\t\tlast = pos\n\t\t}\n\t\tprev = now\n");
+        out.push_str("\t}\n");
+        let eof = self.embed_body(stage, EmbeddingOp::Eof, "\t\t")?;
+        if !eof.is_empty() {
+            out.push_str("\tif pos >= n && !prev {\n");
+            out.push_str(&eof);
+            out.push_str("\t}\n");
+        } else {
+            // `prev` is otherwise only read by the `%{}` guard; reference it
+            // so Go does not flag an unused variable when neither is present.
+            out.push_str("\t_ = prev\n");
+        }
+        out.push_str("\tm.cursor = entry\n\treturn last\n}\n\n");
+        Ok(())
+    }
+
+    fn embed_body(&self, stage: &StageAst, op: EmbeddingOp, ind: &str) -> Result<String, String> {
+        let mut s = String::new();
+        for ea in &stage.embedding_actions {
+            if ea.op == op {
+                for st in &ea.body.statements {
+                    s.push_str(&self.stmt(st, ind)?);
+                }
+            }
+        }
+        Ok(s)
+    }
+
+    fn emit_anchor_guards(&self, out: &mut String, sid: usize, ind: &str) {
+        let dfa = &self.stage_dfas[sid];
+        let input = &self.decl.params[0].name;
+        if dfa.requires_start {
+            writeln!(
+                out,
+                "{}if m.cursor != 0 {{\n{}\tr{} = -1\n{}}}",
+                ind, ind, sid, ind
+            )
+            .ok();
+        }
+        if dfa.requires_end {
+            writeln!(
+                out,
+                "{}if r{} != len(m.{}) {{\n{}\tr{} = -1\n{}}}",
+                ind, sid, input, ind, sid, ind
+            )
+            .ok();
+        }
     }
 
     fn emit_success(&self, out: &mut String, m: &MatchAst, ind: &str) {
@@ -661,6 +1035,18 @@ impl<'a> Generator<'a> {
             Expression::Call { func, args } => self.call(func, args),
             Expression::Member { object, field } => {
                 if let Expression::Var(name) = object.as_ref() {
+                    // Mode C (§8.3): `$state.label.<fsm field>` reads the
+                    // inner fsm instance recorded for that stage.
+                    if let Some((state, label)) =
+                        name.strip_prefix('$').and_then(|c| c.split_once('.'))
+                    {
+                        if matches!(
+                            field.as_str(),
+                            "return_value" | "accepted" | "cursor" | "reject_position"
+                        ) {
+                            return format!("m.{}.{}", cap_inst_field(state, label), field);
+                        }
+                    }
                     if name == "self" {
                         return format!("m.{}", field);
                     }
@@ -692,6 +1078,10 @@ fn cap_field(state: &str, label: &str) -> String {
     format!("cap_{}_{}", state, label)
 }
 
+fn cap_inst_field(state: &str, label: &str) -> String {
+    format!("cap_inst_{}_{}", state, label)
+}
+
 fn binop(op: &BinaryOp) -> &'static str {
     match op {
         BinaryOp::Add => "+",
@@ -713,7 +1103,6 @@ fn binop(op: &BinaryOp) -> &'static str {
     }
 }
 
-/// Map a raw default-value token to a Go expression of the field's type.
 fn go_default(ty: &Type, raw: &str) -> String {
     match raw {
         "false" => "false".to_string(),
@@ -744,21 +1133,18 @@ mod tests {
     use crate::frame_c::compiler::fsm_parser::parse_fsm_block;
     use std::process::Command;
 
-    /// Generate Go for `src`, wrap it in a `package main` with a driver that
-    /// constructs the fsm and prints `accepted` + `return_value`, and run via
-    /// `go run`. `None` if `go` is unavailable.
-    fn run(src: &str, ctor: &str, tag: &str) -> Option<(String, String)> {
-        let decl = parse_fsm_block(src.as_bytes()).expect("fixture must parse");
-        let code = generate(&decl).expect("fixture must generate");
+    /// Compile + run a Go `package main` program (generated code + driver)
+    /// via `go run`, returning stdout lines. `None` if `go` is unavailable.
+    fn go_run(code: &str, driver: &str, tag: &str) -> Option<Vec<String>> {
         let prog = format!(
-            "package main\n\nimport \"fmt\"\n\n{code}\nfunc main() {{\n\tm := {ctor}\n\tfmt.Println(m.accepted)\n\tfmt.Println(m.return_value)\n}}\n",
+            "package main\n\nimport \"fmt\"\n\n{code}\nfunc main() {{\n{driver}\n}}\n",
             code = code,
-            ctor = ctor
+            driver = driver
         );
         let dir = std::env::temp_dir().join(format!("framec_go_{}", tag));
         std::fs::create_dir_all(&dir).ok()?;
         let path = dir.join("main.go");
-        std::fs::write(&path, prog).expect("write go");
+        std::fs::write(&path, prog).ok()?;
         let out = match Command::new("go").arg("run").arg(&path).output() {
             Ok(o) => o,
             Err(_) => return None,
@@ -766,12 +1152,29 @@ mod tests {
         assert!(
             out.status.success(),
             "go run failed for {:?}:\n{}",
-            src,
+            tag,
             String::from_utf8_lossy(&out.stderr)
         );
-        let text = String::from_utf8_lossy(&out.stdout);
-        let lines: Vec<&str> = text.lines().collect();
-        Some((lines[0].to_string(), lines[1].to_string()))
+        Some(
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .map(|s| s.to_string())
+                .collect(),
+        )
+    }
+
+    fn gen(src: &str) -> String {
+        let decl = parse_fsm_block(src.as_bytes()).expect("fixture must parse");
+        generate(&decl).expect("fixture must generate")
+    }
+
+    /// Run `New M(<arg>)` and return `(accepted, return_value)`.
+    fn run(src: &str, ctor: &str, tag: &str) -> Option<(String, String)> {
+        let code = gen(src);
+        let driver =
+            format!("\tm := {ctor}\n\tfmt.Println(m.accepted)\n\tfmt.Println(m.return_value)");
+        let lines = go_run(&code, &driver, tag)?;
+        Some((lines[0].clone(), lines[1].clone()))
     }
 
     #[test]
@@ -863,9 +1266,71 @@ mod tests {
     }
 
     #[test]
+    fn go_multi_match() {
+        let code = gen("@@fsm M(text: bytes) : int = 0 { /[0-9]/ -> $num | 99 $num: 1 }");
+        let driver = "\tfor _, s := range []string{\"5\", \"a\"} {\n\t\tm := NewM(s)\n\t\tfmt.Println(m.return_value)\n\t}";
+        let Some(lines) = go_run(&code, driver, "mm") else {
+            return;
+        };
+        assert_eq!(lines, vec!["1", "99"]);
+    }
+
+    #[test]
+    fn go_embed_every_transition() {
+        let code = gen(
+            "@@fsm M(text: bytes) : int = 0 { /[0-9]+/ ${ tally() } self.count \
+             actions: tally() { self.count = self.count + 1 } domain: count: int = 0 }",
+        );
+        let driver = "\tm := NewM(\"123\")\n\tfmt.Println(m.return_value)";
+        let Some(lines) = go_run(&code, driver, "emb") else {
+            return;
+        };
+        assert_eq!(lines[0], "3");
+    }
+
+    #[test]
+    fn go_token_alphabet() {
+        let code = gen("@@fsm M(toks: token) : bool = false { /IDENT LPAREN RPAREN/ true }");
+        let driver = "\tfor _, t := range [][]string{{\"IDENT\",\"LPAREN\",\"RPAREN\"},{\"IDENT\",\"RPAREN\"},{\"IDENT\",\"WAT\"}} {\n\t\tm := NewM(t)\n\t\tfmt.Println(m.accepted)\n\t}";
+        let Some(lines) = go_run(&code, driver, "tok") else {
+            return;
+        };
+        assert_eq!(lines, vec!["true", "false", "false"]);
+    }
+
+    #[test]
+    fn go_mode_c_callout() {
+        let inner = gen("@@fsm Digits(text: bytes) : int = 0 { /[0-9]+/ to_int(@@:matched) }");
+        let outer = gen("@@fsm Outer(text: bytes) : int = 0 { $s: .d/@Digits/ $s.d.return_value }");
+        let code = format!("{}\n{}", inner, outer);
+        let driver = "\tfor _, s := range []string{\"42\", \"x\"} {\n\t\tm := NewOuter(s)\n\t\tfmt.Println(m.accepted, m.return_value)\n\t}";
+        let Some(lines) = go_run(&code, driver, "modec") else {
+            return;
+        };
+        assert_eq!(lines, vec!["true 42", "false 0"]);
+    }
+
+    #[test]
+    fn go_anchors() {
+        let start = gen("@@fsm M(text: bytes) : bool = false { /^foo/ true }");
+        let d1 = "\tfor _, s := range []string{\"foo\", \"xfoo\"} {\n\t\tm := NewM(s)\n\t\tfmt.Println(m.accepted)\n\t}";
+        let Some(l1) = go_run(&start, d1, "anc_s") else {
+            return;
+        };
+        assert_eq!(l1, vec!["true", "false"]);
+        let end = gen("@@fsm M(text: bytes) : bool = false { /[0-9]+$/ true }");
+        let d2 = "\tfor _, s := range []string{\"123\", \"123x\"} {\n\t\tm := NewM(s)\n\t\tfmt.Println(m.accepted)\n\t}";
+        let Some(l2) = go_run(&end, d2, "anc_e") else {
+            return;
+        };
+        assert_eq!(l2, vec!["true", "false"]);
+    }
+
+    #[test]
     fn go_unsupported_errors() {
         let decl =
-            parse_fsm_block(b"@@fsm M(toks: token) : bool = false { /A/ true }").expect("parses");
-        assert!(generate(&decl).is_err());
+            parse_fsm_block(b"@@fsm M(text: bytes) : bool = false { /a$b/ true }").expect("parses");
+        let err = generate(&decl).unwrap_err();
+        assert!(err.contains("anchor"), "got {err}");
     }
 }
