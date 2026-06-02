@@ -172,6 +172,7 @@ pub mod frame_expansion;
 pub mod fsm_dart;
 pub mod fsm_erlang;
 pub mod fsm_go;
+pub mod fsm_java;
 pub mod fsm_javascript;
 pub mod fsm_lua;
 pub mod fsm_php;
