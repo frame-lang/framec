@@ -395,6 +395,9 @@ pub(crate) fn do_segment(c: &mut PipelineCtx) -> Option<CompileResult> {
                             TargetLanguage::Swift => {
                                 Some(crate::frame_c::compiler::codegen::fsm_swift::generate(&ast))
                             }
+                            TargetLanguage::Cpp => {
+                                Some(crate::frame_c::compiler::codegen::fsm_cpp::generate(&ast))
+                            }
                             _ => None,
                         };
                         match generated {
@@ -409,7 +412,7 @@ pub(crate) fn do_segment(c: &mut PipelineCtx) -> Option<CompileResult> {
                                     "@@fsm {}: code generation for the {:?} target is not yet \
                                      implemented (v0.1 supports python_3, rust, erlang, \
                                      javascript, typescript, go, ruby, php, dart, lua, java, \
-                                     kotlin, csharp, and swift)",
+                                     kotlin, csharp, swift, and cpp)",
                                     name, c.config.target
                                 ),
                             )),
@@ -1934,12 +1937,12 @@ mod tests {
     }
 
     /// `@@fsm` codegen for a target without an fsm backend yet surfaces E740
-    /// rather than silently dropping the block. (C++ is not yet wired; as
+    /// rather than silently dropping the block. (C is not yet wired; as
     /// backends land this should be switched to another pending target.)
     #[test]
     fn fsm_block_unsupported_target_e740() {
         use crate::frame_c::compiler::pipeline_supervisor::run_pipeline;
-        let config = PipelineConfig::production(TargetLanguage::Cpp);
+        let config = PipelineConfig::production(TargetLanguage::C);
         let r = run_pipeline(
             b"@@fsm M(text: bytes) : bool = false { /a/ true }\n",
             &config,
