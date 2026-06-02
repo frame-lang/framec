@@ -174,6 +174,7 @@ pub mod fsm_erlang;
 pub mod fsm_go;
 pub mod fsm_java;
 pub mod fsm_javascript;
+pub mod fsm_kotlin;
 pub mod fsm_lua;
 pub mod fsm_php;
 pub mod fsm_python;
