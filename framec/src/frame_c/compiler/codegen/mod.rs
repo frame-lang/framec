@@ -173,6 +173,7 @@ pub mod fsm_erlang;
 pub mod fsm_go;
 pub mod fsm_javascript;
 pub mod fsm_python;
+pub mod fsm_ruby;
 pub mod fsm_rust;
 pub mod fsm_typescript;
 pub mod interface_gen;
