@@ -380,6 +380,9 @@ pub(crate) fn do_segment(c: &mut PipelineCtx) -> Option<CompileResult> {
                             TargetLanguage::Dart => {
                                 Some(crate::frame_c::compiler::codegen::fsm_dart::generate(&ast))
                             }
+                            TargetLanguage::Lua => {
+                                Some(crate::frame_c::compiler::codegen::fsm_lua::generate(&ast))
+                            }
                             _ => None,
                         };
                         match generated {
@@ -393,7 +396,7 @@ pub(crate) fn do_segment(c: &mut PipelineCtx) -> Option<CompileResult> {
                                 &format!(
                                     "@@fsm {}: code generation for the {:?} target is not yet \
                                      implemented (v0.1 supports python_3, rust, erlang, \
-                                     javascript, typescript, go, ruby, php, and dart)",
+                                     javascript, typescript, go, ruby, php, dart, and lua)",
                                     name, c.config.target
                                 ),
                             )),
