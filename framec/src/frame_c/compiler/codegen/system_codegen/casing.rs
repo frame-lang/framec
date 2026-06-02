@@ -158,6 +158,21 @@ fn generate_casing(system: &SystemAst, machine_name: &str, lang: TargetLanguage)
     let fields = generate_casing_fields(machine_name, lang);
     let mut methods = Vec::new();
 
+    // RFC-0043 D2: Swift's casing throws a recoverable error on E703.
+    // Emit the `FrameE703Error` enum as a nested type at the top of the
+    // casing class so each casing's wrappers can reference it without
+    // a fully-qualified prefix (callers reach it as
+    // `<Casing>.FrameE703Error.busy(...)`). One per casing.
+    if matches!(lang, TargetLanguage::Swift) {
+        methods.push(CodegenNode::NativeBlock {
+            code: "public enum FrameE703Error: Error {\n\
+                   \x20   case busy(method: String, inFlight: String)\n\
+                   }"
+            .to_string(),
+            span: None,
+        });
+    }
+
     methods.push(generate_casing_constructor(machine_name, lang));
 
     for ifm in &system.interface {
@@ -803,13 +818,20 @@ fn generate_casing_interface_wrapper(ifm: &InterfaceMethod, lang: TargetLanguage
             let arg_list: Vec<String> = ifm.params.iter().map(|p| p.name.clone()).collect();
             let arg_str = arg_list.join(", ");
             // Swift: `defer { ... }` runs when the function scope exits,
-            // including after an `await` and on early `return`. This is
-            // the idiomatic equivalent of try/finally; cleaner than
-            // do/catch wrapping. `fatalError` matches the unchecked-throw
-            // semantics of the other backends — E703 is a programming
-            // error, not a recoverable condition. Optional unwrap uses
-            // nil-coalescing `?? "?"` to avoid forced-unwrap on a value
-            // we treat as advisory in the message.
+            // including after a `throw`, after an `await`, and on early
+            // `return`. The casing's gated interface wrappers are
+            // `async throws -> T` (RFC-0043 §Swift D2): E703 is a
+            // RECOVERABLE error the caller can `try?` / `catch`, aligning
+            // Swift with every other layered backend (Python's
+            // RuntimeError, JS's Error, Java's RuntimeException, etc.).
+            // Pre-D2 emitted `fatalError(...)` which terminated the
+            // program; switching to `throw FrameE703Error.busy(...)`
+            // requires callers to add `try` at every interface-method
+            // call site — a one-time migration.
+            //
+            // The Method emitter detects the `__swift_throws__`
+            // decorator marker below and emits `throws` between
+            // `async` and `->`.
             let has_return = !matches!(ifm.return_type, None | Some(FrameType::Unknown));
             let delegate_line = if has_return {
                 format!("return await self.machine.{}({})", ifm.name, arg_str)
@@ -818,9 +840,7 @@ fn generate_casing_interface_wrapper(ifm: &InterfaceMethod, lang: TargetLanguage
             };
             format!(
                 "if self.busy {{\n\
-                 \x20   fatalError(\n\
-                 \x20       \"E703: system busy: cannot enter '{name}' while '\\(self.in_flight ?? \"?\")' is in flight\"\n\
-                 \x20   )\n\
+                 \x20   throw FrameE703Error.busy(method: \"{name}\", inFlight: self.in_flight ?? \"?\")\n\
                  }}\n\
                  self.busy = true\n\
                  self.in_flight = \"{name}\"\n\
@@ -876,6 +896,15 @@ fn generate_casing_interface_wrapper(ifm: &InterfaceMethod, lang: TargetLanguage
         })
         .collect();
 
+    // RFC-0043 D2: Swift's casing wrappers are `async throws -> T`.
+    // The `__swift_throws__` decorator is a side-channel to Swift's
+    // Method emitter; see `backends/swift.rs` for the expansion.
+    let decorators = if matches!(lang, TargetLanguage::Swift) {
+        vec!["__swift_throws__".to_string()]
+    } else {
+        vec![]
+    };
+
     CodegenNode::Method {
         name: ifm.name.clone(),
         params,
@@ -889,7 +918,7 @@ fn generate_casing_interface_wrapper(ifm: &InterfaceMethod, lang: TargetLanguage
         is_async: true,
         is_static: false,
         visibility: Visibility::Public,
-        decorators: vec![],
+        decorators,
     }
 }
 

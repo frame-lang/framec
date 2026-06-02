@@ -158,6 +158,7 @@ impl LanguageBackend for SwiftBackend {
                 is_async,
                 is_static,
                 visibility,
+                decorators,
                 ..
             } => {
                 let vis = self.emit_visibility_swift(*visibility);
@@ -179,14 +180,28 @@ impl LanguageBackend for SwiftBackend {
                 // Swift: `async` goes between the param list and return type.
                 //   func foo() async -> Int { ... }
                 let async_kw = if *is_async { " async" } else { "" };
+                // RFC-0043 D2: the casing's gated interface wrappers carry a
+                // `__swift_throws__` decorator marker, which we expand here
+                // into a `throws` keyword between `async` and the return
+                // type. The marker is a side-channel from
+                // `system_codegen::casing.rs` because adding a `throws: bool`
+                // field to the shared `Method` node would touch every
+                // backend and 190+ construction sites for a Swift-only
+                // signature element.
+                let throws_kw = if decorators.iter().any(|d| d == "__swift_throws__") {
+                    " throws"
+                } else {
+                    ""
+                };
                 let mut result = format!(
-                    "{}{}{}func {}({}){}{} {{\n",
+                    "{}{}{}func {}({}){}{}{} {{\n",
                     ctx.get_indent(),
                     vis_prefix,
                     static_kw,
                     name,
                     params_str,
                     async_kw,
+                    throws_kw,
                     return_str
                 );
 
