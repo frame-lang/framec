@@ -49,6 +49,36 @@ fn return_type_for(t: Option<&FrameType>, lang: TargetLanguage) -> Option<String
     }
 }
 
+/// RFC-0043 D3: GDScript E703 gate falls through to an early-return
+/// with a typed-zero value (replaces the pre-D3 `assert` which Godot
+/// strips in release builds). This helper maps the user's declared
+/// return type to a zero literal GDScript will accept under static
+/// typing. Unknown / unrecognized types fall back to `null` — GDScript
+/// will accept null in most slots when typing is `Variant`-like, and
+/// in strict-typed code the user's runtime path was already going to
+/// crash on E703 so the fallback is no worse.
+fn gdscript_typed_zero(t: Option<&FrameType>) -> &'static str {
+    let s = match t {
+        Some(FrameType::Custom(s)) => s.as_str(),
+        _ => return "null",
+    };
+    // Lowercase prefix match so `Int` / `int` both map. Array / Dict
+    // matches the prefix because `Array[String]` / `Dictionary[String,
+    // Int]` are typed variants; the zero is the empty container in
+    // either case.
+    let lower = s.to_lowercase();
+    match lower.as_str() {
+        "int" | "i32" | "i64" | "u32" | "u64" | "i16" | "u16" | "i8" | "u8" => "0",
+        "float" | "f32" | "f64" | "double" | "real" => "0.0",
+        "bool" | "boolean" => "false",
+        "string" | "str" => "\"\"",
+        _ if lower.starts_with("array") => "[]",
+        _ if lower.starts_with("dictionary") => "{}",
+        _ if lower.starts_with("packed") => "[]", // PackedStringArray etc.
+        _ => "null",
+    }
+}
+
 /// Per-backend opt-in to layered emission. Returns `true` only for
 /// backends where the casing/machine shape has been verified end-to-end.
 /// Phase 4 wires Python; Phase 5 wires Rust (its emission lives in
@@ -749,16 +779,31 @@ fn generate_casing_interface_wrapper(ifm: &InterfaceMethod, lang: TargetLanguage
         TargetLanguage::GDScript => {
             let arg_list: Vec<String> = ifm.params.iter().map(|p| p.name.clone()).collect();
             let arg_str = arg_list.join(", ");
-            // GDScript has no try/finally — manual cleanup before / after
-            // the await. `assert(cond, msg)` fails fast in debug builds
-            // (matches the "programming error, terminate" semantics other
-            // backends get from throw/panic). Void vs value-returning
-            // split: value awaits into `__result`, then clears the gate,
-            // then returns; void just awaits and clears.
+            // GDScript has no try/finally. Original RFC-0043 emission
+            // used `assert(not self.busy, ...)` — but Godot strips
+            // `assert()` calls in --release builds, so the gate
+            // becomes a silent no-op in shipped games. The pilot user
+            // flagged that exact "silent failure" risk in his original
+            // feedback that started RFC-0043.
+            //
+            // RFC-0043 D3 replaces the assert with:
+            //   if self.busy:
+            //       push_error("E703: ...")
+            //       return <typed-zero>
+            //
+            // `push_error()` logs to the debugger AND prints to stderr
+            // in ALL builds. The early-return prevents reentry and
+            // returns a typed-zero value that satisfies the declared
+            // return type. Callers see a sentinel value (typed zero)
+            // rather than a crash — not as obvious as `throw`, but
+            // survives release-build stripping.
             let has_return = !matches!(ifm.return_type, None | Some(FrameType::Unknown));
             let body = if has_return {
+                let zero = gdscript_typed_zero(ifm.return_type.as_ref());
                 format!(
-                    "assert(not self.busy, \"E703: system busy: cannot enter '{name}' while '%s' is in flight\" % str(self.in_flight))\n\
+                    "if self.busy:\n\
+                     \x20   push_error(\"E703: system busy: cannot enter '{name}' while '%s' is in flight\" % str(self.in_flight))\n\
+                     \x20   return {zero}\n\
                      self.busy = true\n\
                      self.in_flight = \"{name}\"\n\
                      var __result = await self.machine.{name}({args})\n\
@@ -766,11 +811,14 @@ fn generate_casing_interface_wrapper(ifm: &InterfaceMethod, lang: TargetLanguage
                      self.in_flight = null\n\
                      return __result",
                     name = ifm.name,
-                    args = arg_str
+                    args = arg_str,
+                    zero = zero
                 )
             } else {
                 format!(
-                    "assert(not self.busy, \"E703: system busy: cannot enter '{name}' while '%s' is in flight\" % str(self.in_flight))\n\
+                    "if self.busy:\n\
+                     \x20   push_error(\"E703: system busy: cannot enter '{name}' while '%s' is in flight\" % str(self.in_flight))\n\
+                     \x20   return\n\
                      self.busy = true\n\
                      self.in_flight = \"{name}\"\n\
                      await self.machine.{name}({args})\n\
