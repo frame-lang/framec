@@ -240,7 +240,10 @@ self._context_stack.pop()"#,
                 s = system_name
             ),
             TargetLanguage::TypeScript | TargetLanguage::JavaScript => format!(
-                r#"const __e = new {s}FrameEvent("$>", null);
+                // FrameEvent's second param is the parameters list (any[]
+                // in TS). Pass an empty array, not null — strict-mode TS
+                // (D-TS-1) rejects null where any[] is expected.
+                r#"const __e = new {s}FrameEvent("$>", []);
 const __ctx = new {s}FrameContext(__e, null);
 this._context_stack.push(__ctx);
 await this.__kernel(__e);
