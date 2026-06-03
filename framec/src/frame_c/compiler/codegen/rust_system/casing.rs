@@ -10,12 +10,15 @@
 //!
 //! - Plain `bool` and `Option<&'static str>` gate fields on the
 //!   casing struct (no `Cell` / `RefCell`).
-//! - `panic!("E703: ...")` on gate violation — matches the existing
-//!   `E700` pattern in `rust_system/persistence.rs`.
+//! - Interface wrappers return `Result<T, FrameE703Error>` and emit
+//!   `return Err(FrameE703Error { ... })` on gate violation (RFC-0043
+//!   D5; pre-D5 emitted `panic!("E703: ...")`). Aligns Rust with every
+//!   other layered backend, which all raise a recoverable error.
 //! - RAII via `_GateGuard<'_>` holding split borrows on the gate
 //!   fields, distinct from the `&mut self.machine` borrow that the
-//!   awaited call holds. Resets fields on Drop, including on panic
-//!   propagation.
+//!   awaited call holds. Resets fields on Drop, including on
+//!   handler-side panic propagation (which IS still a panic, distinct
+//!   from the gate-violation case).
 
 use super::super::ast::{CodegenNode, Field, Param, Visibility};
 use crate::frame_c::compiler::frame_ast::Type as FrameType;
@@ -46,10 +49,10 @@ pub(crate) fn wrap_in_casing(system: &SystemAst, mut machine_class: CodegenNode)
     }
 }
 
-/// Emit the `_GateGuard<'a>` struct and its `Drop` impl as a
-/// module-level NativeBlock. Both go together because `impl Drop for X`
-/// isn't a standard `impl` block representable in the `Class` IR
-/// variant.
+/// Emit the `_GateGuard<'a>` struct + its `Drop` impl, and the
+/// `FrameE703Error` struct + Display + Error impls, as a single
+/// module-level NativeBlock. Both go together because `impl X for Y`
+/// blocks aren't directly representable in the `Class` IR variant.
 fn generate_gate_guard_block() -> CodegenNode {
     let code = r#"struct _GateGuard<'a> {
     busy: &'a mut bool,
@@ -61,8 +64,26 @@ impl<'a> Drop for _GateGuard<'a> {
         *self.busy = false;
         *self.in_flight = None;
     }
-}"#
-    .to_string();
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FrameE703Error {
+    pub method: &'static str,
+    pub in_flight: Option<&'static str>,
+}
+
+impl core::fmt::Display for FrameE703Error {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "E703: system busy: cannot enter '{}' while {:?} is in flight",
+            self.method, self.in_flight
+        )
+    }
+}
+
+impl std::error::Error for FrameE703Error {}"#
+        .to_string();
 
     CodegenNode::NativeBlock { code, span: None }
 }
@@ -196,16 +217,43 @@ fn generate_casing_factory_alias(system: &SystemAst) -> CodegenNode {
 }
 
 fn generate_casing_interface_wrapper(ifm: &InterfaceMethod) -> CodegenNode {
-    let return_type_str = rust_type_to_string(ifm.return_type.as_ref());
+    let raw_return = rust_type_to_string(ifm.return_type.as_ref());
+    let inner_type = if raw_return.is_empty() {
+        "()".to_string()
+    } else {
+        raw_return
+    };
     let arg_call: Vec<String> = ifm.params.iter().map(|p| p.name.clone()).collect();
     let arg_call_str = arg_call.join(", ");
 
+    // RFC-0043 D5: gate violation returns `Err(FrameE703Error { ... })`
+    // instead of `panic!("E703: ...")`. Caller propagates with `?` or
+    // matches the Err variant. Handler panics (a different error class
+    // — programming bugs in user handler bodies) still propagate as
+    // panics, with `_GateGuard::drop` cleaning up the gate on unwind.
+    //
+    // The happy path wraps the machine's return value in `Ok(...)`.
+    // For void methods (`-> ()`), wrap the unit value: `Ok({ ...; () })`.
+    let success_expr = if inner_type == "()" {
+        format!(
+            "{{ self.machine.{name}({args}).await; Ok(()) }}",
+            name = ifm.name,
+            args = arg_call_str
+        )
+    } else {
+        format!(
+            "Ok(self.machine.{name}({args}).await)",
+            name = ifm.name,
+            args = arg_call_str
+        )
+    };
+
     let body_code = format!(
         "if self.busy {{\n\
-         \x20   panic!(\n\
-         \x20       \"E703: system busy: cannot enter '{name}' while {{:?}} is in flight\",\n\
-         \x20       self.in_flight\n\
-         \x20   );\n\
+         \x20   return Err(FrameE703Error {{\n\
+         \x20       method: \"{name}\",\n\
+         \x20       in_flight: self.in_flight,\n\
+         \x20   }});\n\
          }}\n\
          self.busy = true;\n\
          self.in_flight = Some(\"{name}\");\n\
@@ -213,9 +261,9 @@ fn generate_casing_interface_wrapper(ifm: &InterfaceMethod) -> CodegenNode {
          \x20   busy: &mut self.busy,\n\
          \x20   in_flight: &mut self.in_flight,\n\
          }};\n\
-         self.machine.{name}({args}).await",
+         {success}",
         name = ifm.name,
-        args = arg_call_str
+        success = success_expr
     );
 
     let params = ifm
@@ -231,11 +279,7 @@ fn generate_casing_interface_wrapper(ifm: &InterfaceMethod) -> CodegenNode {
     CodegenNode::Method {
         name: ifm.name.clone(),
         params,
-        return_type: if return_type_str.is_empty() {
-            None
-        } else {
-            Some(return_type_str)
-        },
+        return_type: Some(format!("Result<{}, FrameE703Error>", inner_type)),
         body: vec![CodegenNode::NativeBlock {
             code: body_code,
             span: None,
