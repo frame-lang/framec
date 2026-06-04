@@ -1162,6 +1162,26 @@ fn generate_casing_operation_delegate(op: &OperationAst, lang: TargetLanguage) -
     }
 }
 
+/// Return the language-idiomatic type for the persist serialization
+/// blob. Today framec only emits String-serialized persist (JSON for
+/// most backends, serde for Rust). When `@@[persist(<type>)]` carries
+/// a richer typed signature in the future, this helper extends to
+/// surface the declared type.
+fn persist_blob_type(lang: TargetLanguage) -> Option<String> {
+    match lang {
+        // Dynamic targets: no annotation needed.
+        TargetLanguage::Python3 | TargetLanguage::JavaScript | TargetLanguage::GDScript => None,
+        TargetLanguage::TypeScript => Some("string".to_string()),
+        TargetLanguage::Java | TargetLanguage::Swift | TargetLanguage::Kotlin => {
+            Some("String".to_string())
+        }
+        TargetLanguage::CSharp => Some("string".to_string()),
+        TargetLanguage::Dart => Some("String".to_string()),
+        TargetLanguage::Cpp => Some("std::string".to_string()),
+        _ => None,
+    }
+}
+
 fn generate_casing_save_delegate(system: &SystemAst, lang: TargetLanguage) -> Option<CodegenNode> {
     let save_name = system.save_op_name_rfc0015()?;
     let body_code = match lang {
@@ -1182,7 +1202,12 @@ fn generate_casing_save_delegate(system: &SystemAst, lang: TargetLanguage) -> Op
     Some(CodegenNode::Method {
         name: save_name.to_string(),
         params: vec![],
-        return_type: None,
+        // The casing's save delegate returns the persist blob type
+        // (matches the machine's save signature). Pre-fix this was
+        // `None` which produced `void save_state()` on typed backends
+        // — incompatible with the `return this.machine.X()` body
+        // (Java / C# / Kotlin / Swift / Dart / C++ all rejected it).
+        return_type: persist_blob_type(lang),
         body: vec![CodegenNode::NativeBlock {
             code: body_code,
             span: None,
@@ -1218,7 +1243,12 @@ fn generate_casing_restore_delegate(
         name: load_name.to_string(),
         params: vec![Param {
             name: "data".to_string(),
-            type_annotation: None,
+            // Match the machine's restore param type (the persist blob
+            // type, currently always String / std::string). Pre-fix
+            // this was `None` which produced `Object data` (Java) or
+            // `object data` (C#) — incompatible with the caller passing
+            // a String/string snapshot.
+            type_annotation: persist_blob_type(lang),
             default_value: None,
         }],
         return_type: None,
