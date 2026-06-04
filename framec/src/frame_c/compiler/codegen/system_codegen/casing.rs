@@ -904,28 +904,51 @@ fn generate_casing_interface_wrapper(ifm: &InterfaceMethod, lang: TargetLanguage
         TargetLanguage::Java => {
             let arg_list: Vec<String> = ifm.params.iter().map(|p| p.name.clone()).collect();
             let arg_str = arg_list.join(", ");
-            // The machine's interface method (post-`make_java_interface_async`)
-            // returns `CompletableFuture<T>` synchronously — Java's internals
-            // are sync. Two ways the user can see a failure:
+            // The machine's interface method has TWO possible shapes:
             //
-            //   1. E703 gate-violation: instead of throwing
-            //      RuntimeException synchronously, wrap as
-            //      `CompletableFuture.failedFuture(...)` so the caller
-            //      sees the failure through the SAME mechanism as a
-            //      successful result — chain it via `.exceptionally(...)`,
-            //      `.handle(...)`, or `.get()` (rethrows wrapped in
-            //      ExecutionException).
+            //   - User-declared `async fetch(...): T` →
+            //     `make_java_interface_async` marks it async, so the
+            //     machine emits `CompletableFuture<T> fetch(...)`. The
+            //     casing's wrapper returns the machine's future
+            //     directly.
             //
-            //   2. Handler-thrown exception: the machine's sync call
-            //      bubbles a RuntimeException straight out before the
-            //      future is constructed. Catch it and turn it into a
-            //      failedFuture so the contract matches the rest of the
-            //      layered backends (Python RuntimeError, JS Error, etc.,
-            //      all reach the caller via the future / await chain).
+            //   - User-declared SYNC `get(): T` (no `async`) on an
+            //     `@@[async]` system → machine stays sync and emits
+            //     `T get(...)`. The casing still exposes
+            //     `CompletableFuture<T> get(...)` for API uniformity,
+            //     so the body wraps the sync result via
+            //     `CompletableFuture.completedFuture(...)`.
+            //
+            // Two ways the user can see a failure:
+            //
+            //   1. E703 gate-violation: `CompletableFuture.failedFuture(...)`
+            //      so the caller sees the failure through the SAME
+            //      mechanism as a successful result — chain via
+            //      `.exceptionally(...)`, `.handle(...)`, or `.get()`
+            //      (rethrows wrapped in ExecutionException).
+            //
+            //   2. Handler-thrown RuntimeException from the machine
+            //      call: catch and convert to `failedFuture(e)` so the
+            //      contract matches the rest of the layered backends.
             //
             // Pre-fix (D-JAVA-1): both paths threw synchronously out of
             // the casing, diverging from every other backend's contract
             // and breaking `cf.exceptionally(...)` recovery.
+            let success_expr = if ifm.is_async {
+                // Async machine method already returns CompletableFuture<T>.
+                format!(
+                    "return this.machine.{name}({args});",
+                    name = ifm.name,
+                    args = arg_str
+                )
+            } else {
+                // Sync machine method returns plain T; wrap.
+                format!(
+                    "return java.util.concurrent.CompletableFuture.completedFuture(this.machine.{name}({args}));",
+                    name = ifm.name,
+                    args = arg_str
+                )
+            };
             format!(
                 "if (this.busy) {{\n\
                  \x20   return java.util.concurrent.CompletableFuture.failedFuture(\n\
@@ -937,7 +960,7 @@ fn generate_casing_interface_wrapper(ifm: &InterfaceMethod, lang: TargetLanguage
                  this.busy = true;\n\
                  this.in_flight = \"{name}\";\n\
                  try {{\n\
-                 \x20   return this.machine.{name}({args});\n\
+                 \x20   {success}\n\
                  }} catch (RuntimeException __e) {{\n\
                  \x20   return java.util.concurrent.CompletableFuture.failedFuture(__e);\n\
                  }} finally {{\n\
@@ -945,7 +968,7 @@ fn generate_casing_interface_wrapper(ifm: &InterfaceMethod, lang: TargetLanguage
                  \x20   this.busy = false;\n\
                  }}",
                 name = ifm.name,
-                args = arg_str
+                success = success_expr
             )
         }
         _ => String::new(),
