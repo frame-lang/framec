@@ -635,8 +635,8 @@ fn generate_casing_interface_wrapper(ifm: &InterfaceMethod, lang: TargetLanguage
                  try:\n\
                  \x20   return await self._machine.{name}({args})\n\
                  finally:\n\
-                 \x20   self._busy = False\n\
-                 \x20   self._in_flight = None",
+                 \x20   self._in_flight = None\n\
+                 \x20   self._busy = False",
                 name = ifm.name,
                 args = arg_str
             )
@@ -655,8 +655,8 @@ fn generate_casing_interface_wrapper(ifm: &InterfaceMethod, lang: TargetLanguage
                  try {{\n\
                  \x20   return await this.machine.{name}({args});\n\
                  }} finally {{\n\
-                 \x20   this.busy = false;\n\
                  \x20   this.in_flight = null;\n\
+                 \x20   this.busy = false;\n\
                  }}",
                 name = ifm.name,
                 args = arg_str
@@ -685,8 +685,8 @@ fn generate_casing_interface_wrapper(ifm: &InterfaceMethod, lang: TargetLanguage
                  try {{\n\
                  \x20   {delegate}\n\
                  }} finally {{\n\
-                 \x20   this.busy = false\n\
                  \x20   this.in_flight = null\n\
+                 \x20   this.busy = false\n\
                  }}",
                 name = ifm.name,
                 delegate = delegate_line
@@ -714,8 +714,8 @@ fn generate_casing_interface_wrapper(ifm: &InterfaceMethod, lang: TargetLanguage
                  try {{\n\
                  \x20   {delegate}\n\
                  }} finally {{\n\
-                 \x20   this.busy = false;\n\
                  \x20   this.in_flight = null;\n\
+                 \x20   this.busy = false;\n\
                  }}",
                 name = ifm.name,
                 delegate = delegate_line
@@ -741,8 +741,8 @@ fn generate_casing_interface_wrapper(ifm: &InterfaceMethod, lang: TargetLanguage
             let success_block = if has_return {
                 format!(
                     "auto __result = co_await this->machine.{name}({args});\n\
-                     this->busy = false;\n\
                      this->in_flight.clear();\n\
+                     this->busy = false;\n\
                      co_return __result;",
                     name = ifm.name,
                     args = arg_str
@@ -750,8 +750,8 @@ fn generate_casing_interface_wrapper(ifm: &InterfaceMethod, lang: TargetLanguage
             } else {
                 format!(
                     "co_await this->machine.{name}({args});\n\
-                     this->busy = false;\n\
                      this->in_flight.clear();\n\
+                     this->busy = false;\n\
                      co_return;",
                     name = ifm.name,
                     args = arg_str
@@ -768,8 +768,8 @@ fn generate_casing_interface_wrapper(ifm: &InterfaceMethod, lang: TargetLanguage
                  try {{\n\
                  \x20   {success}\n\
                  }} catch (...) {{\n\
-                 \x20   this->busy = false;\n\
                  \x20   this->in_flight.clear();\n\
+                 \x20   this->busy = false;\n\
                  \x20   throw;\n\
                  }}",
                 name = ifm.name,
@@ -807,8 +807,8 @@ fn generate_casing_interface_wrapper(ifm: &InterfaceMethod, lang: TargetLanguage
                      self.busy = true\n\
                      self.in_flight = \"{name}\"\n\
                      var __result = await self.machine.{name}({args})\n\
-                     self.busy = false\n\
                      self.in_flight = null\n\
+                     self.busy = false\n\
                      return __result",
                     name = ifm.name,
                     args = arg_str,
@@ -822,8 +822,8 @@ fn generate_casing_interface_wrapper(ifm: &InterfaceMethod, lang: TargetLanguage
                      self.busy = true\n\
                      self.in_flight = \"{name}\"\n\
                      await self.machine.{name}({args})\n\
-                     self.busy = false\n\
-                     self.in_flight = null",
+                     self.in_flight = null\n\
+                     self.busy = false",
                     name = ifm.name,
                     args = arg_str
                 )
@@ -847,7 +847,7 @@ fn generate_casing_interface_wrapper(ifm: &InterfaceMethod, lang: TargetLanguage
             format!(
                 "if (this.busy) {{\n\
                  \x20   throw StateError(\n\
-                 \x20       \"E703: system busy: cannot enter '{name}' while '${{this.in_flight}}' is in flight\"\n\
+                 \x20       \"E703: system busy: cannot enter '{name}' while '${{this.in_flight ?? \"?\"}}' is in flight\"\n\
                  \x20   );\n\
                  }}\n\
                  this.busy = true;\n\
@@ -855,8 +855,8 @@ fn generate_casing_interface_wrapper(ifm: &InterfaceMethod, lang: TargetLanguage
                  try {{\n\
                  \x20   {delegate}\n\
                  }} finally {{\n\
-                 \x20   this.busy = false;\n\
                  \x20   this.in_flight = null;\n\
+                 \x20   this.busy = false;\n\
                  }}",
                 name = ifm.name,
                 delegate = delegate_line
@@ -893,8 +893,8 @@ fn generate_casing_interface_wrapper(ifm: &InterfaceMethod, lang: TargetLanguage
                  self.busy = true\n\
                  self.in_flight = \"{name}\"\n\
                  defer {{\n\
-                 \x20   self.busy = false\n\
                  \x20   self.in_flight = nil\n\
+                 \x20   self.busy = false\n\
                  }}\n\
                  {delegate}",
                 name = ifm.name,
@@ -905,27 +905,44 @@ fn generate_casing_interface_wrapper(ifm: &InterfaceMethod, lang: TargetLanguage
             let arg_list: Vec<String> = ifm.params.iter().map(|p| p.name.clone()).collect();
             let arg_str = arg_list.join(", ");
             // The machine's interface method (post-`make_java_interface_async`)
-            // already returns `CompletableFuture<T>` (already-completed because
-            // Java's internals are sync). The casing returns the machine's
-            // future directly; no extra `completedFuture` wrap needed.
-            // The gate-clear runs in `finally` so it executes whether the
-            // machine call returns normally or throws (Java's evaluation
-            // order: machine call returns → return value captured → finally
-            // runs → captured value returned, so the future the user
-            // receives is well-defined).
+            // returns `CompletableFuture<T>` synchronously — Java's internals
+            // are sync. Two ways the user can see a failure:
+            //
+            //   1. E703 gate-violation: instead of throwing
+            //      RuntimeException synchronously, wrap as
+            //      `CompletableFuture.failedFuture(...)` so the caller
+            //      sees the failure through the SAME mechanism as a
+            //      successful result — chain it via `.exceptionally(...)`,
+            //      `.handle(...)`, or `.get()` (rethrows wrapped in
+            //      ExecutionException).
+            //
+            //   2. Handler-thrown exception: the machine's sync call
+            //      bubbles a RuntimeException straight out before the
+            //      future is constructed. Catch it and turn it into a
+            //      failedFuture so the contract matches the rest of the
+            //      layered backends (Python RuntimeError, JS Error, etc.,
+            //      all reach the caller via the future / await chain).
+            //
+            // Pre-fix (D-JAVA-1): both paths threw synchronously out of
+            // the casing, diverging from every other backend's contract
+            // and breaking `cf.exceptionally(...)` recovery.
             format!(
                 "if (this.busy) {{\n\
-                 \x20   throw new RuntimeException(\n\
-                 \x20       \"E703: system busy: cannot enter '{name}' while '\" + this.in_flight + \"' is in flight\"\n\
+                 \x20   return java.util.concurrent.CompletableFuture.failedFuture(\n\
+                 \x20       new RuntimeException(\n\
+                 \x20           \"E703: system busy: cannot enter '{name}' while '\" + this.in_flight + \"' is in flight\"\n\
+                 \x20       )\n\
                  \x20   );\n\
                  }}\n\
                  this.busy = true;\n\
                  this.in_flight = \"{name}\";\n\
                  try {{\n\
                  \x20   return this.machine.{name}({args});\n\
+                 }} catch (RuntimeException __e) {{\n\
+                 \x20   return java.util.concurrent.CompletableFuture.failedFuture(__e);\n\
                  }} finally {{\n\
-                 \x20   this.busy = false;\n\
                  \x20   this.in_flight = null;\n\
+                 \x20   this.busy = false;\n\
                  }}",
                 name = ifm.name,
                 args = arg_str
