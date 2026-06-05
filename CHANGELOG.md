@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [4.4.0] - 2026-06-06
+
 Ships RFC-0043: the `@@[async]` system-header attribute and a layered
 casing/machine codegen architecture for every async-capable backend. Async
 systems are now emitted as a public **casing** (user-declared name) that gates
@@ -197,6 +199,16 @@ works.
 If your GDScript code relies on E703 firing in release builds, no change
 needed — D3 replaces the assert-based gate with `push_error` + typed-zero,
 which survives `--remap`.
+
+- **Graphviz: `push$ -> $X` now draws a forward edge.** The Graphviz backend
+  emitted no edge into a state reached by `push$ -> $Target`, so the pushed-to
+  state appeared unreachable in the diagram even though the FSM ran correctly.
+  The diagram IR builder's `StackPush` arm dropped the transition target; it now
+  emits a forward edge to the pushed-to state. For an HSM-inherited `push$` on a
+  parent state the edge is cluster-anchored (`ltail="cluster_<Parent>"`), and a
+  single-state push emits a plain forward edge. The push edge is distinguished
+  by a `(push$)` label tag on a solid edge (dashed/dotted remain `->>`/`=>`).
+  Graphviz-only; all other targets are byte-identical to 4.3.0.
 
 ## [4.3.0] - 2026-05-27
 

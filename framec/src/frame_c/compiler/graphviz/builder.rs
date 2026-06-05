@@ -175,8 +175,25 @@ fn extract_transitions_from_statements(
                     guard: guard.map(|s| s.to_string()),
                 });
             }
-            Statement::StackPush(_) => {
+            Statement::StackPush(push) => {
                 *has_state_stack = true;
+                // `push$ -> $Target` carries a forward transition; emit the
+                // edge so the pushed-to state isn't left unreachable in the
+                // diagram (Issue #46). A bare `push$` has no target → no edge.
+                // Distinguished from a normal transition by a "(push$)" label
+                // tag only; the edge stays solid (dashed/dotted are taken by
+                // ->>/=>). Cluster anchoring (ltail) is applied by emit_edge
+                // when the source is a parent state.
+                if let Some(target) = &push.transition_target {
+                    transitions.push(TransitionEdge {
+                        source: source_state.to_string(),
+                        target: TransitionTarget::State(target.clone()),
+                        event: event.to_string(),
+                        label: Some(format!("{} (push$)", event)),
+                        kind: TransitionKind::Transition,
+                        guard: guard.map(|s| s.to_string()),
+                    });
+                }
             }
             Statement::StackPop(_) => {
                 *has_state_stack = true;
@@ -321,7 +338,7 @@ fn format_expression(expr: &Expression) -> String {
 mod tests {
     use super::*;
     use crate::frame_c::compiler::frame_ast::{
-        HandlerAst, HandlerBody, IfAst, MachineAst, Span, StateAst, TransitionAst,
+        HandlerAst, HandlerBody, IfAst, MachineAst, Span, StackPushAst, StateAst, TransitionAst,
     };
 
     fn span() -> Span {
@@ -568,5 +585,120 @@ mod tests {
             .find(|t| matches!(&t.target, TransitionTarget::State(n) if n == "Bad"))
             .unwrap();
         assert_eq!(to_bad.guard, Some("else".to_string()));
+    }
+
+    /// Build a `StateAst` carrying a single handler whose body is `stmts`.
+    fn state_with_handler(
+        name: &str,
+        parent: Option<&str>,
+        event: &str,
+        stmts: Vec<Statement>,
+    ) -> StateAst {
+        StateAst {
+            name: name.to_string(),
+            params: vec![],
+            parent: parent.map(|p| p.to_string()),
+            state_vars: vec![],
+            handlers: vec![HandlerAst {
+                event: event.to_string(),
+                params: vec![],
+                return_type: None,
+                return_init: None,
+                leading_comments: Vec::new(),
+                attributes: Vec::new(),
+                body: HandlerBody {
+                    statements: stmts,
+                    span: span(),
+                },
+                span: span(),
+            }],
+            enter: None,
+            exit: None,
+            default_forward: false,
+            leading_comments: Vec::new(),
+            span: span(),
+            body_span: span(),
+        }
+    }
+
+    /// Build a handler-less `StateAst`.
+    fn bare_state(name: &str, parent: Option<&str>) -> StateAst {
+        StateAst {
+            name: name.to_string(),
+            params: vec![],
+            parent: parent.map(|p| p.to_string()),
+            state_vars: vec![],
+            handlers: vec![],
+            enter: None,
+            exit: None,
+            default_forward: false,
+            leading_comments: Vec::new(),
+            span: span(),
+            body_span: span(),
+        }
+    }
+
+    #[test]
+    fn test_push_transition_emits_forward_edge() {
+        // Issue #46: an inherited `push$ -> $Paused` on a parent state must
+        // emit a forward edge into Paused. The source is a parent (InGame has
+        // child Playing), so emit_edge cluster-anchors it via ltail.
+        let mut system = SystemAst::new("Repro".to_string(), span());
+        system.machine = Some(MachineAst {
+            states: vec![
+                state_with_handler(
+                    "InGame",
+                    None,
+                    "pause",
+                    vec![Statement::StackPush(StackPushAst {
+                        span: span(),
+                        indent: 0,
+                        transition_target: Some("Paused".to_string()),
+                    })],
+                ),
+                bare_state("Playing", Some("InGame")),
+                bare_state("Paused", None),
+            ],
+            span: span(),
+        });
+
+        let arcanum = Arcanum::default();
+        let graph = build_system_graph(&system, &arcanum);
+
+        assert!(graph.has_state_stack);
+        let edge = graph
+            .transitions
+            .iter()
+            .find(|t| matches!(&t.target, TransitionTarget::State(n) if n == "Paused"))
+            .expect("push$ -> $Paused should emit a forward edge into Paused");
+        assert_eq!(edge.source, "InGame");
+        assert_eq!(edge.label, Some("pause (push$)".to_string()));
+        assert_eq!(edge.kind, TransitionKind::Transition);
+    }
+
+    #[test]
+    fn test_bare_push_emits_no_edge() {
+        // A bare `push$` (no target) pushes the current state — no forward
+        // edge, but it still flags the state stack so the Stack node renders.
+        let mut system = SystemAst::new("Bare".to_string(), span());
+        system.machine = Some(MachineAst {
+            states: vec![state_with_handler(
+                "Active",
+                None,
+                "hold",
+                vec![Statement::StackPush(StackPushAst {
+                    span: span(),
+                    indent: 0,
+                    transition_target: None,
+                })],
+            )],
+            span: span(),
+        });
+
+        let arcanum = Arcanum::default();
+        let graph = build_system_graph(&system, &arcanum);
+
+        assert!(graph.has_state_stack);
+        assert!(graph.transitions.is_empty());
     }
 }
