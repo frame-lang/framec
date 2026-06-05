@@ -116,29 +116,41 @@ class NoPersist:
         __e = NoPersistFrameEvent("bump", [])
         __ctx = NoPersistFrameContext(__e, None)
         self._context_stack.append(__ctx)
-        self.__kernel(__e)
-        return self._context_stack.pop()._return
+        try:
+            self.__kernel(__e)
+        finally:
+            __frame_ctx = self._context_stack.pop()
+        return __frame_ctx._return
 
     def set_cache(self, v: int):
         __e = NoPersistFrameEvent("set_cache", [v])
         __ctx = NoPersistFrameContext(__e, None)
         self._context_stack.append(__ctx)
-        self.__kernel(__e)
-        return self._context_stack.pop()._return
+        try:
+            self.__kernel(__e)
+        finally:
+            __frame_ctx = self._context_stack.pop()
+        return __frame_ctx._return
 
     def get_count(self) -> int:
         __e = NoPersistFrameEvent("get_count", [])
         __ctx = NoPersistFrameContext(__e, None)
         self._context_stack.append(__ctx)
-        self.__kernel(__e)
-        return self._context_stack.pop()._return
+        try:
+            self.__kernel(__e)
+        finally:
+            __frame_ctx = self._context_stack.pop()
+        return __frame_ctx._return
 
     def get_cache(self) -> int:
         __e = NoPersistFrameEvent("get_cache", [])
         __ctx = NoPersistFrameContext(__e, None)
         self._context_stack.append(__ctx)
-        self.__kernel(__e)
-        return self._context_stack.pop()._return
+        try:
+            self.__kernel(__e)
+        finally:
+            __frame_ctx = self._context_stack.pop()
+        return __frame_ctx._return
 
     def _state_Active(self, __e, compartment):
         if __e._message == "bump":

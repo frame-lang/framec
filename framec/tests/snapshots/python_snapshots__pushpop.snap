@@ -119,29 +119,41 @@ class PushPop:
         __e = PushPopFrameEvent("ping", [])
         __ctx = PushPopFrameContext(__e, None)
         self._context_stack.append(__ctx)
-        self.__kernel(__e)
-        return self._context_stack.pop()._return
+        try:
+            self.__kernel(__e)
+        finally:
+            __frame_ctx = self._context_stack.pop()
+        return __frame_ctx._return
 
     def nest(self):
         __e = PushPopFrameEvent("nest", [])
         __ctx = PushPopFrameContext(__e, None)
         self._context_stack.append(__ctx)
-        self.__kernel(__e)
-        return self._context_stack.pop()._return
+        try:
+            self.__kernel(__e)
+        finally:
+            __frame_ctx = self._context_stack.pop()
+        return __frame_ctx._return
 
     def unnest(self):
         __e = PushPopFrameEvent("unnest", [])
         __ctx = PushPopFrameContext(__e, None)
         self._context_stack.append(__ctx)
-        self.__kernel(__e)
-        return self._context_stack.pop()._return
+        try:
+            self.__kernel(__e)
+        finally:
+            __frame_ctx = self._context_stack.pop()
+        return __frame_ctx._return
 
     def leaf(self):
         __e = PushPopFrameEvent("leaf", [])
         __ctx = PushPopFrameContext(__e, None)
         self._context_stack.append(__ctx)
-        self.__kernel(__e)
-        return self._context_stack.pop()._return
+        try:
+            self.__kernel(__e)
+        finally:
+            __frame_ctx = self._context_stack.pop()
+        return __frame_ctx._return
 
     def _state_Idle(self, __e, compartment):
         if __e._message == "nest":
