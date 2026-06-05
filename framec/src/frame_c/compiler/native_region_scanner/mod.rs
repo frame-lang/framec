@@ -7,19 +7,20 @@ pub enum FrameSegmentKind {
     StateVar,       // $.varName (read access)
     StateVarAssign, // $.varName = expr (assignment)
     // System context syntax (@@)
-    ContextReturn,       // @@:return - return value slot (assignment or read)
-    ContextEvent,        // @@:event - interface event name
-    ContextData,         // @@:data[key] - call-scoped data (read)
-    ContextDataAssign,   // @@:data[key] = expr - call-scoped data (assignment)
-    ContextParams,       // @@:params[key] - explicit parameter access
-    ContextReturnExpr,   // @@:(expr) - set context return value (concise form)
-    SystemInstantiation, // @@SystemName() - validated system instantiation
-    ReturnCall,          // @@:return(expr) - set return value AND exit handler
-    ContextSelfCall,     // @@:self.method(args) - reentrant interface call
-    ContextSelf,         // @@:self - bare system instance reference
-    ContextSystemState,  // @@:system.state - current state name (read-only)
-    ContextSystemBare,   // @@:system without recognized member - error E604
-    ReturnStatement,     // return <expr>? - native return keyword in handler body
+    ContextReturn,              // @@:return - return value slot (assignment or read)
+    ContextEvent,               // @@:event - interface event name
+    ContextData,                // @@:data[key] - call-scoped data (read)
+    ContextDataAssign,          // @@:data[key] = expr - call-scoped data (assignment)
+    ContextParams,              // @@:params[key] - explicit parameter access
+    ContextReturnExpr,          // @@:(expr) - set context return value (concise form)
+    SystemInstantiation,        // @@SystemName() - validated system instantiation
+    ReturnCall,                 // @@:return(expr) - set return value AND exit handler
+    ContextSelfCall,            // @@:self.method(args) - reentrant interface call
+    ContextSelf,                // @@:self - bare system instance reference
+    ContextSystemState,         // @@:system.state.name - current state name (read-only)
+    ContextSystemBare,          // @@:system without recognized member - error E604
+    ContextSystemStateReserved, // @@:system.state without .name - reserved (RFC-0045), error E608
+    ReturnStatement,            // return <expr>? - native return keyword in handler body
 }
 
 /// Structured content parsed from a Frame segment during scanning.
@@ -366,6 +367,12 @@ pub fn regions_to_statements(
                         stmts.push(Statement::ContextSystemState { span: seg_span });
                     }
                     FrameSegmentKind::ContextSystemBare => {
+                        stmts.push(Statement::NativeCode(raw()));
+                    }
+                    FrameSegmentKind::ContextSystemStateReserved => {
+                        // Reserved (RFC-0045) — validation rejects it with E608
+                        // before codegen; emit as native so nothing leaks if a
+                        // caller skips validation.
                         stmts.push(Statement::NativeCode(raw()));
                     }
                     FrameSegmentKind::ReturnStatement => {

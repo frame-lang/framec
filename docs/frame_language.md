@@ -455,7 +455,7 @@ actions:
     }
 ```
 
-**Can access:** domain variables, `@@:return`, `@@:params.x`, `@@:event`, `@@:data.key`, `@@:self.method()`, `@@:system.state`
+**Can access:** domain variables, `@@:return`, `@@:params.x`, `@@:event`, `@@:data.key`, `@@:self.method()`, `@@:system.state.name`
 
 **Cannot access (E401):** `-> $State`, `=> $^`, `push$`, `pop$`, `$.varName`
 
@@ -618,7 +618,7 @@ See [System Context](#system-context) for full semantics.
 
 ```frame
 @@:self.method(args) // call own interface method (reentrant)
-@@:system.state      // current state name (read-only)
+@@:system.state.name      // current state name (read-only)
 ```
 
 `@@:self` and `@@:system` are syntactic prefixes — neither is a first-class value. Bare `@@:self` (E603) and bare `@@:system` (E604) are errors.
@@ -840,21 +840,26 @@ The generated interface method handles FrameEvent construction, context push/pop
 
 | Syntax | Meaning |
 |--------|---------|
-| `@@:system.state` | Current state name (read-only string) |
+| `@@:system.state.name` | Current state name (read-only string) |
 
-### Current State — `@@:system.state`
+### Current State — `@@:system.state.name`
 
 Returns the current state name as a string, without the `$` prefix. Read-only — assignment is a parse error.
 
 ```frame
 $Processing {
     status(): str {
-        @@:(@@:system.state)    // returns "Processing"
+        @@:(@@:system.state.name)    // returns "Processing"
     }
 }
 ```
 
-`@@:system.state` reads from the compartment's `state` field. It reflects the current state at the time of access — if a transition has been deferred but not yet processed, `@@:system.state` still returns the pre-transition state.
+`@@:system.state.name` reads from the compartment's `state` field. It reflects the current state at the time of access — if a transition has been deferred but not yet processed, `@@:system.state.name` still returns the pre-transition state.
+
+> **Bare `@@:system.state` is reserved** ([RFC-0045](rfcs/rfc-0045.md)). The
+> name accessor is `@@:system.state.name`; writing bare `@@:system.state` is a
+> compile error (**E608**). The `@@:system.state` path is held for a future
+> direct reference to the current *compartment*, of which the name is one field.
 
 **Available in:** event handlers, enter/exit handlers, actions, non-static operations.
 
@@ -1132,7 +1137,7 @@ Both `@@:self` and `@@:system` are syntactic prefixes. Bare forms are errors (E6
 | Token | Meaning |
 |-------|---------|
 | `@@:self.method()` | Self interface call (reentrant) |
-| `@@:system.state` | Current state name (read-only) |
+| `@@:system.state.name` | Current state name (read-only) |
 
 ---
 
@@ -1178,7 +1183,8 @@ Both `@@:self` and `@@:system` are syntactic prefixes. Bare forms are errors (E6
 | E601 | `unknown-iface-method` | `@@:self.method()` targets method not in `interface:` |
 | E602 | `self-call-arity` | Argument count does not match interface declaration |
 | E603 | `bare-self-reference` | Bare `@@:self` — must be `@@:self.method(args)` |
-| E604 | `bare-system-reference` | Bare `@@:system` — must be `@@:system.state` (or other member) |
+| E604 | `bare-system-reference` | Bare `@@:system` — must be `@@:system.state.name` (or other member) |
+| E608 | `reserved-system-state` | `@@:system.state` is reserved (RFC-0045) — use `@@:system.state.name` for the state name |
 
 ### Domain & Pop Errors (E6xx)
 
@@ -1327,7 +1333,7 @@ Frame reference (`$.x` → `self.x`) spliced in.
 
 4. **Expressions** — yield a value. Frame has exactly two kinds:
    - *Property references* (**getters**): `$.x`, `@@:return`, `@@:data.key`,
-     `@@:event`, `@@:params.x`, `@@:system.state`, `@@:self`.
+     `@@:event`, `@@:params.x`, `@@:system.state.name`, `@@:self`.
    - *Call expressions*: `@@:self.method(args)` (re-entrant self-dispatch) and
      `@@Sys(args)` / `@@!Sys()` (system instantiation). Both are usable in value
      position (assignment RHS) and, standalone, as expression-statements.
@@ -1355,7 +1361,7 @@ Frame-managed place value. A property exposes up to two **accessors**:
 | `@@:return` | yes | yes (`= e`, `@@:(e)`; `@@:return(e)` also exits) |
 | `@@:event` | yes | — (read-only) |
 | `@@:params.x` | yes | — (read-only) |
-| `@@:system.state` | yes | — (read-only) |
+| `@@:system.state.name` | yes | — (read-only) |
 | `@@:self` | yes | — (read-only) |
 
 "Two kinds of accessor" = getter and setter. A read-only property has only a

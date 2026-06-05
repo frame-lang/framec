@@ -12,7 +12,8 @@
 //   @@:return(expr)    → ReturnCall (kind=9)
 //   @@:self.method()   → ContextSelfCall (kind=10)
 //   @@:self            → ContextSelf (kind=11)
-//   @@:system.state    → ContextSystemState (kind=12)
+//   @@:system.state.name → ContextSystemState (kind=12), current state name
+//   @@:system.state    → ContextSystemStateReserved (kind=14), reserved (RFC-0045) → E608
 //   other              → no match (has_result=false)
 //
 // For SystemInstantiation, the FSM sets `result_no_init = true` if the source
@@ -712,7 +713,9 @@ mod _context_parser_fsm_framec {
         }
 
         fn _s_ParseSystem_hdl_frame_enter(&mut self, __e: &ContextParserFsmFrameEvent) {
-            // @@:system — currently only .state is supported
+            // @@:system — `.state.name` is the current-state name accessor.
+            // Bare `@@:system.state` is RESERVED for future use (RFC-0045)
+            // and rejected with E608; anything else is E604.
             let i = self.pos;
             let end = self.end;
             let bytes = &self.bytes;
@@ -720,12 +723,23 @@ mod _context_parser_fsm_framec {
             if i + 5 < end && &bytes[i..i + 6] == b".state"
                 && (i + 6 >= end || !(bytes[i + 6].is_ascii_alphanumeric() || bytes[i + 6] == b'_'))
             {
-                // @@:system.state — read-only state name accessor
-                self.result_end = i + 6;
-                self.result_kind = 12; // ContextSystemState
-                self.has_result = true;
+                // Matched `.state` at a word boundary — now require `.name`.
+                let j = i + 6;
+                if j + 4 < end && &bytes[j..j + 5] == b".name"
+                    && (j + 5 >= end || !(bytes[j + 5].is_ascii_alphanumeric() || bytes[j + 5] == b'_'))
+                {
+                    // @@:system.state.name — read-only state name accessor
+                    self.result_end = j + 5;
+                    self.result_kind = 12; // ContextSystemState
+                    self.has_result = true;
+                } else {
+                    // @@:system.state (no `.name`) — reserved (RFC-0045) → E608
+                    self.result_end = j;
+                    self.result_kind = 14; // ContextSystemStateReserved
+                    self.has_result = true;
+                }
             } else {
-                // Bare @@:system or unknown variant — emit for validation
+                // Bare @@:system or unknown variant — emit for validation (E604)
                 self.result_end = i;
                 self.result_kind = 13; // ContextSystemBare
                 self.has_result = true;

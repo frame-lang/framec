@@ -358,24 +358,67 @@ impl FrameValidator {
         }
 
         // E401: Validate no Frame statements in operations
-        // E421: @@:system.state not allowed in static operations
+        // E608: bare `@@:system.state` is reserved (RFC-0045); the name
+        //       accessor is `@@:system.state.name`.
+        // E421: `@@:system.state.name` not allowed in static operations.
+        //
+        // Operation bodies are raw native code (not scanned into Frame
+        // segments), so these are detected by text scan here rather than via
+        // the segment-kind checks that cover handler bodies.
+        //
+        // `@@:system.state` is reserved unless it is a complete token
+        // continued by `.name` (a word-bounded `.name` suffix).
+        fn has_reserved_system_state(code: &str) -> bool {
+            let needle = "@@:system.state";
+            let mut from = 0;
+            while let Some(rel) = code[from..].find(needle) {
+                let after = from + rel + needle.len();
+                let rest = &code[after..];
+                let state_is_token = rest
+                    .chars()
+                    .next()
+                    .map_or(true, |c| !c.is_ascii_alphanumeric() && c != '_');
+                let is_name = rest.starts_with(".name")
+                    && rest[5..]
+                        .chars()
+                        .next()
+                        .map_or(true, |c| !c.is_ascii_alphanumeric() && c != '_');
+                if state_is_token && !is_name {
+                    return true;
+                }
+                from = after;
+            }
+            false
+        }
+
         for operation in &system.operations {
             self.validate_operation_no_frame_statements(operation);
-            if operation.is_static {
-                if let Some(ref code) = operation.body.code {
-                    if code.contains("@@:system.state") {
-                        self.errors.push(
-                            ValidationError::new(
-                                "E421",
-                                format!(
-                                    "'@@:system.state' is not allowed in static operation '{}' in system '{}'. \
-                                     Static operations have no access to the system's compartment.",
-                                    operation.name, system.name
-                                ),
-                            )
-                            .with_span(operation.span.clone()),
-                        );
-                    }
+            if let Some(ref code) = operation.body.code {
+                if has_reserved_system_state(code) {
+                    self.errors.push(
+                        ValidationError::new(
+                            "E608",
+                            format!(
+                                "'@@:system.state' is reserved for future use in operation '{}' of system '{}'; \
+                                 use '@@:system.state.name' to read the current state name.",
+                                operation.name, system.name
+                            ),
+                        )
+                        .with_span(operation.span.clone()),
+                    );
+                }
+                if operation.is_static && code.contains("@@:system.state.name") {
+                    self.errors.push(
+                        ValidationError::new(
+                            "E421",
+                            format!(
+                                "'@@:system.state.name' is not allowed in static operation '{}' in system '{}'. \
+                                 Static operations have no access to the system's compartment.",
+                                operation.name, system.name
+                            ),
+                        )
+                        .with_span(operation.span.clone()),
+                    );
                 }
             }
         }
@@ -2494,5 +2537,97 @@ mod tests {
                 errs.iter().map(|e| &e.code).collect::<Vec<_>>()
             );
         }
+    }
+
+    // ===== RFC-0045: state-name relocation to `@@:system.state.name`,
+    //                 bare `@@:system.state` reserved (E608) =====
+
+    #[test]
+    fn test_e608_bare_system_state_in_handler() {
+        let source = r#"
+@@system R {
+    interface:
+        go()
+    machine:
+        $Active {
+            go() { let s = @@:system.state }
+        }
+}"#;
+        let codes = v4_codes(source);
+        assert!(
+            codes.iter().any(|c| c == "E608"),
+            "expected E608 for bare `@@:system.state` in a handler, got {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_state_name_in_handler_accepted() {
+        let source = r#"
+@@system R {
+    interface:
+        go()
+    machine:
+        $Active {
+            go() { let s = @@:system.state.name }
+        }
+}"#;
+        let codes = v4_codes(source);
+        assert!(
+            !codes.iter().any(|c| c == "E608" || c == "E604"),
+            "`@@:system.state.name` should be accepted in a handler, got {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_e608_bare_system_state_in_operation() {
+        let source = r#"
+@@system R {
+    operations:
+        peek() { let s = @@:system.state }
+    machine:
+        $Active { }
+}"#;
+        let codes = v4_codes(source);
+        assert!(
+            codes.iter().any(|c| c == "E608"),
+            "expected E608 for bare `@@:system.state` in an operation, got {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_e421_state_name_in_static_operation() {
+        let source = r#"
+@@system R {
+    operations:
+        static peek() { let s = @@:system.state.name }
+    machine:
+        $Active { }
+}"#;
+        let codes = v4_codes(source);
+        assert!(
+            codes.iter().any(|c| c == "E421"),
+            "expected E421 for `@@:system.state.name` in a static operation, got {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_state_name_in_nonstatic_operation_accepted() {
+        let source = r#"
+@@system R {
+    operations:
+        peek() { let s = @@:system.state.name }
+    machine:
+        $Active { }
+}"#;
+        let codes = v4_codes(source);
+        assert!(
+            !codes.iter().any(|c| c == "E608" || c == "E421"),
+            "`@@:system.state.name` in a non-static operation should be accepted, got {:?}",
+            codes
+        );
     }
 }

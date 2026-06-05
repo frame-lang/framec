@@ -98,9 +98,11 @@ pub(crate) fn expand_system_state(lang: TargetLanguage) -> String {
 pub(crate) fn expand_system_state_in_code(code: &str, lang: TargetLanguage) -> String {
     let mut result = code.to_string();
 
-    // Expand @@:system.state → compartment accessor
-    if result.contains("@@:system.state") {
-        result = result.replace("@@:system.state", &expand_system_state(lang));
+    // Expand @@:system.state.name → compartment accessor (the state-name
+    // string). Bare `@@:system.state` is reserved (RFC-0045) and rejected by
+    // E608 during validation, so only the `.name` form reaches codegen.
+    if result.contains("@@:system.state.name") {
+        result = result.replace("@@:system.state.name", &expand_system_state(lang));
     }
 
     // Expand @@:(expr) → return expr

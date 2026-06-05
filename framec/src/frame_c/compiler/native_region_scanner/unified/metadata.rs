@@ -147,6 +147,7 @@ pub(super) fn extract_segment_metadata(kind: FrameSegmentKind, text: &str) -> Se
         FrameSegmentKind::ContextSelf
         | FrameSegmentKind::ContextSystemState
         | FrameSegmentKind::ContextSystemBare
+        | FrameSegmentKind::ContextSystemStateReserved
         | FrameSegmentKind::ContextEvent => {
             // These carry no variable content — the kind is sufficient
             SegmentMetadata::None

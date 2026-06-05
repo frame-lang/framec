@@ -567,6 +567,7 @@ pub fn scan_native_regions<S: SyntaxSkipper>(
                         11 => FrameSegmentKind::ContextSelf,
                         12 => FrameSegmentKind::ContextSystemState,
                         13 => FrameSegmentKind::ContextSystemBare,
+                        14 => FrameSegmentKind::ContextSystemStateReserved,
                         _ => FrameSegmentKind::ContextReturn, // shouldn't happen
                     };
                     let mut seg_end = parser.result_end;
@@ -1704,14 +1705,29 @@ mod tests {
     }
 
     #[test]
-    fn test_system_state_recognized() {
-        let kinds = scan_for_kinds("{ let s = @@:system.state; }");
+    fn test_system_state_name_recognized() {
+        // RFC-0045: the current-state name accessor is `@@:system.state.name`.
+        let kinds = scan_for_kinds("{ let s = @@:system.state.name; }");
         assert_eq!(kinds, vec![FrameSegmentKind::ContextSystemState]);
     }
 
     #[test]
+    fn test_bare_system_state_reserved() {
+        // RFC-0045: bare `@@:system.state` (no `.name`) is reserved → E608.
+        let kinds = scan_for_kinds("{ let s = @@:system.state; }");
+        assert_eq!(kinds, vec![FrameSegmentKind::ContextSystemStateReserved]);
+    }
+
+    #[test]
+    fn test_system_state_dot_other_reserved() {
+        // `.state.<other>` is not the `.name` accessor → reserved → E608.
+        let kinds = scan_for_kinds("{ let s = @@:system.state.foo; }");
+        assert_eq!(kinds, vec![FrameSegmentKind::ContextSystemStateReserved]);
+    }
+
+    #[test]
     fn test_system_state_in_return_expr() {
-        let kinds = scan_for_kinds("{ @@:(@@:system.state) }");
+        let kinds = scan_for_kinds("{ @@:(@@:system.state.name) }");
         assert_eq!(kinds, vec![FrameSegmentKind::ContextReturnExpr]);
     }
 
