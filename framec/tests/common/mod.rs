@@ -72,6 +72,21 @@ pub fn compile_source(source: &str, target: &str) -> String {
     }
 }
 
+/// Compile inline source expecting framec to REJECT it, returning the
+/// error text for assertion. Panics if the source unexpectedly compiles —
+/// the inverse of `compile_source`, for negative (diagnostic) tests.
+pub fn compile_expect_error(source: &str, target: &str) -> String {
+    let lang = TargetLanguage::try_from(target)
+        .unwrap_or_else(|e| panic!("unknown target language '{}': {}", target, e));
+    match compile_module(source, lang) {
+        Ok(_) => panic!(
+            "expected a compile error for target {}, but it transpiled successfully:\n--- source ---\n{}",
+            target, source
+        ),
+        Err(RunError { error, .. }) => error,
+    }
+}
+
 // ─── RFC-0034: per-backend in-process compile checks ─────────────────
 //
 // Snapshot tests historically only diff TEXT; the .snap file could
