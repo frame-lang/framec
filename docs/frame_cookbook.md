@@ -1197,6 +1197,7 @@ if __name__ == '__main__':
 
 ```frame
 @@[target("python_3")]
+@@[async]
 
 import aiohttp
 import asyncio
@@ -1224,7 +1225,7 @@ import asyncio
             fetch(path: str): str {
                 async with aiohttp.ClientSession() as session:
                     async with session.get(self.base_url + path) as resp:
-                        return await resp.text()
+                        @@:(await resp.text())
             }
             disconnect() { -> $Idle }
         }
@@ -1244,9 +1245,9 @@ async def main():
 asyncio.run(main())
 ```
 
-**How it works:** `async` on interface methods makes the entire dispatch chain async. The constructor is synchronous — `await client.init()` fires the enter event separately (two-phase init). Native `await` in handler bodies works because the generated methods are async.
+**How it works:** The `@@[async]` header marks this as an async system (required — without it framec raises E720). `async` on interface methods makes the entire dispatch chain async. framec emits a public casing (`HttpClient`) that enforces single-driver entry over a private machine; the constructor is synchronous — `await client.init()` fires the enter event separately (two-phase init). Native `await` in handler bodies works because the generated methods are async.
 
-**Features used:** `async` interface methods, two-phase init, native async code in handlers
+**Features used:** `@@[async]` system attribute, `async` interface methods, two-phase init, native async code in handlers
 
 -----
 

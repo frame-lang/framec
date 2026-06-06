@@ -191,6 +191,16 @@ must be on the classpath. The matrix harness configures this
 via `kotlinx-coroutines-core-*.jar` in
 `docker/runners/kotlin_runner.sh`.
 
+### Single-driver gate (`@@[async]`)
+
+An `@@[async]` system is emitted as a public **casing** (`class
+<Name>`) wrapping a private **`_<Name>Machine`**. Each `suspend fun`
+on the casing gates external entry: if the system is already `busy`
+when a second call arrives, it throws
+`IllegalStateException("E703: …")` (the single-driver contract,
+**E703**). The gate is set on entry and cleared in a `finally`. See
+[language reference § Async](../frame_language.md#async).
+
 ---
 
 ## Companion objects: where state-name constants and trailing comments live

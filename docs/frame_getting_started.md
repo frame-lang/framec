@@ -1552,14 +1552,32 @@ Some state machines need to do asynchronous work — network calls, file I/O, ti
 
 ### Declaring Async Methods
 
-Add `async` before interface methods, actions, or operations:
+Add `async` before interface methods, actions, or operations — and mark the
+system itself with `@@[async]` on the line just above `@@system`:
 
 ```frame
-interface:
-    async connect(url: str)
-    async receive(): Message
-    get_state(): str          # This one stays sync
+@@[async]
+@@system Connection {
+    interface:
+        async connect(url: str)
+        async receive(): Message
+        get_state(): str          # This one stays sync
+
+    machine:
+        $Idle { ... }
+}
 ```
+
+The `@@[async]` attribute is **required** whenever a system has any async member.
+Forget it and the compiler stops you with a clear error:
+
+```
+E720: @@system 'Connection' declares async member(s) but lacks the
+       `@@[async]` system-header attribute (RFC-0043).
+```
+
+If you're migrating older Frame sources, `framec project add-async-attr <path>`
+inserts the attribute for you across a whole tree.
 
 ### How Async Propagates
 
@@ -1569,10 +1587,31 @@ This means callers must `await` every method on an async system, even `get_state
 
 Sync methods on an async system still work correctly — awaiting a synchronous function is a no-op in most languages.
 
+### One Driver at a Time
+
+An `@@[async]` system is generated as two classes: the **casing** (the public
+class with the name you declared) and a private **machine** (`_Connection­Machine`)
+that holds the actual state-machine dispatch. You only ever touch the casing.
+
+The casing enforces a **single-driver** rule: only one interface call may be in
+flight at a time. If a second call arrives while the first is still running —
+for example, awaiting a slow `connect()` and then calling `receive()` before it
+finishes — the casing raises `E703`:
+
+```
+E703: system busy: cannot enter 'receive' while 'connect' is in flight
+```
+
+This catches a common async bug — accidentally driving one state machine from
+two concurrent tasks. Each backend raises `E703` as a normal, catchable error
+(a `RuntimeError` in Python, an `Error` in TypeScript, `Err(FrameE703Error)` in
+Rust, and so on), so you can recover from it if a retry makes sense.
+
 ### Example
 
 ```frame
 @@[target("python_3")]
+@@[async]
 
 @@system HttpClient {
     interface:

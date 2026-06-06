@@ -157,6 +157,16 @@ on C# (unlike Java's `CompletableFuture.completedFuture(...)`)
 because C#'s compiler-generated state machine handles the
 synchronous-completion case efficiently.
 
+### Single-driver gate (`@@[async]`)
+
+An `@@[async]` system is emitted as a public **casing** (`public
+class <Name>`) wrapping a private **`_<Name>Machine`**. Each
+interface method gates external entry: if the system is already
+`busy` when a second call arrives, it throws
+`new InvalidOperationException("E703: …")` (the single-driver
+contract, **E703**). The gate is set on entry and cleared in a
+`finally`. See [language reference § Async](../frame_language.md#async).
+
 ---
 
 ## Cross-system fields: direct instantiation

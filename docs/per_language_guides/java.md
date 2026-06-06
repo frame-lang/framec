@@ -231,6 +231,19 @@ yield, restructure to dispatch the work to an executor inside
 the handler body and chain via `.thenApply(...)` —
 framec doesn't auto-emit this pattern.
 
+### Single-driver gate (`@@[async]`)
+
+An `@@[async]` system is emitted as a public **casing** (`public
+class <Name>`) wrapping a private **`_<Name>Machine`** — the casing
+is the only async layer; the machine stays synchronous as described
+above. Each casing method gates external entry: if the system is
+already `busy` when a second call arrives, it returns
+`CompletableFuture.failedFuture(new RuntimeException("E703: …"))` (the
+single-driver contract, **E703**). A real exception thrown by the
+machine is likewise funneled into a `failedFuture`, and the `busy`
+flag is cleared in a `finally`. See
+[language reference § Async](../frame_language.md#async).
+
 ---
 
 ## Loop idioms — both work
