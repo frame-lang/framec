@@ -123,10 +123,10 @@ Python async is mature:
 
 ## Concurrency and re-entrancy
 
-Frame does **not** manage concurrency. The Python runtime is
-single-threaded by design — the context stack, compartment, and
-state-variable storage on a system instance are **not** guarded
-by locks or atomics. The intended deployment model is:
+Frame does **not** provide thread-level concurrency control — the
+context stack, compartment, and state-variable storage on a system
+instance are **not** guarded by locks or atomics. The intended
+deployment model is:
 
 > **One system instance per session, driven by a single sequential
 > driver.**
@@ -135,6 +135,15 @@ For an automation pipeline, a long-running daemon, or a background
 worker, that typically means one `asyncio` task or one Python
 thread owns each `@@Counter()` instance and serializes events
 through it.
+
+For an `@@[async]` system (RFC-0043), the generated **casing**
+*enforces* this contract on a single event loop: each interface
+method checks a `busy` flag on entry and raises
+`RuntimeError("E703: …")` if a second external call arrives while
+the first is still in flight, then clears the flag in a `finally`.
+This is a cooperative single-driver gate, not a lock — it catches
+the accidental re-entry described below rather than serializing
+true OS-thread parallelism.
 
 ### What's safe
 
@@ -154,13 +163,17 @@ through it.
 - **External re-entry during `await`.** If interface method `A` is
   an `async` method and is currently suspended on
   `await self.cache.get(...)`, calling interface method `B` on the
-  *same* instance from another `asyncio` task will execute `B`
-  against a partially-progressed context stack. The runtime does
-  not detect this.
+  *same* instance from another `asyncio` task re-enters dispatch
+  against a partially-progressed context stack. On an `@@[async]`
+  system the casing **detects** this and raises
+  `RuntimeError("E703: …")` — the corruption is turned into a loud,
+  catchable error. On a non-`@@[async]` system there is no gate and
+  the re-entry runs silently; serialize externally.
 - **Multi-threaded access to one instance.** Frame's generated
-  Python code has no `threading.Lock` around dispatch. Two OS
-  threads calling methods on the same instance race on the
-  compartment and state vars.
+  Python code has no `threading.Lock` around dispatch — the E703
+  gate is a plain boolean, not an atomic, so it does not make an
+  instance thread-safe. Two OS threads calling methods on the same
+  instance still race on the compartment and state vars.
 
 ### Pattern: serialize external events
 

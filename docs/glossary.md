@@ -32,10 +32,14 @@ read domain variables and the system / self / return accessors but cannot fire
 
 ### async system
 
-A [system](#system) whose [interface](#interface) methods are generated as the
-host language's asynchronous form (`async`/`await`, `CompletableFuture`,
-`Future`, …) while its internal [dispatch](#dispatch) stays synchronous. Enabled
-by an `async` modifier on interface methods. See
+A [system](#system) that declares one or more `async` members (interface
+method, [action](#action), or [operation](#operation)) and carries the
+**required** `@@[async]` header attribute. Its public methods are generated as
+the host language's asynchronous form (`async`/`await`, `CompletableFuture`,
+`Future`, …). An async system is emitted as two classes — a public
+[casing](#casing) that enforces single-driver entry and a private
+[machine](#machine-async-system) that holds the dispatch core. Declaring an async
+member without `@@[async]` is the hard error **E720**. See
 [language reference § Async](frame_language.md#async).
 
 ### backbone
@@ -47,6 +51,18 @@ to [oracles](#oracle). Named for being the structural spine the specialists
 attach to. framec's own parser is organized this way — one `SystemBackbone`
 system whose flat self-looping states cover the entire token-level outer grammar.
 See [RFC-0039](rfcs/rfc-0039.md#terminology).
+
+### casing
+
+The public class framec emits for an [async system](#async-system) — the one
+bearing the user-declared name. Each [interface](#interface) method is a gated
+wrapper that enforces the single-driver contract (raising **E703** on
+concurrent external entry), then delegates to the private
+[machine](#machine-async-system) and clears the gate on both the success and
+the error path. [Operations](#operation) and persist save/load pass through
+without the gate. The casing is the only surface external callers and
+[composition](#composed-system) touch. Introduced in
+[RFC-0043](rfcs/rfc-0043.md). See [language reference § Async](frame_language.md#async).
 
 ### compartment
 
@@ -186,6 +202,16 @@ A [system](#system)'s state machine, declared in the `machine:` block: its
 [states](#state), their [handlers](#event-handler), and the
 [transitions](#transition) between them. See
 [language reference § Machine Section](frame_language.md#machine-section).
+
+### machine (async system)
+
+The private class (`_<Name>Machine`) framec emits for an
+[async system](#async-system), holding the actual dispatch core — kernel,
+router, state methods, transition loop, and lifecycle cascades. It is the
+previous-release single-class emission minus the public name; self-calls
+and kernel-internal dispatch run against it directly, bypassing the
+[casing](#casing)'s gate. It is internal: user code must not name
+`_<Name>Machine` directly. Introduced in [RFC-0043](rfcs/rfc-0043.md).
 
 ### no-initialization
 

@@ -200,6 +200,19 @@ shape. The Phase 6 fuzz `two_awaits` pattern (`await A; await B;`)
 exercises sequential awaits — landed in commit referenced in
 `memory/rust_full_parity_2026_04_26.md`.
 
+### Single-driver gate (`@@[async]`)
+
+An `@@[async]` system is emitted as a public **casing** (`pub struct
+<Name>`) wrapping a private **`_<Name>Machine`**. Each interface
+method on the casing returns `Result<T, FrameE703Error>`: if the
+system is already `busy` when a second external call enters, it
+returns `Err(FrameE703Error { .. })` (the single-driver contract,
+**E703**). Rust's surface is **recoverable** — callers `?`-chain or
+`match` the error rather than taking a `panic!` (D5). The gate is
+cleared on the way out by a `_GateGuard` whose `Drop` runs even on an
+early-return or unwind. See
+[language reference § Async](../frame_language.md#async).
+
 ---
 
 ## Cross-system fields use `Rc<RefCell<...>>`

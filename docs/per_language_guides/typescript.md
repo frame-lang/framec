@@ -131,6 +131,17 @@ async fetch(key: string): Promise<string> {
 Promises are first-class in TS; `Promise<T>` is the standard
 async return shape.
 
+### Single-driver gate (`@@[async]`)
+
+An `@@[async]` system is emitted as a public **casing** (`export
+class <Name>`) wrapping a private **`_<Name>Machine`**. Each
+interface method gates external entry: if the system is already
+`busy` when a second call arrives, it throws
+`new Error("E703: …")` (the single-driver contract, **E703**) — a
+normal, catchable error. The gate is set on entry and cleared in a
+`finally`, so it clears on both the resolved and the rejected path.
+See [language reference § Async](../frame_language.md#async).
+
 ---
 
 ## Cross-system fields: direct instantiation

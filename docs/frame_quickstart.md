@@ -89,7 +89,7 @@ interface:
     event(a: T, b: U)                 # typed params (types are opaque strings)
     event(): ret                      # return type, no default
     event(): ret = "default"          # return type with default value
-    async event()                     # async variant
+    async event()                     # async variant — requires @@[async] on the system header
 ```
 
 ---

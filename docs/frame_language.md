@@ -929,46 +929,131 @@ system-level *inclusion* list — `@@[persist_fields([...])]` — is tracked in
 
 ## Async
 
-Interface methods, actions, and operations can be declared `async`:
+Interface methods, actions, and operations can be declared `async`. A system
+that declares **any** async member **must** carry the `@@[async]` attribute on a
+line immediately preceding `@@system` (RFC-0043):
 
 ```frame
-interface:
-    async connect(url: str)
-    async receive(): Message
+@@[async]
+@@system HttpClient {
+    interface:
+        async connect(url: str)
+        async receive(): Message
 
-actions:
-    async fetch_data() {
-        return await http.get("/data")
-    }
+    machine:
+        $Idle {
+            connect(url: str) { ... }
+        }
+
+    actions:
+        async fetch_data() {
+            return await http.get("/data")
+        }
+}
 ```
 
-If ANY interface method is `async`, the entire dispatch chain becomes async (with a couple of per-language carve-outs noted below). Async systems use a two-phase init: `s = @@System()` (sync construct), then `await s.init()` (async — fires the `$>` enter event). Swift is the exception: `init` is a reserved keyword, so the async entry point is named `initAsync()`.
+`@@[async]` opts the system into the async **layered codegen architecture** (see
+below). It takes no arguments. A system that declares no async members **may**
+still carry `@@[async]` to opt into the single-driver gate without becoming
+async.
 
-| Target | Supported | Mechanism | Caller pattern |
+If ANY interface method is `async`, the entire dispatch chain becomes async
+(with a couple of per-language carve-outs noted below). Async systems use a
+two-phase init: `s = @@System()` (sync construct), then `await s.init()` (async
+— fires the `$>` enter event). Swift is the exception: `init` is a reserved
+keyword, so the async entry point is named `initAsync()`.
+
+### Layered architecture: casing + machine
+
+Framec emits an async system `<Name>` as **two classes**:
+
+- **`<Name>` — the casing.** The user-facing class, with the name you declared
+  (`HttpClient`). Each interface method is a *gated wrapper*: it enforces the
+  single-driver contract (below), then delegates to the machine and clears the
+  gate on the way out — on both the happy and the error path. This is the only
+  surface external callers touch; `@@<Other>()` composition and `@@import`
+  resolution always reference this name.
+- **`_<Name>Machine` — the machine.** A private class holding the actual
+  dispatch core — `__kernel`, `__router`, the state methods, the transition
+  loop, the lifecycle cascades. It is byte-for-byte the previous-release
+  single-class emission, minus the public name. Self-calls and kernel-internal
+  dispatch run against the machine directly and **never** touch the gate.
+
+The machine is internal — private to the file / module / namespace per the
+target's privacy unit. **User code must not name `_<Name>Machine` directly**;
+its surface is unstable between releases.
+
+### The single-driver gate (`E703`)
+
+The casing permits **at most one external dispatch in flight at a time**. If an
+interface method is entered while another is already running (re-entrant or
+concurrent external entry), the casing raises **`E703`**:
+
+```
+E703: system busy: cannot enter '<method>' while '<in-flight method>' is in flight
+```
+
+`E703` reports a programming error — a violation of the single-driver contract,
+not a recoverable runtime condition. Operations and persist save/load pass
+through to the machine **without** the gate (they're explicitly non-dispatching).
+
+Two validator errors guard the attribute itself:
+
+- **`E720`** — a system declares an async member but lacks `@@[async]`. This is
+  a **hard cut**: no warning grace period. Add the attribute, or run the
+  migration codemod (below).
+- **`E721`** — a *sync* system has a domain field whose type names an `@@[async]`
+  system declared in the same file. A sync holder can't await the async
+  system's wrappers without itself becoming async; add `@@[async]` to the
+  holder. (Same-file only — cross-file composition via `@@import` is not yet
+  resolved.)
+
+### Per-target support
+
+| Target | Supported | Mechanism | `E703` surface |
 |---|---|---|---|
-| Python | Yes | `async def` + `await` | `asyncio.run(main())` |
-| TypeScript | Yes | `async` + `await`, `Promise<T>` | `await worker.get_status()` |
-| JavaScript | Yes | `async` + `await`, `Promise<T>` | `await worker.get_status()` |
-| Rust | Yes | `async fn` + `.await`, boxed futures for recursion | runtime-dependent (tokio / async-std) |
-| Dart | Yes | `Future<T> foo() async` + `await` | `await worker.get_status()` |
-| GDScript | Yes | bare `await` on dispatch calls (no keyword) | `await worker.get_status()` |
-| Kotlin | Yes | `suspend fun` — suspend→suspend calls are bare, no `await` keyword | `runBlocking { worker.get_status() }` |
-| Swift | Yes | `func foo() async -> T`; async entry is `initAsync()` (not `init()`) | `Task { await worker.get_status() }` |
-| C# | Yes | `async Task<T>` | `await worker.get_status()` (inside an async method) |
-| Java | Yes | `CompletableFuture<T>` on the public interface only — internal dispatch (`__kernel`, `__router`, `_state_X`) stays synchronous. Bodies run sync and wrap the result via `CompletableFuture.completedFuture(...)`. | `worker.get_status().get()` |
-| C++ | Yes (C++23) | `FrameTask<T>` coroutine promise emitted header-guarded at file scope. `suspend_never` initial + `suspend_always` final — bodies run sync until a real `co_await`; callers extract via `.get()`. | `worker.get_status().get()` |
-| C | No | No native async/await. `async` on an interface method is a framec error (the test environment marks these with `@@skip`). | — |
+| Python | Yes | `async def` + `await` | `RuntimeError` |
+| TypeScript | Yes | `async` + `await`, `Promise<T>` | `Error` |
+| JavaScript | Yes | `async` + `await`, `Promise<T>` | `Error` |
+| Rust | Yes | `async fn` + `.await`, boxed futures for recursion | `Err(FrameE703Error)` — recoverable via `?` (D5) |
+| Dart | Yes | `Future<T> foo() async` + `await` | `StateError` |
+| GDScript | Yes | bare `await` on dispatch calls (no keyword) | `push_error(...)` + typed-zero return (D3) |
+| Kotlin | Yes | `suspend fun` — suspend→suspend calls are bare, no `await` keyword | `IllegalStateException` |
+| Swift | Yes | `func foo() async throws -> T`; async entry is `initAsync()` (not `init()`) | `throws FrameE703Error` (D2) |
+| C# | Yes | `async Task<T>` | `InvalidOperationException` |
+| Java | Yes | `CompletableFuture<T>` on the casing only — the machine's internal dispatch (`__kernel`, `__router`, `_state_X`) stays synchronous. Bodies run sync and wrap the result via `CompletableFuture.completedFuture(...)`. | `CompletableFuture.failedFuture(RuntimeException)` |
+| C++ | Yes (C++23) | `FrameTask<T>` coroutine promise emitted header-guarded at file scope. `suspend_never` initial + `suspend_always` final — bodies run sync until a real `co_await`; callers extract via `.get()`. | `std::runtime_error` |
+| C | No | No native async/await. `async` members are a framec error (the test environment marks these with `@@skip`). | — |
 | Go | No | No `async`/`await` keyword. Goroutines + channels model concurrency differently. | — |
 | PHP | No | No native async. Fibers (PHP 8.1+) exist but framec has no PHP fiber backend. | — |
 | Ruby | No | No native async. Fibers/Async gem exist but framec has no Ruby fiber backend. | — |
 | Lua | No | No native async. Coroutines exist but framec has no Lua coroutine backend. | — |
 | Erlang | No | gen_statem is a one-color functional async model — `async` isn't applicable. | — |
 
+The `E703` surface is **recoverable** on every layered backend: callers can
+catch it (`try`/`catch`), `?`-chain it (Rust), or `try?` it (Swift). It is never
+a process-aborting `panic!`/`fatalError`/stripped-`assert`.
+
 **Notes:**
 
 - **Kotlin** is the one supported language that does *not* take an `await` keyword on internal dispatch calls — a `suspend fun` calling another `suspend fun` is bare syntax. This is handled by the framec backend.
-- **Java** (no native async/await) uses `CompletableFuture<T>` for the public interface only; the dispatch chain stays sync so the call graph doesn't explode through `.thenCompose(...)`. Net cost: callers `.get()`.
+- **Java** (no native async/await) uses `CompletableFuture<T>` for the casing only; the machine's dispatch chain stays sync so the call graph doesn't explode through `.thenCompose(...)`. Net cost: callers `.get()`.
 - **C++** target must be `cpp_23` (the default `cpp`/`cpp_17` aliases also work, but the compiler needs ≥ C++20 for coroutines — see `framepiler_design.md` for the `FrameTask<T>` model).
+
+### Migration
+
+Existing pre-RFC-0043 sources that declare async members without `@@[async]` are
+mechanically migrated — the codemod inserts a single `@@[async]` line above each
+affected `@@system` header and changes nothing else:
+
+```bash
+framec project add-async-attr path/to/source-tree
+```
+
+```javascript
+import { migrate_async_attr } from "@frame-lang/framec-wasm";
+const migrated = migrate_async_attr(originalSource);
+```
 
 ---
 

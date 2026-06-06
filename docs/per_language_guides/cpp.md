@@ -258,6 +258,18 @@ For the Frame test matrix, this is wired up via
 `memory/audit_phase8_2026_04_26.md` for the C++ async wiring
 context.
 
+### Single-driver gate (`@@[async]`)
+
+An `@@[async]` system is emitted as a public **casing** (`class
+<Name>`) wrapping a private **`_<Name>Machine`**. Each casing method
+returns `FrameTask<T>` and gates external entry: if the system is
+already `busy` when a second call arrives, it throws
+`std::runtime_error("E703: …")` (the single-driver contract,
+**E703**). The casing wraps the machine's `co_await` in a
+`try/catch(...)` that clears the `busy` flag and rethrows, so the
+gate clears on both the normal and the throwing path. See
+[language reference § Async](../frame_language.md#async).
+
 ---
 
 ## Loop idioms — both work; idiom 1 is natural

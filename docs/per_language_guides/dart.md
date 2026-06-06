@@ -178,6 +178,16 @@ Dart async is mature:
 - The matrix harness drives async tests via `await` from a
   `Future<void> main()`.
 
+### Single-driver gate (`@@[async]`)
+
+An `@@[async]` system is emitted as a public **casing** (`class
+<Name>`) wrapping a private **`_<Name>Machine`**. Each interface
+method gates external entry: if the system is already `busy` when a
+second call arrives, it throws `StateError("E703: …")` (the
+single-driver contract, **E703**). The gate is set on entry and
+cleared in a `finally`. See
+[language reference § Async](../frame_language.md#async).
+
 ---
 
 ## Cross-system fields: direct instantiation

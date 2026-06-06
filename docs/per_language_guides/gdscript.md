@@ -283,6 +283,17 @@ The capability matrix shows GDScript async as ✅ (Stage 5 of Phase 6
 async wiring). See `tests/common/positive/cross_backend/`
 async fixtures for canonical examples.
 
+### Single-driver gate (`@@[async]`)
+
+An `@@[async]` system is emitted as a public **casing** (`class
+<Name>`) wrapping a private **`_<Name>Machine`**. Each interface
+method gates external entry: if the system is already `busy` when a
+second call arrives, it calls `push_error("E703: …")` and returns a
+typed-zero value (the single-driver contract, **E703**). GDScript
+uses `push_error` rather than `assert` because Godot strips `assert`
+in release/`--remap` builds, which would silently drop the gate
+(D3). See [language reference § Async](../frame_language.md#async).
+
 ---
 
 ## Multi-system per file: pick a primary with `@@[main]`
