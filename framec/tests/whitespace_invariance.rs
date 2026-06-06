@@ -2,12 +2,16 @@
 //!
 //! **Horizontal** whitespace between the tokens of a Frame statement is
 //! insignificant: any permutation of spaces/tabs must produce
-//! byte-identical generated code. Verified scope, learned the hard way
-//! (see below): Frame statements are **line-oriented** — a newline ends a
-//! statement, so newlines are NOT free to inject mid-statement (`->\n$B`
-//! is not a transition; it lowers to native `->` / `$B` lines). Thus the
-//! Tier-A invariant covers space/tab variants only; newline behavior is a
-//! separate (Tier-B) property.
+//! byte-identical generated code. The Tier-A `FILLERS` below stay
+//! space/tab-only because not every gap is newline-tolerant (e.g. the gap
+//! between `push$` and `->`, or before `=> $^`).
+//!
+//! Tier-B (FRAMEC_BUGS #43): the gap between a transition's `->` and its
+//! `$State` target **is** newline-tolerant — `->` ⏎ `$State` lowers
+//! identically to the one-line form. (It previously emitted `->` / `$B`
+//! as native garbage with no diagnostic.) That property is pinned by
+//! `transition_across_newline_matches_single_line` below rather than by
+//! the blanket `FILLERS` sweep.
 //!
 //! This is adjacent to — but not the same as — FRAMEC_BUGS #42. #42 was
 //! two *different but equivalent* segmentations (`push$`⏎`-> $S`
@@ -129,6 +133,44 @@ fn default_forward_is_whitespace_invariant() {
 }
 "#,
     );
+}
+
+/// Tier-B (FRAMEC_BUGS #43): a transition written across a newline
+/// (`->` ⏎ `$State`) must lower **identically** to the one-line `-> $State`.
+/// Before the fix it silently emitted `->` / `$State` as native text — no
+/// transition, no diagnostic — so the target state looked unreachable
+/// (spurious W414) and the handler did nothing.
+#[test]
+fn transition_across_newline_matches_single_line() {
+    let one_line = r#"
+@@system R {
+    interface:
+        go()
+        ev()
+    machine:
+        $A { go() { -> $B } }
+        $B { ev() { -> $A } }
+}
+"#;
+    let multi_line = r#"
+@@system R {
+    interface:
+        go()
+        ev()
+    machine:
+        $A { go() {
+                ->
+                $B } }
+        $B { ev() { -> $A } }
+}
+"#;
+    for backend in BACKENDS {
+        assert_eq!(
+            compile_source(multi_line, backend),
+            compile_source(one_line, backend),
+            "[transition-newline / {backend}] `->` ⏎ `$B` must lower like `-> $B`",
+        );
+    }
 }
 
 /// Pop transition `-> pop$`. Gap: around `->`.
