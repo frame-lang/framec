@@ -31,12 +31,25 @@ the previous release: async members now **require** the `@@[async]` header.
   including user-sync operations.
 - **`E703` — concurrent external dispatch.** Runtime error raised when an
   external caller enters an async system while a dispatch is in flight.
-  Per-backend idiomatic raise: `RuntimeError` / `Error` / `panic!` /
-  `RuntimeException` / `InvalidOperationException` /
-  `IllegalStateException` / `fatalError` / `StateError` / `assert` /
-  `std::runtime_error`. The gate is single-driver — at most one external
-  dispatch in flight at a time. Internal self-calls (RFC-0006) bypass the
-  gate by going directly to the machine.
+  The gate is **single-driver** — at most one external dispatch in flight
+  at a time. Internal self-calls (RFC-0006) bypass the gate by going
+  directly to the machine. Per-backend surface (all recoverable):
+  - Python: `RuntimeError("E703: …")`
+  - Rust: `Err(FrameE703Error)` (D5 — replaces the original `panic!`)
+  - TypeScript / JavaScript: `Error("E703: …")`
+  - Java: `CompletableFuture.failedFuture(IllegalStateException)`
+  - C#: `InvalidOperationException("E703: …")`
+  - Kotlin: `IllegalStateException("E703: …")`
+  - Swift: `throws FrameE703Error` (D2 — replaces the original `fatalError`)
+  - Dart: `StateError("E703: …")`
+  - GDScript: `push_error(…)` + typed-zero return (D3 — replaces `assert`
+    which Godot strips in `--remap` release builds)
+  - C++: `std::runtime_error("E703: …")`
+- **Single-driver concurrency contract (D1, documented).** The gate is a
+  plain non-atomic boolean. Concurrent entry from multiple OS threads /
+  dispatchers / executors is the caller's responsibility — see RFC-0043
+  Drawbacks for per-language mitigation patterns (Mutex, single-thread
+  executor, actor wrapper, etc.).
 - **`E720` — async members require `@@[async]`** (validator, hard cut).
   An `async` interface method, action, or operation without the
   `@@[async]` system-header attribute is now an error. No warning grace
@@ -64,6 +77,94 @@ the previous release: async members now **require** the `@@[async]` header.
   fix mirrors the established Java / Kotlin / Swift pattern.
 - **`<stdexcept>` added to the C++ runtime imports** for
   `std::runtime_error` used by the casing's E703 gate.
+- **D2 — Swift gate is recoverable.** Casing interface methods are now
+  `async throws -> T` and throw `FrameE703Error` on busy. Replaces the
+  original `fatalError` so callers can `try?` / `catch`. Aligns Swift
+  with every other layered backend's recoverable contract.
+- **D3 — GDScript gate uses `push_error` + typed-zero.** On busy, the
+  casing pushes an error and returns the typed-zero for the declared
+  return type (`""` for String, `0` for int, `false` for bool, `0.0`
+  for float, `null` for object). Survives Godot `--remap` release builds
+  (which strip `assert`).
+- **D4 — C++ matrix lane uses `-std=c++23`** for `@@[target("cpp_23")]`
+  fixtures (local harness + Docker runners).
+- **D5 — Rust gate is recoverable.** Casing interface methods now return
+  `Result<T, FrameE703Error>`. The error type implements
+  `std::error::Error` + `Display` + `Debug` and `?`-chains cleanly.
+  Replaces the original `panic!`. `_GateGuard::drop` still runs on
+  user-handler panic so the gate clears via RAII; `panic = "abort"`
+  bypasses this (documented limitation).
+- **Operation behavior — `op.is_async` is now respected.** Operations
+  declared without `async` no longer get coroutinized when the system is
+  `@@[async]`. A sync casing delegate calling a sync machine op returns
+  a sync value (not an unawaited coroutine).
+- **Casing persist save/restore signatures are typed correctly.** Fix #2:
+  the casing's save/load delegates now carry the system's persist-blob
+  type instead of `void` / `Object` placeholders. Affects 8 typed
+  backends (Java, Kotlin, C#, Swift, C++, Dart, Rust, GDScript).
+- **Java casing wraps sync interface methods in
+  `CompletableFuture.completedFuture(...)`.** A non-`async` interface
+  method on an `@@[async]` Java system used to emit a
+  `CompletableFuture<T>` declaration with a plain `T` body — silently
+  broken. The casing now splits on `is_async` and wraps the sync result
+  appropriately.
+- **TS/JS init() emits `[]` for empty params, not `null`** (Fix #1 /
+  D-TS-1). Strict-TS rejects `null` where `any[]` is expected.
+- **JS/TS finally clear order swap** (Fix #4 / D-JS-3): the casing now
+  clears `in_flight = null` before `busy = false`. A microtask observer
+  between the two writes sees the gate fully cleared instead of
+  half-stale.
+- **Dart E703 message uses nil-coalesce** (Fix #5 / D-DT-1): emits
+  `${this.in_flight ?? "?"}` so a null in-flight slot doesn't render as
+  the literal string `"null"`.
+- **Java handler exceptions become `CompletableFuture.failedFuture`**
+  (Fix #3 / D-JAVA-1). Previously a sync `RuntimeException` escaped the
+  casing — diverging from every other layered backend's recoverable
+  contract. Now the casing wraps and surfaces via the future's
+  exceptional state. The asymmetric Java unwrap semantics
+  (`.handle()`/`.exceptionally()` see the raw cause; `.get()` wraps in
+  `ExecutionException`; `.join()` wraps in `CompletionException`) are
+  pinned by the fixture suite.
+- **`19_async_http_client` demos use a `has_log_entry` operation
+  accessor** (Fix #6) instead of reaching into the casing's
+  not-actually-public log field. Consistent with `@@system private`
+  encapsulation across 17 demos.
+
+### Fixed
+
+- **Kernel context-stack must clean up on exception (RFC-0044, D-PY-1).**
+  Every interface dispatch wrapper used to emit `push / __kernel / pop`
+  without exception safety. If a handler raised mid-dispatch, the pop
+  was skipped and the stack accumulated a stale entry per failed call.
+  Now wrapped in language-idiomatic try/finally (or equivalent) on 12
+  backends: Python (`try/finally`), TypeScript/JavaScript/Java/Kotlin/
+  C#/C++/Dart (`try/catch + rethrow` or `try/finally`), Ruby
+  (`begin/ensure`), Go (`defer`), Lua (`pcall` + re-raise). Exempt:
+  C (no exceptions), GDScript (no try/catch; assert halts the script),
+  Erlang (process model isolates state), Swift (machine dispatch
+  signature isn't `throws`). See [RFC-0044](docs/rfcs/rfc-0044.md).
+
+### Testing
+
+The contract is pinned by a layered fixture suite in `framec-test-env`:
+
+- **Cross-backend common core** — 6 patterns × 11 backends = **66
+  fixtures** verifying the gate's structural invariants: exception clears
+  gate (C1), cooperative concurrent E703 (C2), distinct-instance
+  parallelism (C3), sync operations bypass gate (C4), persist roundtrip
+  preserves gate (C5), parent–child composition (C6).
+- **Per-language P1 unique** — **48 fixtures** exercising each backend's
+  unique async risk surface (e.g. Kotlin's cancellation cluster, Java's
+  CompletableFuture semantics, TypeScript's Promise foot-guns, JavaScript's
+  unbound-`this`, Python's asyncio idioms, Swift's `TaskGroup`/`async let`/
+  detached tasks, Dart's `Future.wait`/Zone propagation, GDScript's
+  D3 typed-zero contract, C++'s nested `co_await` + `std::string` lifetime,
+  Rust's `select!`/`timeout` cancellation, C#'s `WhenAll`/`WhenAny`/
+  exception-filter).
+- **RFC-0044 leak regression** — 12 backends pinning the
+  `len(context_stack_after) == len(context_stack_before)` invariant.
+
+Every fixture verified end-to-end against its real runtime.
 
 ### Migration
 
@@ -83,6 +184,19 @@ If your code has a sync system holding an async system as a domain field,
 E721 surfaces it at compile time. The two fixes are: (1) add `@@[async]`
 to the holder, or (2) restructure so the async child is held by an async
 parent.
+
+If your Swift code calls casing methods directly (without `try`), update
+to `try await sys.method()` and add a `do { ... } catch { ... }` block
+to handle `FrameE703Error` — Swift's recoverable gate contract (D2).
+
+If your Rust code calls casing methods, the return type is now
+`Result<T, FrameE703Error>` — use `?`-chains or match. The error type
+implements `std::error::Error` so `Box<dyn std::error::Error>` conversion
+works.
+
+If your GDScript code relies on E703 firing in release builds, no change
+needed — D3 replaces the assert-based gate with `push_error` + typed-zero,
+which survives `--remap`.
 
 ## [4.3.0] - 2026-05-27
 
