@@ -226,6 +226,18 @@ which survives `--remap`.
   E604 hint (bare `@@:system`) now suggests `@@:system.state.name`, and E421
   (no state access in static operations) is retargeted to the new spelling.
 
+### RFC-0044 — context stack cleans up on a handler exception (D-PY-1)
+
+- **The interface dispatch wrapper now pops the context stack even when a
+  handler throws.** Previously the `push / __kernel / pop` sequence had no
+  exception safety, so a handler that raised mid-dispatch leaked a stale
+  context-stack entry per failed call — the leak RFC-0043's casing surfaced.
+  Fixed across 12 backends with each language's idiom (try/finally, try/catch +
+  rethrow, begin/ensure, `defer`, `pcall` + re-raise). Holds under RFC-0043's
+  casing (the machine layer carries the guard; the casing delegates to it).
+  C, GDScript, Swift, and Erlang are exempt — no catchable exception can
+  propagate through their dispatch.
+
 ## [4.3.0] - 2026-05-27
 
 Re-introduces the `@@import` directive (removed in 4.2.0 by RFC-0024) in a
