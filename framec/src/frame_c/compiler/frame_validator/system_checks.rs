@@ -218,6 +218,82 @@ impl FrameValidator {
         }
     }
 
+    /// Re-scan the inner text of return-expression segments to catch a
+    /// reserved `@@:system` (E604) / `@@:system.state` (E608) form nested
+    /// inside `@@:(…)`, `@@:return(…)`, or `@@:return = …`.
+    ///
+    /// The top-level segment walk only sees the return segment, not the
+    /// reserved form *inside* it, so without this pass those forms slip
+    /// past the validator and codegen falls back to emitting a
+    /// `/* ERROR: bare @@:system */` placeholder into the output
+    /// (RFC-0045 expression-context gap). Reuses the scanner rather than
+    /// re-deriving the `@@:system` classification, and recurses so
+    /// arbitrarily-nested return expressions (`@@:(@@:(…))`) are covered.
+    fn check_reserved_system_in_expr(
+        &mut self,
+        regions: &[Region],
+        scope_outer: &str,
+        scope_inner: &str,
+        target: crate::frame_c::visitors::TargetLanguage,
+    ) {
+        for region in regions {
+            if let Region::FrameSegment { kind, metadata, .. } = region {
+                let inner = match (kind, metadata) {
+                    (FrameSegmentKind::ContextReturnExpr, SegmentMetadata::ReturnExpr { expr }) => {
+                        Some(expr.as_str())
+                    }
+                    (FrameSegmentKind::ReturnCall, SegmentMetadata::ReturnCall { expr }) => {
+                        Some(expr.as_str())
+                    }
+                    (
+                        FrameSegmentKind::ContextReturn,
+                        SegmentMetadata::ContextReturn {
+                            assign_expr: Some(expr),
+                        },
+                    ) => Some(expr.as_str()),
+                    _ => None,
+                };
+                let Some(inner) = inner else { continue };
+
+                // Wrap in a synthetic body so the scanner classifies the
+                // inner text exactly as it would in statement position.
+                let synthetic = format!("{{{}}}", inner);
+                let mut scanner = get_native_scanner(target);
+                let scan = match scanner.scan(synthetic.as_bytes(), 0) {
+                    Ok(s) => s,
+                    Err(_) => continue,
+                };
+                for r in &scan.regions {
+                    if let Region::FrameSegment { kind: k, .. } = r {
+                        match k {
+                            FrameSegmentKind::ContextSystemBare => {
+                                self.errors.push(ValidationError::new(
+                                    "E604",
+                                    format!(
+                                        "bare `@@:system` in {}/{} — `@@:system` requires a member access (e.g. `@@:system.state.name`)",
+                                        scope_outer, scope_inner
+                                    ),
+                                ));
+                            }
+                            FrameSegmentKind::ContextSystemStateReserved => {
+                                self.errors.push(ValidationError::new(
+                                    "E608",
+                                    format!(
+                                        "`@@:system.state` in {}/{} is reserved for future use; use `@@:system.state.name` to read the current state name",
+                                        scope_outer, scope_inner
+                                    ),
+                                ));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                // Recurse for nested return expressions.
+                self.check_reserved_system_in_expr(&scan.regions, scope_outer, scope_inner, target);
+            }
+        }
+    }
+
     /// Validate Frame segments in a handler/action body using the scanner.
     /// Runs the language-specific scanner on the body text, then walks the
     /// identified segments. No byte-level scanning — the scanner handles
@@ -312,6 +388,13 @@ impl FrameValidator {
                 }
             }
         }
+
+        // Close the E604/E608 expression-context gap (RFC-0045): a reserved
+        // `@@:system` / `@@:system.state` nested inside a return expression
+        // (`@@:(…)`, `@@:return(…)`, `@@:return = …`) is not a top-level
+        // segment, so the walk above can't see it. Re-scan each return
+        // expression's inner text and raise there too.
+        self.check_reserved_system_in_expr(&scan_result.regions, scope_outer, scope_inner, target);
 
         // W705: transition in a non-void handler without a preceding
         // `@@:(value)` may leak the return type's default (None /
