@@ -39,7 +39,7 @@ the previous release: async members now **require** the `@@[async]` header.
   - Python: `RuntimeError("E703: …")`
   - Rust: `Err(FrameE703Error)` (D5 — replaces the original `panic!`)
   - TypeScript / JavaScript: `Error("E703: …")`
-  - Java: `CompletableFuture.failedFuture(IllegalStateException)`
+  - Java: `CompletableFuture.failedFuture(RuntimeException)`
   - C#: `InvalidOperationException("E703: …")`
   - Kotlin: `IllegalStateException("E703: …")`
   - Swift: `throws FrameE703Error` (D2 — replaces the original `fatalError`)
