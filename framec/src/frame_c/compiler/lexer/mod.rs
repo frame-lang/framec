@@ -911,6 +911,26 @@ impl Lexer {
         }
     }
 
+    /// Like `skip_inline_whitespace` but also consumes newlines (LF/CR).
+    /// Used inside transition lexing so a transition written across lines
+    /// (`->` <newline> `$State`) tokenizes the same as the one-line form —
+    /// whitespace-invariant parsing (FRAMEC_BUGS #43).
+    pub(super) fn skip_ws_and_newlines(&mut self) {
+        let end = if self.mode == LexerMode::NativeAware {
+            self.native_end
+        } else {
+            self.end
+        };
+        while self.cursor < end {
+            let b = self.source[self.cursor];
+            if b == b' ' || b == b'\t' || b == b'\n' || b == b'\r' {
+                self.cursor += 1;
+            } else {
+                break;
+            }
+        }
+    }
+
     fn scan_identifier(&mut self) -> String {
         let start = self.cursor;
         let end = if self.mode == LexerMode::NativeAware {

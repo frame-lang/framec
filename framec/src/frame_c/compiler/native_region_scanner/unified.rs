@@ -175,7 +175,7 @@ pub fn scan_native_regions<S: SyntaxSkipper>(
         // Frame statements (-> $, => $, push$, pop$, return) are detected at any position.
         // Closures are already skipped by skip_nested_scope() above.
         if matches!(b, b'-' | b'=' | b'(' | b'p' | b'r') {
-            if let Some((_new_i, kind)) = match_frame_statement(skipper, bytes, i, end) {
+            if let Some((match_pos, kind)) = match_frame_statement(skipper, bytes, i, end) {
                 // Calculate indent: count leading whitespace from start of
                 // current line.
                 //
@@ -240,8 +240,14 @@ pub fn scan_native_regions<S: SyntaxSkipper>(
                     }
                 }
 
-                // Find end of Frame statement.
-                let raw_stmt_end = skipper.find_line_end(bytes, i, end);
+                // Find end of Frame statement. Seed the line-end search from
+                // the matched construct position rather than `i`: when a
+                // transition spans a newline (`->` <newline> `$State`,
+                // FRAMEC_BUGS #43) the target lives on a later line, so the
+                // statement end is that line's end — not the `->` line's.
+                // For all same-line constructs `match_pos` is on the same line
+                // as `i`, so this is identical to `find_line_end(.., i, ..)`.
+                let raw_stmt_end = skipper.find_line_end(bytes, match_pos.max(i), end);
                 // Trim trailing inline whitespace from the Frame segment
                 // span so it stays in the *following* NativeText region.
                 // Without this, a same-line trailing comment after a Frame
@@ -775,11 +781,14 @@ fn match_frame_statement<S: SyntaxSkipper>(
 
     // Transition variants: -> $State, -> (args) $State, -> pop$, -> => $State
     if b == b'-' && pos + 1 < end && bytes[pos + 1] == b'>' {
-        let mut k = skip_ws(bytes, pos + 2, end);
+        // Newline-aware: a transition may be written `->` <newline> `$State`
+        // (FRAMEC_BUGS #43). The trailing-`$` requirement below still keeps
+        // native `->` forms (Rust `-> T`, Erlang `-> Expr`) from matching.
+        let mut k = skip_ws_nl(bytes, pos + 2, end);
 
         // Check for -> => $State (transition forward)
         if k + 1 < end && bytes[k] == b'=' && bytes[k + 1] == b'>' {
-            k = skip_ws(bytes, k + 2, end);
+            k = skip_ws_nl(bytes, k + 2, end);
             if k < end && bytes[k] == b'$' {
                 return Some((k, FrameSegmentKind::Transition));
             }
@@ -798,7 +807,7 @@ fn match_frame_statement<S: SyntaxSkipper>(
         // Check for optional enter args: -> (args) $State
         if k < end && bytes[k] == b'(' {
             if let Some(k2) = skipper.balanced_paren_end(bytes, k, end) {
-                k = skip_ws(bytes, k2, end);
+                k = skip_ws_nl(bytes, k2, end);
             }
         }
 
@@ -816,7 +825,7 @@ fn match_frame_statement<S: SyntaxSkipper>(
             if k < end {
                 k += 1;
             } // Skip closing quote
-            k = skip_ws(bytes, k, end);
+            k = skip_ws_nl(bytes, k, end);
         }
 
         // Regular transition: -> $State
@@ -955,6 +964,23 @@ fn match_frame_statement<S: SyntaxSkipper>(
 #[inline]
 pub fn skip_ws(bytes: &[u8], mut pos: usize, end: usize) -> usize {
     while pos < end && (bytes[pos] == b' ' || bytes[pos] == b'\t') {
+        pos += 1;
+    }
+    pos
+}
+
+/// Skip whitespace *including* newlines (space, tab, CR, LF). Returns new
+/// position. Used where a Frame construct may legitimately span lines —
+/// e.g. a transition written `->` <newline> `$State` — so parsing stays
+/// whitespace-invariant. It still only consumes contiguous whitespace, so
+/// a `->` with no `$` target on the following line is left un-matched
+/// (and falls through to native text) exactly as a same-line `-> foo`
+/// would. FRAMEC_BUGS #43.
+#[inline]
+pub fn skip_ws_nl(bytes: &[u8], mut pos: usize, end: usize) -> usize {
+    while pos < end
+        && (bytes[pos] == b' ' || bytes[pos] == b'\t' || bytes[pos] == b'\n' || bytes[pos] == b'\r')
+    {
         pos += 1;
     }
     pos

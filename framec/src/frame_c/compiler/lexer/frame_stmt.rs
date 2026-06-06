@@ -132,44 +132,44 @@ impl Lexer {
     ///
     /// `after_arrow` is the byte position immediately after `>` in `->`.
     pub(super) fn peek_frame_transition_target(&self, after_arrow: usize, end: usize) -> bool {
-        let mut k = after_arrow;
-        // Skip whitespace
-        while k < end && (self.source[k] == b' ' || self.source[k] == b'\t') {
-            k += 1;
+        // Newline-aware whitespace skip: a transition may be written across
+        // lines (`->` ⏎ `$State`), so detection must look past newlines too
+        // — whitespace-invariant parsing (FRAMEC_BUGS #43).
+        fn skip_wsnl(source: &[u8], mut k: usize, end: usize) -> usize {
+            while k < end && matches!(source[k], b' ' | b'\t' | b'\n' | b'\r') {
+                k += 1;
+            }
+            k
         }
+        let src = &self.source;
+        let mut k = skip_wsnl(src, after_arrow, end);
         if k >= end {
             return false;
         }
         // -> => $State (transition forward)
-        if k + 1 < end && self.source[k] == b'=' && self.source[k + 1] == b'>' {
-            k += 2;
-            while k < end && (self.source[k] == b' ' || self.source[k] == b'\t') {
-                k += 1;
-            }
-            return k < end && self.source[k] == b'$';
+        if k + 1 < end && src[k] == b'=' && src[k + 1] == b'>' {
+            k = skip_wsnl(src, k + 2, end);
+            return k < end && src[k] == b'$';
         }
         // -> pop$
         if k + 3 < end
-            && self.source[k] == b'p'
-            && self.source[k + 1] == b'o'
-            && self.source[k + 2] == b'p'
-            && self.source[k + 3] == b'$'
+            && src[k] == b'p'
+            && src[k + 1] == b'o'
+            && src[k + 2] == b'p'
+            && src[k + 3] == b'$'
         {
             return true;
         }
         // -> (args) ...  — skip balanced parens, then look for $
-        if self.source[k] == b'(' {
-            if let Some(k2) = self.skipper.balanced_paren_end(&self.source, k, end) {
-                k = k2;
-                while k < end && (self.source[k] == b' ' || self.source[k] == b'\t') {
-                    k += 1;
-                }
+        if src[k] == b'(' {
+            if let Some(k2) = self.skipper.balanced_paren_end(src, k, end) {
+                k = skip_wsnl(src, k2, end);
                 // After (args), skip optional "label"
-                if k < end && (self.source[k] == b'"' || self.source[k] == b'\'') {
-                    let quote = self.source[k];
+                if k < end && (src[k] == b'"' || src[k] == b'\'') {
+                    let quote = src[k];
                     k += 1;
-                    while k < end && self.source[k] != quote {
-                        if self.source[k] == b'\\' && k + 1 < end {
+                    while k < end && src[k] != quote {
+                        if src[k] == b'\\' && k + 1 < end {
                             k += 2;
                         } else {
                             k += 1;
@@ -178,20 +178,18 @@ impl Lexer {
                     if k < end {
                         k += 1;
                     }
-                    while k < end && (self.source[k] == b' ' || self.source[k] == b'\t') {
-                        k += 1;
-                    }
+                    k = skip_wsnl(src, k, end);
                 }
-                return k < end && self.source[k] == b'$';
+                return k < end && src[k] == b'$';
             }
             return false;
         }
         // -> "label" $State — skip label, check for $
-        if self.source[k] == b'"' || self.source[k] == b'\'' {
-            let quote = self.source[k];
+        if src[k] == b'"' || src[k] == b'\'' {
+            let quote = src[k];
             k += 1;
-            while k < end && self.source[k] != quote {
-                if self.source[k] == b'\\' && k + 1 < end {
+            while k < end && src[k] != quote {
+                if src[k] == b'\\' && k + 1 < end {
                     k += 2;
                 } else {
                     k += 1;
@@ -200,13 +198,11 @@ impl Lexer {
             if k < end {
                 k += 1;
             }
-            while k < end && (self.source[k] == b' ' || self.source[k] == b'\t') {
-                k += 1;
-            }
-            return k < end && self.source[k] == b'$';
+            k = skip_wsnl(src, k, end);
+            return k < end && src[k] == b'$';
         }
         // -> $State (simple)
-        self.source[k] == b'$'
+        src[k] == b'$'
     }
 
     /// Lex a transition statement: -> $State, -> (args) $State, -> pop$, -> => $State
@@ -221,7 +217,9 @@ impl Lexer {
             span: Span::new(arrow_pos, self.cursor),
         }];
 
-        self.skip_inline_whitespace();
+        // Newline-aware: a transition may span lines (`->` ⏎ `$State`),
+        // FRAMEC_BUGS #43. Same for the inter-token skips below.
+        self.skip_ws_and_newlines();
 
         // Check for -> => $State (transition forward)
         if self.cursor + 1 < end
@@ -234,7 +232,7 @@ impl Lexer {
                 token: Token::FatArrow,
                 span: Span::new(fa_start, self.cursor),
             });
-            self.skip_inline_whitespace();
+            self.skip_ws_and_newlines();
         }
 
         // Check for enter args: (args)
@@ -250,7 +248,7 @@ impl Lexer {
                     span: Span::new(self.cursor, paren_end),
                 });
                 self.cursor = paren_end;
-                self.skip_inline_whitespace();
+                self.skip_ws_and_newlines();
             }
         }
 
@@ -278,7 +276,7 @@ impl Lexer {
                 token: Token::StringLit(content),
                 span: Span::new(str_start, self.cursor),
             });
-            self.skip_inline_whitespace();
+            self.skip_ws_and_newlines();
         }
 
         // Check for pop$ after ->
