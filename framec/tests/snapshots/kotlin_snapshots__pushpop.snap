@@ -131,32 +131,52 @@ class PushPop {
         val __e = PushPopFrameEvent("ping", mutableListOf())
         val __ctx = PushPopFrameContext(__e, null)
         _context_stack.add(__ctx)
-        __kernel(_context_stack[_context_stack.size - 1]._event)
-        _context_stack.removeAt(_context_stack.size - 1)
+        try {
+            __kernel(_context_stack[_context_stack.size - 1]._event)
+            _context_stack.removeAt(_context_stack.size - 1)
+        } catch (__frame_err: Throwable) {
+            _context_stack.removeAt(_context_stack.size - 1)
+            throw __frame_err
+        }
     }
 
     fun nest() {
         val __e = PushPopFrameEvent("nest", mutableListOf())
         val __ctx = PushPopFrameContext(__e, null)
         _context_stack.add(__ctx)
-        __kernel(_context_stack[_context_stack.size - 1]._event)
-        _context_stack.removeAt(_context_stack.size - 1)
+        try {
+            __kernel(_context_stack[_context_stack.size - 1]._event)
+            _context_stack.removeAt(_context_stack.size - 1)
+        } catch (__frame_err: Throwable) {
+            _context_stack.removeAt(_context_stack.size - 1)
+            throw __frame_err
+        }
     }
 
     fun unnest() {
         val __e = PushPopFrameEvent("unnest", mutableListOf())
         val __ctx = PushPopFrameContext(__e, null)
         _context_stack.add(__ctx)
-        __kernel(_context_stack[_context_stack.size - 1]._event)
-        _context_stack.removeAt(_context_stack.size - 1)
+        try {
+            __kernel(_context_stack[_context_stack.size - 1]._event)
+            _context_stack.removeAt(_context_stack.size - 1)
+        } catch (__frame_err: Throwable) {
+            _context_stack.removeAt(_context_stack.size - 1)
+            throw __frame_err
+        }
     }
 
     fun leaf() {
         val __e = PushPopFrameEvent("leaf", mutableListOf())
         val __ctx = PushPopFrameContext(__e, null)
         _context_stack.add(__ctx)
-        __kernel(_context_stack[_context_stack.size - 1]._event)
-        _context_stack.removeAt(_context_stack.size - 1)
+        try {
+            __kernel(_context_stack[_context_stack.size - 1]._event)
+            _context_stack.removeAt(_context_stack.size - 1)
+        } catch (__frame_err: Throwable) {
+            _context_stack.removeAt(_context_stack.size - 1)
+            throw __frame_err
+        }
     }
 
     private fun _state_Idle(__e: PushPopFrameEvent, compartment: PushPopCompartment) {

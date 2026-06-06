@@ -168,16 +168,26 @@ public class Forward {
         ForwardFrameEvent __e = new ForwardFrameEvent("run", new java.util.ArrayList<>());
         ForwardFrameContext __ctx = new ForwardFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(_context_stack.get(_context_stack.size() - 1)._event);
-        _context_stack.remove(_context_stack.size() - 1);
+        try {
+            __kernel(_context_stack.get(_context_stack.size() - 1)._event);
+            _context_stack.remove(_context_stack.size() - 1);
+        } catch (RuntimeException __frame_err) {
+            _context_stack.remove(_context_stack.size() - 1);
+            throw __frame_err;
+        }
     }
 
     public void finish() {
         ForwardFrameEvent __e = new ForwardFrameEvent("finish", new java.util.ArrayList<>());
         ForwardFrameContext __ctx = new ForwardFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(_context_stack.get(_context_stack.size() - 1)._event);
-        _context_stack.remove(_context_stack.size() - 1);
+        try {
+            __kernel(_context_stack.get(_context_stack.size() - 1)._event);
+            _context_stack.remove(_context_stack.size() - 1);
+        } catch (RuntimeException __frame_err) {
+            _context_stack.remove(_context_stack.size() - 1);
+            throw __frame_err;
+        }
     }
 
     private void _state_Start(ForwardFrameEvent __e, ForwardCompartment compartment) {

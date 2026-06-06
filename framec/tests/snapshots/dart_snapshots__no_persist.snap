@@ -165,32 +165,48 @@ class NoPersist {
         final __e = NoPersistFrameEvent("bump", []);
         final __ctx = NoPersistFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(__e);
-        _context_stack.removeLast();
+        try {
+            __kernel(__e);
+        } finally {
+            _context_stack.removeLast();
+        }
     }
 
     void set_cache(int v) {
         final __e = NoPersistFrameEvent("set_cache", [v]);
         final __ctx = NoPersistFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(__e);
-        _context_stack.removeLast();
+        try {
+            __kernel(__e);
+        } finally {
+            _context_stack.removeLast();
+        }
     }
 
     int get_count() {
         final __e = NoPersistFrameEvent("get_count", []);
         final __ctx = NoPersistFrameContext(__e, 0);
         _context_stack.add(__ctx);
-        __kernel(__e);
-        return _context_stack.removeLast()._return;
+        try {
+            __kernel(__e);
+            return _context_stack.removeLast()._return;
+        } catch (__frame_err) {
+            _context_stack.removeLast();
+            rethrow;
+        }
     }
 
     int get_cache() {
         final __e = NoPersistFrameEvent("get_cache", []);
         final __ctx = NoPersistFrameContext(__e, 0);
         _context_stack.add(__ctx);
-        __kernel(__e);
-        return _context_stack.removeLast()._return;
+        try {
+            __kernel(__e);
+            return _context_stack.removeLast()._return;
+        } catch (__frame_err) {
+            _context_stack.removeLast();
+            rethrow;
+        }
     }
 
     void _state_Active(NoPersistFrameEvent __e, NoPersistCompartment compartment) {

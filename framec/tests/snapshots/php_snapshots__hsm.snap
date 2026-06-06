@@ -161,24 +161,39 @@ class MiniHsm {
         $__e = new MiniHsmFrameEvent("wake", []);
         $__ctx = new MiniHsmFrameContext($__e, null);
         $this->_context_stack[] = $__ctx;
-        $this->__kernel($__e);
-        return array_pop($this->_context_stack)->_return;
+        try {
+            $this->__kernel($__e);
+            return array_pop($this->_context_stack)->_return;
+        } catch (\Throwable $__frame_err) {
+            array_pop($this->_context_stack);
+            throw $__frame_err;
+        }
     }
 
     public function sleep() {
         $__e = new MiniHsmFrameEvent("sleep", []);
         $__ctx = new MiniHsmFrameContext($__e, null);
         $this->_context_stack[] = $__ctx;
-        $this->__kernel($__e);
-        return array_pop($this->_context_stack)->_return;
+        try {
+            $this->__kernel($__e);
+            return array_pop($this->_context_stack)->_return;
+        } catch (\Throwable $__frame_err) {
+            array_pop($this->_context_stack);
+            throw $__frame_err;
+        }
     }
 
     public function signal() {
         $__e = new MiniHsmFrameEvent("signal", []);
         $__ctx = new MiniHsmFrameContext($__e, null);
         $this->_context_stack[] = $__ctx;
-        $this->__kernel($__e);
-        return array_pop($this->_context_stack)->_return;
+        try {
+            $this->__kernel($__e);
+            return array_pop($this->_context_stack)->_return;
+        } catch (\Throwable $__frame_err) {
+            array_pop($this->_context_stack);
+            throw $__frame_err;
+        }
     }
 
     private function _state_Live($__e, $compartment) {

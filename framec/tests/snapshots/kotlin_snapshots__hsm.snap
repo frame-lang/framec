@@ -135,24 +135,39 @@ class MiniHsm {
         val __e = MiniHsmFrameEvent("wake", mutableListOf())
         val __ctx = MiniHsmFrameContext(__e, null)
         _context_stack.add(__ctx)
-        __kernel(_context_stack[_context_stack.size - 1]._event)
-        _context_stack.removeAt(_context_stack.size - 1)
+        try {
+            __kernel(_context_stack[_context_stack.size - 1]._event)
+            _context_stack.removeAt(_context_stack.size - 1)
+        } catch (__frame_err: Throwable) {
+            _context_stack.removeAt(_context_stack.size - 1)
+            throw __frame_err
+        }
     }
 
     fun sleep() {
         val __e = MiniHsmFrameEvent("sleep", mutableListOf())
         val __ctx = MiniHsmFrameContext(__e, null)
         _context_stack.add(__ctx)
-        __kernel(_context_stack[_context_stack.size - 1]._event)
-        _context_stack.removeAt(_context_stack.size - 1)
+        try {
+            __kernel(_context_stack[_context_stack.size - 1]._event)
+            _context_stack.removeAt(_context_stack.size - 1)
+        } catch (__frame_err: Throwable) {
+            _context_stack.removeAt(_context_stack.size - 1)
+            throw __frame_err
+        }
     }
 
     fun signal() {
         val __e = MiniHsmFrameEvent("signal", mutableListOf())
         val __ctx = MiniHsmFrameContext(__e, null)
         _context_stack.add(__ctx)
-        __kernel(_context_stack[_context_stack.size - 1]._event)
-        _context_stack.removeAt(_context_stack.size - 1)
+        try {
+            __kernel(_context_stack[_context_stack.size - 1]._event)
+            _context_stack.removeAt(_context_stack.size - 1)
+        } catch (__frame_err: Throwable) {
+            _context_stack.removeAt(_context_stack.size - 1)
+            throw __frame_err
+        }
     }
 
     private fun _state_Live(__e: MiniHsmFrameEvent, compartment: MiniHsmCompartment) {

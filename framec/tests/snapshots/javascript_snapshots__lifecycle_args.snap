@@ -164,24 +164,39 @@ export class LifecycleArgs {
         const __e = new LifecycleArgsFrameEvent("load", [n, label]);
         const __ctx = new LifecycleArgsFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        return this._context_stack.pop()._return;
+        try {
+            this.__kernel(__e);
+            return this._context_stack.pop()._return;
+        } catch (__frame_err) {
+            this._context_stack.pop();
+            throw __frame_err;
+        }
     }
 
     total() {
         const __e = new LifecycleArgsFrameEvent("total", []);
         const __ctx = new LifecycleArgsFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        return this._context_stack.pop()._return;
+        try {
+            this.__kernel(__e);
+            return this._context_stack.pop()._return;
+        } catch (__frame_err) {
+            this._context_stack.pop();
+            throw __frame_err;
+        }
     }
 
     tag() {
         const __e = new LifecycleArgsFrameEvent("tag", []);
         const __ctx = new LifecycleArgsFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        return this._context_stack.pop()._return;
+        try {
+            this.__kernel(__e);
+            return this._context_stack.pop()._return;
+        } catch (__frame_err) {
+            this._context_stack.pop();
+            throw __frame_err;
+        }
     }
 
     _state_Idle(__e, compartment) {

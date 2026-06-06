@@ -161,7 +161,11 @@ function Consts:tick()
     local __e = ConstsFrameEvent.new("tick", {})
     local __ctx = ConstsFrameContext.new(__e, nil)
     self._context_stack[#self._context_stack + 1] = __ctx
-    self:__kernel(__e)
+    local __ok, __err = pcall(self.__kernel, self, __e)
+    if not __ok then
+        self._context_stack[#self._context_stack] = nil
+        error(__err)
+    end
     return table.remove(self._context_stack)._return
 end
 
@@ -169,7 +173,11 @@ function Consts:get_count()
     local __e = ConstsFrameEvent.new("get_count", {})
     local __ctx = ConstsFrameContext.new(__e, nil)
     self._context_stack[#self._context_stack + 1] = __ctx
-    self:__kernel(__e)
+    local __ok, __err = pcall(self.__kernel, self, __e)
+    if not __ok then
+        self._context_stack[#self._context_stack] = nil
+        error(__err)
+    end
     return table.remove(self._context_stack)._return
 end
 

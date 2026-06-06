@@ -163,32 +163,52 @@ export class NoPersist {
         const __e = new NoPersistFrameEvent("bump", []);
         const __ctx = new NoPersistFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        return this._context_stack.pop()._return;
+        try {
+            this.__kernel(__e);
+            return this._context_stack.pop()._return;
+        } catch (__frame_err) {
+            this._context_stack.pop();
+            throw __frame_err;
+        }
     }
 
     set_cache(v) {
         const __e = new NoPersistFrameEvent("set_cache", [v]);
         const __ctx = new NoPersistFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        return this._context_stack.pop()._return;
+        try {
+            this.__kernel(__e);
+            return this._context_stack.pop()._return;
+        } catch (__frame_err) {
+            this._context_stack.pop();
+            throw __frame_err;
+        }
     }
 
     get_count() {
         const __e = new NoPersistFrameEvent("get_count", []);
         const __ctx = new NoPersistFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        return this._context_stack.pop()._return;
+        try {
+            this.__kernel(__e);
+            return this._context_stack.pop()._return;
+        } catch (__frame_err) {
+            this._context_stack.pop();
+            throw __frame_err;
+        }
     }
 
     get_cache() {
         const __e = new NoPersistFrameEvent("get_cache", []);
         const __ctx = new NoPersistFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        return this._context_stack.pop()._return;
+        try {
+            this.__kernel(__e);
+            return this._context_stack.pop()._return;
+        } catch (__frame_err) {
+            this._context_stack.pop();
+            throw __frame_err;
+        }
     }
 
     _state_Active(__e, compartment) {

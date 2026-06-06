@@ -131,18 +131,28 @@ class Consts {
         val __e = ConstsFrameEvent("tick", mutableListOf())
         val __ctx = ConstsFrameContext(__e, null)
         _context_stack.add(__ctx)
-        __kernel(_context_stack[_context_stack.size - 1]._event)
-        _context_stack.removeAt(_context_stack.size - 1)
+        try {
+            __kernel(_context_stack[_context_stack.size - 1]._event)
+            _context_stack.removeAt(_context_stack.size - 1)
+        } catch (__frame_err: Throwable) {
+            _context_stack.removeAt(_context_stack.size - 1)
+            throw __frame_err
+        }
     }
 
     fun get_count(): Int {
         val __e = ConstsFrameEvent("get_count", mutableListOf())
         val __ctx = ConstsFrameContext(__e, 0)
         _context_stack.add(__ctx)
-        __kernel(_context_stack[_context_stack.size - 1]._event)
-        val __result = _context_stack[_context_stack.size - 1]._return as Int
-        _context_stack.removeAt(_context_stack.size - 1)
-        return __result
+        try {
+            __kernel(_context_stack[_context_stack.size - 1]._event)
+            val __result = _context_stack[_context_stack.size - 1]._return as Int
+            _context_stack.removeAt(_context_stack.size - 1)
+            return __result
+        } catch (__frame_err: Throwable) {
+            _context_stack.removeAt(_context_stack.size - 1)
+            throw __frame_err
+        }
     }
 
     private fun _state_Running(__e: ConstsFrameEvent, compartment: ConstsCompartment) {

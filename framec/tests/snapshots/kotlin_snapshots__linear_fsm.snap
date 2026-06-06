@@ -133,24 +133,39 @@ class LinearFsm {
         val __e = LinearFsmFrameEvent("start", mutableListOf())
         val __ctx = LinearFsmFrameContext(__e, null)
         _context_stack.add(__ctx)
-        __kernel(_context_stack[_context_stack.size - 1]._event)
-        _context_stack.removeAt(_context_stack.size - 1)
+        try {
+            __kernel(_context_stack[_context_stack.size - 1]._event)
+            _context_stack.removeAt(_context_stack.size - 1)
+        } catch (__frame_err: Throwable) {
+            _context_stack.removeAt(_context_stack.size - 1)
+            throw __frame_err
+        }
     }
 
     fun progress(amount: Int) {
         val __e = LinearFsmFrameEvent("progress", mutableListOf(amount))
         val __ctx = LinearFsmFrameContext(__e, null)
         _context_stack.add(__ctx)
-        __kernel(_context_stack[_context_stack.size - 1]._event)
-        _context_stack.removeAt(_context_stack.size - 1)
+        try {
+            __kernel(_context_stack[_context_stack.size - 1]._event)
+            _context_stack.removeAt(_context_stack.size - 1)
+        } catch (__frame_err: Throwable) {
+            _context_stack.removeAt(_context_stack.size - 1)
+            throw __frame_err
+        }
     }
 
     fun finish() {
         val __e = LinearFsmFrameEvent("finish", mutableListOf())
         val __ctx = LinearFsmFrameContext(__e, null)
         _context_stack.add(__ctx)
-        __kernel(_context_stack[_context_stack.size - 1]._event)
-        _context_stack.removeAt(_context_stack.size - 1)
+        try {
+            __kernel(_context_stack[_context_stack.size - 1]._event)
+            _context_stack.removeAt(_context_stack.size - 1)
+        } catch (__frame_err: Throwable) {
+            _context_stack.removeAt(_context_stack.size - 1)
+            throw __frame_err
+        }
     }
 
     private fun _state_Idle(__e: LinearFsmFrameEvent, compartment: LinearFsmCompartment) {

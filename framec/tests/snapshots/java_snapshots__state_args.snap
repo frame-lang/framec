@@ -163,26 +163,41 @@ public class StateArgs {
         StateArgsFrameEvent __e = new StateArgsFrameEvent("load", new java.util.ArrayList<>(java.util.Arrays.asList(initial)));
         StateArgsFrameContext __ctx = new StateArgsFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(_context_stack.get(_context_stack.size() - 1)._event);
-        _context_stack.remove(_context_stack.size() - 1);
+        try {
+            __kernel(_context_stack.get(_context_stack.size() - 1)._event);
+            _context_stack.remove(_context_stack.size() - 1);
+        } catch (RuntimeException __frame_err) {
+            _context_stack.remove(_context_stack.size() - 1);
+            throw __frame_err;
+        }
     }
 
     public void adjust(int delta) {
         StateArgsFrameEvent __e = new StateArgsFrameEvent("adjust", new java.util.ArrayList<>(java.util.Arrays.asList(delta)));
         StateArgsFrameContext __ctx = new StateArgsFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(_context_stack.get(_context_stack.size() - 1)._event);
-        _context_stack.remove(_context_stack.size() - 1);
+        try {
+            __kernel(_context_stack.get(_context_stack.size() - 1)._event);
+            _context_stack.remove(_context_stack.size() - 1);
+        } catch (RuntimeException __frame_err) {
+            _context_stack.remove(_context_stack.size() - 1);
+            throw __frame_err;
+        }
     }
 
     public int peek() {
         StateArgsFrameEvent __e = new StateArgsFrameEvent("peek", new java.util.ArrayList<>());
         StateArgsFrameContext __ctx = new StateArgsFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(_context_stack.get(_context_stack.size() - 1)._event);
-        int __result = (int) _context_stack.get(_context_stack.size() - 1)._return;
-        _context_stack.remove(_context_stack.size() - 1);
-        return __result;
+        try {
+            __kernel(_context_stack.get(_context_stack.size() - 1)._event);
+            int __result = (int) _context_stack.get(_context_stack.size() - 1)._return;
+            _context_stack.remove(_context_stack.size() - 1);
+            return __result;
+        } catch (RuntimeException __frame_err) {
+            _context_stack.remove(_context_stack.size() - 1);
+            throw __frame_err;
+        }
     }
 
     private void _state_Idle(StateArgsFrameEvent __e, StateArgsCompartment compartment) {

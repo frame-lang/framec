@@ -175,24 +175,39 @@ public class LinearFsm {
         LinearFsmFrameEvent __e = new LinearFsmFrameEvent("start", new List<object>());
         LinearFsmFrameContext __ctx = new LinearFsmFrameContext(__e, null);
         _context_stack.Add(__ctx);
-        __kernel(_context_stack[_context_stack.Count - 1]._event);
-        _context_stack.RemoveAt(_context_stack.Count - 1);
+        try {
+            __kernel(_context_stack[_context_stack.Count - 1]._event);
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+        } catch {
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+            throw;
+        }
     }
 
     public void progress(int amount) {
         LinearFsmFrameEvent __e = new LinearFsmFrameEvent("progress", new List<object> { amount });
         LinearFsmFrameContext __ctx = new LinearFsmFrameContext(__e, null);
         _context_stack.Add(__ctx);
-        __kernel(_context_stack[_context_stack.Count - 1]._event);
-        _context_stack.RemoveAt(_context_stack.Count - 1);
+        try {
+            __kernel(_context_stack[_context_stack.Count - 1]._event);
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+        } catch {
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+            throw;
+        }
     }
 
     public void finish() {
         LinearFsmFrameEvent __e = new LinearFsmFrameEvent("finish", new List<object>());
         LinearFsmFrameContext __ctx = new LinearFsmFrameContext(__e, null);
         _context_stack.Add(__ctx);
-        __kernel(_context_stack[_context_stack.Count - 1]._event);
-        _context_stack.RemoveAt(_context_stack.Count - 1);
+        try {
+            __kernel(_context_stack[_context_stack.Count - 1]._event);
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+        } catch {
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+            throw;
+        }
     }
 
     private void _state_Idle(LinearFsmFrameEvent __e, LinearFsmCompartment compartment) {

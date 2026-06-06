@@ -164,32 +164,52 @@ export class PushPop {
         const __e = new PushPopFrameEvent("ping", []);
         const __ctx = new PushPopFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        return this._context_stack.pop()._return;
+        try {
+            this.__kernel(__e);
+            return this._context_stack.pop()._return;
+        } catch (__frame_err) {
+            this._context_stack.pop();
+            throw __frame_err;
+        }
     }
 
     nest() {
         const __e = new PushPopFrameEvent("nest", []);
         const __ctx = new PushPopFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        return this._context_stack.pop()._return;
+        try {
+            this.__kernel(__e);
+            return this._context_stack.pop()._return;
+        } catch (__frame_err) {
+            this._context_stack.pop();
+            throw __frame_err;
+        }
     }
 
     unnest() {
         const __e = new PushPopFrameEvent("unnest", []);
         const __ctx = new PushPopFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        return this._context_stack.pop()._return;
+        try {
+            this.__kernel(__e);
+            return this._context_stack.pop()._return;
+        } catch (__frame_err) {
+            this._context_stack.pop();
+            throw __frame_err;
+        }
     }
 
     leaf() {
         const __e = new PushPopFrameEvent("leaf", []);
         const __ctx = new PushPopFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        return this._context_stack.pop()._return;
+        try {
+            this.__kernel(__e);
+            return this._context_stack.pop()._return;
+        } catch (__frame_err) {
+            this._context_stack.pop();
+            throw __frame_err;
+        }
     }
 
     _state_Idle(__e, compartment) {

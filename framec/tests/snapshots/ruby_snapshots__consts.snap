@@ -160,16 +160,24 @@ class Consts
         __e = ConstsFrameEvent.new("tick", [])
         __ctx = ConstsFrameContext.new(__e, nil)
         @_context_stack.push(__ctx)
-        __kernel(__e)
-        return @_context_stack.pop._return
+        begin
+            __kernel(__e)
+            return @_context_stack.last._return
+        ensure
+            @_context_stack.pop
+        end
     end
 
     def get_count
         __e = ConstsFrameEvent.new("get_count", [])
         __ctx = ConstsFrameContext.new(__e, nil)
         @_context_stack.push(__ctx)
-        __kernel(__e)
-        return @_context_stack.pop._return
+        begin
+            __kernel(__e)
+            return @_context_stack.last._return
+        ensure
+            @_context_stack.pop
+        end
     end
 
     def _state_Running(__e, compartment)

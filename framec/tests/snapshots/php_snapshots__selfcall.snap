@@ -157,16 +157,26 @@ class SelfCall {
         $__e = new SelfCallFrameEvent("kick", []);
         $__ctx = new SelfCallFrameContext($__e, null);
         $this->_context_stack[] = $__ctx;
-        $this->__kernel($__e);
-        return array_pop($this->_context_stack)->_return;
+        try {
+            $this->__kernel($__e);
+            return array_pop($this->_context_stack)->_return;
+        } catch (\Throwable $__frame_err) {
+            array_pop($this->_context_stack);
+            throw $__frame_err;
+        }
     }
 
     public function report() {
         $__e = new SelfCallFrameEvent("report", []);
         $__ctx = new SelfCallFrameContext($__e, null);
         $this->_context_stack[] = $__ctx;
-        $this->__kernel($__e);
-        return array_pop($this->_context_stack)->_return;
+        try {
+            $this->__kernel($__e);
+            return array_pop($this->_context_stack)->_return;
+        } catch (\Throwable $__frame_err) {
+            array_pop($this->_context_stack);
+            throw $__frame_err;
+        }
     }
 
     private function _state_Active($__e, $compartment) {

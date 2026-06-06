@@ -163,32 +163,48 @@ export class NoPersist {
         const __e = new NoPersistFrameEvent("bump", []);
         const __ctx = new NoPersistFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        this._context_stack.pop();
+        try {
+            this.__kernel(__e);
+        } finally {
+            this._context_stack.pop();
+        }
     }
 
     public set_cache(v: number) {
         const __e = new NoPersistFrameEvent("set_cache", [v]);
         const __ctx = new NoPersistFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        this._context_stack.pop();
+        try {
+            this.__kernel(__e);
+        } finally {
+            this._context_stack.pop();
+        }
     }
 
     public get_count(): number {
         const __e = new NoPersistFrameEvent("get_count", []);
         const __ctx = new NoPersistFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        return this._context_stack.pop()!._return;
+        try {
+            this.__kernel(__e);
+            return this._context_stack.pop()!._return;
+        } catch (__frame_err) {
+            this._context_stack.pop();
+            throw __frame_err;
+        }
     }
 
     public get_cache(): number {
         const __e = new NoPersistFrameEvent("get_cache", []);
         const __ctx = new NoPersistFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        return this._context_stack.pop()!._return;
+        try {
+            this.__kernel(__e);
+            return this._context_stack.pop()!._return;
+        } catch (__frame_err) {
+            this._context_stack.pop();
+            throw __frame_err;
+        }
     }
 
     private _state_Active(__e: NoPersistFrameEvent, compartment: NoPersistCompartment) {

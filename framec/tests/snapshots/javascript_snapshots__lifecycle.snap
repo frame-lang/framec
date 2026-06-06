@@ -165,16 +165,26 @@ export class Lifecycle {
         const __e = new LifecycleFrameEvent("start", [label]);
         const __ctx = new LifecycleFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        return this._context_stack.pop()._return;
+        try {
+            this.__kernel(__e);
+            return this._context_stack.pop()._return;
+        } catch (__frame_err) {
+            this._context_stack.pop();
+            throw __frame_err;
+        }
     }
 
     stop() {
         const __e = new LifecycleFrameEvent("stop", []);
         const __ctx = new LifecycleFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        return this._context_stack.pop()._return;
+        try {
+            this.__kernel(__e);
+            return this._context_stack.pop()._return;
+        } catch (__frame_err) {
+            this._context_stack.pop();
+            throw __frame_err;
+        }
     }
 
     _state_Idle(__e, compartment) {

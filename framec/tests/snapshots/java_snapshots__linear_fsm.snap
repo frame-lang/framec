@@ -167,24 +167,39 @@ public class LinearFsm {
         LinearFsmFrameEvent __e = new LinearFsmFrameEvent("start", new java.util.ArrayList<>());
         LinearFsmFrameContext __ctx = new LinearFsmFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(_context_stack.get(_context_stack.size() - 1)._event);
-        _context_stack.remove(_context_stack.size() - 1);
+        try {
+            __kernel(_context_stack.get(_context_stack.size() - 1)._event);
+            _context_stack.remove(_context_stack.size() - 1);
+        } catch (RuntimeException __frame_err) {
+            _context_stack.remove(_context_stack.size() - 1);
+            throw __frame_err;
+        }
     }
 
     public void progress(int amount) {
         LinearFsmFrameEvent __e = new LinearFsmFrameEvent("progress", new java.util.ArrayList<>(java.util.Arrays.asList(amount)));
         LinearFsmFrameContext __ctx = new LinearFsmFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(_context_stack.get(_context_stack.size() - 1)._event);
-        _context_stack.remove(_context_stack.size() - 1);
+        try {
+            __kernel(_context_stack.get(_context_stack.size() - 1)._event);
+            _context_stack.remove(_context_stack.size() - 1);
+        } catch (RuntimeException __frame_err) {
+            _context_stack.remove(_context_stack.size() - 1);
+            throw __frame_err;
+        }
     }
 
     public void finish() {
         LinearFsmFrameEvent __e = new LinearFsmFrameEvent("finish", new java.util.ArrayList<>());
         LinearFsmFrameContext __ctx = new LinearFsmFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(_context_stack.get(_context_stack.size() - 1)._event);
-        _context_stack.remove(_context_stack.size() - 1);
+        try {
+            __kernel(_context_stack.get(_context_stack.size() - 1)._event);
+            _context_stack.remove(_context_stack.size() - 1);
+        } catch (RuntimeException __frame_err) {
+            _context_stack.remove(_context_stack.size() - 1);
+            throw __frame_err;
+        }
     }
 
     private void _state_Idle(LinearFsmFrameEvent __e, LinearFsmCompartment compartment) {

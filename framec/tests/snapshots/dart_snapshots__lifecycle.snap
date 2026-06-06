@@ -170,16 +170,22 @@ class Lifecycle {
         final __e = LifecycleFrameEvent("start", [label]);
         final __ctx = LifecycleFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(__e);
-        _context_stack.removeLast();
+        try {
+            __kernel(__e);
+        } finally {
+            _context_stack.removeLast();
+        }
     }
 
     void stop() {
         final __e = LifecycleFrameEvent("stop", []);
         final __ctx = LifecycleFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(__e);
-        _context_stack.removeLast();
+        try {
+            __kernel(__e);
+        } finally {
+            _context_stack.removeLast();
+        }
     }
 
     void _state_Idle(LifecycleFrameEvent __e, LifecycleCompartment compartment) {

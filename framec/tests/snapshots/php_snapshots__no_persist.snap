@@ -158,32 +158,52 @@ class NoPersist {
         $__e = new NoPersistFrameEvent("bump", []);
         $__ctx = new NoPersistFrameContext($__e, null);
         $this->_context_stack[] = $__ctx;
-        $this->__kernel($__e);
-        return array_pop($this->_context_stack)->_return;
+        try {
+            $this->__kernel($__e);
+            return array_pop($this->_context_stack)->_return;
+        } catch (\Throwable $__frame_err) {
+            array_pop($this->_context_stack);
+            throw $__frame_err;
+        }
     }
 
     public function set_cache($v) {
         $__e = new NoPersistFrameEvent("set_cache", [$v]);
         $__ctx = new NoPersistFrameContext($__e, null);
         $this->_context_stack[] = $__ctx;
-        $this->__kernel($__e);
-        return array_pop($this->_context_stack)->_return;
+        try {
+            $this->__kernel($__e);
+            return array_pop($this->_context_stack)->_return;
+        } catch (\Throwable $__frame_err) {
+            array_pop($this->_context_stack);
+            throw $__frame_err;
+        }
     }
 
     public function get_count() {
         $__e = new NoPersistFrameEvent("get_count", []);
         $__ctx = new NoPersistFrameContext($__e, null);
         $this->_context_stack[] = $__ctx;
-        $this->__kernel($__e);
-        return array_pop($this->_context_stack)->_return;
+        try {
+            $this->__kernel($__e);
+            return array_pop($this->_context_stack)->_return;
+        } catch (\Throwable $__frame_err) {
+            array_pop($this->_context_stack);
+            throw $__frame_err;
+        }
     }
 
     public function get_cache() {
         $__e = new NoPersistFrameEvent("get_cache", []);
         $__ctx = new NoPersistFrameContext($__e, null);
         $this->_context_stack[] = $__ctx;
-        $this->__kernel($__e);
-        return array_pop($this->_context_stack)->_return;
+        try {
+            $this->__kernel($__e);
+            return array_pop($this->_context_stack)->_return;
+        } catch (\Throwable $__frame_err) {
+            array_pop($this->_context_stack);
+            throw $__frame_err;
+        }
     }
 
     private function _state_Active($__e, $compartment) {

@@ -159,24 +159,39 @@ class LifecycleArgs {
         $__e = new LifecycleArgsFrameEvent("load", [$n, $label]);
         $__ctx = new LifecycleArgsFrameContext($__e, null);
         $this->_context_stack[] = $__ctx;
-        $this->__kernel($__e);
-        return array_pop($this->_context_stack)->_return;
+        try {
+            $this->__kernel($__e);
+            return array_pop($this->_context_stack)->_return;
+        } catch (\Throwable $__frame_err) {
+            array_pop($this->_context_stack);
+            throw $__frame_err;
+        }
     }
 
     public function total() {
         $__e = new LifecycleArgsFrameEvent("total", []);
         $__ctx = new LifecycleArgsFrameContext($__e, null);
         $this->_context_stack[] = $__ctx;
-        $this->__kernel($__e);
-        return array_pop($this->_context_stack)->_return;
+        try {
+            $this->__kernel($__e);
+            return array_pop($this->_context_stack)->_return;
+        } catch (\Throwable $__frame_err) {
+            array_pop($this->_context_stack);
+            throw $__frame_err;
+        }
     }
 
     public function tag() {
         $__e = new LifecycleArgsFrameEvent("tag", []);
         $__ctx = new LifecycleArgsFrameContext($__e, null);
         $this->_context_stack[] = $__ctx;
-        $this->__kernel($__e);
-        return array_pop($this->_context_stack)->_return;
+        try {
+            $this->__kernel($__e);
+            return array_pop($this->_context_stack)->_return;
+        } catch (\Throwable $__frame_err) {
+            array_pop($this->_context_stack);
+            throw $__frame_err;
+        }
     }
 
     private function _state_Idle($__e, $compartment) {

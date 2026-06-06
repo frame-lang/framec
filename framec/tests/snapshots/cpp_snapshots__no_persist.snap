@@ -1,6 +1,5 @@
 ---
 source: framec/tests/cpp_snapshots.rs
-assertion_line: 68
 expression: "compile_fixture(\"12_no_persist\", \"cpp\")"
 ---
 #include <string>
@@ -191,8 +190,13 @@ public:
         NoPersistFrameEvent __e("bump");
         NoPersistFrameContext __ctx(std::move(__e));
         _context_stack.push_back(std::move(__ctx));
-        __kernel(_context_stack.back()._event);
-        _context_stack.pop_back();
+        try {
+            __kernel(_context_stack.back()._event);
+            _context_stack.pop_back();
+        } catch (...) {
+            _context_stack.pop_back();
+            throw;
+        }
 
     }
 
@@ -200,8 +204,13 @@ public:
         NoPersistFrameEvent __e("set_cache", std::vector<std::any>{v});
         NoPersistFrameContext __ctx(std::move(__e));
         _context_stack.push_back(std::move(__ctx));
-        __kernel(_context_stack.back()._event);
-        _context_stack.pop_back();
+        try {
+            __kernel(_context_stack.back()._event);
+            _context_stack.pop_back();
+        } catch (...) {
+            _context_stack.pop_back();
+            throw;
+        }
 
     }
 
@@ -209,10 +218,15 @@ public:
         NoPersistFrameEvent __e("get_count");
         NoPersistFrameContext __ctx(std::move(__e), std::any(int()));
         _context_stack.push_back(std::move(__ctx));
-        __kernel(_context_stack.back()._event);
-        auto __result = std::any_cast<int>(std::move(_context_stack.back()._return));
-        _context_stack.pop_back();
-        return __result;
+        try {
+            __kernel(_context_stack.back()._event);
+            auto __result = std::any_cast<int>(std::move(_context_stack.back()._return));
+            _context_stack.pop_back();
+            return __result;
+        } catch (...) {
+            _context_stack.pop_back();
+            throw;
+        }
 
     }
 
@@ -220,10 +234,15 @@ public:
         NoPersistFrameEvent __e("get_cache");
         NoPersistFrameContext __ctx(std::move(__e), std::any(int()));
         _context_stack.push_back(std::move(__ctx));
-        __kernel(_context_stack.back()._event);
-        auto __result = std::any_cast<int>(std::move(_context_stack.back()._return));
-        _context_stack.pop_back();
-        return __result;
+        try {
+            __kernel(_context_stack.back()._event);
+            auto __result = std::any_cast<int>(std::move(_context_stack.back()._return));
+            _context_stack.pop_back();
+            return __result;
+        } catch (...) {
+            _context_stack.pop_back();
+            throw;
+        }
 
     }
 

@@ -162,16 +162,24 @@ export class Actions {
         const __e = new ActionsFrameEvent("increment", [n]);
         const __ctx = new ActionsFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        this._context_stack.pop();
+        try {
+            this.__kernel(__e);
+        } finally {
+            this._context_stack.pop();
+        }
     }
 
     public get_total(): number {
         const __e = new ActionsFrameEvent("get_total", []);
         const __ctx = new ActionsFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        return this._context_stack.pop()!._return;
+        try {
+            this.__kernel(__e);
+            return this._context_stack.pop()!._return;
+        } catch (__frame_err) {
+            this._context_stack.pop();
+            throw __frame_err;
+        }
     }
 
     private _state_Counting(__e: ActionsFrameEvent, compartment: ActionsCompartment) {

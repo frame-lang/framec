@@ -162,36 +162,56 @@ public class NoPersist {
         NoPersistFrameEvent __e = new NoPersistFrameEvent("bump", new java.util.ArrayList<>());
         NoPersistFrameContext __ctx = new NoPersistFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(_context_stack.get(_context_stack.size() - 1)._event);
-        _context_stack.remove(_context_stack.size() - 1);
+        try {
+            __kernel(_context_stack.get(_context_stack.size() - 1)._event);
+            _context_stack.remove(_context_stack.size() - 1);
+        } catch (RuntimeException __frame_err) {
+            _context_stack.remove(_context_stack.size() - 1);
+            throw __frame_err;
+        }
     }
 
     public void set_cache(int v) {
         NoPersistFrameEvent __e = new NoPersistFrameEvent("set_cache", new java.util.ArrayList<>(java.util.Arrays.asList(v)));
         NoPersistFrameContext __ctx = new NoPersistFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(_context_stack.get(_context_stack.size() - 1)._event);
-        _context_stack.remove(_context_stack.size() - 1);
+        try {
+            __kernel(_context_stack.get(_context_stack.size() - 1)._event);
+            _context_stack.remove(_context_stack.size() - 1);
+        } catch (RuntimeException __frame_err) {
+            _context_stack.remove(_context_stack.size() - 1);
+            throw __frame_err;
+        }
     }
 
     public int get_count() {
         NoPersistFrameEvent __e = new NoPersistFrameEvent("get_count", new java.util.ArrayList<>());
         NoPersistFrameContext __ctx = new NoPersistFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(_context_stack.get(_context_stack.size() - 1)._event);
-        int __result = (int) _context_stack.get(_context_stack.size() - 1)._return;
-        _context_stack.remove(_context_stack.size() - 1);
-        return __result;
+        try {
+            __kernel(_context_stack.get(_context_stack.size() - 1)._event);
+            int __result = (int) _context_stack.get(_context_stack.size() - 1)._return;
+            _context_stack.remove(_context_stack.size() - 1);
+            return __result;
+        } catch (RuntimeException __frame_err) {
+            _context_stack.remove(_context_stack.size() - 1);
+            throw __frame_err;
+        }
     }
 
     public int get_cache() {
         NoPersistFrameEvent __e = new NoPersistFrameEvent("get_cache", new java.util.ArrayList<>());
         NoPersistFrameContext __ctx = new NoPersistFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(_context_stack.get(_context_stack.size() - 1)._event);
-        int __result = (int) _context_stack.get(_context_stack.size() - 1)._return;
-        _context_stack.remove(_context_stack.size() - 1);
-        return __result;
+        try {
+            __kernel(_context_stack.get(_context_stack.size() - 1)._event);
+            int __result = (int) _context_stack.get(_context_stack.size() - 1)._return;
+            _context_stack.remove(_context_stack.size() - 1);
+            return __result;
+        } catch (RuntimeException __frame_err) {
+            _context_stack.remove(_context_stack.size() - 1);
+            throw __frame_err;
+        }
     }
 
     private void _state_Active(NoPersistFrameEvent __e, NoPersistCompartment compartment) {

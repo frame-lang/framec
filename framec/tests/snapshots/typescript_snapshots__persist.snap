@@ -162,8 +162,11 @@ export class Counter {
         const __e = new CounterFrameEvent("increment", [by]);
         const __ctx = new CounterFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        this._context_stack.pop();
+        try {
+            this.__kernel(__e);
+        } finally {
+            this._context_stack.pop();
+        }
     }
 
     public value(): number {
@@ -171,8 +174,13 @@ export class Counter {
         const __ctx = new CounterFrameContext(__e, null);
         __ctx._return = 0;
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        return this._context_stack.pop()!._return;
+        try {
+            this.__kernel(__e);
+            return this._context_stack.pop()!._return;
+        } catch (__frame_err) {
+            this._context_stack.pop();
+            throw __frame_err;
+        }
     }
 
     private _state_Counting(__e: CounterFrameEvent, compartment: CounterCompartment) {

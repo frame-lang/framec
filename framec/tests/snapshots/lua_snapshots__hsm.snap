@@ -161,7 +161,11 @@ function MiniHsm:wake()
     local __e = MiniHsmFrameEvent.new("wake", {})
     local __ctx = MiniHsmFrameContext.new(__e, nil)
     self._context_stack[#self._context_stack + 1] = __ctx
-    self:__kernel(__e)
+    local __ok, __err = pcall(self.__kernel, self, __e)
+    if not __ok then
+        self._context_stack[#self._context_stack] = nil
+        error(__err)
+    end
     return table.remove(self._context_stack)._return
 end
 
@@ -169,7 +173,11 @@ function MiniHsm:sleep()
     local __e = MiniHsmFrameEvent.new("sleep", {})
     local __ctx = MiniHsmFrameContext.new(__e, nil)
     self._context_stack[#self._context_stack + 1] = __ctx
-    self:__kernel(__e)
+    local __ok, __err = pcall(self.__kernel, self, __e)
+    if not __ok then
+        self._context_stack[#self._context_stack] = nil
+        error(__err)
+    end
     return table.remove(self._context_stack)._return
 end
 
@@ -177,7 +185,11 @@ function MiniHsm:signal()
     local __e = MiniHsmFrameEvent.new("signal", {})
     local __ctx = MiniHsmFrameContext.new(__e, nil)
     self._context_stack[#self._context_stack + 1] = __ctx
-    self:__kernel(__e)
+    local __ok, __err = pcall(self.__kernel, self, __e)
+    if not __ok then
+        self._context_stack[#self._context_stack] = nil
+        error(__err)
+    end
     return table.remove(self._context_stack)._return
 end
 

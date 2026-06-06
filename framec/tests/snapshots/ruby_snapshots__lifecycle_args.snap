@@ -157,24 +157,36 @@ class LifecycleArgs
         __e = LifecycleArgsFrameEvent.new("load", [n, label])
         __ctx = LifecycleArgsFrameContext.new(__e, nil)
         @_context_stack.push(__ctx)
-        __kernel(__e)
-        return @_context_stack.pop._return
+        begin
+            __kernel(__e)
+            return @_context_stack.last._return
+        ensure
+            @_context_stack.pop
+        end
     end
 
     def total
         __e = LifecycleArgsFrameEvent.new("total", [])
         __ctx = LifecycleArgsFrameContext.new(__e, nil)
         @_context_stack.push(__ctx)
-        __kernel(__e)
-        return @_context_stack.pop._return
+        begin
+            __kernel(__e)
+            return @_context_stack.last._return
+        ensure
+            @_context_stack.pop
+        end
     end
 
     def tag
         __e = LifecycleArgsFrameEvent.new("tag", [])
         __ctx = LifecycleArgsFrameContext.new(__e, nil)
         @_context_stack.push(__ctx)
-        __kernel(__e)
-        return @_context_stack.pop._return
+        begin
+            __kernel(__e)
+            return @_context_stack.last._return
+        ensure
+            @_context_stack.pop
+        end
     end
 
     def _state_Idle(__e, compartment)

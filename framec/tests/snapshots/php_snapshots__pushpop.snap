@@ -159,32 +159,52 @@ class PushPop {
         $__e = new PushPopFrameEvent("ping", []);
         $__ctx = new PushPopFrameContext($__e, null);
         $this->_context_stack[] = $__ctx;
-        $this->__kernel($__e);
-        return array_pop($this->_context_stack)->_return;
+        try {
+            $this->__kernel($__e);
+            return array_pop($this->_context_stack)->_return;
+        } catch (\Throwable $__frame_err) {
+            array_pop($this->_context_stack);
+            throw $__frame_err;
+        }
     }
 
     public function nest() {
         $__e = new PushPopFrameEvent("nest", []);
         $__ctx = new PushPopFrameContext($__e, null);
         $this->_context_stack[] = $__ctx;
-        $this->__kernel($__e);
-        return array_pop($this->_context_stack)->_return;
+        try {
+            $this->__kernel($__e);
+            return array_pop($this->_context_stack)->_return;
+        } catch (\Throwable $__frame_err) {
+            array_pop($this->_context_stack);
+            throw $__frame_err;
+        }
     }
 
     public function unnest() {
         $__e = new PushPopFrameEvent("unnest", []);
         $__ctx = new PushPopFrameContext($__e, null);
         $this->_context_stack[] = $__ctx;
-        $this->__kernel($__e);
-        return array_pop($this->_context_stack)->_return;
+        try {
+            $this->__kernel($__e);
+            return array_pop($this->_context_stack)->_return;
+        } catch (\Throwable $__frame_err) {
+            array_pop($this->_context_stack);
+            throw $__frame_err;
+        }
     }
 
     public function leaf() {
         $__e = new PushPopFrameEvent("leaf", []);
         $__ctx = new PushPopFrameContext($__e, null);
         $this->_context_stack[] = $__ctx;
-        $this->__kernel($__e);
-        return array_pop($this->_context_stack)->_return;
+        try {
+            $this->__kernel($__e);
+            return array_pop($this->_context_stack)->_return;
+        } catch (\Throwable $__frame_err) {
+            array_pop($this->_context_stack);
+            throw $__frame_err;
+        }
     }
 
     private function _state_Idle($__e, $compartment) {

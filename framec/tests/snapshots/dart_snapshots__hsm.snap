@@ -174,24 +174,33 @@ class MiniHsm {
         final __e = MiniHsmFrameEvent("wake", []);
         final __ctx = MiniHsmFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(__e);
-        _context_stack.removeLast();
+        try {
+            __kernel(__e);
+        } finally {
+            _context_stack.removeLast();
+        }
     }
 
     void sleep() {
         final __e = MiniHsmFrameEvent("sleep", []);
         final __ctx = MiniHsmFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(__e);
-        _context_stack.removeLast();
+        try {
+            __kernel(__e);
+        } finally {
+            _context_stack.removeLast();
+        }
     }
 
     void signal() {
         final __e = MiniHsmFrameEvent("signal", []);
         final __ctx = MiniHsmFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(__e);
-        _context_stack.removeLast();
+        try {
+            __kernel(__e);
+        } finally {
+            _context_stack.removeLast();
+        }
     }
 
     void _state_Live(MiniHsmFrameEvent __e, MiniHsmCompartment compartment) {

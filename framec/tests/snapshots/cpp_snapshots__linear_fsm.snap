@@ -1,6 +1,5 @@
 ---
 source: framec/tests/cpp_snapshots.rs
-assertion_line: 13
 expression: "compile_fixture(\"01_linear_fsm\", \"cpp\")"
 ---
 #include <string>
@@ -200,8 +199,13 @@ public:
         LinearFsmFrameEvent __e("start");
         LinearFsmFrameContext __ctx(std::move(__e));
         _context_stack.push_back(std::move(__ctx));
-        __kernel(_context_stack.back()._event);
-        _context_stack.pop_back();
+        try {
+            __kernel(_context_stack.back()._event);
+            _context_stack.pop_back();
+        } catch (...) {
+            _context_stack.pop_back();
+            throw;
+        }
 
     }
 
@@ -209,8 +213,13 @@ public:
         LinearFsmFrameEvent __e("progress", std::vector<std::any>{amount});
         LinearFsmFrameContext __ctx(std::move(__e));
         _context_stack.push_back(std::move(__ctx));
-        __kernel(_context_stack.back()._event);
-        _context_stack.pop_back();
+        try {
+            __kernel(_context_stack.back()._event);
+            _context_stack.pop_back();
+        } catch (...) {
+            _context_stack.pop_back();
+            throw;
+        }
 
     }
 
@@ -218,8 +227,13 @@ public:
         LinearFsmFrameEvent __e("finish");
         LinearFsmFrameContext __ctx(std::move(__e));
         _context_stack.push_back(std::move(__ctx));
-        __kernel(_context_stack.back()._event);
-        _context_stack.pop_back();
+        try {
+            __kernel(_context_stack.back()._event);
+            _context_stack.pop_back();
+        } catch (...) {
+            _context_stack.pop_back();
+            throw;
+        }
 
     }
 };

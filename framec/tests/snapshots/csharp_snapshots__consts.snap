@@ -173,18 +173,28 @@ public class Consts {
         ConstsFrameEvent __e = new ConstsFrameEvent("tick", new List<object>());
         ConstsFrameContext __ctx = new ConstsFrameContext(__e, null);
         _context_stack.Add(__ctx);
-        __kernel(_context_stack[_context_stack.Count - 1]._event);
-        _context_stack.RemoveAt(_context_stack.Count - 1);
+        try {
+            __kernel(_context_stack[_context_stack.Count - 1]._event);
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+        } catch {
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+            throw;
+        }
     }
 
     public int get_count() {
         ConstsFrameEvent __e = new ConstsFrameEvent("get_count", new List<object>());
         ConstsFrameContext __ctx = new ConstsFrameContext(__e, null);
         _context_stack.Add(__ctx);
-        __kernel(_context_stack[_context_stack.Count - 1]._event);
-        var __result = (int) _context_stack[_context_stack.Count - 1]._return;
-        _context_stack.RemoveAt(_context_stack.Count - 1);
-        return __result;
+        try {
+            __kernel(_context_stack[_context_stack.Count - 1]._event);
+            var __result = (int) _context_stack[_context_stack.Count - 1]._return;
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+            return __result;
+        } catch {
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+            throw;
+        }
     }
 
     private void _state_Running(ConstsFrameEvent __e, ConstsCompartment compartment) {

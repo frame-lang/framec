@@ -165,16 +165,22 @@ export class Forward {
         const __e = new ForwardFrameEvent("run", []);
         const __ctx = new ForwardFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        this._context_stack.pop();
+        try {
+            this.__kernel(__e);
+        } finally {
+            this._context_stack.pop();
+        }
     }
 
     public finish() {
         const __e = new ForwardFrameEvent("finish", []);
         const __ctx = new ForwardFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        this._context_stack.pop();
+        try {
+            this.__kernel(__e);
+        } finally {
+            this._context_stack.pop();
+        }
     }
 
     private _state_Start(__e: ForwardFrameEvent, compartment: ForwardCompartment) {
