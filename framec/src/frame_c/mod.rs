@@ -1,4 +1,5 @@
 pub mod cli;
+pub mod codemod;
 pub mod compiler;
 pub mod config;
 pub mod driver;

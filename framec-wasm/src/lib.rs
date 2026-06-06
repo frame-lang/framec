@@ -17,3 +17,13 @@ use wasm_bindgen::prelude::*;
 pub fn run(source: &str, target: &str) -> String {
     framec::run(source, target)
 }
+
+/// RFC-0043 Phase 1 migration: insert `@@[async]` on every `@@system`
+/// in `source` whose body declares async members but whose header lacks
+/// the attribute. The WASM-callable equivalent of the CLI subcommand
+/// `framec project add-async-attr`, intended for in-browser / npm
+/// migrations that cannot reach the CLI. Idempotent.
+#[wasm_bindgen]
+pub fn migrate_async_attr(source: &str) -> String {
+    framec::frame_c::codemod::add_async_attr_to_source(source)
+}

@@ -56,6 +56,8 @@ numbers are not re-used.
 | [0039](rfc-0039.md) | Parser as composed Frame state machines | Accepted | builds on [0035](rfc-0035.md) |
 | [0040](rfc-0040.md) | Re-introduce `@@import` as analysis-only cross-file resolution | Draft | amends [0024](rfc-0024.md) (analysis half only); builds on [0012](rfc-0012.md), [0015](rfc-0015.md) |
 | [0041](rfc-0041.md) | Web persistence — storage-bound save/load for browser targets (`@@[web_persist]`) | Draft | builds on [0012](rfc-0012.md), [0015](rfc-0015.md), [0016](rfc-0016.md) |
+| [0043](rfc-0043.md) | `@@[async]` — single-driver gate via layered casing/machine | Accepted; shipped in 4.4.0 | builds on [0015](rfc-0015.md), [0017](rfc-0017.md), [0020](rfc-0020.md) |
+| [0044](rfc-0044.md) | Kernel context-stack must clean up on exception | Draft | builds on [0020](rfc-0020.md), surfaced by [0043](rfc-0043.md) |
 
 ## Other documents in this directory
 

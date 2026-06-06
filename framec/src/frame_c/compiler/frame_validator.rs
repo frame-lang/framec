@@ -152,15 +152,50 @@ impl FrameValidator {
 
     /// Validate a Frame AST
     pub fn validate(&mut self, ast: &FrameAst) -> Result<(), Vec<ValidationError>> {
+        let async_systems = collect_async_system_names(ast);
         match ast {
-            FrameAst::System(system) => self.validate_system(system),
+            FrameAst::System(system) => {
+                self.validate_system(system);
+                self.validate_no_sync_composes_async(system, &async_systems);
+            }
             FrameAst::Module(module) => {
                 for system in &module.systems {
                     self.validate_system(system);
+                    self.validate_no_sync_composes_async(system, &async_systems);
                 }
             }
         }
 
+        if self.errors.is_empty() {
+            Ok(())
+        } else {
+            Err(self.errors.clone())
+        }
+    }
+
+    /// RFC-0043 E721 cross-system pass — runs the sync-composes-async
+    /// check across every system in a module at once. The per-system
+    /// `validate_with_arcanum` entry point gets called once per system
+    /// from the pipeline, so a per-system check there only sees its own
+    /// system and cannot answer "is the type named by this domain field
+    /// an `@@[async]` system declared elsewhere in the file?". This
+    /// method takes the full list, builds the set of async system names
+    /// once, then runs E721 against every system.
+    pub fn validate_module_e721_sync_composes_async(
+        &mut self,
+        systems: &[SystemAst],
+    ) -> Result<(), Vec<ValidationError>> {
+        let async_systems: HashSet<String> = systems
+            .iter()
+            .filter(|s| s.attributes.iter().any(|a| a.name == "async"))
+            .map(|s| s.name.clone())
+            .collect();
+        if async_systems.is_empty() {
+            return Ok(());
+        }
+        for system in systems {
+            self.validate_no_sync_composes_async(system, &async_systems);
+        }
         if self.errors.is_empty() {
             Ok(())
         } else {
@@ -177,15 +212,18 @@ impl FrameValidator {
         ast: &FrameAst,
         arcanum: &Arcanum,
     ) -> Result<(), Vec<ValidationError>> {
+        let async_systems = collect_async_system_names(ast);
         match ast {
             FrameAst::System(system) => {
                 self.validate_system(system);
                 self.validate_system_with_arcanum(system, arcanum);
+                self.validate_no_sync_composes_async(system, &async_systems);
             }
             FrameAst::Module(module) => {
                 for system in &module.systems {
                     self.validate_system(system);
                     self.validate_system_with_arcanum(system, arcanum);
+                    self.validate_no_sync_composes_async(system, &async_systems);
                 }
             }
         }
@@ -359,6 +397,10 @@ impl FrameValidator {
         // per-item `@@[name(args?)]` attachments.
         self.validate_attributes(system);
 
+        // E720: RFC-0043 hard cut — async members require `@@[async]`
+        // on the system header.
+        self.validate_async_attribute(system);
+
         // E815/E817/E818: RFC-0015 lifecycle attributes
         // (`@@[create]`, `@@[save]`, `@@[load]`) at system level.
         self.validate_rfc0015_lifecycle_attrs(system);
@@ -368,6 +410,31 @@ impl FrameValidator {
 /// Convenience function to validate Frame source code. Runs the full
 /// V4 pipeline (parse + validate + codegen) and surfaces any errors.
 /// Used only by this module's unit tests.
+/// Collect the names of every `@@[async]` system in this AST. Used by
+/// E721 (sync composes async) to decide whether a domain field's type
+/// names a known async system in the same compilation unit.
+///
+/// Restricted to the current file — Frame doesn't have cross-file type
+/// resolution today, so an async system that arrives via `@@import`
+/// from a separate file is invisible here.
+fn collect_async_system_names(ast: &FrameAst) -> HashSet<String> {
+    let mut out = HashSet::new();
+    let mut add_if_async = |s: &SystemAst| {
+        if s.attributes.iter().any(|a| a.name == "async") {
+            out.insert(s.name.clone());
+        }
+    };
+    match ast {
+        FrameAst::System(s) => add_if_async(s),
+        FrameAst::Module(m) => {
+            for s in &m.systems {
+                add_if_async(s);
+            }
+        }
+    }
+    out
+}
+
 pub fn validate_frame_source(
     source: &str,
     target: TargetLanguage,
@@ -2154,6 +2221,277 @@ mod tests {
                 "{:?}: pop with forward should set forward_event:\n{}",
                 target,
                 code
+            );
+        }
+    }
+
+    // ---- RFC-0043 E720: async members require @@[async] ----
+
+    /// E720 fires when a system declares an async interface method but
+    /// lacks the `@@[async]` system-header attribute. Hard cut — no
+    /// warning grace period.
+    #[test]
+    fn test_e720_async_interface_without_attribute() {
+        let source = r#"
+@@system NoAttr {
+    interface:
+        async fetch(key: String): String
+    machine:
+        $S { fetch(key: String): String { @@:(key) } }
+}
+"#;
+        let errs = validate_for_target(source, VTarget::Python3).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.code == "E720"),
+            "expected E720 on async-without-attribute; got: {:?}",
+            errs.iter().map(|e| &e.code).collect::<Vec<_>>()
+        );
+    }
+
+    /// E720 does NOT fire when `@@[async]` is present alongside async
+    /// members.
+    #[test]
+    fn test_e720_clean_with_attribute() {
+        let source = r#"
+@@[async]
+@@system WithAttr {
+    interface:
+        async fetch(key: String): String
+    machine:
+        $S { fetch(key: String): String { @@:(key) } }
+}
+"#;
+        let result = validate_for_target(source, VTarget::Python3);
+        if let Err(errs) = &result {
+            assert!(
+                !errs.iter().any(|e| e.code == "E720"),
+                "E720 must not fire when @@[async] is present; got: {:?}",
+                errs.iter().map(|e| &e.code).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// E720 does NOT fire on a sync system with no async members and
+    /// no attribute.
+    #[test]
+    fn test_e720_clean_on_sync_system() {
+        let source = r#"
+@@system PureSync {
+    interface:
+        bump()
+    machine:
+        $S { bump() {} }
+}
+"#;
+        let result = validate_for_target(source, VTarget::Python3);
+        if let Err(errs) = &result {
+            assert!(
+                !errs.iter().any(|e| e.code == "E720"),
+                "E720 must not fire on pure-sync system; got: {:?}",
+                errs.iter().map(|e| &e.code).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// `@@[async]` is permitted without any async members (a
+    /// sync-dispatch system opting into the layered architecture for
+    /// the concurrent-entry gate).
+    #[test]
+    fn test_e720_clean_when_attr_present_without_async_members() {
+        let source = r#"
+@@[async]
+@@system AsyncFlagOnly {
+    interface:
+        bump()
+    machine:
+        $S { bump() {} }
+}
+"#;
+        let result = validate_for_target(source, VTarget::Python3);
+        if let Err(errs) = &result {
+            assert!(
+                !errs.iter().any(|e| e.code == "E720"),
+                "E720 must not fire when only @@[async] is present (RFC permits it); got: {:?}",
+                errs.iter().map(|e| &e.code).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// E720 fires when an async action is declared without `@@[async]`.
+    #[test]
+    fn test_e720_async_action_without_attribute() {
+        let source = r#"
+@@system AsyncAction {
+    interface:
+        run()
+    machine:
+        $S { run() {} }
+    actions:
+        async io_call(): String { @@:("done") }
+}
+"#;
+        let errs = validate_for_target(source, VTarget::Python3).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.code == "E720"),
+            "expected E720 on async-action-without-attribute; got: {:?}",
+            errs.iter().map(|e| &e.code).collect::<Vec<_>>()
+        );
+    }
+
+    // ---- RFC-0043 E721: sync system composes async system ----
+
+    /// E721 fires when a sync system declares a domain field whose type
+    /// names an `@@[async]` system in the same module. Hard cut — no
+    /// warning grace period; same-file only (no cross-file resolution).
+    #[test]
+    fn test_e721_sync_composes_async_direct() {
+        let source = r#"
+@@[async]
+@@system Fetcher {
+    interface:
+        async fetch(key: String): String
+    machine:
+        $S { fetch(key: String): String { @@:(key) } }
+}
+
+@@[main]
+@@system Holder {
+    interface:
+        peek(): String
+    machine:
+        $S { peek(): String { @@:("?") } }
+    domain:
+        f: Fetcher = nil
+}
+"#;
+        let errs = validate_for_target(source, VTarget::Python3).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.code == "E721"),
+            "expected E721 on sync-composes-async; got: {:?}",
+            errs.iter().map(|e| &e.code).collect::<Vec<_>>()
+        );
+    }
+
+    /// E721 fires for container-wrapped composition
+    /// (`Vec<Async>`, `Option<Async>`, `Async?`) — the tokenizer
+    /// matches any identifier in the type text.
+    #[test]
+    fn test_e721_sync_composes_async_wrapped() {
+        let source = r#"
+@@[async]
+@@system Fetcher {
+    interface:
+        async fetch(key: String): String
+    machine:
+        $S { fetch(key: String): String { @@:(key) } }
+}
+
+@@[main]
+@@system Holder {
+    interface:
+        peek(): String
+    machine:
+        $S { peek(): String { @@:("?") } }
+    domain:
+        fs: List<Fetcher> = nil
+}
+"#;
+        let errs = validate_for_target(source, VTarget::Python3).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.code == "E721"),
+            "expected E721 on sync-composes-List<async>; got: {:?}",
+            errs.iter().map(|e| &e.code).collect::<Vec<_>>()
+        );
+    }
+
+    /// E721 does NOT fire when both holder and held are `@@[async]`.
+    #[test]
+    fn test_e721_clean_async_composes_async() {
+        let source = r#"
+@@[async]
+@@system Fetcher {
+    interface:
+        async fetch(key: String): String
+    machine:
+        $S { fetch(key: String): String { @@:(key) } }
+}
+
+@@[async]
+@@[main]
+@@system Holder {
+    interface:
+        async peek(): String
+    machine:
+        $S { peek(): String { @@:("?") } }
+    domain:
+        f: Fetcher = nil
+}
+"#;
+        let result = validate_for_target(source, VTarget::Python3);
+        if let Err(errs) = &result {
+            assert!(
+                !errs.iter().any(|e| e.code == "E721"),
+                "E721 must not fire when both holder and held are async; got: {:?}",
+                errs.iter().map(|e| &e.code).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// E721 does NOT fire on a sync system whose domain fields touch
+    /// only non-system types (no async system referenced).
+    #[test]
+    fn test_e721_clean_sync_only() {
+        let source = r#"
+@@system Holder {
+    interface:
+        peek(): String
+    machine:
+        $S { peek(): String { @@:("?") } }
+    domain:
+        count: i32 = 0
+        name: String = ""
+}
+"#;
+        let result = validate_for_target(source, VTarget::Python3);
+        if let Err(errs) = &result {
+            assert!(
+                !errs.iter().any(|e| e.code == "E721"),
+                "E721 must not fire on sync system with sync-only domain; got: {:?}",
+                errs.iter().map(|e| &e.code).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// E721 does NOT fire when the holder is sync and the held name
+    /// happens to be a substring of an async system name but is a
+    /// distinct identifier (`Fetcher` vs `FetcherCache`).
+    #[test]
+    fn test_e721_clean_substring_distinct_identifier() {
+        let source = r#"
+@@[async]
+@@system Fetcher {
+    interface:
+        async go(): String
+    machine:
+        $S { go(): String { @@:("ok") } }
+}
+
+@@[main]
+@@system Holder {
+    interface:
+        peek(): String
+    machine:
+        $S { peek(): String { @@:("?") } }
+    domain:
+        c: FetcherCache = nil
+}
+"#;
+        let result = validate_for_target(source, VTarget::Python3);
+        if let Err(errs) = &result {
+            assert!(
+                !errs.iter().any(|e| e.code == "E721"),
+                "E721 must not fire when type is a distinct identifier (FetcherCache); got: {:?}",
+                errs.iter().map(|e| &e.code).collect::<Vec<_>>()
             );
         }
     }

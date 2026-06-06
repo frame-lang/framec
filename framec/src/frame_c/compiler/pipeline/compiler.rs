@@ -359,6 +359,9 @@ fn parse_module_segments(
     // when the child lives in an imported file.
     let mut imported_new_contract_names: Vec<String> = Vec::new();
     let mut pending_main_attr_span: Option<crate::frame_c::compiler::frame_ast::Span> = None;
+    // RFC-0043: `@@[async]` accumulates here until the next @@system parses
+    // and we attach it to that system's attribute vec.
+    let mut pending_async_attr_span: Option<crate::frame_c::compiler::frame_ast::Span> = None;
     // Vec (not Option) so multiple occurrences of the same lifecycle
     // pragma — `@@[create(a)]` followed by `@@[create(b)]` — all
     // arrive at the validator and trigger E818 (at most one per
@@ -389,6 +392,17 @@ fn parse_module_segments(
         } = segment
         {
             pending_main_attr_span = Some(crate::frame_c::compiler::frame_ast::Span::new(
+                span.start, span.end,
+            ));
+            continue;
+        }
+        if let Segment::Pragma {
+            kind: crate::frame_c::compiler::segmenter::PragmaKind::Async,
+            span,
+            ..
+        } = segment
+        {
+            pending_async_attr_span = Some(crate::frame_c::compiler::frame_ast::Span::new(
                 span.start, span.end,
             ));
             continue;
@@ -620,6 +634,22 @@ fn parse_module_segments(
                         args: None,
                         span: main_span,
                     });
+            }
+
+            // RFC-0043: attach pending `@@[async]` attribute (if any),
+            // and set the `is_async_layered` flag so downstream codegen
+            // can read it directly without re-scanning attributes or
+            // members. Resets after attachment so the pragma can't
+            // bleed onto a later system.
+            if let Some(async_span) = pending_async_attr_span.take() {
+                system_ast
+                    .attributes
+                    .push(crate::frame_c::compiler::frame_ast::Attribute {
+                        name: "async".to_string(),
+                        args: None,
+                        span: async_span,
+                    });
+                system_ast.is_async_layered = true;
             }
 
             // RFC-0015: attach pending lifecycle attributes (`@@[create]`,
@@ -1135,6 +1165,28 @@ pub(crate) fn do_validate_codegen(c: &mut PipelineCtx) -> Option<CompileResult> 
         crate::frame_c::compiler::codegen::interface_gen::set_nested_system_persist_names(map);
     }
 
+    // RFC-0043 E721 — cross-system "sync composes async" check. Has to
+    // run with the full system list visible; the per-system
+    // `validate_with_arcanum` loop below sees one system at a time and
+    // cannot tell whether a domain field's type names a sibling async
+    // system declared elsewhere in the file. Validation runs on the
+    // *unfiltered* AST so the check sees every system attribute.
+    {
+        let mut e721_validator = FrameValidator::new();
+        if let Err(errs) = e721_validator.validate_module_e721_sync_composes_async(&system_asts) {
+            let errors = errs
+                .iter()
+                .map(|e| CompileError::new(&e.code, &e.message))
+                .collect();
+            return Some(CompileResult {
+                code: String::new(),
+                errors,
+                warnings: module_warnings,
+                source_map: None,
+            });
+        }
+    }
+
     for system_ast in &mut system_asts {
         // Validate with shared arcanum (all sibling systems visible).
         // Validation runs on the *unfiltered* AST so attribute-shape
@@ -1194,11 +1246,12 @@ pub(crate) fn do_validate_codegen(c: &mut PipelineCtx) -> Option<CompileResult> 
         // validators so attribute-shape errors fire first.
         filter_by_target_attribute(system_ast, config.target);
 
-        // Warn if async is used with C target (no native async support)
-        let has_async = system_ast.interface.iter().any(|m| m.is_async)
-            || system_ast.actions.iter().any(|a| a.is_async)
-            || system_ast.operations.iter().any(|o| o.is_async);
-        if has_async && matches!(config.target, TargetLanguage::C) {
+        // Warn if async is used with C target (no native async support).
+        // Reads the RFC-0043 `is_async_layered` flag set during the
+        // attribute-attach pass; equivalent post-validation to scanning
+        // members for `is_async` because E720 makes async members
+        // without `@@[async]` impossible past the validator.
+        if system_ast.is_async_layered && matches!(config.target, TargetLanguage::C) {
             eprintln!("Warning: async is not supported for C — async keyword ignored");
         }
 

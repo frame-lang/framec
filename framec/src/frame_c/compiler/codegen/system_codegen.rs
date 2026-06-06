@@ -7,6 +7,7 @@
 //! are replaced with generated code using the splicer.
 
 mod async_wrap;
+pub(crate) mod casing;
 mod expand_system;
 mod factory;
 mod fields;
@@ -361,8 +362,18 @@ pub fn generate_system_shared(
         if matches!(lang, TargetLanguage::Java) {
             make_java_interface_async(&mut class_node, system);
         } else {
-            make_system_async(&mut class_node, &system.name, lang);
+            make_system_async(&mut class_node, &system.name, lang, system);
         }
+    }
+
+    // RFC-0043: if the system carries `@@[async]` AND the backend has
+    // been verified for layered emission, wrap the dispatch class (now
+    // the machine) in a casing. Returns a `CodegenNode::Module`
+    // containing the casing + machine pair. Backends that haven't been
+    // flipped on yet (Phase 4 day-1: everything except Python) return
+    // the single-class shape unchanged.
+    if system.is_async_layered() && casing::should_emit_layered(lang) {
+        return casing::wrap_in_casing(system, class_node, lang);
     }
 
     class_node

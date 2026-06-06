@@ -65,6 +65,12 @@ pub enum PragmaKind {
     /// `@@[persist(<Format>)]` (takes Format). Body framework-
     /// generated.
     Load,
+    /// @@[async] — RFC-0043. System-level attribute that opts a system
+    /// into the layered casing/machine codegen architecture. **Required**
+    /// on any system that declares one or more `async` interface,
+    /// action, or operation members (E720 from the implementing
+    /// release; no warning grace period).
+    Async,
     /// @@import "<path>" — RFC-0022. Module-scope directive declaring a
     /// cross-file dependency. The path is the importer-relative path to
     /// another Frame source file. The codegen emits the target's native
@@ -611,6 +617,8 @@ fn identify_pragma(bytes: &[u8], start: usize) -> (PragmaKind, Option<String>) {
             b"create" => PragmaKind::Create,
             b"save" => PragmaKind::Save,
             b"load" => PragmaKind::Load,
+            // RFC-0043 system-level attribute.
+            b"async" => PragmaKind::Async,
             _ => PragmaKind::Other,
         };
 

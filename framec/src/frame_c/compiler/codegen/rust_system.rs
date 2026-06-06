@@ -34,6 +34,7 @@
 //! pipeline. The work is comparable in size to the shared-pipeline
 //! change, not a smaller patch.
 
+mod casing;
 mod persistence;
 
 pub(crate) use persistence::generate_rust_persistence_methods;
@@ -273,7 +274,7 @@ pub fn generate_rust_system(system: &SystemAst, arcanum: &Arcanum, source: &[u8]
     };
 
     if needs_async {
-        super::system_codegen::make_system_async(&mut class_node, &system.name, lang);
+        super::system_codegen::make_system_async(&mut class_node, &system.name, lang, system);
     }
 
     // Auto-clone non-Copy domain fields passed by value to Frame calls.
@@ -283,6 +284,15 @@ pub fn generate_rust_system(system: &SystemAst, arcanum: &Arcanum, source: &[u8]
     let call_targets = rust_frame_call_targets(system);
     let non_copy_fields = rust_non_copy_domain_fields(system);
     apply_rust_auto_clone(&mut class_node, &call_targets, &non_copy_fields);
+
+    // RFC-0043 Phase 5: wrap the dispatch class (now the machine) in a
+    // Rust-idiomatic casing struct with gate fields and a `_GateGuard`
+    // RAII helper. Gated by both `is_async_layered()` (set by the
+    // pipeline from the `@@[async]` attribute) and the shared
+    // `should_emit_layered` predicate (which now includes Rust).
+    if system.is_async_layered() && super::system_codegen::casing::should_emit_layered(lang) {
+        return casing::wrap_in_casing(system, class_node);
+    }
 
     class_node
 }

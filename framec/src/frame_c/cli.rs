@@ -65,6 +65,9 @@ pub enum CliCommand {
         output_dir: PathBuf,
         recursive: bool,
     },
+    ProjectAddAsyncAttr {
+        path: PathBuf,
+    },
     FidImport {
         target: String,
         input: PathBuf,
@@ -90,6 +93,11 @@ impl Cli {
                             .arg(Arg::new("language").long("language").short('l').value_name("LANG").required(true))
                             .arg(Arg::new("output-dir").long("output-dir").short('o').value_name("DIR").required(true))
                             .arg(Arg::new("recursive").long("recursive").short('r').action(clap::ArgAction::SetTrue))
+                    )
+                    .subcommand(
+                        Command::new("add-async-attr")
+                            .about("Codemod: insert @@[async] on systems with async members but no attribute (RFC-0043)")
+                            .arg(Arg::new("path").value_name("PATH").help("Directory to scan recursively").required(true).index(1))
                     )
             )
             .subcommand(
@@ -214,6 +222,16 @@ impl Cli {
                                 recursive,
                             }
                         }
+                        Some(("add-async-attr", sb)) => {
+                            let path = sb
+                                .get_one::<String>("path")
+                                .map(PathBuf::from)
+                                .unwrap_or_else(|| {
+                                    eprintln!("error: path required");
+                                    std::process::exit(exitcode::USAGE);
+                                });
+                            CliCommand::ProjectAddAsyncAttr { path }
+                        }
                         _ => CliCommand::None,
                     },
                     "fid" => match sub.subcommand() {
@@ -319,6 +337,10 @@ pub fn run_with(args: Cli) {
             recursive,
         } => {
             handle_project_build(&args, language, output_dir, recursive);
+            return;
+        }
+        CliCommand::ProjectAddAsyncAttr { path } => {
+            handle_project_add_async_attr(path);
             return;
         }
         CliCommand::FidImport {
@@ -492,6 +514,32 @@ fn main() {
         }
         Err(e) => {
             eprintln!("Failed to create frame.toml: {}", e);
+            std::process::exit(exitcode::IOERR);
+        }
+    }
+}
+
+/// RFC-0043 Phase 1 codemod: insert `@@[async]` on every `@@system`
+/// whose body declares async members but whose header lacks the
+/// attribute. Walks `path` recursively, processing every file whose
+/// extension is in `codemod::FRAME_SOURCE_EXTENSIONS`. Idempotent.
+fn handle_project_add_async_attr(path: PathBuf) {
+    if !path.exists() {
+        eprintln!("error: path does not exist: {}", path.display());
+        std::process::exit(exitcode::NOINPUT);
+    }
+    match super::codemod::add_async_attr_to_tree(&path, super::codemod::FRAME_SOURCE_EXTENSIONS) {
+        Ok(report) => {
+            println!(
+                "add-async-attr: scanned {} files, modified {}",
+                report.files_scanned, report.files_modified
+            );
+            for p in &report.modified_paths {
+                println!("  modified  {}", p.display());
+            }
+        }
+        Err(e) => {
+            eprintln!("error: codemod failed: {}", e);
             std::process::exit(exitcode::IOERR);
         }
     }
