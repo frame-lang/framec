@@ -58,6 +58,7 @@ numbers are not re-used.
 | [0041](rfc-0041.md) | Web persistence — storage-bound save/load for browser targets (`@@[web_persist]`) | Draft | builds on [0012](rfc-0012.md), [0015](rfc-0015.md), [0016](rfc-0016.md) |
 | [0043](rfc-0043.md) | `@@[async]` — single-driver gate via layered casing/machine | Accepted; shipped in 4.4.0 | builds on [0015](rfc-0015.md), [0017](rfc-0017.md), [0020](rfc-0020.md) |
 | [0044](rfc-0044.md) | Kernel context-stack must clean up on exception | Draft | builds on [0020](rfc-0020.md), surfaced by [0043](rfc-0043.md) |
+| [0045](rfc-0045.md) | Reserve `@@:system`; relocate state name to `@@:system.state.name` | Accepted; implemented | builds on [0006](rfc-0006.md), [0013](rfc-0013.md); breaking (pre-public-beta) |
 
 ## Other documents in this directory
 

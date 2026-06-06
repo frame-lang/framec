@@ -161,16 +161,16 @@ func (s *Forward) Run() {
     __e := ForwardFrameEvent{_message: "run", _parameters: []any{}}
     __ctx := ForwardFrameContext{_event: __e, _data: make(map[string]any)}
     s._context_stack = append(s._context_stack, __ctx)
+    defer func() { s._context_stack = s._context_stack[:len(s._context_stack)-1] }()
     s.__kernel(&s._context_stack[len(s._context_stack)-1]._event)
-    s._context_stack = s._context_stack[:len(s._context_stack)-1]
 }
 
 func (s *Forward) Finish() {
     __e := ForwardFrameEvent{_message: "finish", _parameters: []any{}}
     __ctx := ForwardFrameContext{_event: __e, _data: make(map[string]any)}
     s._context_stack = append(s._context_stack, __ctx)
+    defer func() { s._context_stack = s._context_stack[:len(s._context_stack)-1] }()
     s.__kernel(&s._context_stack[len(s._context_stack)-1]._event)
-    s._context_stack = s._context_stack[:len(s._context_stack)-1]
 }
 
 func (s *Forward) _state_Start(__e *ForwardFrameEvent, compartment *ForwardCompartment) {

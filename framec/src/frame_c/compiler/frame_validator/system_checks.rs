@@ -286,12 +286,23 @@ impl FrameValidator {
                         ));
                     }
 
-                    // E604: bare @@:system without .state
+                    // E604: bare @@:system without a recognized member
                     FrameSegmentKind::ContextSystemBare => {
                         self.errors.push(ValidationError::new(
                             "E604",
                             format!(
-                                "bare `@@:system` in {}/{} — `@@:system` requires a member access (e.g. `@@:system.state`)",
+                                "bare `@@:system` in {}/{} — `@@:system` requires a member access (e.g. `@@:system.state.name`)",
+                                scope_outer, scope_inner
+                            ),
+                        ));
+                    }
+
+                    // E608: @@:system.state without .name — reserved (RFC-0045)
+                    FrameSegmentKind::ContextSystemStateReserved => {
+                        self.errors.push(ValidationError::new(
+                            "E608",
+                            format!(
+                                "`@@:system.state` in {}/{} is reserved for future use; use `@@:system.state.name` to read the current state name",
                                 scope_outer, scope_inner
                             ),
                         ));

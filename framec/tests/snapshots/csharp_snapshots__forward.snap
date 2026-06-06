@@ -176,16 +176,26 @@ public class Forward {
         ForwardFrameEvent __e = new ForwardFrameEvent("run", new List<object>());
         ForwardFrameContext __ctx = new ForwardFrameContext(__e, null);
         _context_stack.Add(__ctx);
-        __kernel(_context_stack[_context_stack.Count - 1]._event);
-        _context_stack.RemoveAt(_context_stack.Count - 1);
+        try {
+            __kernel(_context_stack[_context_stack.Count - 1]._event);
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+        } catch {
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+            throw;
+        }
     }
 
     public void finish() {
         ForwardFrameEvent __e = new ForwardFrameEvent("finish", new List<object>());
         ForwardFrameContext __ctx = new ForwardFrameContext(__e, null);
         _context_stack.Add(__ctx);
-        __kernel(_context_stack[_context_stack.Count - 1]._event);
-        _context_stack.RemoveAt(_context_stack.Count - 1);
+        try {
+            __kernel(_context_stack[_context_stack.Count - 1]._event);
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+        } catch {
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+            throw;
+        }
     }
 
     private void _state_Start(ForwardFrameEvent __e, ForwardCompartment compartment) {

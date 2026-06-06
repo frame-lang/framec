@@ -125,6 +125,12 @@ pub(crate) fn generate_frame_expansion(
             context_data::expand_context_system_bare(body_bytes, span, indent, lang, ctx, metadata)
         }
         FrameSegmentKind::ContextSystemState => expand_system_state(lang),
+        // Reserved (RFC-0045) — validation rejects bare `@@:system.state` with
+        // E608 before codegen; this fallback only fires if validation is
+        // bypassed, in which case it passes the text through like a bare member.
+        FrameSegmentKind::ContextSystemStateReserved => {
+            context_data::expand_context_system_bare(body_bytes, span, indent, lang, ctx, metadata)
+        }
         FrameSegmentKind::ContextSelf => {
             context_self::expand_context_self(body_bytes, span, indent, lang, ctx, metadata)
         }

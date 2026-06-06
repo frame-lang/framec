@@ -167,24 +167,35 @@ class StateArgs {
         final __e = StateArgsFrameEvent("load", [initial]);
         final __ctx = StateArgsFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(__e);
-        _context_stack.removeLast();
+        try {
+            __kernel(__e);
+        } finally {
+            _context_stack.removeLast();
+        }
     }
 
     void adjust(int delta) {
         final __e = StateArgsFrameEvent("adjust", [delta]);
         final __ctx = StateArgsFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(__e);
-        _context_stack.removeLast();
+        try {
+            __kernel(__e);
+        } finally {
+            _context_stack.removeLast();
+        }
     }
 
     int peek() {
         final __e = StateArgsFrameEvent("peek", []);
         final __ctx = StateArgsFrameContext(__e, 0);
         _context_stack.add(__ctx);
-        __kernel(__e);
-        return _context_stack.removeLast()._return;
+        try {
+            __kernel(__e);
+            return _context_stack.removeLast()._return;
+        } catch (__frame_err) {
+            _context_stack.removeLast();
+            rethrow;
+        }
     }
 
     void _state_Idle(StateArgsFrameEvent __e, StateArgsCompartment compartment) {

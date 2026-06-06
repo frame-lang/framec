@@ -173,16 +173,22 @@ class Forward {
         final __e = ForwardFrameEvent("run", []);
         final __ctx = ForwardFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(__e);
-        _context_stack.removeLast();
+        try {
+            __kernel(__e);
+        } finally {
+            _context_stack.removeLast();
+        }
     }
 
     void finish() {
         final __e = ForwardFrameEvent("finish", []);
         final __ctx = ForwardFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(__e);
-        _context_stack.removeLast();
+        try {
+            __kernel(__e);
+        } finally {
+            _context_stack.removeLast();
+        }
     }
 
     void _state_Start(ForwardFrameEvent __e, ForwardCompartment compartment) {

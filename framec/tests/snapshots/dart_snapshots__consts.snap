@@ -168,16 +168,24 @@ class Consts {
         final __e = ConstsFrameEvent("tick", []);
         final __ctx = ConstsFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(__e);
-        _context_stack.removeLast();
+        try {
+            __kernel(__e);
+        } finally {
+            _context_stack.removeLast();
+        }
     }
 
     int get_count() {
         final __e = ConstsFrameEvent("get_count", []);
         final __ctx = ConstsFrameContext(__e, 0);
         _context_stack.add(__ctx);
-        __kernel(__e);
-        return _context_stack.removeLast()._return;
+        try {
+            __kernel(__e);
+            return _context_stack.removeLast()._return;
+        } catch (__frame_err) {
+            _context_stack.removeLast();
+            rethrow;
+        }
     }
 
     void _state_Running(ConstsFrameEvent __e, ConstsCompartment compartment) {

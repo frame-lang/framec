@@ -1,6 +1,5 @@
 ---
 source: framec/tests/cpp_snapshots.rs
-assertion_line: 53
 expression: "compile_fixture(\"09_return_explicit\", \"cpp\")"
 ---
 #include <string>
@@ -166,10 +165,15 @@ public:
         ReturnExplicitFrameEvent __e("decide", std::vector<std::any>{score});
         ReturnExplicitFrameContext __ctx(std::move(__e), std::any(std::string()));
         _context_stack.push_back(std::move(__ctx));
-        __kernel(_context_stack.back()._event);
-        auto __result = std::any_cast<std::string>(std::move(_context_stack.back()._return));
-        _context_stack.pop_back();
-        return __result;
+        try {
+            __kernel(_context_stack.back()._event);
+            auto __result = std::any_cast<std::string>(std::move(_context_stack.back()._return));
+            _context_stack.pop_back();
+            return __result;
+        } catch (...) {
+            _context_stack.pop_back();
+            throw;
+        }
 
     }
 };

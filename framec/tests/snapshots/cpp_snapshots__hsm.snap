@@ -1,6 +1,5 @@
 ---
 source: framec/tests/cpp_snapshots.rs
-assertion_line: 18
 expression: "compile_fixture(\"02_hsm\", \"cpp\")"
 ---
 #include <string>
@@ -245,8 +244,13 @@ public:
         MiniHsmFrameEvent __e("wake");
         MiniHsmFrameContext __ctx(std::move(__e));
         _context_stack.push_back(std::move(__ctx));
-        __kernel(_context_stack.back()._event);
-        _context_stack.pop_back();
+        try {
+            __kernel(_context_stack.back()._event);
+            _context_stack.pop_back();
+        } catch (...) {
+            _context_stack.pop_back();
+            throw;
+        }
 
     }
 
@@ -254,8 +258,13 @@ public:
         MiniHsmFrameEvent __e("sleep");
         MiniHsmFrameContext __ctx(std::move(__e));
         _context_stack.push_back(std::move(__ctx));
-        __kernel(_context_stack.back()._event);
-        _context_stack.pop_back();
+        try {
+            __kernel(_context_stack.back()._event);
+            _context_stack.pop_back();
+        } catch (...) {
+            _context_stack.pop_back();
+            throw;
+        }
 
     }
 
@@ -263,8 +272,13 @@ public:
         MiniHsmFrameEvent __e("signal");
         MiniHsmFrameContext __ctx(std::move(__e));
         _context_stack.push_back(std::move(__ctx));
-        __kernel(_context_stack.back()._event);
-        _context_stack.pop_back();
+        try {
+            __kernel(_context_stack.back()._event);
+            _context_stack.pop_back();
+        } catch (...) {
+            _context_stack.pop_back();
+            throw;
+        }
 
     }
 };

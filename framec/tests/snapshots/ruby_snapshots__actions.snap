@@ -154,16 +154,24 @@ class Actions
         __e = ActionsFrameEvent.new("increment", [n])
         __ctx = ActionsFrameContext.new(__e, nil)
         @_context_stack.push(__ctx)
-        __kernel(__e)
-        return @_context_stack.pop._return
+        begin
+            __kernel(__e)
+            return @_context_stack.last._return
+        ensure
+            @_context_stack.pop
+        end
     end
 
     def get_total
         __e = ActionsFrameEvent.new("get_total", [])
         __ctx = ActionsFrameContext.new(__e, nil)
         @_context_stack.push(__ctx)
-        __kernel(__e)
-        return @_context_stack.pop._return
+        begin
+            __kernel(__e)
+            return @_context_stack.last._return
+        ensure
+            @_context_stack.pop
+        end
     end
 
     def _state_Counting(__e, compartment)

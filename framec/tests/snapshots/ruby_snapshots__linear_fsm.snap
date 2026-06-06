@@ -156,24 +156,36 @@ class LinearFsm
         __e = LinearFsmFrameEvent.new("start", [])
         __ctx = LinearFsmFrameContext.new(__e, nil)
         @_context_stack.push(__ctx)
-        __kernel(__e)
-        return @_context_stack.pop._return
+        begin
+            __kernel(__e)
+            return @_context_stack.last._return
+        ensure
+            @_context_stack.pop
+        end
     end
 
     def progress(amount)
         __e = LinearFsmFrameEvent.new("progress", [amount])
         __ctx = LinearFsmFrameContext.new(__e, nil)
         @_context_stack.push(__ctx)
-        __kernel(__e)
-        return @_context_stack.pop._return
+        begin
+            __kernel(__e)
+            return @_context_stack.last._return
+        ensure
+            @_context_stack.pop
+        end
     end
 
     def finish
         __e = LinearFsmFrameEvent.new("finish", [])
         __ctx = LinearFsmFrameContext.new(__e, nil)
         @_context_stack.push(__ctx)
-        __kernel(__e)
-        return @_context_stack.pop._return
+        begin
+            __kernel(__e)
+            return @_context_stack.last._return
+        ensure
+            @_context_stack.pop
+        end
     end
 
     def _state_Idle(__e, compartment)

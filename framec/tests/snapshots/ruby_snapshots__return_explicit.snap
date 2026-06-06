@@ -152,8 +152,12 @@ class ReturnExplicit
         __e = ReturnExplicitFrameEvent.new("decide", [score])
         __ctx = ReturnExplicitFrameContext.new(__e, nil)
         @_context_stack.push(__ctx)
-        __kernel(__e)
-        return @_context_stack.pop._return
+        begin
+            __kernel(__e)
+            return @_context_stack.last._return
+        ensure
+            @_context_stack.pop
+        end
     end
 
     def _state_Judging(__e, compartment)

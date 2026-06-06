@@ -210,6 +210,34 @@ which survives `--remap`.
   by a `(push$)` label tag on a solid edge (dashed/dotted remain `->>`/`=>`).
   Graphviz-only; all other targets are byte-identical to 4.3.0.
 
+### RFC-0045 — reserve `@@:system.state`, relocate name to `@@:system.state.name`
+
+- **BREAKING — the current-state name accessor moves to `@@:system.state.name`
+  (RFC-0045).** `@@:system.state` previously evaluated to the current state's
+  name as a string; that spelling is now **reserved** for a future meaning (a
+  direct reference to the current compartment), and the name accessor is
+  `@@:system.state.name`. Bare `@@:system.state` is a hard error (**E608**) with
+  a fix-it message. Generated output for `@@:system.state.name` is byte-identical
+  on all 17 backends to what `@@:system.state` produced before. Migration is
+  mechanical: `@@:system.state` → `@@:system.state.name`. (Pre-public-beta: no
+  published program is affected.)
+- **E608 — `@@:system.state` is reserved (RFC-0045).** Fires in handler and
+  operation bodies for the bare form, pointing at `@@:system.state.name`. The
+  E604 hint (bare `@@:system`) now suggests `@@:system.state.name`, and E421
+  (no state access in static operations) is retargeted to the new spelling.
+
+### RFC-0044 — context stack cleans up on a handler exception (D-PY-1)
+
+- **The interface dispatch wrapper now pops the context stack even when a
+  handler throws.** Previously the `push / __kernel / pop` sequence had no
+  exception safety, so a handler that raised mid-dispatch leaked a stale
+  context-stack entry per failed call — the leak RFC-0043's casing surfaced.
+  Fixed across 12 backends with each language's idiom (try/finally, try/catch +
+  rethrow, begin/ensure, `defer`, `pcall` + re-raise). Holds under RFC-0043's
+  casing (the machine layer carries the guard; the casing delegates to it).
+  C, GDScript, Swift, and Erlang are exempt — no catchable exception can
+  propagate through their dispatch.
+
 ## [4.3.0] - 2026-05-27
 
 Re-introduces the `@@import` directive (removed in 4.2.0 by RFC-0024) in a

@@ -164,16 +164,24 @@ class SelfCall {
         final __e = SelfCallFrameEvent("kick", []);
         final __ctx = SelfCallFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(__e);
-        _context_stack.removeLast();
+        try {
+            __kernel(__e);
+        } finally {
+            _context_stack.removeLast();
+        }
     }
 
     int report() {
         final __e = SelfCallFrameEvent("report", []);
         final __ctx = SelfCallFrameContext(__e, 0);
         _context_stack.add(__ctx);
-        __kernel(__e);
-        return _context_stack.removeLast()._return;
+        try {
+            __kernel(__e);
+            return _context_stack.removeLast()._return;
+        } catch (__frame_err) {
+            _context_stack.removeLast();
+            rethrow;
+        }
     }
 
     void _state_Active(SelfCallFrameEvent __e, SelfCallCompartment compartment) {

@@ -1970,7 +1970,7 @@ to wire up.
 
 ---
 
-## Step 17 — `const` domain fields and `@@:system.state`
+## Step 17 — `const` domain fields and `@@:system.state.name`
 
 ```frame
 @@system Lamp(name: str = "Lamp", max_brightness: int = 100) {
@@ -1983,7 +1983,7 @@ to wire up.
         }
         // new in this step
         get_state(): str {
-            return @@:system.state
+            return @@:system.state.name
         }
 
     interface:
@@ -2032,7 +2032,7 @@ Two additions:
   system parameter at construction and can never be reassigned.
   Handlers that try will be rejected at compile time (E615).
 - A new operation, `get_state()`, returns the current state name
-  via `@@:system.state`.
+  via `@@:system.state.name`.
 
 The constructor emits the const field with a marker for its
 immutability:
@@ -2067,7 +2067,7 @@ The framepiler enforces single-assignment at compile time
 regardless of target — even in Python, assigning to a `const`
 field in a handler body is E615.
 
-`@@:system.state` compiles to a direct read off the current
+`@@:system.state.name` compiles to a direct read off the current
 compartment:
 
 ```python
@@ -2086,7 +2086,7 @@ without dispatching an event to find out.
 
 Two prefixes worth knowing about:
 
-- `@@:system.state` — the only `@@:system` reference currently
+- `@@:system.state.name` — the only `@@:system` reference currently
   defined. Reads the current state name.
 - `@@:self.method(args)` — calls the system's own interface
   method. Goes through the full dispatch pipeline. We'll see this
@@ -2683,7 +2683,7 @@ Self-calls have compile-time checks:
 | E601 | Method doesn't exist in `interface:` |
 | E602 | Argument count doesn't match |
 | E603 | Bare `@@:self` (must be `@@:self.method(args)`) |
-| E604 | Bare `@@:system` (must be `@@:system.state`) |
+| E604 | Bare `@@:system` (must be `@@:system.state.name`) |
 
 The validation runs at the same stage as other interface
 references. By the time the framepiler emits code, all self-calls
@@ -3247,10 +3247,10 @@ of mistake the rebuild-on-every-transition rule makes visible.
 ### Self-calls and HSM
 
 The transition guard pattern from Step 19 (checking
-`@@:system.state` after a self-call that might transition) still
-works with HSM. `@@:system.state` reads the leaf state's name —
+`@@:system.state.name` after a self-call that might transition) still
+works with HSM. `@@:system.state.name` reads the leaf state's name —
 which is what you want. After a self-call that transitions from
-`$Heating` to `$Cooling`, `@@:system.state` returns `"Cooling"`.
+`$Heating` to `$Cooling`, `@@:system.state.name` returns `"Cooling"`.
 The guard pattern is unaffected by HSM depth.
 
 ---

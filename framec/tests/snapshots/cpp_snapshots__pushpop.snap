@@ -1,6 +1,5 @@
 ---
 source: framec/tests/cpp_snapshots.rs
-assertion_line: 33
 expression: "compile_fixture(\"05_pushpop\", \"cpp\")"
 ---
 #include <string>
@@ -202,8 +201,13 @@ public:
         PushPopFrameEvent __e("ping");
         PushPopFrameContext __ctx(std::move(__e));
         _context_stack.push_back(std::move(__ctx));
-        __kernel(_context_stack.back()._event);
-        _context_stack.pop_back();
+        try {
+            __kernel(_context_stack.back()._event);
+            _context_stack.pop_back();
+        } catch (...) {
+            _context_stack.pop_back();
+            throw;
+        }
 
     }
 
@@ -211,8 +215,13 @@ public:
         PushPopFrameEvent __e("nest");
         PushPopFrameContext __ctx(std::move(__e));
         _context_stack.push_back(std::move(__ctx));
-        __kernel(_context_stack.back()._event);
-        _context_stack.pop_back();
+        try {
+            __kernel(_context_stack.back()._event);
+            _context_stack.pop_back();
+        } catch (...) {
+            _context_stack.pop_back();
+            throw;
+        }
 
     }
 
@@ -220,8 +229,13 @@ public:
         PushPopFrameEvent __e("unnest");
         PushPopFrameContext __ctx(std::move(__e));
         _context_stack.push_back(std::move(__ctx));
-        __kernel(_context_stack.back()._event);
-        _context_stack.pop_back();
+        try {
+            __kernel(_context_stack.back()._event);
+            _context_stack.pop_back();
+        } catch (...) {
+            _context_stack.pop_back();
+            throw;
+        }
 
     }
 
@@ -229,8 +243,13 @@ public:
         PushPopFrameEvent __e("leaf");
         PushPopFrameContext __ctx(std::move(__e));
         _context_stack.push_back(std::move(__ctx));
-        __kernel(_context_stack.back()._event);
-        _context_stack.pop_back();
+        try {
+            __kernel(_context_stack.back()._event);
+            _context_stack.pop_back();
+        } catch (...) {
+            _context_stack.pop_back();
+            throw;
+        }
 
     }
 };

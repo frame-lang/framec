@@ -165,32 +165,52 @@ public class PushPop {
         PushPopFrameEvent __e = new PushPopFrameEvent("ping", new java.util.ArrayList<>());
         PushPopFrameContext __ctx = new PushPopFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(_context_stack.get(_context_stack.size() - 1)._event);
-        _context_stack.remove(_context_stack.size() - 1);
+        try {
+            __kernel(_context_stack.get(_context_stack.size() - 1)._event);
+            _context_stack.remove(_context_stack.size() - 1);
+        } catch (RuntimeException __frame_err) {
+            _context_stack.remove(_context_stack.size() - 1);
+            throw __frame_err;
+        }
     }
 
     public void nest() {
         PushPopFrameEvent __e = new PushPopFrameEvent("nest", new java.util.ArrayList<>());
         PushPopFrameContext __ctx = new PushPopFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(_context_stack.get(_context_stack.size() - 1)._event);
-        _context_stack.remove(_context_stack.size() - 1);
+        try {
+            __kernel(_context_stack.get(_context_stack.size() - 1)._event);
+            _context_stack.remove(_context_stack.size() - 1);
+        } catch (RuntimeException __frame_err) {
+            _context_stack.remove(_context_stack.size() - 1);
+            throw __frame_err;
+        }
     }
 
     public void unnest() {
         PushPopFrameEvent __e = new PushPopFrameEvent("unnest", new java.util.ArrayList<>());
         PushPopFrameContext __ctx = new PushPopFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(_context_stack.get(_context_stack.size() - 1)._event);
-        _context_stack.remove(_context_stack.size() - 1);
+        try {
+            __kernel(_context_stack.get(_context_stack.size() - 1)._event);
+            _context_stack.remove(_context_stack.size() - 1);
+        } catch (RuntimeException __frame_err) {
+            _context_stack.remove(_context_stack.size() - 1);
+            throw __frame_err;
+        }
     }
 
     public void leaf() {
         PushPopFrameEvent __e = new PushPopFrameEvent("leaf", new java.util.ArrayList<>());
         PushPopFrameContext __ctx = new PushPopFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(_context_stack.get(_context_stack.size() - 1)._event);
-        _context_stack.remove(_context_stack.size() - 1);
+        try {
+            __kernel(_context_stack.get(_context_stack.size() - 1)._event);
+            _context_stack.remove(_context_stack.size() - 1);
+        } catch (RuntimeException __frame_err) {
+            _context_stack.remove(_context_stack.size() - 1);
+            throw __frame_err;
+        }
     }
 
     private void _state_Idle(PushPopFrameEvent __e, PushPopCompartment compartment) {

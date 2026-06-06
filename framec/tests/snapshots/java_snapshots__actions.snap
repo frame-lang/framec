@@ -161,18 +161,28 @@ public class Actions {
         ActionsFrameEvent __e = new ActionsFrameEvent("increment", new java.util.ArrayList<>(java.util.Arrays.asList(n)));
         ActionsFrameContext __ctx = new ActionsFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(_context_stack.get(_context_stack.size() - 1)._event);
-        _context_stack.remove(_context_stack.size() - 1);
+        try {
+            __kernel(_context_stack.get(_context_stack.size() - 1)._event);
+            _context_stack.remove(_context_stack.size() - 1);
+        } catch (RuntimeException __frame_err) {
+            _context_stack.remove(_context_stack.size() - 1);
+            throw __frame_err;
+        }
     }
 
     public int get_total() {
         ActionsFrameEvent __e = new ActionsFrameEvent("get_total", new java.util.ArrayList<>());
         ActionsFrameContext __ctx = new ActionsFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(_context_stack.get(_context_stack.size() - 1)._event);
-        int __result = (int) _context_stack.get(_context_stack.size() - 1)._return;
-        _context_stack.remove(_context_stack.size() - 1);
-        return __result;
+        try {
+            __kernel(_context_stack.get(_context_stack.size() - 1)._event);
+            int __result = (int) _context_stack.get(_context_stack.size() - 1)._return;
+            _context_stack.remove(_context_stack.size() - 1);
+            return __result;
+        } catch (RuntimeException __frame_err) {
+            _context_stack.remove(_context_stack.size() - 1);
+            throw __frame_err;
+        }
     }
 
     private void _state_Counting(ActionsFrameEvent __e, ActionsCompartment compartment) {

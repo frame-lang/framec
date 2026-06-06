@@ -157,7 +157,11 @@ function StateArgs:load(initial)
     local __e = StateArgsFrameEvent.new("load", {initial})
     local __ctx = StateArgsFrameContext.new(__e, nil)
     self._context_stack[#self._context_stack + 1] = __ctx
-    self:__kernel(__e)
+    local __ok, __err = pcall(self.__kernel, self, __e)
+    if not __ok then
+        self._context_stack[#self._context_stack] = nil
+        error(__err)
+    end
     return table.remove(self._context_stack)._return
 end
 
@@ -165,7 +169,11 @@ function StateArgs:adjust(delta)
     local __e = StateArgsFrameEvent.new("adjust", {delta})
     local __ctx = StateArgsFrameContext.new(__e, nil)
     self._context_stack[#self._context_stack + 1] = __ctx
-    self:__kernel(__e)
+    local __ok, __err = pcall(self.__kernel, self, __e)
+    if not __ok then
+        self._context_stack[#self._context_stack] = nil
+        error(__err)
+    end
     return table.remove(self._context_stack)._return
 end
 
@@ -173,7 +181,11 @@ function StateArgs:peek()
     local __e = StateArgsFrameEvent.new("peek", {})
     local __ctx = StateArgsFrameContext.new(__e, nil)
     self._context_stack[#self._context_stack + 1] = __ctx
-    self:__kernel(__e)
+    local __ok, __err = pcall(self.__kernel, self, __e)
+    if not __ok then
+        self._context_stack[#self._context_stack] = nil
+        error(__err)
+    end
     return table.remove(self._context_stack)._return
 end
 

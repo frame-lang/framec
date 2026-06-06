@@ -160,16 +160,16 @@ func (s *Lifecycle) Start(label string) {
     __e := LifecycleFrameEvent{_message: "start", _parameters: []any{label}}
     __ctx := LifecycleFrameContext{_event: __e, _data: make(map[string]any)}
     s._context_stack = append(s._context_stack, __ctx)
+    defer func() { s._context_stack = s._context_stack[:len(s._context_stack)-1] }()
     s.__kernel(&s._context_stack[len(s._context_stack)-1]._event)
-    s._context_stack = s._context_stack[:len(s._context_stack)-1]
 }
 
 func (s *Lifecycle) Stop() {
     __e := LifecycleFrameEvent{_message: "stop", _parameters: []any{}}
     __ctx := LifecycleFrameContext{_event: __e, _data: make(map[string]any)}
     s._context_stack = append(s._context_stack, __ctx)
+    defer func() { s._context_stack = s._context_stack[:len(s._context_stack)-1] }()
     s.__kernel(&s._context_stack[len(s._context_stack)-1]._event)
-    s._context_stack = s._context_stack[:len(s._context_stack)-1]
 }
 
 func (s *Lifecycle) _state_Idle(__e *LifecycleFrameEvent, compartment *LifecycleCompartment) {

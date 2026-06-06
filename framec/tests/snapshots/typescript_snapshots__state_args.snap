@@ -162,24 +162,35 @@ export class StateArgs {
         const __e = new StateArgsFrameEvent("load", [initial]);
         const __ctx = new StateArgsFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        this._context_stack.pop();
+        try {
+            this.__kernel(__e);
+        } finally {
+            this._context_stack.pop();
+        }
     }
 
     public adjust(delta: number) {
         const __e = new StateArgsFrameEvent("adjust", [delta]);
         const __ctx = new StateArgsFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        this._context_stack.pop();
+        try {
+            this.__kernel(__e);
+        } finally {
+            this._context_stack.pop();
+        }
     }
 
     public peek(): number {
         const __e = new StateArgsFrameEvent("peek", []);
         const __ctx = new StateArgsFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        return this._context_stack.pop()!._return;
+        try {
+            this.__kernel(__e);
+            return this._context_stack.pop()!._return;
+        } catch (__frame_err) {
+            this._context_stack.pop();
+            throw __frame_err;
+        }
     }
 
     private _state_Idle(__e: StateArgsFrameEvent, compartment: StateArgsCompartment) {

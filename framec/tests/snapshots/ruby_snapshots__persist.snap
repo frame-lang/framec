@@ -154,8 +154,12 @@ class Counter
         __e = CounterFrameEvent.new("increment", [by])
         __ctx = CounterFrameContext.new(__e, nil)
         @_context_stack.push(__ctx)
-        __kernel(__e)
-        return @_context_stack.pop._return
+        begin
+            __kernel(__e)
+            return @_context_stack.last._return
+        ensure
+            @_context_stack.pop
+        end
     end
 
     def value
@@ -163,8 +167,12 @@ class Counter
         __ctx = CounterFrameContext.new(__e, nil)
         __ctx._return = 0
         @_context_stack.push(__ctx)
-        __kernel(__e)
-        return @_context_stack.pop._return
+        begin
+            __kernel(__e)
+            return @_context_stack.last._return
+        ensure
+            @_context_stack.pop
+        end
     end
 
     def _state_Counting(__e, compartment)

@@ -153,24 +153,36 @@ class StateArgs
         __e = StateArgsFrameEvent.new("load", [initial])
         __ctx = StateArgsFrameContext.new(__e, nil)
         @_context_stack.push(__ctx)
-        __kernel(__e)
-        return @_context_stack.pop._return
+        begin
+            __kernel(__e)
+            return @_context_stack.last._return
+        ensure
+            @_context_stack.pop
+        end
     end
 
     def adjust(delta)
         __e = StateArgsFrameEvent.new("adjust", [delta])
         __ctx = StateArgsFrameContext.new(__e, nil)
         @_context_stack.push(__ctx)
-        __kernel(__e)
-        return @_context_stack.pop._return
+        begin
+            __kernel(__e)
+            return @_context_stack.last._return
+        ensure
+            @_context_stack.pop
+        end
     end
 
     def peek
         __e = StateArgsFrameEvent.new("peek", [])
         __ctx = StateArgsFrameContext.new(__e, nil)
         @_context_stack.push(__ctx)
-        __kernel(__e)
-        return @_context_stack.pop._return
+        begin
+            __kernel(__e)
+            return @_context_stack.last._return
+        ensure
+            @_context_stack.pop
+        end
     end
 
     def _state_Idle(__e, compartment)

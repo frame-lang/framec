@@ -166,24 +166,33 @@ export class MiniHsm {
         const __e = new MiniHsmFrameEvent("wake", []);
         const __ctx = new MiniHsmFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        this._context_stack.pop();
+        try {
+            this.__kernel(__e);
+        } finally {
+            this._context_stack.pop();
+        }
     }
 
     public sleep() {
         const __e = new MiniHsmFrameEvent("sleep", []);
         const __ctx = new MiniHsmFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        this._context_stack.pop();
+        try {
+            this.__kernel(__e);
+        } finally {
+            this._context_stack.pop();
+        }
     }
 
     public signal() {
         const __e = new MiniHsmFrameEvent("signal", []);
         const __ctx = new MiniHsmFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        this._context_stack.pop();
+        try {
+            this.__kernel(__e);
+        } finally {
+            this._context_stack.pop();
+        }
     }
 
     private _state_Live(__e: MiniHsmFrameEvent, compartment: MiniHsmCompartment) {

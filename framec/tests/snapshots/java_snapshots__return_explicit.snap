@@ -160,10 +160,15 @@ public class ReturnExplicit {
         ReturnExplicitFrameEvent __e = new ReturnExplicitFrameEvent("decide", new java.util.ArrayList<>(java.util.Arrays.asList(score)));
         ReturnExplicitFrameContext __ctx = new ReturnExplicitFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(_context_stack.get(_context_stack.size() - 1)._event);
-        String __result = (String) _context_stack.get(_context_stack.size() - 1)._return;
-        _context_stack.remove(_context_stack.size() - 1);
-        return __result;
+        try {
+            __kernel(_context_stack.get(_context_stack.size() - 1)._event);
+            String __result = (String) _context_stack.get(_context_stack.size() - 1)._return;
+            _context_stack.remove(_context_stack.size() - 1);
+            return __result;
+        } catch (RuntimeException __frame_err) {
+            _context_stack.remove(_context_stack.size() - 1);
+            throw __frame_err;
+        }
     }
 
     private void _state_Judging(ReturnExplicitFrameEvent __e, ReturnExplicitCompartment compartment) {

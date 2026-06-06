@@ -163,24 +163,24 @@ func (s *MiniHsm) Wake() {
     __e := MiniHsmFrameEvent{_message: "wake", _parameters: []any{}}
     __ctx := MiniHsmFrameContext{_event: __e, _data: make(map[string]any)}
     s._context_stack = append(s._context_stack, __ctx)
+    defer func() { s._context_stack = s._context_stack[:len(s._context_stack)-1] }()
     s.__kernel(&s._context_stack[len(s._context_stack)-1]._event)
-    s._context_stack = s._context_stack[:len(s._context_stack)-1]
 }
 
 func (s *MiniHsm) Sleep() {
     __e := MiniHsmFrameEvent{_message: "sleep", _parameters: []any{}}
     __ctx := MiniHsmFrameContext{_event: __e, _data: make(map[string]any)}
     s._context_stack = append(s._context_stack, __ctx)
+    defer func() { s._context_stack = s._context_stack[:len(s._context_stack)-1] }()
     s.__kernel(&s._context_stack[len(s._context_stack)-1]._event)
-    s._context_stack = s._context_stack[:len(s._context_stack)-1]
 }
 
 func (s *MiniHsm) Signal() {
     __e := MiniHsmFrameEvent{_message: "signal", _parameters: []any{}}
     __ctx := MiniHsmFrameContext{_event: __e, _data: make(map[string]any)}
     s._context_stack = append(s._context_stack, __ctx)
+    defer func() { s._context_stack = s._context_stack[:len(s._context_stack)-1] }()
     s.__kernel(&s._context_stack[len(s._context_stack)-1]._event)
-    s._context_stack = s._context_stack[:len(s._context_stack)-1]
 }
 
 func (s *MiniHsm) _state_Live(__e *MiniHsmFrameEvent, compartment *MiniHsmCompartment) {

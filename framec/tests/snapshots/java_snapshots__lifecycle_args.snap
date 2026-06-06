@@ -165,28 +165,43 @@ public class LifecycleArgs {
         LifecycleArgsFrameEvent __e = new LifecycleArgsFrameEvent("load", new java.util.ArrayList<>(java.util.Arrays.asList(n, label)));
         LifecycleArgsFrameContext __ctx = new LifecycleArgsFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(_context_stack.get(_context_stack.size() - 1)._event);
-        _context_stack.remove(_context_stack.size() - 1);
+        try {
+            __kernel(_context_stack.get(_context_stack.size() - 1)._event);
+            _context_stack.remove(_context_stack.size() - 1);
+        } catch (RuntimeException __frame_err) {
+            _context_stack.remove(_context_stack.size() - 1);
+            throw __frame_err;
+        }
     }
 
     public int total() {
         LifecycleArgsFrameEvent __e = new LifecycleArgsFrameEvent("total", new java.util.ArrayList<>());
         LifecycleArgsFrameContext __ctx = new LifecycleArgsFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(_context_stack.get(_context_stack.size() - 1)._event);
-        int __result = (int) _context_stack.get(_context_stack.size() - 1)._return;
-        _context_stack.remove(_context_stack.size() - 1);
-        return __result;
+        try {
+            __kernel(_context_stack.get(_context_stack.size() - 1)._event);
+            int __result = (int) _context_stack.get(_context_stack.size() - 1)._return;
+            _context_stack.remove(_context_stack.size() - 1);
+            return __result;
+        } catch (RuntimeException __frame_err) {
+            _context_stack.remove(_context_stack.size() - 1);
+            throw __frame_err;
+        }
     }
 
     public String tag() {
         LifecycleArgsFrameEvent __e = new LifecycleArgsFrameEvent("tag", new java.util.ArrayList<>());
         LifecycleArgsFrameContext __ctx = new LifecycleArgsFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(_context_stack.get(_context_stack.size() - 1)._event);
-        String __result = (String) _context_stack.get(_context_stack.size() - 1)._return;
-        _context_stack.remove(_context_stack.size() - 1);
-        return __result;
+        try {
+            __kernel(_context_stack.get(_context_stack.size() - 1)._event);
+            String __result = (String) _context_stack.get(_context_stack.size() - 1)._return;
+            _context_stack.remove(_context_stack.size() - 1);
+            return __result;
+        } catch (RuntimeException __frame_err) {
+            _context_stack.remove(_context_stack.size() - 1);
+            throw __frame_err;
+        }
     }
 
     private void _state_Idle(LifecycleArgsFrameEvent __e, LifecycleArgsCompartment compartment) {

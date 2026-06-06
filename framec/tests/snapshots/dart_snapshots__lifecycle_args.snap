@@ -169,24 +169,37 @@ class LifecycleArgs {
         final __e = LifecycleArgsFrameEvent("load", [n, label]);
         final __ctx = LifecycleArgsFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(__e);
-        _context_stack.removeLast();
+        try {
+            __kernel(__e);
+        } finally {
+            _context_stack.removeLast();
+        }
     }
 
     int total() {
         final __e = LifecycleArgsFrameEvent("total", []);
         final __ctx = LifecycleArgsFrameContext(__e, 0);
         _context_stack.add(__ctx);
-        __kernel(__e);
-        return _context_stack.removeLast()._return;
+        try {
+            __kernel(__e);
+            return _context_stack.removeLast()._return;
+        } catch (__frame_err) {
+            _context_stack.removeLast();
+            rethrow;
+        }
     }
 
     String tag() {
         final __e = LifecycleArgsFrameEvent("tag", []);
         final __ctx = LifecycleArgsFrameContext(__e, '');
         _context_stack.add(__ctx);
-        __kernel(__e);
-        return _context_stack.removeLast()._return;
+        try {
+            __kernel(__e);
+            return _context_stack.removeLast()._return;
+        } catch (__frame_err) {
+            _context_stack.removeLast();
+            rethrow;
+        }
     }
 
     void _state_Idle(LifecycleArgsFrameEvent __e, LifecycleArgsCompartment compartment) {

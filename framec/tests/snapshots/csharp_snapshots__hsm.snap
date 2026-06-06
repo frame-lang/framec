@@ -177,24 +177,39 @@ public class MiniHsm {
         MiniHsmFrameEvent __e = new MiniHsmFrameEvent("wake", new List<object>());
         MiniHsmFrameContext __ctx = new MiniHsmFrameContext(__e, null);
         _context_stack.Add(__ctx);
-        __kernel(_context_stack[_context_stack.Count - 1]._event);
-        _context_stack.RemoveAt(_context_stack.Count - 1);
+        try {
+            __kernel(_context_stack[_context_stack.Count - 1]._event);
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+        } catch {
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+            throw;
+        }
     }
 
     public void sleep() {
         MiniHsmFrameEvent __e = new MiniHsmFrameEvent("sleep", new List<object>());
         MiniHsmFrameContext __ctx = new MiniHsmFrameContext(__e, null);
         _context_stack.Add(__ctx);
-        __kernel(_context_stack[_context_stack.Count - 1]._event);
-        _context_stack.RemoveAt(_context_stack.Count - 1);
+        try {
+            __kernel(_context_stack[_context_stack.Count - 1]._event);
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+        } catch {
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+            throw;
+        }
     }
 
     public void signal() {
         MiniHsmFrameEvent __e = new MiniHsmFrameEvent("signal", new List<object>());
         MiniHsmFrameContext __ctx = new MiniHsmFrameContext(__e, null);
         _context_stack.Add(__ctx);
-        __kernel(_context_stack[_context_stack.Count - 1]._event);
-        _context_stack.RemoveAt(_context_stack.Count - 1);
+        try {
+            __kernel(_context_stack[_context_stack.Count - 1]._event);
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+        } catch {
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+            throw;
+        }
     }
 
     private void _state_Live(MiniHsmFrameEvent __e, MiniHsmCompartment compartment) {
