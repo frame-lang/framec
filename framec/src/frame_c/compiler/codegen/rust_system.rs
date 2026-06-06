@@ -7,6 +7,32 @@
 //!
 //! `backends/rust.rs` handles the lower-level `CodegenNode → String`
 //! rendering and is not modified by this module.
+//!
+//! # Why Rust has its own pipeline
+//!
+//! Fifteen of seventeen targets go through
+//! `system_codegen::generate_system_shared`. Rust does not, for
+//! three independent reasons:
+//!
+//! 1. **`Rc<RefCell<Compartment>>` ownership.** Without GC, shared
+//!    mutable state requires explicit refcounted cells; the shared
+//!    pipeline emits the compartment as a plain instance field.
+//! 2. **Typed per-state `Context`.** The shared pipeline uses one
+//!    type-erased compartment shape per system. Rust emits N typed
+//!    `Context` structs, one per state, each carrying that state's
+//!    actual params + lifecycle params in their declared Rust types.
+//!    See RFC-0025.1 (`docs/rfcs/rfc-0025-1.md`) and
+//!    `rust_ctx_param_fields` below.
+//! 3. **`Rc<FrameEvent>` for `FrameContext.event`.** The borrow
+//!    checker rejects passing a `&FrameEvent` borrowed from inside
+//!    `self` to a `&mut self` method; the Rust runtime stores the
+//!    event by `Rc` and threads `Rc::clone` through dispatch.
+//!    See RFC-0020 § "Exceptions: Rust" (`docs/rfcs/rfc-0020.md`).
+//!
+//! Cross-cutting codegen changes (e.g. RFC-0043's layered async
+//! architecture) must be applied here in addition to the shared
+//! pipeline. The work is comparable in size to the shared-pipeline
+//! change, not a smaller patch.
 
 mod persistence;
 
