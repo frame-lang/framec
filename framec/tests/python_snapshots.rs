@@ -195,6 +195,80 @@ fn rfc0034_all_fixtures_compile() {
 /// identifier and Python emitted `state_vars["x"] = list` (a
 /// reference to the type), not `state_vars["x"] = list()` (a fresh
 /// instance). Same parser bug — the user's code is silently wrong.
+/// Regression for FRAMEC_BUGS Issue #47: a `$.var` interpolated inside a
+/// double-quoted f-string used to lower its dict-subscript key with double
+/// quotes too (`f"...{state_vars["k"]}..."`) — a `SyntaxError` on Python
+/// < 3.12 (pre-PEP-701). The key must take the OPPOSITE quote of the
+/// surrounding string. This assertion is version-independent: it checks the
+/// emitted quote choice directly, so it fails on a 3.12 host where
+/// `py_compile` would wrongly pass (PEP 701 accepts the nested same-quote).
+#[test]
+fn fstring_state_var_quote_swap_47() {
+    // (a) double-quoted f-string -> key must use single quotes
+    let out_a = compile_source(
+        r#"
+@@system A {
+    interface: status(): str = ""
+    machine:
+        $Active {
+            $.failures: int = 0
+            status(): str { @@:(f"closed ({$.failures} failures)") }
+        }
+}
+"#,
+        "python_3",
+    );
+    // Scope to the f-string interpolation (the `} failures)` suffix) so the
+    // correctly double-quoted state-var INITIALIZER line
+    // (`state_vars["failures"] = 0`, not inside any string) isn't matched.
+    assert!(
+        out_a.contains("state_vars['failures']} failures)"),
+        "state-var key inside a double-quoted f-string must use single quotes:\n{out_a}"
+    );
+    assert!(
+        !out_a.contains("state_vars[\"failures\"]} failures)"),
+        "must not nest same-quote (double-in-double) — SyntaxError pre-3.12:\n{out_a}"
+    );
+
+    // (b) single-quoted f-string -> key must flip to double quotes
+    let out_b = compile_source(
+        r#"
+@@system B {
+    interface: status(): str = ""
+    machine:
+        $Active {
+            $.failures: int = 0
+            status(): str { @@:(f'closed ({$.failures} failures)') }
+        }
+}
+"#,
+        "python_3",
+    );
+    assert!(
+        out_b.contains("state_vars[\"failures\"]} failures)"),
+        "state-var key inside a single-quoted f-string must use double quotes:\n{out_b}"
+    );
+
+    // (c) plain (non-string) expression -> key stays double-quoted
+    let out_c = compile_source(
+        r#"
+@@system C {
+    interface: bump(): int = 0
+    machine:
+        $Active {
+            $.count: int = 0
+            bump(): int { @@:($.count + 1) }
+        }
+}
+"#,
+        "python_3",
+    );
+    assert!(
+        out_c.contains("state_vars[\"count\"] + 1"),
+        "state-var key outside any string must remain double-quoted:\n{out_c}"
+    );
+}
+
 #[test]
 fn rfc0033_state_var_call_initializers_python() {
     let src = r#"
