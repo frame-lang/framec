@@ -33,6 +33,13 @@ aux_links:
   framec on GitHub:
     - https://github.com/frame-lang/framec
 aux_links_new_tab: true
+
+# Playable Frame Arcade — a separate deploy (frame-games repo) at its own
+# subdomain. Surfaced as a top-level nav item that opens in a new tab.
+nav_external_links:
+  - title: Games
+    url: https://games.frame-lang.org
+    opens_in_new_tab: true
 back_to_top: true
 back_to_top_text: "Back to top"
 
