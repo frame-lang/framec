@@ -115,9 +115,20 @@ The same documentation is also available as source in this repository:
 - [Language Reference](docs/frame_language.md) — complete Frame language reference
 - [Cookbook](docs/frame_cookbook.md) — 111 recipes from traffic lights through EIP patterns, protocol/systems stress tests, deferred event processing, and a scanner/parser pair
 - [Runtime Architecture](docs/frame_runtime.md) — how generated code works
+- [Per-Language Guides](docs/per_language_guides/) — target-specific idioms and gotchas (Python, TypeScript, Rust, Java, …)
+- [Agents Guide](docs/AGENTS_README.md) — orientation for LLM-assisted editing of Frame code
 - [Framepiler Design](docs/framepiler_design.md) — transpiler internals
 - [Contributing](CONTRIBUTING.md) — build from source, run tests, submit PRs
 - [Changelog](CHANGELOG.md) — release history
+
+## Versioning
+
+Frame has two version numbers that move on different schedules:
+
+- **framec semver** (e.g. `4.3.0`) tracks the compiler release line. Patch and minor releases are bug-fix and additive — existing `.fpy` / `.frs` / `.fts` sources continue to compile. Major bumps may require source changes; migration notes ship in [`docs/releases/`](docs/releases/).
+- **Grammar version** (e.g. `v0.30`) tracks the Frame language specification itself, and moves much more slowly than the compiler.
+
+Generated code is de facto byte-stable across patch and minor releases of `framec` for sources that don't use changed features. Each release's `CHANGELOG.md` entry calls out specifically where output differs from the previous version. See [Versioning & Stability](docs/frame_language.md#versioning--stability) in the language reference for the full contract.
 
 ## License
 
