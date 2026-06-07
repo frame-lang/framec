@@ -12,6 +12,26 @@ use crate::frame_c::compiler::codegen::system_codegen::init_references_param;
 use crate::frame_c::compiler::frame_ast::*;
 use std::collections::HashSet;
 
+/// E609 helper (FRAMEC_BUGS #37): bare Python-ish container type names have
+/// no meaning as a type on any statically-typed target — Frame passes type
+/// strings through verbatim, so `domain: xs: list` emits `pub xs: list`
+/// (invalid Rust). Returns a per-language hint for the few unambiguous
+/// pseudo-types; `None` for everything else.
+///
+/// Only the exact bare lowercase names are matched — a real static-target
+/// type (`List`/`Map` in Java/Kotlin, `std::vector`/`std::map` in C++,
+/// `Vec`/`HashMap` in Rust) is capitalized or namespaced and won't match,
+/// so this never flags legitimate native types.
+fn static_target_pseudo_type(t: &str) -> Option<&'static str> {
+    match t.trim() {
+        "list" => Some("your target's list/array type (e.g. `Vec<T>`, `std::vector<T>`, `List<T>`, `[]T`)"),
+        "dict" => Some("your target's map type (e.g. `HashMap<K, V>`, `std::map<K, V>`, `Map<K, V>`, `map[K]V`)"),
+        "set" => Some("your target's set type (e.g. `HashSet<T>`, `std::set<T>`, `Set<T>`)"),
+        "tuple" => Some("your target's tuple or a named struct type"),
+        _ => None,
+    }
+}
+
 impl FrameValidator {
     /// E615: Direct assignment to a `const` domain field inside a handler
     /// body. Catches the obvious per-target self-access patterns; the target
@@ -268,22 +288,42 @@ impl FrameValidator {
             return;
         }
         for var in &system.domain {
-            if matches!(var.var_type, Type::Unknown) {
-                self.errors.push(
-                    ValidationError::new(
-                        "E605",
-                        format!(
-                            "domain field '{}' in system '{}' missing type annotation. \
-                             Frame's canonical domain form is `name: type = init`. \
-                             For target '{:?}', framec cannot infer struct-field types \
-                             from initializers — the explicit annotation is required. \
-                             Add `: <type>` between the field name and `=`. \
-                             See docs/frame_language.md § Domain Section.",
-                            var.name, system.name, target
-                        ),
-                    )
-                    .with_span(var.span.clone()),
-                );
+            match &var.var_type {
+                Type::Unknown => {
+                    self.errors.push(
+                        ValidationError::new(
+                            "E605",
+                            format!(
+                                "domain field '{}' in system '{}' missing type annotation. \
+                                 Frame's canonical domain form is `name: type = init`. \
+                                 For target '{:?}', framec cannot infer struct-field types \
+                                 from initializers — the explicit annotation is required. \
+                                 Add `: <type>` between the field name and `=`. \
+                                 See docs/frame_language.md § Domain Section.",
+                                var.name, system.name, target
+                            ),
+                        )
+                        .with_span(var.span.clone()),
+                    );
+                }
+                Type::Custom(s) => {
+                    if let Some(hint) = static_target_pseudo_type(s) {
+                        self.errors.push(
+                            ValidationError::new(
+                                "E609",
+                                format!(
+                                    "domain field '{}' in system '{}' has type '{}', which is \
+                                     not a real type on the statically-typed target '{:?}'. \
+                                     Frame passes type names through verbatim (it has no type \
+                                     system), so write {} instead. \
+                                     See docs/frame_language.md § Types and Expressions.",
+                                    var.name, system.name, s, target, hint
+                                ),
+                            )
+                            .with_span(var.span.clone()),
+                        );
+                    }
+                }
             }
         }
     }
@@ -315,23 +355,42 @@ impl FrameValidator {
                         ptype: &Type,
                         span: &Span,
                         errs: &mut Vec<ValidationError>| {
-            if matches!(ptype, Type::Unknown) {
-                errs.push(
-                    ValidationError::new(
-                        "E606",
-                        format!(
-                            "{} '{}' parameter '{}' is missing a type annotation. \
-                             Frame has no type system — type names pass through \
-                             verbatim — and for the statically-typed target '{:?}' \
-                             framec cannot synthesize a parameter type. Write \
-                             `{}: <your target's type>` (e.g. `int`, `i64`, \
-                             `std::string`). See docs/frame_language.md \
-                             § Types and Expressions.",
-                            kind, owner, pname, target, pname
-                        ),
-                    )
-                    .with_span(span.clone()),
-                );
+            match ptype {
+                Type::Unknown => {
+                    errs.push(
+                        ValidationError::new(
+                            "E606",
+                            format!(
+                                "{} '{}' parameter '{}' is missing a type annotation. \
+                                 Frame has no type system — type names pass through \
+                                 verbatim — and for the statically-typed target '{:?}' \
+                                 framec cannot synthesize a parameter type. Write \
+                                 `{}: <your target's type>` (e.g. `int`, `i64`, \
+                                 `std::string`). See docs/frame_language.md \
+                                 § Types and Expressions.",
+                                kind, owner, pname, target, pname
+                            ),
+                        )
+                        .with_span(span.clone()),
+                    );
+                }
+                Type::Custom(s) => {
+                    if let Some(hint) = static_target_pseudo_type(s) {
+                        errs.push(
+                            ValidationError::new(
+                                "E609",
+                                format!(
+                                    "{} '{}' parameter '{}' has type '{}', which is not a real \
+                                     type on the statically-typed target '{:?}'. Frame passes \
+                                     type names through verbatim, so write {} instead. \
+                                     See docs/frame_language.md § Types and Expressions.",
+                                    kind, owner, pname, s, target, hint
+                                ),
+                            )
+                            .with_span(span.clone()),
+                        );
+                    }
+                }
             }
         };
         // Interface-declared methods.
