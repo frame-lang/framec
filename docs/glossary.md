@@ -171,6 +171,22 @@ store. A stack of frame contexts (the *context stack*) exists so a
 event: its name and its positional parameters. See
 [runtime walkthrough § Step 1](frame_runtime.md#step-1--a-system-that-accepts-a-call).
 
+### framec
+
+The Frame [transpiler](#transpiler): the command-line tool that reads a Frame
+source file, expands its `@@system` blocks into an idiomatic state-machine
+implementation in the file's target language, and passes all native
+host code through unchanged. `framec` is the canonical name for the tool in both
+prose and CLI examples (`framec source.fpy -l rust`). Its formal project name is
+the [framepiler](#framepiler).
+
+### framepiler
+
+The formal project name for [framec](#framec) — the Frame
+[transpiler](#transpiler). The two names refer to the same tool: "framepiler" is
+the project/repository name, while `framec` is the binary and the name used
+throughout the guides. Architecture: [framepiler design](framepiler_design.md).
+
 ### hierarchical state machine (HSM)
 
 A [state machine](#machine) in which a [state](#state) may declare a parent
@@ -351,7 +367,7 @@ with `$.name`. See
 
 A Frame state machine as a unit: the `@@system` declaration with its
 `interface:`, `machine:`, `actions:`, `operations:`, and `domain:` blocks. The
-compilation target. See
+transpilation target. See
 [language reference § System Declaration](frame_language.md#system-declaration).
 
 ### system context
@@ -378,6 +394,15 @@ fresh [compartment](#compartment) for the target, and runs the target's `$>`
 [enter handler](#-enter-handler). See
 [language reference § Transition](frame_language.md#transition---state).
 
+### transpiler
+
+A source-to-source translator: a tool that reads source in one language and
+emits source in another, rather than producing machine code or bytecode.
+[framec](#framec) is a transpiler — it turns Frame `@@system` blocks into
+target-language source (Python, Rust, TypeScript, …) that a developer reads,
+edits, and compiles with that language's own toolchain. Frame uses *transpiler*
+(verb: *transpile*) throughout the documentation.
+
 ---
 
 ## Symbols
@@ -386,7 +411,7 @@ fresh [compartment](#compartment) for the target, and runs the target's `$>`
 
 The *system context* token. On its own it introduces a context accessor
 (`@@:return`, `@@:params.x`, `@@:event`, `@@:data.k`, `@@:system.state`,
-`@@:self.method(...)`); as a prefix it tags compiler-recognized constructs
+`@@:self.method(...)`); as a prefix it tags framec-recognized constructs
 (`@@system`, `@@[...]` attributes, `@@SystemName(...)` instantiation,
 `@@!Foo()`). See [language reference § System Context — `@@`](frame_language.md#system-context--).
 
@@ -403,7 +428,7 @@ and [RFC-0013](rfcs/rfc-0013.md).
 
 ### `@@[target(...)]`
 
-File-level attribute selecting the code-generation backend. See
+File-level attribute selecting the target backend. See
 [language reference § `@@[target(...)]`](frame_language.md#target).
 
 ### `@@[main]`
@@ -453,7 +478,7 @@ a resource handle, which the user reattaches explicitly). Applies only to
 
 Module-level **analysis directive** naming a Frame source file —
 `@@import "./other.frm"`. It tells framec where a referenced [system](#system)'s
-source lives so framec can read it *while compiling the current file*: to check
+source lives so framec can read it *while transpiling the current file*: to check
 this file's use of that system (argument arity/types, existence) and to resolve
 cross-file facts code generation needs (notably a [composed](#composed-system)
 child's [save](#save) / [load](#load) method names). It is **not** a
