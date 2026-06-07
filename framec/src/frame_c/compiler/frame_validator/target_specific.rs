@@ -48,6 +48,9 @@ impl FrameValidator {
             crate::frame_c::visitors::TargetLanguage::GDScript => {
                 self.validate_gdscript_reserved_methods(system);
             }
+            crate::frame_c::visitors::TargetLanguage::Ruby => {
+                self.validate_ruby_reserved_methods(system);
+            }
             crate::frame_c::visitors::TargetLanguage::TypeScript
             | crate::frame_c::visitors::TargetLanguage::JavaScript => {
                 self.validate_typescript_global_collision(system);
@@ -118,6 +121,46 @@ impl FrameValidator {
                 );
             }
         }
+    }
+
+    /// E501 (Ruby): an interface method whose generated `def <name>` would
+    /// override a method Ruby's object model relies on, an unworkable
+    /// collision. `initialize` is the constructor — a `def initialize`
+    /// event handler silently replaces the system's constructor, breaking
+    /// construction. (Contrast `send`, which is *not* rejected: internal
+    /// dispatch uses the override-proof `__send__` alias, so a user `send`
+    /// event is fine — FRAMEC_BUGS #14.) FRAMEC_BUGS #15.
+    pub(super) fn validate_ruby_reserved_methods(&mut self, system: &SystemAst) {
+        for method in &system.interface {
+            if let Some(suggested) = ruby_reserved_method_rename(&method.name) {
+                self.errors.push(
+                    ValidationError::new(
+                        "E501",
+                        format!(
+                            "Interface method '{}' in system '{}' collides with Ruby's \
+                             `{}` (the object constructor). The generated `def {}` would \
+                             silently replace the system's constructor, breaking \
+                             construction. Rename it (suggested: '{}').",
+                            method.name, system.name, method.name, method.name, suggested
+                        ),
+                    )
+                    .with_span(method.span.clone()),
+                );
+            }
+        }
+    }
+}
+
+/// Ruby method names an interface method must not use because the
+/// generated `def <name>` would override a method Ruby's object model
+/// depends on and the collision can't be worked around by the caller.
+/// `initialize` is the constructor. (`send` is deliberately absent —
+/// internal dispatch uses `__send__`, so a user `send` event is safe.)
+/// Returns `None` for names that are safe to use as-is.
+pub fn ruby_reserved_method_rename(name: &str) -> Option<&'static str> {
+    match name {
+        "initialize" => Some("on_initialize"),
+        _ => None,
     }
 }
 

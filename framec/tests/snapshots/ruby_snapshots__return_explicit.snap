@@ -140,7 +140,7 @@ class ReturnExplicit
     def __router(__e)
         handler_name = "_state_#{@__compartment.state}"
         if respond_to?(handler_name, true)
-            send(handler_name, __e, @__compartment)
+            __send__(handler_name, __e, @__compartment)
         end
     end
 

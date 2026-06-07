@@ -92,7 +92,10 @@ mod system_checks;
 mod target_specific;
 mod transitions;
 
-pub use target_specific::{gdscript_reserved_method_rename, typescript_global_collision_rename};
+pub use target_specific::{
+    gdscript_reserved_method_rename, ruby_reserved_method_rename,
+    typescript_global_collision_rename,
+};
 
 use super::arcanum::Arcanum;
 use super::frame_ast::*;
