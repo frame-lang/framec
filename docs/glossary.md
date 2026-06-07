@@ -95,8 +95,20 @@ See [RFC-0015](rfcs/rfc-0015.md).
 The runtime act of routing an incoming [frame event](#frame-event) to the
 [event handler](#event-handler) for the current [state](#state) — walking up the
 [HSM](#hierarchical-state-machine-hsm) parent chain if the current state
-[forwards](#forward). Performed by the per-system *kernel* function. See
+[forwards](#forward). Performed by the per-system [kernel](#kernel) function,
+which calls the [router](#router) and the current state's
+[dispatcher](#dispatcher). See
 [runtime walkthrough § Step 1](frame_runtime.md#step-1--a-system-that-accepts-a-call).
+
+### dispatcher
+
+*(`_state_<State>` in generated code.)* A [state](#state)'s own event-handling
+function — one per state — that matches a [frame event](#frame-event)'s message
+to that state's [event handler](#event-handler) (or does nothing if the state
+has no handler for it). Selected and called by the [router](#router). Not to be
+confused with [dispatch](#dispatch), the runtime *act* of routing an event: the
+dispatcher is the per-state function that performs the final match. See
+[runtime walkthrough § Step 2](frame_runtime.md#step-2--adding-a-state).
 
 ### domain
 
@@ -200,6 +212,15 @@ A [system](#system)'s public API, declared in the `interface:` block: the named
 methods callers may invoke. Each interface call is [dispatched](#dispatch) to
 the current [state](#state). See
 [language reference § Interface Section](frame_language.md#interface-section).
+
+### kernel
+
+*(`__kernel`.)* The per-system runtime entry point for one [dispatch](#dispatch):
+an interface-method wrapper builds a [frame event](#frame-event) and hands it to
+the kernel, which calls the [router](#router) and then drains any pending
+[transitions](#transition). One kernel per system; it holds no state-selection
+logic itself. See
+[runtime walkthrough § Step 2](frame_runtime.md#step-2--adding-a-state).
 
 ### load
 
@@ -310,6 +331,14 @@ Reconstructing a [system](#system) instance from a serialized blob: allocate the
 instance with [no-initialization](#no-initialization), then call [`load`](#load).
 For a [composed system](#composed-system), the same pattern recurses into nested
 `@@system` domain fields. See [RFC-0015](rfcs/rfc-0015.md).
+
+### router
+
+*(`__router`.)* The single dispatch primitive: it reads the current
+[state](#state) name from the leaf [compartment](#compartment) and calls that
+state's [dispatcher](#dispatcher) — one `if/elif` branch per state. Invoked by
+the [kernel](#kernel). See
+[runtime walkthrough § Step 2](frame_runtime.md#step-2--adding-a-state).
 
 ### save
 
