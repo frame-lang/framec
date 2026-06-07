@@ -238,6 +238,32 @@ which survives `--remap`.
   C, GDScript, Swift, and Erlang are exempt — no catchable exception can
   propagate through their dispatch.
 
+### Fixed — codegen & validator hardening (bug sweep)
+
+- **Transition across a newline now parses (#43).** `->` followed by its
+  `$State` target on the next line previously emitted the tokens as native
+  text — no transition, and a spurious W414 ("state not reachable"). Both the
+  unified scanner (codegen) and the lexer (AST / reachability) are now
+  newline-aware. The trailing-`$` requirement is preserved, so native `-> T`
+  (Rust / Erlang) is unaffected. All backends.
+- **`E400` — inline control flow with transition arms is rejected (#13).**
+  `if c then -> $A else -> $B end` on a single line silently miscompiled (the
+  transition's implicit `return` cannot be scoped through an opaque native
+  block — the Oceans Model). It is now a clear error; the multi-line
+  `if/then/else` form (and brace-delimited inline blocks) work as before.
+- **Ruby internal dispatch uses `__send__` (#14).** A user event named `send`
+  shadowed `Object#send` and broke the router; internal dispatch now uses the
+  override-proof `__send__` alias, so a user `send` event is harmless.
+- **`E501` — Ruby `initialize` interface method is rejected (#15).** A
+  `def initialize` event handler would silently replace the object
+  constructor; rejected with a suggested rename (mirrors the GDScript
+  reserved-method check). Other targets are unaffected.
+- **`E609` — Rust `list`/`dict`/`set`/`tuple` pseudo-types are rejected (#37).**
+  Rust passes type names through verbatim and has no mapping, so
+  `domain: xs: list` emitted the invalid `pub xs: list`. Rust-scoped — these
+  names remain supported on C and dynamic targets via the runtime's list/dict
+  helpers.
+
 ## [4.3.0] - 2026-05-27
 
 Re-introduces the `@@import` directive (removed in 4.2.0 by RFC-0024) in a
