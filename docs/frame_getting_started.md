@@ -1590,7 +1590,7 @@ Sync methods on an async system still work correctly — awaiting a synchronous 
 ### One Driver at a Time
 
 An `@@[async]` system is generated as two classes: the **casing** (the public
-class with the name you declared) and a private **machine** (`_Connection­Machine`)
+class with the name you declared) and a private **machine class** (`_ConnectionMachine`)
 that holds the actual state-machine dispatch. You only ever touch the casing.
 
 The casing enforces a **single-driver** rule: only one interface call may be in

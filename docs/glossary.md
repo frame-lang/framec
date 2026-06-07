@@ -240,15 +240,22 @@ A [system](#system)'s state machine, declared in the `machine:` block: its
 [transitions](#transition) between them. See
 [language reference § Machine Section](frame_language.md#machine-section).
 
+Two other senses of the word appear in the docs: colloquially, *machine* is
+Frame's shorthand for the whole automaton (the systems it generates), and an
+[async system](#async-system) emits a distinct private class — see
+[machine (async system)](#machine-async-system).
+
 ### machine (async system)
 
 The private class (`_<Name>Machine`) framec emits for an
-[async system](#async-system), holding the actual dispatch core — kernel,
-router, state methods, transition loop, and lifecycle cascades. It is the
-previous-release single-class emission minus the public name; self-calls
-and kernel-internal dispatch run against it directly, bypassing the
-[casing](#casing)'s gate. It is internal: user code must not name
-`_<Name>Machine` directly. Introduced in [RFC-0043](rfcs/rfc-0043.md).
+[async system](#async-system), holding the actual dispatch core —
+[kernel](#kernel), [router](#router), state methods, transition loop, and
+lifecycle cascades. It is the previous-release single-class emission minus the
+public name; self-calls and kernel-internal dispatch run against it directly,
+bypassing the [casing](#casing)'s gate. It is internal: user code must not name
+`_<Name>Machine` directly. Distinct from [machine](#machine) (the `machine:`
+block of states) and from the colloquial use of *machine* for the whole
+automaton. Introduced in [RFC-0043](rfcs/rfc-0043.md).
 
 ### no-initialization
 
