@@ -306,24 +306,31 @@ impl FrameValidator {
                         .with_span(var.span.clone()),
                     );
                 }
-                Type::Custom(s) => {
+                // #37 is Rust-only: `list`/`dict` ARE supported domain types on
+                // C (and dynamic targets) via the runtime's list/dict helpers
+                // (e.g. C's `_persist_pack_field_list`); only Rust lacks the
+                // mapping and emits the verbatim `pub xs: list` (invalid). Scope
+                // the rejection to Rust so those legitimately-supported fixtures
+                // still compile.
+                Type::Custom(s) if matches!(target, Rust) => {
                     if let Some(hint) = static_target_pseudo_type(s) {
                         self.errors.push(
                             ValidationError::new(
                                 "E609",
                                 format!(
-                                    "domain field '{}' in system '{}' has type '{}', which is \
-                                     not a real type on the statically-typed target '{:?}'. \
-                                     Frame passes type names through verbatim (it has no type \
-                                     system), so write {} instead. \
+                                    "domain field '{}' in system '{}' has type '{}', which the \
+                                     Rust backend does not map to a real type (Frame passes type \
+                                     names through verbatim, so it would emit the invalid \
+                                     `pub {}: {}`). Write {} instead. \
                                      See docs/frame_language.md § Types and Expressions.",
-                                    var.name, system.name, s, target, hint
+                                    var.name, system.name, s, var.name, s, hint
                                 ),
                             )
                             .with_span(var.span.clone()),
                         );
                     }
                 }
+                Type::Custom(_) => {}
             }
         }
     }
@@ -374,23 +381,25 @@ impl FrameValidator {
                         .with_span(span.clone()),
                     );
                 }
-                Type::Custom(s) => {
+                // #37 Rust-only — see the domain-field branch above.
+                Type::Custom(s) if matches!(target, Rust) => {
                     if let Some(hint) = static_target_pseudo_type(s) {
                         errs.push(
                             ValidationError::new(
                                 "E609",
                                 format!(
-                                    "{} '{}' parameter '{}' has type '{}', which is not a real \
-                                     type on the statically-typed target '{:?}'. Frame passes \
-                                     type names through verbatim, so write {} instead. \
+                                    "{} '{}' parameter '{}' has type '{}', which the Rust backend \
+                                     does not map to a real type (it would emit the verbatim, \
+                                     invalid `{}`). Write {} instead. \
                                      See docs/frame_language.md § Types and Expressions.",
-                                    kind, owner, pname, s, target, hint
+                                    kind, owner, pname, s, s, hint
                                 ),
                             )
                             .with_span(span.clone()),
                         );
                     }
                 }
+                Type::Custom(_) => {}
             }
         };
         // Interface-declared methods.
