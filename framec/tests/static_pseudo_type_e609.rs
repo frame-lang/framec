@@ -1,10 +1,13 @@
-//! FRAMEC_BUGS #37: bare Python-ish container type names (`list`, `dict`,
-//! `set`, `tuple`) have no meaning on a statically-typed target. Frame
-//! passes type strings through verbatim, so `domain: xs: list` used to emit
-//! `pub xs: list` (invalid Rust). They are now rejected with **E609** + a
-//! native-type hint (keeping the type-passthrough architecture intact —
-//! framec does not map types). Real native types and dynamic targets are
-//! unaffected.
+//! FRAMEC_BUGS #37 (Rust-only): the Rust backend does not map the bare
+//! container type names `list`/`dict`/`set`/`tuple` to a real type — Frame
+//! passes type strings through verbatim, so `domain: xs: list` emitted
+//! `pub xs: list` (invalid Rust). On Rust they are now rejected with
+//! **E609** + a native-type hint (keeping type-passthrough intact — framec
+//! does not map types).
+//!
+//! These names ARE supported on C (and dynamic targets) via the runtime's
+//! list/dict helpers, so the rejection is **Rust-scoped**: real native
+//! types, C's bare `list`/`dict`, and dynamic targets are all unaffected.
 
 mod common;
 use common::{compile_expect_error, compile_source};
@@ -38,9 +41,19 @@ fn rust_real_container_type_accepted() {
 
 #[test]
 fn dynamic_target_pseudo_type_allowed() {
-    // `list` is a real type on Python — the check is static-target only.
+    // `list` is a real type on Python — the check is Rust-only.
     let _ = compile_source(
         "@@[target(\"python_3\")]\n@@system R { interface: g() machine: $A { g() {} } domain: xs: list = [] }",
         "python_3",
+    );
+}
+
+#[test]
+fn c_target_list_dict_allowed() {
+    // C supports `list`/`dict` as domain types via the runtime's
+    // list/dict helpers — they must NOT be rejected (#37 is Rust-only).
+    let _ = compile_source(
+        "@@[target(\"c\")]\n@@system R { interface: g(m: dict) machine: $A { g(m: dict) {} } domain: xs: list = 0 }",
+        "c",
     );
 }
