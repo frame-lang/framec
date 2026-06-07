@@ -240,6 +240,56 @@ pub fn scan_native_regions<S: SyntaxSkipper>(
                     }
                 }
 
+                // E400 (FRAMEC_BUGS #13): a transition must be the last
+                // statement on its line. Inline native control flow with
+                // transition arms — `if c then -> $A else -> $B end` — can't
+                // scope the transition's implicit `return` through an opaque
+                // native block (Oceans Model), so it silently miscompiles
+                // (wrong arm taken, dropped `else`, or a broken `end`). Reject
+                // it; the multi-line if/then/else form works correctly.
+                //
+                // Allowed to follow the transition on its line: whitespace, a
+                // comment, a block/terminator delimiter (`}` / `;`), or a
+                // Frame continuation (`@`). Anything else (`else`, `end`, a
+                // second `->`, …) means the transition isn't the last token.
+                if kind == FrameSegmentKind::Transition {
+                    let construct_end = if match_pos < end && bytes[match_pos] == b'$' {
+                        let mut k = match_pos + 1;
+                        if k < end && bytes[k] == b'^' {
+                            k += 1; // $^
+                        } else {
+                            while k < end && (bytes[k].is_ascii_alphanumeric() || bytes[k] == b'_')
+                            {
+                                k += 1;
+                            }
+                        }
+                        if k < end && bytes[k] == b'(' {
+                            if let Some(k2) = skipper.balanced_paren_end(bytes, k, end) {
+                                k = k2;
+                            }
+                        }
+                        k
+                    } else {
+                        match_pos // `-> pop$` etc — already past the construct
+                    };
+                    let after = skip_ws(bytes, construct_end, end);
+                    let trailing_code = after < end
+                        && !matches!(bytes[after], b'\n' | b'\r' | b'}' | b';' | b'@')
+                        && skipper.skip_comment(bytes, after, end).is_none();
+                    if trailing_code {
+                        return Err(ScanError {
+                            kind: ScanErrorKind::UnterminatedProtected,
+                            message: "E400: a transition must be the last statement on its line. \
+                                      Inline native control flow with transition arms (e.g. \
+                                      `if c then -> $A else -> $B end`) is not supported — the \
+                                      transition's implicit return cannot be scoped through an \
+                                      opaque native block. Put each transition on its own line \
+                                      using the multi-line form."
+                                .to_string(),
+                        });
+                    }
+                }
+
                 // Find end of Frame statement. Seed the line-end search from
                 // the matched construct position rather than `i`: when a
                 // transition spans a newline (`->` <newline> `$State`,
