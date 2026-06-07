@@ -199,7 +199,7 @@ Three parameter groups configure a system at construction time. Each is optional
 | Enter arg | `$>(name: type)` | Start state's `compartment.enter_args` |
 | Domain arg | `name: type` (bare) | Constructor argument, used in domain field initializers |
 
-Each param body has the same shape (`name: type` or `name: type = default`) regardless of group; only the sigil differs. The framepiler validates that state and enter args have matching declarations on the start state's `$Start(name: type)` and `$>(name: type)` handlers.
+Each param body has the same shape (`name: type` or `name: type = default`) regardless of group; only the sigil differs. framec validates that state and enter args have matching declarations on the start state's `$Start(name: type)` and `$>(name: type)` handlers.
 
 #### Param syntax
 
@@ -236,7 +236,7 @@ name : type = default
 r = @@Robot($(7), "R2D2")       // x = 7 (state arg), name = "R2D2" (domain)
 ```
 
-Note the call site: state args are tagged with `$(...)` so the assembler can route them into `compartment.state_args`. See [System Instantiation](#system-instantiation) for the full call site form.
+Note the call site: state args are tagged with `$(...)` so framec can route them into `compartment.state_args`. See [System Instantiation](#system-instantiation) for the full call site form.
 
 State args are also written by transitions (`-> $Start(42)`). The codegen stores transition-passed args under the same declared param name, so the dispatch reads the param identically whether the state was entered via the system constructor or a transition.
 
@@ -289,7 +289,7 @@ Bare identifiers in the header become **constructor arguments** that are in scop
 c = @@Counter(10)               // value is 10
 ```
 
-The codegen prepends the language-appropriate self-reference (`self.`, `this.`, `@`) to the LHS of the domain field assignment, so `value = value` (param and field with the same name) is unambiguous: it compiles to `self.value = value`.
+The codegen prepends the language-appropriate self-reference (`self.`, `this.`, `@`) to the LHS of the domain field assignment, so `value = value` (param and field with the same name) is unambiguous: it transpiles to `self.value = value`.
 
 ---
 
@@ -368,7 +368,7 @@ $.<varName> (: <type>)? = <initializer_expr>
 - No duplicates within a state
 - State variable names may shadow domain variables (no ambiguity due to `$.` prefix)
 
-**Portable init expressions:** Use Frame-portable literals for state variable initializers: `""` for strings, `0` for integers, `false` for booleans. The framepiler wraps these to match the target language's type system (e.g., `String::from("")` for Rust, `std::string("")` for C++). Target-language-specific constructors like `String::new()` are NOT portable — the Frame parser may not handle them correctly. If you need a target-specific value, write it as native code and the framepiler will pass it through unchanged.
+**Portable init expressions:** Use Frame-portable literals for state variable initializers: `""` for strings, `0` for integers, `false` for booleans. framec wraps these to match the target language's type system (e.g., `String::from("")` for Rust, `std::string("")` for C++). Target-language-specific constructors like `String::new()` are NOT portable — the Frame parser may not handle them correctly. If you need a target-specific value, write it as native code and framec will pass it through unchanged.
 
 ### Event Handlers
 
@@ -423,7 +423,7 @@ $Active {
 ### Argument-receiver contract
 
 A transition that supplies args must have a receiver that can take
-them. The framepiler enforces this at compile time:
+them. framec enforces this at transpile time:
 
 | Site             | Receiver                       | Code  |
 |------------------|--------------------------------|-------|
@@ -431,7 +431,7 @@ them. The framepiler enforces this at compile time:
 | `-> (args) $T`   | target state's `$>(...)`       | E417  |
 | `-> $T(args)`    | target state's state params    | E405  |
 
-If the receiver is missing or its arity doesn't fit, the compile
+If the receiver is missing or its arity doesn't fit, transpilation
 fails. EventParam-backed receivers (E417, E419) honor trailing
 defaults — `<$(a, b = "x")` accepts 1 or 2 supplied args. State
 params (E405) currently have no defaults, so the count must match
@@ -762,7 +762,7 @@ Each interface call pushes its own context. Nested calls are isolated — inner 
 
 ## Self Reference
 
-`@@:self` is a syntactic prefix used to dispatch through the system's own interface. It is **not** a first-class value — bare `@@:self` is a compile error (E603). The only valid form is `@@:self.method(args)`.
+`@@:self` is a syntactic prefix used to dispatch through the system's own interface. It is **not** a first-class value — bare `@@:self` is a transpile error (E603). The only valid form is `@@:self.method(args)`.
 
 ### Self Accessors
 
@@ -782,7 +782,7 @@ In OO target languages (Python, TypeScript, Rust, Java, Kotlin, Swift, C#, Ruby,
 `@@:self.method(args)` is preferred for two reasons:
 
 1. **Static validation.** The validator checks that `method` exists in the `interface:` block with the right arity (E601/E602). Native calls bypass this.
-2. **Cross-backend portability.** In C and Erlang the handler scope has no `self`/`this` keyword; dispatch goes through a different mechanism. `@@:self.` abstracts that difference so the same Frame source compiles everywhere.
+2. **Cross-backend portability.** In C and Erlang the handler scope has no `self`/`this` keyword; dispatch goes through a different mechanism. `@@:self.` abstracts that difference so the same Frame source transpiles everywhere.
 
 ```frame
 $Active {
@@ -858,7 +858,7 @@ $Processing {
 
 > **Bare `@@:system.state` is reserved** ([RFC-0045](rfcs/rfc-0045.md)). The
 > name accessor is `@@:system.state.name`; writing bare `@@:system.state` is a
-> compile error (**E608**). The `@@:system.state` path is held for a future
+> transpile error (**E608**). The `@@:system.state` path is held for a future
 > direct reference to the current *compartment*, of which the name is one field.
 
 **Available in:** event handlers, enter/exit handlers, actions, non-static operations.
@@ -1059,7 +1059,7 @@ const migrated = migrate_async_attr(originalSource);
 
 ## System Instantiation
 
-Use `@@SystemName()` in native code to instantiate a Frame system. The framepiler expands this to the appropriate native constructor and validates that the system name exists and arguments match.
+Use `@@SystemName()` in native code to instantiate a Frame system. framec expands this to the appropriate native constructor and validates that the system name exists and arguments match.
 
 ```frame
 calc = @@Calculator()
@@ -1109,7 +1109,7 @@ Named-form args may be supplied in any order. Defaults are filled in for any omi
 
 #### Defaults are substituted at the call site
 
-Parameters with default values may be omitted from either form. The Frame assembler substitutes the declared default expression at the tagged-instantiation expansion site, so the target language never sees it as a constructor-default — it's a literal arg in the generated call.
+Parameters with default values may be omitted from either form. framec substitutes the declared default expression at the tagged-instantiation expansion site, so the target language never sees it as a constructor-default — it's a literal arg in the generated call.
 
 ```frame
 @@system Counter(initial: int = 0) { ... }
@@ -1121,7 +1121,7 @@ This means default values can use any expression valid in the target language at
 
 #### Instantiation Validation
 
-The framepiler validates at the assembler stage:
+framec validates this when it expands the instantiation:
 
 - The system name exists in this file.
 - Sigils on the call site match the declared groups (`$(...)` for state args, `$>(...)` for enter args, bare for domain).
@@ -1139,17 +1139,17 @@ Frame has two version numbers that move on different schedules.
 
 | Number | What it tracks | Example |
 |---|---|---|
-| **framec semver** | The compiler release line. Bumps signal CLI/codegen changes. | `4.3.0` |
+| **framec semver** | The transpiler release line. Bumps signal CLI/codegen changes. | `4.3.0` |
 | **Grammar version** | The Frame language specification itself. Moves much more slowly. | `v0.30` |
 
-The compiler version on its own does not tell you the language version, and vice versa. A patch release of framec almost never changes the grammar; a grammar bump only happens when the language surface changes (new syntax, removed syntax, semantics change).
+The framec version on its own does not tell you the language version, and vice versa. A patch release of framec almost never changes the grammar; a grammar bump only happens when the language surface changes (new syntax, removed syntax, semantics change).
 
 ### Source compatibility (what `4.x` means for your `.fpy` files)
 
 `framec` follows semver for **source-level** compatibility of `.fpy` / `.frs` / `.fts` / etc. files:
 
 - **Major** (`4.x` → `5.x`) may require source changes — a grammar version bump usually rides with it. Migration notes ship in `docs/releases/<version>-migration.md`.
-- **Minor** (`4.2` → `4.3`) is additive. Existing valid sources continue to compile.
+- **Minor** (`4.2` → `4.3`) is additive. Existing valid sources continue to transpile.
 - **Patch** (`4.2.3` → `4.2.4`) is bug-fix only. No source changes required.
 
 ### Generated code stability (will codegen churn on upgrade?)
@@ -1387,8 +1387,8 @@ if __name__ == '__main__':
 Frame's surface syntax divides into a small, closed set of categories. This
 appendix names each with standard compiler terminology and is the source of the
 vocabulary used throughout this guide. Every classification here is verified
-against *emitted code* by `framec/tests/syntax_taxonomy.rs` — it states what the
-compiler does, not what the syntax looks like.
+against *emitted code* by `framec/tests/syntax_taxonomy.rs` — it states what framec
+does, not what the syntax looks like.
 
 The central fact: **Frame has almost no expression grammar of its own.** There
 are no operators, literals, precedence, or control-flow keywords (`if`/`while`/
@@ -1423,7 +1423,7 @@ Frame reference (`$.x` → `self.x`) spliced in.
      `@@Sys(args)` / `@@!Sys()` (system instantiation). Both are usable in value
      position (assignment RHS) and, standalone, as expression-statements.
 
-5. **Attributes / Pragmas** — compile-time metadata, never runtime:
+5. **Attributes / Pragmas** — transpile-time metadata, never runtime:
    `@@[target(...)]`, `@@[persist]`, `@@[main]`, `@@[create/save/load/no_persist]`,
    and the bare directives `@@import`, `@@codegen`, `@@run-expect`, `@@skip-if`,
    `@@timeout`.

@@ -371,7 +371,7 @@ Assignment to a `const` field in a handler body is E615. Per-target rendering: `
 ## CLI quick reference
 
 ```bash
-framec source.fpy                     # compile to target declared via @@[target(...)]
+framec source.fpy                     # transpile to target declared via @@[target(...)]
 framec source.fpy -l rust             # override target
 framec source.fpy -l graphviz | dot -Tsvg -o diagram.svg
 framec source.fpy -o out.py           # write output to file

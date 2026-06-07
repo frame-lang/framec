@@ -11,7 +11,7 @@ idiomatic state-machine implementations in that same language. Everything outsid
 the `@@system` blocks passes through unchanged — native code, no runtime
 dependency, drop-in ready.
 
-One specification compiles to **17 target languages** — Python, TypeScript,
+One specification transpiles to **17 target languages** — Python, TypeScript,
 JavaScript, Rust, C, C++, Java, C#, Go, PHP, Kotlin, Swift, Ruby, Erlang, Lua,
 Dart, GDScript — plus **Graphviz** for state-diagram visualization.
 
@@ -24,7 +24,7 @@ cargo install framec
 ## Start here
 
 - [Getting Started](frame_getting_started.md) — tutorial introduction
-- [QuickStart](frame_quickstart.md) — dense syntax reference
+- [QuickStart](frame_quickstart.md) — jump into Frame syntax
 - [Language Reference](frame_language.md) — full syntax and semantics
 - [Cookbook](frame_cookbook.md) — 111 recipes, from basic machines to enterprise patterns
 - [Runtime](frame_runtime.md) — how a generated machine behaves at runtime

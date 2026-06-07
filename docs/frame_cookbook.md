@@ -1448,7 +1448,7 @@ if __name__ == '__main__':
 
 **How it works:** `@@:self.reading()` dispatches through the full kernel pipeline. The return value is available as a native expression.
 
-**Automatic transition guard:** In `attempt_post_shutdown()`, calling `@@:self.trigger_shutdown()` transitions to `$Shutdown`. The framepiler emits an early-return guard immediately after every `@@:self.method(...)` call site:
+**Automatic transition guard:** In `attempt_post_shutdown()`, calling `@@:self.trigger_shutdown()` transitions to `$Shutdown`. framec emits an early-return guard immediately after every `@@:self.method(...)` call site:
 
 ```python
 def _s_Active_hdl_user_attempt_post_shutdown(self, __e, compartment):
@@ -11590,7 +11590,7 @@ Most security protocols are already state machines in prose form. RFC 8446 (TLS 
 
 Implemented as imperative code with booleans and guards, these protocols produce scattered `if`-checks, invisible safety properties, and transitions that reviewers must trace by hand. Implemented as Frame systems, the security property *is* the shape of the graph: missing a gate is a visible missing node, adding a bypass is a visible new edge, and impossible states are impossible because they have no handler — not because a check rejects them.
 
-The authoritative statement of each protocol above is the Frame source, diffed in version control, diagrammed with `framec system.fpy -l graphviz | dot -Tsvg`, and compiled to the same class the production system runs.
+The authoritative statement of each protocol above is the Frame source, diffed in version control, diagrammed with `framec system.fpy -l graphviz | dot -Tsvg`, and transpiled to the same class the production system runs.
 
 -----
 
