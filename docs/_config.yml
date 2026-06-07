@@ -35,10 +35,11 @@ aux_links:
 aux_links_new_tab: true
 
 # Playable Frame Arcade — a separate deploy (frame-games repo) at its own
-# subdomain. Surfaced via docs/games.md, which sits at nav_order 5.5 (between
-# Cookbook and Runtime) and uses jekyll-redirect-from to bounce the visitor
-# out to https://games.frame-lang.org. Same-tab; for new-tab placement we'd
-# need a theme `_includes` override.
+# subdomain. Surfaced as a top-level nav item that opens in a new tab.
+nav_external_links:
+  - title: Games
+    url: https://games.frame-lang.org
+    opens_in_new_tab: true
 back_to_top: true
 back_to_top_text: "Back to top"
 
