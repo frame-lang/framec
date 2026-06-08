@@ -518,6 +518,10 @@ fn extract_transitions(
                     );
                 }
             }
+            // Non-transition statements are skipped. This walks only `@@system`
+            // handler statements, so the `@@fsm`-only `Block`/`Expression`
+            // variants never reach here — see the `Statement` enum's
+            // construct-ownership note.
             _ => {}
         }
     }

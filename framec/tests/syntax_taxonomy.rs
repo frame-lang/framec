@@ -316,11 +316,15 @@ fn statement_category(s: &Statement) -> StmtCategory {
         }
 
         // Not Frame surface syntax (verified: no if/while/for/loop/continue
-        // keywords in the lexer; no operator grammar).
+        // keywords in the lexer; no operator grammar). `Block` is the
+        // RFC-0043 `{ ... }` statement container (an `if` branch or an
+        // `@@fsm` action body) — produced only by the `@@fsm` statement
+        // parser, never by `@@system` surface syntax, so it groups here.
         Statement::If(_)
         | Statement::Loop(_)
         | Statement::Expression(_)
-        | Statement::Continue(_) => StmtCategory::NotSurface,
+        | Statement::Continue(_)
+        | Statement::Block(_) => StmtCategory::NotSurface,
     }
 }
 

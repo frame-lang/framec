@@ -303,6 +303,108 @@ mod engine_tests {
         }
     }
 
+    /// Assert that `pattern` fails to compile with diagnostic `code`.
+    fn assert_code(pattern: &str, alphabet: Alphabet, code: &str) {
+        let err = compile(pattern, alphabet, size_check::DEFAULT_MAX_DFA_STATES)
+            .expect_err(&format!("`{pattern}` should fail to compile"));
+        match err {
+            CompileError::Diagnostics(ds) => assert!(
+                ds.iter().any(|d| d.code == code),
+                "expected {code} for `{pattern}`, got {ds:?}"
+            ),
+            other => panic!("expected {code} diagnostic for `{pattern}`, got {other:?}"),
+        }
+    }
+
+    /// FSM-TEST-250 — byte alphabet: a class over the ASCII byte range compiles
+    /// to a DFA over the 0–255 byte alphabet.
+    #[test]
+    fn fsm_test_250_byte_alphabet() {
+        compile(
+            "[\\x00-\\x7F]+",
+            Alphabet::Bytes,
+            size_check::DEFAULT_MAX_DFA_STATES,
+        )
+        .expect("byte-range class compiles");
+    }
+
+    /// FSM-TEST-252 — the `char` alphabet rejects the `\xNN` byte escape with
+    /// E722 (code points use `\u{NNNN}` instead, §6.7).
+    #[test]
+    fn fsm_test_252_char_rejects_byte_escape() {
+        assert_code("\\x41", Alphabet::Char, "E722");
+        // The code-point form is accepted in the char alphabet.
+        compile(
+            "\\u{4E2D}",
+            Alphabet::Char,
+            size_check::DEFAULT_MAX_DFA_STATES,
+        )
+        .expect("`\\u{4E2D}` compiles in the char alphabet");
+    }
+
+    /// FSM-TEST-254 — the `token` alphabet rejects character classes with E722
+    /// (literal byte/char syntax has no meaning over token kinds, §6.8).
+    #[test]
+    fn fsm_test_254_token_rejects_char_class() {
+        assert_code("[a-z]", Alphabet::Token, "E722");
+    }
+
+    /// FSM-TEST-300 — backreferences are non-regular and rejected with E720.
+    #[test]
+    fn fsm_test_300_backreference_rejected() {
+        assert_code("(.)\\1", Alphabet::Bytes, "E720");
+    }
+
+    /// FSM-TEST-301 — recursion is non-regular and rejected with E720.
+    #[test]
+    fn fsm_test_301_recursion_rejected() {
+        assert_code("a(?R)?b", Alphabet::Bytes, "E720");
+    }
+
+    /// FSM-TEST-302 — lookahead is deferred in v0.1 and rejected with E720.
+    #[test]
+    fn fsm_test_302_lookahead_rejected() {
+        assert_code("foo(?=bar)", Alphabet::Bytes, "E720");
+    }
+
+    /// FSM-TEST-303 — a multi-class concatenation with quantifiers (the
+    /// identifier pattern) compiles.
+    #[test]
+    fn fsm_test_303_character_class_compiles() {
+        compile(
+            "[a-zA-Z_][a-zA-Z0-9_]*",
+            Alphabet::Bytes,
+            size_check::DEFAULT_MAX_DFA_STATES,
+        )
+        .expect("identifier class compiles");
+    }
+
+    /// FSM-TEST-305 — bounded repetition `{n}` compiles.
+    #[test]
+    fn fsm_test_305_bounded_repetition_compiles() {
+        compile(
+            "[0-9]{4}",
+            Alphabet::Bytes,
+            size_check::DEFAULT_MAX_DFA_STATES,
+        )
+        .expect("bounded repetition compiles");
+    }
+
+    /// FSM-TEST-306b — lazy quantifiers are deferred in v0.1 and rejected with
+    /// E720 (the greedy-semantics companion FSM-TEST-306 is a runtime test).
+    #[test]
+    fn fsm_test_306b_lazy_quantifier_rejected() {
+        assert_code("a.*?b", Alphabet::Bytes, "E720");
+    }
+
+    /// FSM-TEST-307 — Unicode general-category classes are deferred in v0.1 and
+    /// rejected with E720.
+    #[test]
+    fn fsm_test_307_unicode_class_rejected() {
+        assert_code("\\p{L}+", Alphabet::Bytes, "E720");
+    }
+
+    /// FSM-TEST-310 — an empty regex (`//`) is rejected with E723.
     #[test]
     fn rejects_empty_with_e723() {
         let err = compile("", Alphabet::Bytes, size_check::DEFAULT_MAX_DFA_STATES).unwrap_err();
@@ -354,6 +456,8 @@ mod engine_tests {
         assert!(matches!(wb, CompileError::UnsupportedAnchors(_)));
     }
 
+    /// FSM-TEST-311 — a pattern whose minimal DFA exceeds the configured
+    /// `max_dfa_states` limit is rejected with E721.
     #[test]
     fn e721_when_dfa_exceeds_limit() {
         // `abc` minimizes to 4 states; a limit of 2 is exceeded.

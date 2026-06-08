@@ -657,7 +657,14 @@ impl Parser {
             '0' => 0x00,
             'a' => 0x07,
             'e' => 0x1B,
-            'x' => return self.parse_hex_escape(),
+            'x' => {
+                // §6.7: the `char` alphabet rejects byte escapes; `\u{NNNN}`
+                // is the code-point form. (Byte/token alphabets accept `\xNN`.)
+                if self.alphabet == Alphabet::Char {
+                    return Err(self.error(ParseErrorKind::ByteEscapeInCharAlphabet));
+                }
+                return self.parse_hex_escape();
+            }
             'u' => return self.parse_unicode_escape(),
             // Escaped punctuation is the literal punctuation char.
             '\\' | '.' | '*' | '+' | '?' | '(' | ')' | '[' | ']' | '{' | '}' | '|' | '^' | '$'
@@ -776,6 +783,10 @@ pub enum ParseErrorKind {
 
     /// `\u{...}` malformed or out of Unicode range.
     InvalidUnicodeEscape,
+
+    /// `\xNN` byte escape used in the `char` alphabet — rejected (§6.7);
+    /// code points use `\u{NNNN}` instead.
+    ByteEscapeInCharAlphabet,
 }
 
 #[cfg(test)]

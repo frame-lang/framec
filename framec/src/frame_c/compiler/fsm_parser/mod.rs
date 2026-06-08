@@ -1698,8 +1698,9 @@ mod structural_code_tests {
         }
     }
 
-    /// E701 — the `@@system` compartment sigil `$(...)` / `$>(...)` is not
-    /// valid in an `@@fsm` header (no compartments).
+    /// FSM-TEST-009 — state-arg sigil rejected in fsm header. The `@@system`
+    /// compartment sigil `$(...)` / `$>(...)` is not valid in an `@@fsm`
+    /// header (no compartments to receive state-args / enter-args).
     #[test]
     fn e701_sigil_in_header() {
         assert_eq!(
@@ -1708,6 +1709,11 @@ mod structural_code_tests {
         );
         assert_eq!(
             code("@@fsm M($>(x): bytes) : bool = false { /a/ true }"),
+            "E701"
+        );
+        // The RFC's exact FSM-TEST-009 fixture: state-arg before the bare input.
+        assert_eq!(
+            code("@@fsm M($(state_arg: int), text: bytes) : bool = false { /a/ true }"),
             "E701"
         );
     }
@@ -1719,11 +1725,14 @@ mod structural_code_tests {
         assert_eq!(code("@@fsm M(text: bytes) = false { /a/ true }"), "E705");
     }
 
+    /// FSM-TEST-003 — missing default rejected. The default value is
+    /// mandatory; no default is inferred even for `bool`.
     #[test]
     fn e705_missing_default() {
         assert_eq!(code("@@fsm M(text: bytes) : bool { /a/ true }"), "E705");
     }
 
+    /// FSM-TEST-104 — domain variable missing its mandatory initializer (E705).
     #[test]
     fn e705_domain_field_no_initializer() {
         assert_eq!(
@@ -1732,6 +1741,8 @@ mod structural_code_tests {
         );
     }
 
+    /// FSM-TEST-021 — domain out of canonical order is rejected (E710). The
+    /// canonical order is states → actions → domain (§3.3).
     /// E710 — sections out of canonical order (states → actions → domain).
     #[test]
     fn e710_domain_before_actions() {
@@ -1742,6 +1753,8 @@ mod structural_code_tests {
         );
     }
 
+    /// FSM-TEST-022 — a section (here `actions:`/state) appearing out of
+    /// canonical order relative to the states is rejected (E710).
     #[test]
     fn e710_state_after_block() {
         // A state declaration following `domain:` is out of order.
@@ -1751,6 +1764,7 @@ mod structural_code_tests {
         );
     }
 
+    /// FSM-TEST-023 — duplicate domain block rejected.
     /// E711 — a section appearing more than once.
     #[test]
     fn e711_duplicate_domain() {
@@ -1760,6 +1774,7 @@ mod structural_code_tests {
         );
     }
 
+    /// FSM-TEST-122 — a transition statement inside an action body rejected.
     /// E712 — a transition statement inside an action body.
     #[test]
     fn e712_transition_in_action_body() {
@@ -1769,6 +1784,9 @@ mod structural_code_tests {
         );
     }
 
+    /// FSM-TEST-1100 / FSM-TEST-1101 — a malformed declaration (here an
+    /// unterminated body; likewise a missing name or missing body braces)
+    /// reports the generic structural error E700.
     /// A generic parse error still reports `E700`.
     #[test]
     fn generic_error_is_e700() {
@@ -1776,5 +1794,43 @@ mod structural_code_tests {
             code("@@fsm M(text: bytes) : bool = false { /a/ true "),
             "E700"
         );
+    }
+
+    /// FSM-TEST-1100 — a malformed declaration missing the fsm name is E700.
+    #[test]
+    fn fsm_test_1100_missing_name() {
+        assert_eq!(
+            code("@@fsm (text: bytes) : bool = false { /a/ true }"),
+            "E700"
+        );
+    }
+
+    /// FSM-TEST-1101 — a malformed declaration missing the body braces is E700.
+    #[test]
+    fn fsm_test_1101_missing_body_braces() {
+        assert_eq!(code("@@fsm M(text: bytes) : bool = false /a/ true"), "E700");
+    }
+
+    /// FSM-TEST-014 — numeric labels (`$0`, `$1`) are valid state identifiers
+    /// (not reserved/magic), and a failure branch may self-loop to the same
+    /// state.
+    #[test]
+    fn fsm_test_014_numeric_label_valid() {
+        let ast = parse_fsm_block(
+            b"@@fsm M(text: bytes) : bool = false { $0: /a/ -> $1 : -> $0  $1: /b/ true }",
+        )
+        .expect("numeric labels must parse");
+        assert_eq!(ast.states[0].label.as_deref(), Some("0"));
+        assert_eq!(ast.states[1].label.as_deref(), Some("1"));
+    }
+
+    /// FSM-TEST-020 — all three section types in canonical order
+    /// (states → actions → domain) parse cleanly.
+    #[test]
+    fn fsm_test_020_canonical_order_compiles() {
+        parse_fsm_block(
+            b"@@fsm M(text: bytes) : int = 0 { /[0-9]/ to_int(@@:matched)  actions: helper(): int { 1 }  domain: n: int = 0 }",
+        )
+        .expect("canonical section order must parse");
     }
 }

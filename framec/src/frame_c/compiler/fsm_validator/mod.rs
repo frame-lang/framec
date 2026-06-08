@@ -164,8 +164,14 @@ fn types_equal(a: &Type, b: &Type) -> bool {
 struct RefSet {
     /// `self.<field>` references, each with the span of the enclosing
     /// top-level expression/statement (Expression nodes carry no span of
-    /// their own, so this is the best available location).
+    /// their own, so this is the best available location). Includes both
+    /// reads and assignment targets, so "referenced" (for unused-name
+    /// warnings) covers writes too.
     self_fields: Vec<(String, Span)>,
+    /// Names of `self.<field>` that appear as an assignment *target* — a
+    /// write. Used to pick E704 (write) over E703 (read) for an undeclared
+    /// name (§4.2: writing to an undeclared name is E704).
+    self_writes: HashSet<String>,
     /// Bare identifiers (call targets, initializer-scope param refs).
     bare: HashSet<String>,
 }
@@ -206,6 +212,15 @@ fn walk_expr(e: &Expression, ctx: &Span, refs: &mut RefSet) {
             }
         }
         Expression::Assign { target, value } => {
+            // A top-level `self.<field>` on the left of `=` is a write — note
+            // it so an undeclared write reports E704 rather than the E703 read
+            // code. The target is still walked normally below, so it continues
+            // to count as a reference for the unused-name warnings.
+            if let Expression::Member { object, field } = target.as_ref() {
+                if matches!(object.as_ref(), Expression::Var(o) if o == "self") {
+                    refs.self_writes.insert(field.clone());
+                }
+            }
             walk_expr(target, ctx, refs);
             walk_expr(value, ctx, refs);
         }
@@ -513,12 +528,18 @@ pub(crate) fn check_undeclared_reads(decl: &FsmDeclAst) -> Vec<FsmDiagnostic> {
     let mut reported: HashSet<&str> = HashSet::new();
     for (field, span) in &refs.self_fields {
         if !symbols.contains(field.as_str()) && reported.insert(field.as_str()) {
+            // A write to an undeclared name is E704; a read is E703 (§4.2).
+            let (code, verb) = if refs.self_writes.contains(field) {
+                ("E704", "write to")
+            } else {
+                ("E703", "read of")
+            };
             out.push(FsmDiagnostic {
-                code: "E703",
+                code,
                 span: span.clone(),
                 message: format!(
-                    "read of undeclared name `self.{}` (no such parameter or domain field)",
-                    field
+                    "{} undeclared name `self.{}` (no such parameter or domain field)",
+                    verb, field
                 ),
             });
         }
@@ -608,6 +629,240 @@ fn check_target(
     }
 }
 
+/// E704 / E731 / E732 — stage-capture references read in *value* position.
+///
+/// [`check_transition_targets`] validates captures that appear as transition
+/// targets (`-> $S.stage`). This pass validates the other place a capture can
+/// name a state/stage: as an expression value — a bare expression, a statement
+/// inside an action block, or an embedding-action body (§3.5.2). Without it,
+/// `$0.x` against an unlabeled state compiles to a dangling capture lookup —
+/// the "phantom successful compile" FSM-TEST-008 guards against.
+///
+/// Disambiguation mirrors §3.4 / §3.5.2 and the transition-target codes:
+/// - state names a declared label: a non-numeric stage absent from that state
+///   is `E732`; a numeric stage is a positional ref (§3.5.2) and is accepted.
+/// - state is not a declared label: `E704` when the *enclosing* state has no
+///   label (a capture ref to an unlabeled state — the fix is to label it),
+///   else `E731` (reference to an undeclared state).
+pub(crate) fn check_capture_refs(decl: &FsmDeclAst) -> Vec<FsmDiagnostic> {
+    // Declared state labels + each labeled state's set of stage labels —
+    // built exactly as in `check_transition_targets`.
+    let mut labels: HashSet<String> = HashSet::new();
+    let mut stages: HashMap<String, HashSet<String>> = HashMap::new();
+    for st in &decl.states {
+        if let Some(label) = &st.label {
+            labels.insert(label.clone());
+            let mut sset = HashSet::new();
+            for m in &st.matches {
+                for el in &m.elements {
+                    if let MatchElement::Stage(s) = el {
+                        if let Some(sl) = &s.label {
+                            sset.insert(sl.clone());
+                        }
+                    }
+                }
+            }
+            stages.insert(label.clone(), sset);
+        }
+    }
+
+    let mut out = Vec::new();
+    for st in &decl.states {
+        let enclosing_labeled = st.label.is_some();
+        for m in &st.matches {
+            for el in &m.elements {
+                match el {
+                    MatchElement::BareExpression { expr, span } => {
+                        check_expr_captures(
+                            expr,
+                            span,
+                            enclosing_labeled,
+                            &labels,
+                            &stages,
+                            &mut out,
+                        );
+                    }
+                    MatchElement::ActionBlock(block) => {
+                        check_block_captures(block, enclosing_labeled, &labels, &stages, &mut out);
+                    }
+                    MatchElement::Stage(s) => {
+                        for ea in &s.embedding_actions {
+                            check_block_captures(
+                                &ea.body,
+                                enclosing_labeled,
+                                &labels,
+                                &stages,
+                                &mut out,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Walk a `{ ... }` block's statements for value-position captures.
+fn check_block_captures(
+    block: &BlockAst,
+    enclosing_labeled: bool,
+    labels: &HashSet<String>,
+    stages: &HashMap<String, HashSet<String>>,
+    out: &mut Vec<FsmDiagnostic>,
+) {
+    for stmt in &block.statements {
+        match stmt {
+            Statement::Expression(e) => {
+                check_expr_captures(&e.expr, &e.span, enclosing_labeled, labels, stages, out);
+            }
+            Statement::If(if_ast) => {
+                check_expr_captures(
+                    &if_ast.condition,
+                    &if_ast.span,
+                    enclosing_labeled,
+                    labels,
+                    stages,
+                    out,
+                );
+                check_stmt_captures(&if_ast.then_branch, enclosing_labeled, labels, stages, out);
+                if let Some(eb) = &if_ast.else_branch {
+                    check_stmt_captures(eb, enclosing_labeled, labels, stages, out);
+                }
+            }
+            Statement::Block(b) => check_block_captures(b, enclosing_labeled, labels, stages, out),
+            _ => {}
+        }
+    }
+}
+
+/// A single statement that may carry captures (an `if` branch body).
+fn check_stmt_captures(
+    stmt: &Statement,
+    enclosing_labeled: bool,
+    labels: &HashSet<String>,
+    stages: &HashMap<String, HashSet<String>>,
+    out: &mut Vec<FsmDiagnostic>,
+) {
+    match stmt {
+        Statement::Block(b) => check_block_captures(b, enclosing_labeled, labels, stages, out),
+        Statement::Expression(e) => {
+            check_expr_captures(&e.expr, &e.span, enclosing_labeled, labels, stages, out);
+        }
+        Statement::If(if_ast) => {
+            check_expr_captures(
+                &if_ast.condition,
+                &if_ast.span,
+                enclosing_labeled,
+                labels,
+                stages,
+                out,
+            );
+            check_stmt_captures(&if_ast.then_branch, enclosing_labeled, labels, stages, out);
+            if let Some(eb) = &if_ast.else_branch {
+                check_stmt_captures(eb, enclosing_labeled, labels, stages, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Recurse through an expression, validating every `$state.stage` capture.
+fn check_expr_captures(
+    expr: &Expression,
+    span: &Span,
+    enclosing_labeled: bool,
+    labels: &HashSet<String>,
+    stages: &HashMap<String, HashSet<String>>,
+    out: &mut Vec<FsmDiagnostic>,
+) {
+    match expr {
+        Expression::Var(name) => {
+            if let Some(body) = name.strip_prefix('$') {
+                validate_capture(body, span, enclosing_labeled, labels, stages, out);
+            }
+        }
+        Expression::Member { object, .. } => {
+            // Mode C `$state.stage.return_value`: the capture lives in `object`
+            // (`$state.stage`); the field is read off the inner instance.
+            check_expr_captures(object, span, enclosing_labeled, labels, stages, out);
+        }
+        Expression::Binary { left, right, .. } => {
+            check_expr_captures(left, span, enclosing_labeled, labels, stages, out);
+            check_expr_captures(right, span, enclosing_labeled, labels, stages, out);
+        }
+        Expression::Unary { expr, .. } => {
+            check_expr_captures(expr, span, enclosing_labeled, labels, stages, out);
+        }
+        Expression::Call { args, .. } => {
+            for a in args {
+                check_expr_captures(a, span, enclosing_labeled, labels, stages, out);
+            }
+        }
+        Expression::Index { object, index } => {
+            check_expr_captures(object, span, enclosing_labeled, labels, stages, out);
+            check_expr_captures(index, span, enclosing_labeled, labels, stages, out);
+        }
+        Expression::Assign { target, value } => {
+            check_expr_captures(target, span, enclosing_labeled, labels, stages, out);
+            check_expr_captures(value, span, enclosing_labeled, labels, stages, out);
+        }
+        Expression::Literal(_) | Expression::NativeExpr(_) => {}
+    }
+}
+
+/// Validate one `$<body>` capture name (`body` is `state` or `state.stage`).
+fn validate_capture(
+    body: &str,
+    span: &Span,
+    enclosing_labeled: bool,
+    labels: &HashSet<String>,
+    stages: &HashMap<String, HashSet<String>>,
+    out: &mut Vec<FsmDiagnostic>,
+) {
+    let mut parts = body.splitn(2, '.');
+    let state = parts.next().unwrap_or("");
+    let stage = parts.next();
+
+    if labels.contains(state) {
+        if let Some(stage) = stage {
+            // Positional refs (`$state.0`, §3.5.2) address unlabeled stages by
+            // index — accept any all-digit stage token without checking.
+            let numeric = !stage.is_empty() && stage.bytes().all(|b| b.is_ascii_digit());
+            let known = numeric
+                || stages
+                    .get(state)
+                    .map(|s| s.contains(stage))
+                    .unwrap_or(false);
+            if !known {
+                out.push(FsmDiagnostic {
+                    code: "E732",
+                    span: span.clone(),
+                    message: format!(
+                        "reference to undeclared stage `.{}` in state `${}`",
+                        stage, state
+                    ),
+                });
+            }
+        }
+    } else if !enclosing_labeled {
+        out.push(FsmDiagnostic {
+            code: "E704",
+            span: span.clone(),
+            message: format!(
+                "stage-capture reference `${}` requires the enclosing state to carry an explicit `$Label:`",
+                body
+            ),
+        });
+    } else {
+        out.push(FsmDiagnostic {
+            code: "E731",
+            span: span.clone(),
+            message: format!("reference to undeclared state `${}`", state),
+        });
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Generated FSM
 // ---------------------------------------------------------------------------
@@ -623,8 +878,8 @@ mod validator_fsm {
     )]
 
     use super::{
-        check_input_param_type, check_regexes, check_structure, check_transition_targets,
-        check_undeclared_reads, check_warnings, FsmDiagnostic,
+        check_capture_refs, check_input_param_type, check_regexes, check_structure,
+        check_transition_targets, check_undeclared_reads, check_warnings, FsmDiagnostic,
     };
     use crate::frame_c::compiler::frame_ast::FsmDeclAst;
 
@@ -648,6 +903,7 @@ mod tests {
         assert!(d.is_empty(), "expected no diagnostics, got {:?}", d);
     }
 
+    /// FSM-TEST-010 — input parameter type validation.
     /// E713 — input parameter type must be bytes/char/token.
     #[test]
     fn e713_bad_input_type() {
@@ -657,6 +913,9 @@ mod tests {
         assert_eq!(d[0].code, "E713");
     }
 
+    /// FSM-TEST-251 — char alphabet (accepted; the runtime behavior is
+    /// exercised by the codegen backends). FSM-TEST-253's token alphabet is
+    /// likewise accepted here.
     /// char and token alphabets are accepted by E713.
     #[test]
     fn e713_accepts_char_and_token() {
@@ -664,6 +923,7 @@ mod tests {
         assert!(diags(b"@@fsm M(toks: token) : bool = false { /IDENT/ true }").is_empty());
     }
 
+    /// FSM-TEST-403 — reference to undeclared state.
     /// E731 — a transition target naming an undeclared state.
     #[test]
     fn e731_undeclared_state() {
@@ -672,6 +932,7 @@ mod tests {
         assert!(d.iter().any(|x| x.code == "E731"));
     }
 
+    /// FSM-TEST-404 — reference to undeclared stage.
     /// E732 — a stage-ref target naming an undeclared stage.
     #[test]
     fn e732_undeclared_stage() {
@@ -694,6 +955,7 @@ mod tests {
         );
     }
 
+    /// FSM-TEST-1102 — stage label collision within a state.
     /// E730 — a stage label used twice within one state.
     #[test]
     fn e730_duplicate_stage_label() {
@@ -701,6 +963,7 @@ mod tests {
         assert!(d.iter().any(|x| x.code == "E730"), "got {:?}", d);
     }
 
+    /// FSM-TEST-013 — two consecutive unlabeled states rejected.
     /// E704 — a second, unlabeled state.
     #[test]
     fn e704_second_unlabeled_state() {
@@ -708,11 +971,58 @@ mod tests {
         assert!(d.iter().any(|x| x.code == "E704"), "got {:?}", d);
     }
 
+    /// FSM-TEST-012 — type mismatch in explicit domain redeclaration.
     /// E707 — a domain field re-declaring a parameter with a different type.
     #[test]
     fn e707_domain_param_type_mismatch() {
         let d = diags(b"@@fsm M(text: bytes) : bool = false { /a/ true  domain: text: int = 0 }");
         assert!(d.iter().any(|x| x.code == "E707"), "got {:?}", d);
+    }
+
+    /// FSM-TEST-008 — a stage-capture reference (`$0.x`) read in value
+    /// position against an *unlabeled* enclosing state is E704: captures of an
+    /// unlabeled state cannot be addressed; the state must be given a label.
+    #[test]
+    fn e704_capture_ref_unlabeled_state() {
+        let d = diags(b"@@fsm M(text: bytes) : bytes = \"\" { .x/[0-9]+/ $0.x }");
+        assert!(d.iter().any(|x| x.code == "E704"), "got {:?}", d);
+    }
+
+    /// E731 — a value-position capture naming a state that is not a declared
+    /// label (from a labeled enclosing state) is an undeclared-state ref,
+    /// matching the transition-target convention.
+    #[test]
+    fn e731_capture_ref_undeclared_state() {
+        let d = diags(b"@@fsm M(text: bytes) : bytes = \"\" { $s: .x/[0-9]+/ $undecl.x }");
+        assert!(d.iter().any(|x| x.code == "E731"), "got {:?}", d);
+    }
+
+    /// E732 — a value-position capture naming a real state but a non-existent
+    /// (non-numeric) stage label.
+    #[test]
+    fn e732_capture_ref_undeclared_stage() {
+        let d = diags(b"@@fsm M(text: bytes) : bytes = \"\" { $s: .x/[0-9]+/ $s.nope }");
+        assert!(d.iter().any(|x| x.code == "E732"), "got {:?}", d);
+    }
+
+    /// A valid value-position capture (`$s.x`, declared state + stage) and a
+    /// positional capture (`$s.0`, §3.5.2) produce no capture diagnostics —
+    /// the pass must not false-positive on legitimate references.
+    #[test]
+    fn capture_ref_valid_no_false_positive() {
+        let ok = diags(b"@@fsm M(text: bytes) : bytes = \"\" { $s: .x/[0-9]+/ $s.x }");
+        assert!(
+            !ok.iter()
+                .any(|x| x.code == "E704" || x.code == "E731" || x.code == "E732"),
+            "labeled capture must be accepted, got {:?}",
+            ok
+        );
+        let pos = diags(b"@@fsm M(text: bytes) : bytes = \"\" { $s: /[0-9]+/ $s.0 }");
+        assert!(
+            !pos.iter().any(|x| x.code == "E732"),
+            "positional capture `$s.0` must be accepted, got {:?}",
+            pos
+        );
     }
 
     /// A domain field re-declaring a parameter with the SAME type is fine.
@@ -724,6 +1034,7 @@ mod tests {
         assert!(!d.iter().any(|x| x.code == "E707"), "got {:?}", d);
     }
 
+    /// FSM-TEST-1103 — unused parameter warning.
     /// W702 — an unused (non-input) parameter.
     #[test]
     fn w702_unused_parameter() {
@@ -741,6 +1052,7 @@ mod tests {
         assert!(!d.iter().any(|x| x.code == "W702"), "got {:?}", d);
     }
 
+    /// FSM-TEST-1104 — unused domain variable warning.
     /// W703 — an unused domain field.
     #[test]
     fn w703_unused_domain_field() {
@@ -757,6 +1069,7 @@ mod tests {
         assert!(!d.iter().any(|x| x.code == "W703"), "got {:?}", d);
     }
 
+    /// FSM-TEST-407 — constant-true `when` guard warns.
     /// W705 — a constant-true `when` guard.
     #[test]
     fn w705_constant_true_when() {
@@ -775,6 +1088,7 @@ mod tests {
         assert!(!d.iter().any(|x| x.code == "W705"), "got {:?}", d);
     }
 
+    /// FSM-TEST-405 — conditional with no matching condition warns.
     /// W701 — a conditional success target with no failure branch can
     /// silently reject unmatched input.
     #[test]
@@ -794,11 +1108,47 @@ mod tests {
         assert!(!d.iter().any(|x| x.code == "W701"), "got {:?}", d);
     }
 
-    /// E703 — reading a `self.<field>` that names no parameter or domain field.
+    /// FSM-TEST-103 — a domain field initializer may reference a constructor
+    /// parameter by bare name (`initial`); parameters are in scope inside
+    /// initializers. Compiles with no diagnostics.
+    #[test]
+    fn fsm_test_103_domain_init_references_param() {
+        let d = diags(
+            b"@@fsm M(text: bytes, initial: int = 0) : int = 0 { /[0-9]/ { self.count = self.count + 1 } self.count  domain: count: int = initial }",
+        );
+        assert!(
+            !d.iter().any(|x| x.code.starts_with('E')),
+            "param-in-initializer must compile clean, got {:?}",
+            d
+        );
+    }
+
+    /// FSM-TEST-100 — undeclared variable read. Reading a `self.<field>` that
+    /// names no parameter or domain field is E703.
     #[test]
     fn e703_undeclared_read() {
         let d = diags(b"@@fsm M(text: bytes) : int = 0 { /a/ { self.count = self.nope } self.count  domain: count: int = 0 }");
         assert!(d.iter().any(|x| x.code == "E703"), "got {:?}", d);
+    }
+
+    /// FSM-TEST-101 — undeclared variable write. Writing to a `self.<field>`
+    /// that names no parameter or domain field is E704 (the write side of
+    /// FSM-TEST-100), distinct from the E703 read code.
+    #[test]
+    fn e704_undeclared_write() {
+        let d = diags(
+            b"@@fsm M(text: bytes) : int = 0 { /a/ { self.nope = 5 } 0  domain: ok: int = 0 }",
+        );
+        assert!(
+            d.iter().any(|x| x.code == "E704"),
+            "undeclared write must be E704, got {:?}",
+            d
+        );
+        assert!(
+            !d.iter().any(|x| x.code == "E703"),
+            "an undeclared write must not also report the E703 read code, got {:?}",
+            d
+        );
     }
 
     /// Reads of a declared domain field and of an auto-promoted parameter
@@ -849,6 +1199,7 @@ mod tests {
         );
     }
 
+    /// FSM-TEST-200 — failable match without a failure_branch rejected.
     /// E701 — a success transition with no failure branch on a match whose
     /// regex can fail (`/a/` does not accept the empty string).
     #[test]
@@ -857,6 +1208,7 @@ mod tests {
         assert!(d.iter().any(|x| x.code == "E701"), "got {:?}", d);
     }
 
+    /// FSM-TEST-201 — unfailable match without a failure_branch allowed.
     /// No E701 when the match is provably non-failing: a nullable regex
     /// (`a*` accepts the empty string) can never fail.
     #[test]

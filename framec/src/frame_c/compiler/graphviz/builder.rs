@@ -251,6 +251,10 @@ fn extract_transitions_from_statement(
                 has_state_stack,
             );
         }
+        // Other statements carry no transition. This walks only `@@system`
+        // handler statements (the sole producer of these branches), so the
+        // `@@fsm`-only `Block`/`Expression` variants never reach here — see the
+        // `Statement` enum's construct-ownership note.
         _ => {}
     }
 }

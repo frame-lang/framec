@@ -1344,7 +1344,10 @@ mod tests {
         assert_eq!(v, vec!["1", "1"]);
     }
 
-    /// FSM-TEST-001 — the smoke test.
+    /// FSM-TEST-001 — the smoke test. Also exercises FSM-TEST-1000 (empty
+    /// input rejects at position 0), FSM-TEST-1001 (input exactly matching:
+    /// accepts, cursor at end), and FSM-TEST-203 (a bare-expression match with
+    /// no transition is an implicit-terminal accepting match).
     #[test]
     fn fsm_test_001_minimal() {
         let src = "@@fsm M(text: bytes) : bool = false { /a/ true }";
@@ -1364,7 +1367,9 @@ mod tests {
         assert_eq!(empty.accepted, "False");
     }
 
-    /// FSM-TEST-002 — single-digit, `to_int(@@:matched)`.
+    /// FSM-TEST-002 — single-digit, `to_int(@@:matched)`. Also FSM-TEST-501 —
+    /// construction with no match (`"a"` against `/[0-9]/`) yields
+    /// `accepted == false` with `reject_position == 0`.
     #[test]
     fn fsm_test_002_matched_builtin() {
         let src = "@@fsm M(text: bytes) : int = 0 { /[0-9]/ to_int(@@:matched) }";
@@ -1379,7 +1384,9 @@ mod tests {
         assert_eq!(a.reject, "0");
     }
 
-    /// FSM-TEST-005 — `len(self.text)` is the full input length.
+    /// FSM-TEST-005 — `len(self.text)` is the full input length. Also
+    /// FSM-TEST-504 — the auto-promoted input parameter is accessible as
+    /// `self.<name>` (distinct from `@@:matched`).
     #[test]
     fn fsm_test_005_self_text() {
         let src = "@@fsm M(text: bytes) : int = 0 { /[0-9]+/ len(self.text) }";
@@ -1393,7 +1400,9 @@ mod tests {
     }
 
     /// FSM-TEST-006 — labeled states, success + failure transitions.
-    /// Reaching `$error` via a failure branch is `accepted == false`.
+    /// Reaching `$error` via a failure branch is `accepted == false`. Also
+    /// FSM-TEST-500 — construction with a full match populates `accepted` and
+    /// `return_value` (here `42` from a two-state match).
     #[test]
     fn fsm_test_006_transitions() {
         let src = "@@fsm M(text: bytes) : int = 0 { \
@@ -1418,7 +1427,11 @@ mod tests {
         assert_eq!(dig.return_value, "-1");
     }
 
-    /// FSM-TEST-007 — stage label capture, anchored-prefix match.
+    /// FSM-TEST-007 — stage label capture, anchored-prefix match. Also
+    /// FSM-TEST-503 (the labeled stage's capture holds the matched bytes,
+    /// `'123'`), FSM-TEST-1002 (input longer than the match: trailing `abc`
+    /// left unconsumed), and FSM-TEST-502 (the cursor advances to 3, the number
+    /// of consumed bytes).
     #[test]
     fn fsm_test_007_capture() {
         let src = "@@fsm M(text: bytes) : bytes = \"\" { $main: .x/[0-9]+/ $main.x }";
@@ -1476,6 +1489,8 @@ mod tests {
     /// FSM-TEST-400 — static transitions across multiple states, success +
     /// failure branches on both initial and intermediate states. The
     /// intermediate state uses a failure-only clause (`/b/ true : -> $error`).
+    /// Also FSM-TEST-202 — an explicit failure branch routes a failed stage
+    /// (`"ax"`) to the declared `$error` target.
     #[test]
     fn fsm_test_400_static_transitions() {
         let src = "@@fsm M(text: bytes) : bool = false { \
@@ -1550,8 +1565,9 @@ mod tests {
         assert_eq!(v, vec!["3"]); // three digits → ${} fires 3×
     }
 
-    /// `>{...}` fires once at the start of the stage's scan; `@@:cursor`
-    /// there is the stage-entry position.
+    /// FSM-TEST-600 — entry and per-element actions. `>{...}` fires once at the
+    /// start of the stage's scan; `@@:cursor` there is the stage-entry position.
+    /// (The per-element `${...}` half is FSM-TEST-123.)
     #[test]
     fn embed_start_captures_entry_cursor() {
         let src = "@@fsm M(text: bytes) : int = 0 { \
@@ -1565,8 +1581,9 @@ mod tests {
         assert_eq!(v, vec!["1"]);
     }
 
-    /// `@{...}` fires when the DFA enters an accepting state; for `/a+/`
-    /// over "aaa" that is once per `a` (each prefix is accepting).
+    /// FSM-TEST-601 — final-state action. `@{...}` fires when the DFA enters an
+    /// accepting state; for `/a+/` over "aaa" that is once per `a` (each prefix
+    /// is accepting).
     #[test]
     fn embed_accept_fires_on_accepting_states() {
         let src = "@@fsm M(text: bytes) : int = 0 { \
@@ -1578,6 +1595,84 @@ mod tests {
         // Each of the three `a` transitions lands in the accepting state,
         // so `@{}` (transition into a final state, §3.5.5) fires 3 times.
         assert_eq!(v, vec!["3"]);
+    }
+
+    /// FSM-TEST-602 — EOF action. `@eof{...}` fires when end-of-input is
+    /// reached while a stage is mid-match (non-accepting). "fo" ends inside
+    /// `/foo/`; the full "foo" completes without firing it.
+    #[test]
+    fn fsm_test_602_eof_action() {
+        let src = "@@fsm M(text: bytes) : int = 0 { \
+                   /foo/ @eof{ self.eofhit = self.eofhit + 1 } : -> $reject \
+                   self.eofhit \
+                   $reject: self.eofhit \
+                   domain: eofhit: int = 0 }";
+        let Some(partial) = eval_py(src, "fo", &["m.eofhit"], "t602a") else {
+            return;
+        };
+        assert_eq!(
+            partial,
+            vec!["1"],
+            "@eof fires once when input ends mid-match"
+        );
+        let full = eval_py(src, "foo", &["m.eofhit"], "t602b").unwrap();
+        assert_eq!(
+            full,
+            vec!["0"],
+            "@eof does not fire when the stage completes"
+        );
+    }
+
+    /// FSM-TEST-1003 — an input that is a strict prefix of the required match
+    /// is rejected (the match cannot complete). "a" against `/ab/`.
+    #[test]
+    fn fsm_test_1003_prefix_of_match_rejected() {
+        let src = "@@fsm M(text: bytes) : bool = false { /ab/ true }";
+        let Some(a) = run(src, "a", "t1003a") else {
+            return;
+        };
+        assert_eq!(a.accepted, "False");
+        assert_eq!(run(src, "ab", "t1003b").unwrap().accepted, "True");
+    }
+
+    /// FSM-TEST-1005 — a zero-length match (`/a*/` against "bbb") succeeds by
+    /// matching the empty string: accepted, cursor stays at 0.
+    #[test]
+    fn fsm_test_1005_zero_length_match() {
+        let src = "@@fsm M(text: bytes) : bool = true { /a*/ true }";
+        let Some(r) = run(src, "bbb", "t1005a") else {
+            return;
+        };
+        assert_eq!(r.accepted, "True");
+        assert_eq!(r.cursor, "0");
+    }
+
+    /// FSM-TEST-1006 — `@@:matched` before any stage has completed in the
+    /// current match is the empty slice.
+    #[test]
+    fn fsm_test_1006_matched_before_stage() {
+        let src = "@@fsm M(text: bytes) : bytes = \"\" { @@:matched }";
+        let Some(v) = eval_py(src, "abc", &["m.return_value"], "t1006a") else {
+            return;
+        };
+        assert_eq!(v, vec!["''"]); // empty matched slice — no stage has matched yet
+    }
+
+    /// FSM-TEST-304 — alternation is the loosest operator: `foo|bar baz`
+    /// parses as `foo | (bar baz)`, so "foo" matches and leaves the cursor at
+    /// 3 (the trailing input unconsumed).
+    #[test]
+    fn fsm_test_304_alternation_precedence() {
+        let src = "@@fsm M(text: bytes) : bytes = \"\" { /foo|bar baz/ @@:matched }";
+        let Some(foo) = run(src, "foo baz", "t304a") else {
+            return;
+        };
+        assert_eq!(foo.return_value, "'foo'");
+        assert_eq!(foo.cursor, "3");
+        assert_eq!(
+            run(src, "bar baz", "t304b").unwrap().return_value,
+            "'bar baz'"
+        );
     }
 
     /// Multi-match (`|`) ordered choice: the first alternative whose first
@@ -1661,7 +1756,9 @@ mod tests {
     }
 
     /// FSM-TEST-312 — the start-of-input anchor `^` matches only at cursor
-    /// 0. `/^foo/` accepts "foo", rejects "xfoo" (reject at 0) and "".
+    /// 0. `/^foo/` accepts "foo", rejects "xfoo" (reject at 0) and "". Also
+    /// FSM-TEST-1004 — an anchored match with a leading non-match byte
+    /// (`"xfoo"`) is rejected at position 0.
     #[test]
     fn fsm_test_312_start_anchor() {
         let src = "@@fsm M(text: bytes) : bool = false { /^foo/ true }";

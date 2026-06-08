@@ -314,10 +314,31 @@ pub struct HandlerBody {
     pub span: Span,
 }
 
-/// Statement in a handler body — Frame statements interleaved with native code
+/// Statement in a handler body — Frame statements interleaved with native code.
+///
+/// # Construct ownership (enforced by construction, not by the type)
+///
+/// `Statement` is shared between the `@@system` and `@@fsm` constructs, but the
+/// two produce **disjoint** subsets — a given AST never mixes them, because the
+/// segmenter routes each construct to its own parser (`pipeline_parser` for
+/// `@@system`, `fsm_parser` for `@@fsm`) producing separate AST types
+/// (`SystemAst` vs `FsmDeclAst`):
+///
+/// - **`@@system` only** (the legacy `machine:`-handler statements): `Transition`,
+///   `Forward`, `StackPush`, `StackPop`, `Return`, `NativeCode`, and the
+///   `StateVar*` / `Context*` context constructs. The `@@system` parser has no
+///   `if`/`loop` keyword, so it never builds `If`/`Loop`/`Block`/`Expression`.
+/// - **`@@fsm` action bodies only** (RFC-0043 statement grammar): `If`, `Loop`,
+///   `Block`, `Expression`. These are built solely by `fsm_parser`; `@@fsm`
+///   action bodies in turn reject `->` transitions (E712).
+///
+/// Consequence: traversal code that only ever sees one construct's AST (e.g. the
+/// `@@system`-only graphviz/model/expansion walkers) will never encounter the
+/// other construct's exclusive variants, so a `_ => {}` arm there is dead-safe.
+/// If a future construct breaks this disjointness, revisit those arms.
 #[derive(Debug, Clone)]
 pub enum Statement {
-    /// Frame transition statement (->)
+    /// Frame transition statement (->)  [@@system]
     Transition(TransitionAst),
     /// Frame transition-forward (-> => $State)
     /// Frame forward to parent (=>)

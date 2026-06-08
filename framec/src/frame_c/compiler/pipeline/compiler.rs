@@ -1896,10 +1896,10 @@ mod tests {
         Some((l[0].to_string(), l[1].to_string(), l[2].to_string()))
     }
 
-    /// RFC-0042 §8.3 Mode C: a `/@Inner/` stage calls another fsm at the
-    /// cursor; `$state.label.return_value` reads the inner's return value
-    /// and the cursor advances by the inner's. (Single-value returns —
-    /// FSM-TEST-700/701's tuple return types are a separate parser gap.)
+    /// FSM-TEST-701 — Mode C bytes-and-return. RFC-0042 §8.3: a `/@Inner/`
+    /// stage calls another fsm at the cursor; `$state.label.return_value` reads
+    /// the inner's return value and the cursor advances by the inner's.
+    /// (Tuple-return variants in FSM-TEST-700 are a separate parser gap.)
     #[test]
     fn fsm_mode_c_call_out() {
         let src = "@@fsm Digit(input: char) : int = 0 { /[0-9]/ to_int(@@:matched) }\n\
