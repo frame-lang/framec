@@ -14373,7 +14373,7 @@ The lesson these cross-references encode is the same one the cookbook argues thr
 
 ## Parser Specialists
 
-The companion essay [Parsers as Composed State Machines](articles/research/Parsers_as_Composed_State_Machines.md) argues for a parser architecture in which a coordinator state machine consults specialist state machines as oracles for bounded sub-problems. Recipe 110 is the worked example referenced by that essay: a small disambiguator that consumes lookahead tokens, walks through a chain of enter handlers inside a single interface call, and returns a classification verdict to the caller.
+The companion essay [Parsers as Composed State Machines](https://frame-lang.org/articles/parsers-as-composed-state-machines/) argues for a parser architecture in which a coordinator state machine consults specialist state machines as oracles for bounded sub-problems. Recipe 110 is the worked example referenced by that essay: a small disambiguator that consumes lookahead tokens, walks through a chain of enter handlers inside a single interface call, and returns a classification verdict to the caller.
 
 -----
 

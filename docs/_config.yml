@@ -16,6 +16,8 @@ plugins:
   - jekyll-remote-theme
   - jekyll-relative-links      # rewrites foo.md -> foo.html, preserves #anchors
   - jekyll-seo-tag
+  - jekyll-redirect-from       # redirect_to shims bounce moved /articles/* URLs
+  - jekyll-include-cache       # required by the just-the-docs remote theme
 
 # jekyll-relative-links
 relative_links:
@@ -41,6 +43,9 @@ aux_links_new_tab: true
 # slot it mid-sidebar (between Cookbook and Runtime) but the docs chrome
 # wrapped the redirect instead of firing it instantly, so we reverted.
 nav_external_links:
+  - title: Articles
+    url: https://frame-lang.org/articles/
+    opens_in_new_tab: true
   - title: Games
     url: https://games.frame-lang.org
     opens_in_new_tab: true
@@ -48,9 +53,11 @@ back_to_top: true
 back_to_top_text: "Back to top"
 
 # Published: guides, cookbook, glossary, migration guide, RFCs (index + linked
-# pages), articles, and the design/internals docs. Still excluded: contributor
-# process docs, the per-language guides (target-language code with Liquid-breaking
-# {{ }} sequences — needs {% raw %} wrapping to publish), and the RFC scratch file.
+# pages), and the design/internals docs. The long-form articles now live on the
+# content hub (frame-lang.org); docs/articles/* are jekyll-redirect-from shims
+# that bounce the old URLs there. Still excluded: contributor process docs, the
+# per-language guides (target-language code with Liquid-breaking {{ }} sequences —
+# needs {% raw %} wrapping to publish), and the RFC scratch file.
 exclude:
   - AGENTS_README.md
   - admin/                  # local symlink into the private frame-admin repo

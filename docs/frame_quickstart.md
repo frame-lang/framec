@@ -337,7 +337,7 @@ Assignment to a `const` field in a handler body is E615. Per-target rendering: `
 | **Interlock** (recipe 60) | Omit the handler in the state where the capability shouldn't exist — silent no-op |
 | **Transient decision state** (recipes 5, 31, 110) | State with only a `$>` handler that branches on data captured at entry |
 | **Parent-callback** (recipes 28, 48, 109) | Child system calls `self.parent.method(...)` to report results |
-| **Oracle specialist** (recipe 110, [Parsers essay](articles/research/Parsers_as_Composed_State_Machines.md)) | Coordinator calls specialist's interface method; specialist runs its own FSM and returns a verdict |
+| **Oracle specialist** (recipe 110, [Parsers essay](https://frame-lang.org/articles/parsers-as-composed-state-machines/)) | Coordinator calls specialist's interface method; specialist runs its own FSM and returns a verdict |
 | **State-as-gate** (recipes 60, 81, 83, 105) | Reach-by-construction: no handler means the capability literally doesn't exist in that state |
 
 ---
