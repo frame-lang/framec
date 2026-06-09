@@ -1,25 +1,29 @@
 name: matrix-smoke
 
-# 4-backend parallel smoke tier of the 17-backend differential matrix.
-# Rationale: the Arc-A "ALL 17 BACKENDS COMPLETE" failure shipped 16
-# commits with 12/17 backends broken because nobody ran the gate. This
-# workflow exists so that gate runs automatically on every framec
-# change. Covers 4 of the 5 architectural buckets:
+# Parallel smoke tier of the 17-backend differential matrix — each
+# backend is an independent job that compiles AND runs the matrix
+# fixtures through that language's real toolchain. Rationale: the Arc-A
+# "ALL 17 BACKENDS COMPLETE" failure shipped 16 commits with 12/17
+# backends broken because nobody ran the gate. This workflow runs it on
+# every framec change. Backends:
 #
-#   - Python:  dynamic-baseline (catches cross-target codegen drift
-#              that most often surfaces first in dynamic-typed targets)
-#   - Rust:    typed-by-value, serde, ownership (catches type-system
-#              bugs)
-#   - Java:    JVM, Jackson, reference semantics (catches JVM-specific
-#              lowering bugs and Kotlin-shape regressions)
-#   - Erlang:  gen_statem actor model (the structurally-distinct backend
-#              with the most idiomatic divergence)
+#   - Python:  dynamic-baseline (cross-target codegen drift surfaces
+#              first in dynamic-typed targets)
+#   - Rust:    typed-by-value, serde, ownership (type-system bugs)
+#   - Java:    JVM, Jackson, reference semantics
+#   - Erlang:  gen_statem actor model (most idiomatic divergence)
+#   - C++ / C# / Go:  the other typed targets with distinct codegen
+#              paths (std::any storage, typed compartments, pointer
+#              receivers). Added per FRAMEC #60 — text snapshots are
+#              blind to "looks plausible but doesn't compile/run" bugs
+#              on the typed targets, and those don't always share a
+#              failure mode with Rust/Java. Compile-gating them here
+#              catches such bugs on the PR instead of only nightly.
 #
-# Out of scope: full 17-backend matrix runs as a nightly via a separate
-# workflow, not here. PR-time wants minutes, not the full ~10 min cold
-# Docker build. GDScript needs Godot; C/C++/Go/Dart/Swift/C#/Kotlin/
-# Lua/Ruby/PHP/JS/TS round-trip through the same dynamic-or-typed
-# lowering categories Python/Rust/Java/Erlang cover.
+# Out of scope: the full 17-backend matrix runs as a nightly (separate
+# workflow). The remaining backends (Kotlin/Swift/Dart/C/GDScript/Lua/
+# Ruby/PHP/JS/TS) stay nightly-only — GDScript needs Godot, and the rest
+# are lower-risk relative to CI minutes per PR.
 
 "on":
   push:
@@ -40,7 +44,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        backend: [python, rust, java, erlang]
+        backend: [python, rust, java, erlang, cpp, csharp, go]
     steps:
       - name: Checkout framec
         uses: actions/checkout@v4
