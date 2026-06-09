@@ -43,8 +43,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **C++: `self.field` is now lowered to `this->field` (#69).** It was emitted
   verbatim as `self.n` — uncompilable, since C++ has no `self`. The C++ handler
   body now lowers `self.<field>` to `this-><field>` (boundary-safe, respecting
-  strings/comments), matching what `cpp.md` documents. (Cross-system embed calls
-  `self.sub.method()` on a `shared_ptr` field — the `.`→`->` step — remain to do.)
+  strings/comments), matching what `cpp.md` documents. Cross-system embed calls
+  are handled too: a domain field whose type is itself a defined system is a
+  `std::shared_ptr<Sub>`, so `self.<embed>.method()` lowers to
+  `this-><embed>->method()` (the `.`→`->` deref) so the call compiles.
 
 ### Docs
 

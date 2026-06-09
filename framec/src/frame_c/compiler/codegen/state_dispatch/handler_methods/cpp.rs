@@ -39,6 +39,7 @@ pub(crate) fn generate_cpp_handler_method(
     handler_state_var_types: &std::collections::HashMap<String, String>,
     state_hsm_parents: &std::collections::HashMap<String, String>,
     state_param_types: &std::collections::HashMap<(String, String), String>,
+    embed_fields: &[String],
 ) -> CodegenNode {
     let method_name = handler_method_name(state_name, handler);
     let lang = TargetLanguage::Cpp;
@@ -150,9 +151,19 @@ pub(crate) fn generate_cpp_handler_method(
     // `// /* */` comments via the shared helper). `this->` rather than bare
     // `n` keeps it unambiguous when a handler param shares a field's name.
     // (The `@@:self.method()` self-call path is lowered separately in
-    // `context_self.rs`.) Cross-system embed calls — `self.sub.method()` on
-    // a `shared_ptr<Sub>` field — still need a `.`→`->` step; tracked in #69.
-    let body_src = replace_outside_strings_and_comments(&body_src, lang, &[("self.", "this->")]);
+    // `context_self.rs`.) Cross-system embed fields are `shared_ptr<Sub>`, so
+    // `self.<embed>.method()` lowers to `<embed>->method()` (the `.`→`->`
+    // deref) — these rules run first, then the general `self.`→`this->`.
+    let mut rules: Vec<(String, String)> = embed_fields
+        .iter()
+        .map(|e| (format!("self.{e}."), format!("this->{e}->")))
+        .collect();
+    rules.push(("self.".to_string(), "this->".to_string()));
+    let rule_refs: Vec<(&str, &str)> = rules
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
+    let body_src = replace_outside_strings_and_comments(&body_src, lang, &rule_refs);
     body.push_str(&body_src);
 
     let event_type = format!("{}FrameEvent&", system_name);

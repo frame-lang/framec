@@ -842,6 +842,31 @@ pub(crate) fn generate_per_handler_methods(
 ) -> Vec<CodegenNode> {
     let mut methods = Vec::new();
 
+    // Cross-system embed fields: domain vars whose declared type is itself a
+    // defined system (`domain: ship: Ship = @@Ship(host)`). The C++ backend
+    // emits these as `std::shared_ptr<Ship>`, so a handler body's
+    // `self.ship.respawn()` must lower the deref to `self.ship->respawn()`
+    // (then the general `self.`→`this->` rule yields `this->ship->respawn()`).
+    // `domain_symbols.symbol_type` carries the Debug-formatted `Type`
+    // (`Custom("Ship")`); unwrap to the bare name before matching.
+    let embed_fields: Vec<String> = arcanum
+        .systems
+        .get(system_name)
+        .map(|entry| {
+            entry
+                .domain_symbols
+                .iter()
+                .filter(|(_, sym)| {
+                    sym.symbol_type
+                        .as_deref()
+                        .and_then(|t| t.strip_prefix("Custom(\"")?.strip_suffix("\")"))
+                        .is_some_and(|ty| defined_systems.contains(ty))
+                })
+                .map(|(name, _)| name.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+
     // State → declared HSM parent map for use by transition codegen inside
     // handler bodies (so `-> $Child` where Child => Parent constructs the
     // full chain rather than patching parent_compartment = self.__compartment).
@@ -926,6 +951,7 @@ pub(crate) fn generate_per_handler_methods(
                 &handler_state_var_types,
                 &state_hsm_parents,
                 state_param_types,
+                &embed_fields,
             );
             methods.push(method);
         }
@@ -959,6 +985,7 @@ pub(crate) fn generate_per_handler_methods(
                 &handler_state_var_types,
                 &state_hsm_parents,
                 state_param_types,
+                &embed_fields,
             );
             // Per-handler leading comments (from `HandlerAst.leading_comments`
             // / `EnterHandler.leading_comments` / `ExitHandler.leading_comments`,
@@ -1005,6 +1032,7 @@ fn generate_per_handler_method_for_lang(
     handler_state_var_types: &std::collections::HashMap<String, String>,
     state_hsm_parents: &std::collections::HashMap<String, String>,
     state_param_types: &std::collections::HashMap<(String, String), String>,
+    embed_fields: &[String],
 ) -> CodegenNode {
     match lang {
         TargetLanguage::Python3 => generate_python_handler_method(
@@ -1232,6 +1260,7 @@ fn generate_per_handler_method_for_lang(
             handler_state_var_types,
             state_hsm_parents,
             state_param_types,
+            embed_fields,
         ),
         TargetLanguage::CSharp => generate_csharp_handler_method(
             system_name,
