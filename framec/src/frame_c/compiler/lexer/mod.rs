@@ -835,18 +835,25 @@ impl Lexer {
                 self.cursor += 1;
                 continue;
             }
-            // Always handle // line comments in structural sections
-            // (Frame structural syntax uses // regardless of target language)
-            if b == b'/' && self.cursor + 1 < self.end && self.source[self.cursor + 1] == b'/' {
+            // Line comments in structural sections. Frame recognizes the
+            // construct grammar and passes everything else through as native
+            // text (Oceans Model) — so a comment here is captured and emitted
+            // verbatim, never rejected. We accept both `//` and `#` leaders
+            // universally (the two a user reaches for structurally) so an
+            // unrecognized leader never throws `E002`; whether the leader is
+            // valid for the target is the target compiler's concern, not
+            // framec's (same contract as type names and init values).
+            if (b == b'/' && self.cursor + 1 < self.end && self.source[self.cursor + 1] == b'/')
+                || b == b'#'
+            {
                 let start = self.cursor;
-                self.cursor += 2;
                 while self.cursor < self.end && self.source[self.cursor] != b'\n' {
                     self.cursor += 1;
                 }
                 self.capture_section_comment(start, self.cursor);
                 continue;
             }
-            // Try to skip comments via SyntaxSkipper (handles #, /* */, etc.)
+            // Try to skip comments via SyntaxSkipper (handles /* */, etc.)
             if let Some(new_pos) = self
                 .skipper
                 .skip_comment(&self.source, self.cursor, self.end)
