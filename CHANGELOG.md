@@ -34,6 +34,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
   rejected as an unexpected byte in `interface:` while passing through verbatim
   in `domain:`/handlers. The structural scanner now passes `#` through like any
   non-Frame text, consistent across all sections (the Oceans Model).
+- **Rust: param-referencing domain initializers no longer require `Default` (#67).**
+  A domain field whose initializer references a ctor param (a parameterized embed
+  `inner: Inner = @@Inner(p)`, or a non-`Default` handle like `Gd<Node>`) emitted
+  `Default::default()` in the parameterless `new()` — uncompilable for non-`Default`
+  types. For systems with such fields, framec now skips `new()` and builds
+  `__create(<params>)` directly with the params in scope (`inner: Inner::__create(p)`).
 
 ### Docs
 
