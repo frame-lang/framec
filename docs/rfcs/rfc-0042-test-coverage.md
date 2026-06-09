@@ -6,8 +6,8 @@
 ## Summary
 
 - **88** RFC conformance IDs
-- **82** backed by an executing test
-- **6** documented deferrals (see end)
+- **86** backed by an executing test
+- **2** documented deferrals (see end)
 
 Runtime tests (`codegen/fsm_python.rs`, `pipeline/compiler.rs`) generate recognizer source and **execute it through `python3`**, asserting `accepted`/`return_value`/`cursor`. Front-end tests (`fsm_parser`/`fsm_validator`/`fsm_regex`) assert parse results and diagnostic codes. The Python backend is the reference; the other 16 backends have their own `fsm_<lang>.rs` execution tests.
 
@@ -47,7 +47,7 @@ Runtime tests (`codegen/fsm_python.rs`, `pipeline/compiler.rs`) generate recogni
 | FSM-TEST-030 | Multi-statement block with semicolons | `fsm_test_030_action_block_semicolons` <sub>(codegen/fsm_python.rs)</sub><br>`fsm_test_030_full` <sub>(fsm_parser/mod.rs)</sub> | ✅ |
 | FSM-TEST-031 | Multi-statement block whitespace-separated | `fsm_test_031_action_block_whitespace` <sub>(codegen/fsm_python.rs)</sub> | ✅ |
 | FSM-TEST-032 | If/else statement | `fsm_test_032_if_else` <sub>(codegen/fsm_python.rs)</sub><br>`action_block_if_else` <sub>(fsm_parser/mod.rs)</sub> | ✅ |
-| FSM-TEST-033 | Bare name does not refer to domain | — | ⏸ **deferred** — bare-name (non-`self.`) E703 validation not implemented — needs context-aware design |
+| FSM-TEST-033 | Bare name does not refer to domain | `e703_bare_name_not_domain` <sub>(fsm_validator/mod.rs)</sub> | ✅ |
 
 ## Typing and variable scope (§4.1, §4.2)
 
@@ -135,7 +135,7 @@ Runtime tests (`codegen/fsm_python.rs`, `pipeline/compiler.rs`) generate recogni
 | FSM-TEST-600 | Entry and per-element actions | `embed_start_captures_entry_cursor` <sub>(codegen/fsm_python.rs)</sub> | ✅ |
 | FSM-TEST-601 | Final-state action | `embed_accept_fires_on_accepting_states` <sub>(codegen/fsm_python.rs)</sub> | ✅ |
 | FSM-TEST-602 | EOF action | `fsm_test_602_eof_action` <sub>(codegen/fsm_python.rs)</sub> | ✅ |
-| FSM-TEST-603 | Leave-final action | — | ⏸ **deferred** — `%{}` leave-final firing needs a dedicated DFA-step scenario — deferred |
+| FSM-TEST-603 | Leave-final action | `fsm_test_603_leave_final_action` <sub>(codegen/fsm_python.rs)</sub><br>`rust_embed_leave_final` <sub>(codegen/fsm_rust.rs)</sub> | ✅ |
 
 ## Composition (§8)
 
@@ -144,8 +144,8 @@ Runtime tests (`codegen/fsm_python.rs`, `pipeline/compiler.rs`) generate recogni
 | FSM-TEST-700 | Mode C composition | `fsm_mode_c_call_out` <sub>(pipeline/compiler.rs)</sub><br>`fsm_mode_c_chained` <sub>(pipeline/compiler.rs)</sub> | ✅ |
 | FSM-TEST-701 | Mode C bytes-and-return | `fsm_mode_c_call_out` <sub>(pipeline/compiler.rs)</sub> | ✅ |
 | FSM-TEST-702 | Mode C type mismatch | — | ⏸ **deferred** — E706 Mode C type mismatch — no @@fsm type system in v0.1 |
-| FSM-TEST-703 | Mode C alphabet mismatch | — | ⏸ **deferred** — Mode C alphabet-mismatch E731 not enforced — needs cross-fsm validation |
-| FSM-TEST-704 | Mode C dynamic dispatch rejected | — | ⏸ **deferred** — Mode C dynamic-dispatch E732 not enforced — needs static-resolvability check |
+| FSM-TEST-703 | Mode C alphabet mismatch | `e731_mode_c_alphabet_mismatch` <sub>(fsm_validator/mod.rs)</sub> | ✅ |
+| FSM-TEST-704 | Mode C dynamic dispatch rejected | `e732_mode_c_dynamic_dispatch` <sub>(fsm_validator/mod.rs)</sub> | ✅ |
 
 ## Edge cases
 
@@ -172,20 +172,16 @@ Runtime tests (`codegen/fsm_python.rs`, `pipeline/compiler.rs`) generate recogni
 
 ## Deferrals (tracked in the enforcement allowlist)
 
-These 6 IDs have no backing test by design; each is an explicit, justified entry in the allowlist so it stays visible rather than silently uncovered.
+These 2 IDs have no backing test by design; each is an explicit, justified entry in the allowlist so it stays visible rather than silently uncovered. Both require an `@@fsm`-level type system, which v0.1 deliberately omits (type errors are deferred to the host language's compiler).
 
 | ID | Reason |
 |---|---|
 | FSM-TEST-102 | E706 return-type mismatch — no @@fsm type system in v0.1 |
 | FSM-TEST-702 | E706 Mode C type mismatch — no @@fsm type system in v0.1 |
-| FSM-TEST-033 | bare-name (non-`self.`) E703 validation not implemented — needs context-aware design |
-| FSM-TEST-603 | `%{}` leave-final firing needs a dedicated DFA-step scenario — deferred |
-| FSM-TEST-703 | Mode C alphabet-mismatch E731 not enforced — needs cross-fsm validation |
-| FSM-TEST-704 | Mode C dynamic-dispatch E732 not enforced — needs static-resolvability check |
 
 ## Running the tests
 ```bash
-cargo test --lib fsm                        # all @@fsm unit + execution tests (418)
+cargo test --lib fsm                        # all @@fsm unit + execution tests (438)
 cargo test --test fsm_conformance_coverage  # the coverage guard
-cargo test                                  # full suite (1177 tests)
+cargo test                                  # full suite (1197 tests)
 ```

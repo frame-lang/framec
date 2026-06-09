@@ -745,14 +745,19 @@ impl<'a> Generator<'a> {
             out.push_str(&accept);
             out.push_str("      }\n");
         }
-        let leave = self.embed_body(stage, EmbeddingOp::LeaveAccept, "        ")?;
-        if !leave.is_empty() {
-            out.push_str("      if (prev && !_now) {\n");
-            out.push_str(&leave);
-            out.push_str("      }\n");
-        }
         out.push_str("      if (_now) last = pos;\n      prev = _now;\n");
         out.push_str("    }\n");
+        // `%{}` — left the last accepting state: a post-scan event firing once
+        // when the longest match stops extending (failing element or EOF), with
+        // `@@:cursor` at the end of the matched region (`last`), not the failing
+        // element (§5.4 / FSM-TEST-603). `last < 0` ⇒ no accepting state was
+        // entered, so there is nothing to leave.
+        let leave = self.embed_body(stage, EmbeddingOp::LeaveAccept, "      ")?;
+        if !leave.is_empty() {
+            out.push_str("    if (last >= 0) {\n      this.cursor = last;\n");
+            out.push_str(&leave);
+            out.push_str("    }\n");
+        }
         let eof = self.embed_body(stage, EmbeddingOp::Eof, "      ")?;
         if !eof.is_empty() {
             out.push_str("    if (pos >= n && !prev) {\n");
@@ -1216,6 +1221,21 @@ mod tests {
             return;
         };
         assert_eq!(lines[0], "3");
+    }
+
+    /// FSM-TEST-603 — `%{...}` fires when the DFA leaves its last accepting
+    /// state, capturing the end of the matched region.
+    #[test]
+    fn ts_embed_leave_final() {
+        let code = gen(
+            "@@fsm M(text: bytes) : int = 0 { /[0-9]+/ %{ self.end_pos = @@:cursor } self.end_pos \
+             domain: end_pos: int = 0 }",
+        );
+        let driver = "for (const s of [\"42x\",\"abx\"]) { const m = new M(s); console.log(String(m.return_value)); }";
+        let Some(lines) = ts_run(&code, driver, "leave") else {
+            return;
+        };
+        assert_eq!(lines, vec!["2", "0"]);
     }
 
     #[test]

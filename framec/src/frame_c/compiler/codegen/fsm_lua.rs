@@ -678,14 +678,19 @@ impl<'a> Generator<'a> {
             out.push_str(&accept);
             out.push_str("    end\n");
         }
-        let leave = self.embed_body(stage, EmbeddingOp::LeaveAccept, "      ")?;
-        if !leave.is_empty() {
-            out.push_str("    if prev and not now then\n");
-            out.push_str(&leave);
-            out.push_str("    end\n");
-        }
         out.push_str("    if now then last = pos end\n    prev = now\n");
         out.push_str("  end\n");
+        // `%{}` — left the last accepting state: a post-scan event firing once
+        // when the longest match stops extending (failing element or EOF), with
+        // `@@:cursor` at the end of the matched region (`last`), not the failing
+        // element (§5.4 / FSM-TEST-603). `last < 0` ⇒ no accepting state was
+        // entered, so there is nothing to leave.
+        let leave = self.embed_body(stage, EmbeddingOp::LeaveAccept, "    ")?;
+        if !leave.is_empty() {
+            out.push_str("  if last >= 0 then\n    self.cursor = last\n");
+            out.push_str(&leave);
+            out.push_str("  end\n");
+        }
         let eof = self.embed_body(stage, EmbeddingOp::Eof, "    ")?;
         if !eof.is_empty() {
             out.push_str("  if pos >= n and not prev then\n");
@@ -1139,6 +1144,20 @@ mod tests {
             return;
         };
         assert_eq!(lines[0], "3");
+    }
+
+    /// FSM-TEST-603 — `%{...}` fires when the DFA leaves its last accepting
+    /// state, capturing the end of the matched region.
+    #[test]
+    fn lua_embed_leave_final() {
+        let src = "@@fsm M(text: bytes) : int = 0 { \
+                   /[0-9]+/ %{ self.end_pos = @@:cursor } self.end_pos \
+                   domain: end_pos: int = 0 }";
+        let Some((_, ret)) = run(src, "M.new(\"42x\")", "leave_a") else {
+            return;
+        };
+        assert_eq!(ret, "2");
+        assert_eq!(run(src, "M.new(\"abx\")", "leave_b").unwrap().1, "0");
     }
 
     #[test]

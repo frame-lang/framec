@@ -532,17 +532,23 @@ impl<'a> Generator<'a> {
             out.push_str("            if _now:\n");
             out.push_str(&accept);
         }
-        // `%{}` — left an accepting state.
-        let leave = self.embed_bodies(stage, EmbeddingOp::LeaveAccept, "                ")?;
-        if !leave.is_empty() {
-            out.push_str("            if prev and not _now:\n");
-            out.push_str(&leave);
-        }
         out.push_str(
             "            if _now:\n\
              \x20               last = pos\n\
              \x20           prev = _now\n",
         );
+        // `%{}` — left the last accepting state. This is a *post-scan* event:
+        // the DFA leaves its last accepting state when the longest match stops
+        // extending — either the next element fails to advance (loop `break`)
+        // or input is exhausted. It fires once, with `@@:cursor` at the end of
+        // the matched region (`last`), not the position of the failing element
+        // (§5.4 / FSM-TEST-603). `last < 0` means no accepting state was ever
+        // entered, so there is nothing to leave.
+        let leave = self.embed_bodies(stage, EmbeddingOp::LeaveAccept, "            ")?;
+        if !leave.is_empty() {
+            out.push_str("        if last >= 0:\n            self.cursor = last\n");
+            out.push_str(&leave);
+        }
         // `@eof{}` — end of input reached while mid-match (non-accepting).
         let eof = self.embed_bodies(stage, EmbeddingOp::Eof, "            ")?;
         if !eof.is_empty() {
@@ -1620,6 +1626,35 @@ mod tests {
             full,
             vec!["0"],
             "@eof does not fire when the stage completes"
+        );
+    }
+
+    /// FSM-TEST-603 — leave-final action. `%{...}` fires when the DFA leaves
+    /// its last accepting state, i.e. when the longest match stops extending.
+    /// For `/[0-9]+/` over "42x", the match is "42" and `x` cannot extend it,
+    /// so `%{}` fires at the end of the matched region — `@@:cursor == 2` —
+    /// not at the failing `x` position.
+    #[test]
+    fn fsm_test_603_leave_final_action() {
+        let src = "@@fsm M(text: bytes) : int = 0 { \
+                   /[0-9]+/ %{ self.end_pos = @@:cursor } self.end_pos \
+                   domain: end_pos: int = 0 }";
+        // "42x": digits stop at index 2; `%{}` records cursor == 2.
+        let Some(v) = eval_py(src, "42x", &["m.return_value"], "t603a") else {
+            return;
+        };
+        assert_eq!(v, vec!["2"], "%{{}} captures the end of the matched region");
+        // "42": match runs to EOF in the accepting state; still leaves it.
+        assert_eq!(
+            eval_py(src, "42", &["m.return_value"], "t603b").unwrap(),
+            vec!["2"],
+            "%{{}} fires at end-of-input when the match was accepting"
+        );
+        // "abx": never enters an accepting state, so there is nothing to leave.
+        assert_eq!(
+            eval_py(src, "abx", &["m.return_value"], "t603c").unwrap(),
+            vec!["0"],
+            "%{{}} does not fire when no accepting state was entered"
         );
     }
 

@@ -573,11 +573,12 @@ impl<'a> Generator<'a> {
     ) -> Result<(), String> {
         let input = &self.decl.params[0].name;
         // `prev` (the previous step's accepting flag) is only consumed by the
-        // `%{}` leave guard and the `@eof{}` mid-match guard; track it only
-        // when one of those is present (else it's a dead variable).
-        let leave = self.embed_bodies(stage, EmbeddingOp::LeaveAccept, "                ")?;
+        // `@eof{}` mid-match guard (the `%{}` leave action is a post-scan event
+        // keyed on `last`, not on `prev`); track it only when `@eof{}` is
+        // present (else it's a dead variable).
+        let leave = self.embed_bodies(stage, EmbeddingOp::LeaveAccept, "            ")?;
         let eof = self.embed_bodies(stage, EmbeddingOp::Eof, "            ")?;
-        let needs_prev = !leave.is_empty() || !eof.is_empty();
+        let needs_prev = !eof.is_empty();
         writeln!(out, "    fn match_stage_{}(&mut self) -> i64 {{", sid).ok();
         self.emit_dfa_const(out, sid, "        ");
         writeln!(
@@ -625,17 +626,21 @@ impl<'a> Generator<'a> {
             out.push_str(&accept);
             out.push_str("            }\n");
         }
-        // `%{}` — left an accepting state.
-        if !leave.is_empty() {
-            out.push_str("            if prev && !_now {\n");
-            out.push_str(&leave);
-            out.push_str("            }\n");
-        }
         out.push_str("            if _now { last = pos as i64; }\n");
         if needs_prev {
             out.push_str("            prev = _now;\n");
         }
         out.push_str("        }\n");
+        // `%{}` — left the last accepting state: a post-scan event firing once
+        // when the longest match stops extending (failing element or EOF), with
+        // `@@:cursor` at the end of the matched region (`last`), not the failing
+        // element (§5.4 / FSM-TEST-603). `last < 0` ⇒ no accepting state was
+        // entered, so there is nothing to leave.
+        if !leave.is_empty() {
+            out.push_str("        if last >= 0 {\n            self.cursor = last as usize;\n");
+            out.push_str(&leave);
+            out.push_str("        }\n");
+        }
         // `@eof{}` — end of input reached while mid-match (non-accepting).
         if !eof.is_empty() {
             out.push_str("        if pos >= n && !prev {\n");
@@ -1569,6 +1574,21 @@ mod tests {
             return;
         };
         assert_eq!(ret, "3");
+    }
+
+    /// FSM-TEST-603 — `%{...}` fires when the DFA leaves its last accepting
+    /// state, capturing the end of the matched region. For `/[0-9]+/` over
+    /// "42x" that is `@@:cursor == 2`, not the failing `x` position.
+    #[test]
+    fn rust_embed_leave_final() {
+        let src = "@@fsm M(text: bytes) : int = 0 { \
+                   /[0-9]+/ %{ self.end_pos = @@:cursor } self.end_pos \
+                   domain: end_pos: int = 0 }";
+        let Some((_, ret)) = run(src, "M", "42x", "emb_l") else {
+            return;
+        };
+        assert_eq!(ret, "2");
+        assert_eq!(run(src, "M", "abx", "emb_l2").unwrap().1, "0"); // never accepting → no fire
     }
 
     /// Mode C call-out (RFC-0042 §8.3): `/@Inner/` constructs the inner fsm

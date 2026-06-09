@@ -325,6 +325,11 @@ pub(crate) fn do_segment(c: &mut PipelineCtx) -> Option<CompileResult> {
     // clean blocks just pass through (the assembler has an emit-nothing
     // Fsm arm).
     let mut fsm_errors: Vec<CompileError> = Vec::new();
+    // Phase 1 — parse every `@@fsm` block. Collect the decls first so each
+    // can be validated with visibility of its siblings: Mode C alphabet
+    // checking (§8.3 / E731) resolves a `/@Inner/` reference against the
+    // other fsms declared in the same module.
+    let mut parsed: Vec<(String, crate::frame_c::compiler::frame_ast::FsmDeclAst)> = Vec::new();
     for seg in &source_map.segments {
         if let Segment::Fsm { outer_span, name } = seg {
             let block = &source_map.source[outer_span.start..outer_span.end];
@@ -335,98 +340,101 @@ pub(crate) fn do_segment(c: &mut PipelineCtx) -> Option<CompileResult> {
                         &format!("@@fsm {}: {}", name, pe.message),
                     ));
                 }
-                Ok(ast) => {
-                    let mut had_error = false;
-                    for d in crate::frame_c::compiler::fsm_validator::validate_fsm(&ast) {
-                        let ce = CompileError::new(d.code, &d.message);
-                        if d.code.starts_with('W') {
-                            c.fsm_warnings.push(ce);
-                        } else {
-                            had_error = true;
-                            fsm_errors.push(ce);
-                        }
-                    }
-                    // Codegen — v0.1 implements the Python reference backend
-                    // and the Rust backend (Phase 8). Other targets surface
-                    // a clear capability error rather than silently dropping
-                    // the @@fsm.
-                    if !had_error {
-                        use crate::frame_c::visitors::TargetLanguage;
-                        let generated = match c.config.target {
-                            TargetLanguage::Python3 => Some(
-                                crate::frame_c::compiler::codegen::fsm_python::generate(&ast),
-                            ),
-                            TargetLanguage::Rust => {
-                                Some(crate::frame_c::compiler::codegen::fsm_rust::generate(&ast))
-                            }
-                            TargetLanguage::Erlang => Some(
-                                crate::frame_c::compiler::codegen::fsm_erlang::generate(&ast),
-                            ),
-                            TargetLanguage::JavaScript => Some(
-                                crate::frame_c::compiler::codegen::fsm_javascript::generate(&ast),
-                            ),
-                            TargetLanguage::TypeScript => Some(
-                                crate::frame_c::compiler::codegen::fsm_typescript::generate(&ast),
-                            ),
-                            TargetLanguage::Go => {
-                                Some(crate::frame_c::compiler::codegen::fsm_go::generate(&ast))
-                            }
-                            TargetLanguage::Ruby => {
-                                Some(crate::frame_c::compiler::codegen::fsm_ruby::generate(&ast))
-                            }
-                            TargetLanguage::Php => {
-                                Some(crate::frame_c::compiler::codegen::fsm_php::generate(&ast))
-                            }
-                            TargetLanguage::Dart => {
-                                Some(crate::frame_c::compiler::codegen::fsm_dart::generate(&ast))
-                            }
-                            TargetLanguage::Lua => {
-                                Some(crate::frame_c::compiler::codegen::fsm_lua::generate(&ast))
-                            }
-                            TargetLanguage::Java => {
-                                Some(crate::frame_c::compiler::codegen::fsm_java::generate(&ast))
-                            }
-                            TargetLanguage::Kotlin => Some(
-                                crate::frame_c::compiler::codegen::fsm_kotlin::generate(&ast),
-                            ),
-                            TargetLanguage::CSharp => Some(
-                                crate::frame_c::compiler::codegen::fsm_csharp::generate(&ast),
-                            ),
-                            TargetLanguage::Swift => {
-                                Some(crate::frame_c::compiler::codegen::fsm_swift::generate(&ast))
-                            }
-                            TargetLanguage::Cpp => {
-                                Some(crate::frame_c::compiler::codegen::fsm_cpp::generate(&ast))
-                            }
-                            TargetLanguage::C => {
-                                Some(crate::frame_c::compiler::codegen::fsm_c::generate(&ast))
-                            }
-                            TargetLanguage::GDScript => Some(
-                                crate::frame_c::compiler::codegen::fsm_gdscript::generate(&ast),
-                            ),
-                            #[allow(unreachable_patterns)]
-                            _ => None,
-                        };
-                        match generated {
-                            Some(Ok(code)) => c.fsm_generated.push((name.clone(), code)),
-                            Some(Err(reason)) => fsm_errors.push(CompileError::new(
-                                "E740",
-                                &format!("@@fsm {}: {}", name, reason),
-                            )),
-                            // All 17 targets now have an @@fsm backend, so
-                            // this arm is unreachable; it remains as a
-                            // defensive backstop should the target set grow.
-                            None => fsm_errors.push(CompileError::new(
-                                "E740",
-                                &format!(
-                                    "@@fsm {}: code generation for the {:?} target is not yet \
-                                     implemented",
-                                    name, c.config.target
-                                ),
-                            )),
-                        }
-                    }
+                Ok(ast) => parsed.push((name.clone(), ast)),
+            }
+        }
+    }
+    let module: Vec<crate::frame_c::compiler::frame_ast::FsmDeclAst> =
+        parsed.iter().map(|(_, ast)| ast.clone()).collect();
+
+    // Phase 2 — validate (with sibling visibility) and generate each fsm.
+    for (name, ast) in &parsed {
+        let mut had_error = false;
+        for d in crate::frame_c::compiler::fsm_validator::validate_fsm_in_module(ast, &module) {
+            let ce = CompileError::new(d.code, &d.message);
+            if d.code.starts_with('W') {
+                c.fsm_warnings.push(ce);
+            } else {
+                had_error = true;
+                fsm_errors.push(ce);
+            }
+        }
+        // Codegen — v0.1 implements the Python reference backend
+        // and the Rust backend (Phase 8). Other targets surface
+        // a clear capability error rather than silently dropping
+        // the @@fsm.
+        if !had_error {
+            use crate::frame_c::visitors::TargetLanguage;
+            let generated = match c.config.target {
+                TargetLanguage::Python3 => {
+                    Some(crate::frame_c::compiler::codegen::fsm_python::generate(ast))
                 }
+                TargetLanguage::Rust => {
+                    Some(crate::frame_c::compiler::codegen::fsm_rust::generate(ast))
+                }
+                TargetLanguage::Erlang => {
+                    Some(crate::frame_c::compiler::codegen::fsm_erlang::generate(ast))
+                }
+                TargetLanguage::JavaScript => Some(
+                    crate::frame_c::compiler::codegen::fsm_javascript::generate(ast),
+                ),
+                TargetLanguage::TypeScript => Some(
+                    crate::frame_c::compiler::codegen::fsm_typescript::generate(ast),
+                ),
+                TargetLanguage::Go => {
+                    Some(crate::frame_c::compiler::codegen::fsm_go::generate(ast))
+                }
+                TargetLanguage::Ruby => {
+                    Some(crate::frame_c::compiler::codegen::fsm_ruby::generate(ast))
+                }
+                TargetLanguage::Php => {
+                    Some(crate::frame_c::compiler::codegen::fsm_php::generate(ast))
+                }
+                TargetLanguage::Dart => {
+                    Some(crate::frame_c::compiler::codegen::fsm_dart::generate(ast))
+                }
+                TargetLanguage::Lua => {
+                    Some(crate::frame_c::compiler::codegen::fsm_lua::generate(ast))
+                }
+                TargetLanguage::Java => {
+                    Some(crate::frame_c::compiler::codegen::fsm_java::generate(ast))
+                }
+                TargetLanguage::Kotlin => {
+                    Some(crate::frame_c::compiler::codegen::fsm_kotlin::generate(ast))
+                }
+                TargetLanguage::CSharp => {
+                    Some(crate::frame_c::compiler::codegen::fsm_csharp::generate(ast))
+                }
+                TargetLanguage::Swift => {
+                    Some(crate::frame_c::compiler::codegen::fsm_swift::generate(ast))
+                }
+                TargetLanguage::Cpp => {
+                    Some(crate::frame_c::compiler::codegen::fsm_cpp::generate(ast))
+                }
+                TargetLanguage::C => Some(crate::frame_c::compiler::codegen::fsm_c::generate(ast)),
+                TargetLanguage::GDScript => Some(
+                    crate::frame_c::compiler::codegen::fsm_gdscript::generate(ast),
+                ),
+                #[allow(unreachable_patterns)]
+                _ => None,
+            };
+            match generated {
+                Some(Ok(code)) => c.fsm_generated.push((name.clone(), code)),
+                Some(Err(reason)) => fsm_errors.push(CompileError::new(
+                    "E740",
+                    &format!("@@fsm {}: {}", name, reason),
+                )),
+                // All 17 targets now have an @@fsm backend, so this arm is
+                // unreachable; it remains as a defensive backstop should the
+                // target set grow.
+                None => fsm_errors.push(CompileError::new(
+                    "E740",
+                    &format!(
+                        "@@fsm {}: code generation for the {:?} target is not yet \
+                         implemented",
+                        name, c.config.target
+                    ),
+                )),
             }
         }
     }

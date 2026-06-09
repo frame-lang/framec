@@ -344,16 +344,35 @@ impl<'a> Generator<'a> {
             pf, prf, sid, start_b
         )
         .ok();
+        // `%{}` — left the last accepting state: a post-scan event firing once
+        // when the longest match stops extending, with `@@:cursor` at the end
+        // of the matched region (`Last`), not the failing element (§5.4 /
+        // FSM-TEST-603). `Last < 0` ⇒ no accepting state was entered.
+        let leave = self.embed_stmts(stage, EmbeddingOp::LeaveAccept);
+        let after_loop_st = if leave.is_empty() {
+            "StZ".to_string()
+        } else {
+            let v = fresh("St", &mut ctr);
+            writeln!(out, "    {} = case Last >= 0 of", v).ok();
+            out.push_str("        true ->\n");
+            let cur = fresh("St", &mut ctr);
+            writeln!(out, "            {} = StZ#{{cursor => Last}},", cur).ok();
+            let b = self.emit_block(out, &leave, &cur, "            ", &mut ctr)?;
+            writeln!(out, "            {};", b).ok();
+            out.push_str("        false -> StZ\n");
+            out.push_str("    end,\n");
+            v
+        };
         // `@eof{}` — end of input reached while mid-match (non-accepting).
         let final_st = if eof.is_empty() {
-            "StZ".to_string()
+            after_loop_st.clone()
         } else {
             let v = fresh("St", &mut ctr);
             writeln!(out, "    {} = case (PosF >= N) andalso (not PrevF) of", v).ok();
             out.push_str("        true ->\n");
-            let b = self.emit_block(out, &eof, "StZ", "            ", &mut ctr)?;
+            let b = self.emit_block(out, &eof, &after_loop_st, "            ", &mut ctr)?;
             writeln!(out, "            {};", b).ok();
-            out.push_str("        false -> StZ\n");
+            writeln!(out, "        false -> {}", after_loop_st).ok();
             out.push_str("    end,\n");
             v
         };
@@ -394,20 +413,7 @@ impl<'a> Generator<'a> {
         } else {
             self.emit_gated_body(out, "Now", &accept, &after_every, ind, &mut ctr)?
         };
-        // `%{}` — left an accepting state.
-        let leave = self.embed_stmts(stage, EmbeddingOp::LeaveAccept);
-        let after_leave = if leave.is_empty() {
-            after_accept.clone()
-        } else {
-            self.emit_gated_body(
-                out,
-                "Prev andalso (not Now)",
-                &leave,
-                &after_accept,
-                ind,
-                &mut ctr,
-            )?
-        };
+        // (`%{}` is handled post-scan in emit_one_matcher, not per-step.)
         writeln!(
             out,
             "{}Last2 = case Now of true -> Pos2; false -> Last end,",
@@ -417,7 +423,7 @@ impl<'a> Generator<'a> {
         writeln!(
             out,
             "{}embed_loop_{}(Input, N, States, Tgt, Pos2, Last2, Now, {})",
-            ind, sid, after_leave
+            ind, sid, after_accept
         )
         .ok();
         out.push_str("            end\n    end.\n\n");
@@ -2011,6 +2017,21 @@ mod tests {
             return;
         };
         assert_eq!(ret, "1");
+    }
+
+    /// FSM-TEST-603 — `%{...}` fires when the DFA leaves its last accepting
+    /// state, capturing the end of the matched region. For `/[0-9]+/` over
+    /// "42x" that is `@@:cursor == 2`, not the failing `x` position.
+    #[test]
+    fn erl_embed_leave_final() {
+        let src = "@@fsm M(text: bytes) : int = 0 { \
+                   /[0-9]+/ %{ self.end_pos = @@:cursor } self.end_pos \
+                   domain: end_pos: int = 0 }";
+        let Some((_, ret)) = run(src, "m", "42x", "emb_l") else {
+            return;
+        };
+        assert_eq!(ret, "2");
+        assert_eq!(run(src, "m", "abx", "emb_l2").unwrap().1, "0"); // never accepting → no fire
     }
 
     /// Token alphabet (FSM-TEST-253): the input is a list of token-kind

@@ -405,12 +405,17 @@ impl<'a> Generator<'a> {
             out.push_str("\t\t\tif _now:\n");
             out.push_str(&accept);
         }
-        let leave = self.embed_bodies(stage, EmbeddingOp::LeaveAccept, "\t\t\t\t")?;
+        out.push_str("\t\t\tif _now:\n\t\t\t\tlast = pos\n\t\t\tprev = _now\n");
+        // `%{}` — left the last accepting state: a post-scan event firing once
+        // when the longest match stops extending (failing element or EOF), with
+        // `@@:cursor` at the end of the matched region (`last`), not the failing
+        // element (§5.4 / FSM-TEST-603). `last < 0` ⇒ no accepting state was
+        // entered, so there is nothing to leave.
+        let leave = self.embed_bodies(stage, EmbeddingOp::LeaveAccept, "\t\t\t")?;
         if !leave.is_empty() {
-            out.push_str("\t\t\tif prev and not _now:\n");
+            out.push_str("\t\tif last >= 0:\n\t\t\tself.cursor = last\n");
             out.push_str(&leave);
         }
-        out.push_str("\t\t\tif _now:\n\t\t\t\tlast = pos\n\t\t\tprev = _now\n");
         let eof = self.embed_bodies(stage, EmbeddingOp::Eof, "\t\t\t")?;
         if !eof.is_empty() {
             out.push_str("\t\tif pos >= n and not prev:\n");
@@ -1139,6 +1144,21 @@ mod tests {
             return;
         };
         assert_eq!(lines[0], "3");
+    }
+
+    /// FSM-TEST-603 — `%{...}` fires when the DFA leaves its last accepting
+    /// state, capturing the end of the matched region.
+    #[test]
+    fn gd_embed_leave_final() {
+        let code = gen("@@fsm M(text: bytes) : int = 0 { \
+             /[0-9]+/ %{ self.end_pos = @@:cursor } self.end_pos \
+             domain: end_pos: int = 0 }");
+        let driver =
+            "\tfor s in [\"42x\", \"abx\"]:\n\t\tvar m = M.new(s)\n\t\tprint(m.return_value)";
+        let Some(lines) = gd_run(&code, driver, "leavefin") else {
+            return;
+        };
+        assert_eq!(lines, vec!["2", "0"]);
     }
 
     #[test]

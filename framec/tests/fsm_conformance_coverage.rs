@@ -35,38 +35,6 @@ const ALLOWLIST: &[(&str, &str)] = &[
         "FSM-TEST-702",
         "E706 Mode C type mismatch — no @@fsm type system in v0.1",
     ),
-    // Impl gap needing a dedicated decision: the validator only checks
-    // `self.<field>` references, so a *bare* name (`count` vs `self.count`) is
-    // not flagged E703 (RFC §4.2). A fix needs context-aware bare-name
-    // validation (exclude initializer-scope param refs — FSM-TEST-103 — plus
-    // call targets, built-ins, and action names) with false-positive risk;
-    // deferred pending that design decision rather than a rushed broad change.
-    (
-        "FSM-TEST-033",
-        "bare-name (non-`self.`) E703 validation not implemented — needs context-aware design",
-    ),
-    // The `%{}` (leave-final) embedding action is emitted, but it fires only on
-    // a DFA *step* from an accepting into a non-accepting state; a plain
-    // `/[0-9]+/` simply halts at a non-match without such a step, so a clean
-    // firing scenario needs dedicated semantics work. Deferred. (FSM-TEST-600
-    // `>{}`/`${}`, 601 `@{}`, and 602 `@eof{}` are covered.)
-    (
-        "FSM-TEST-603",
-        "`%{}` leave-final firing needs a dedicated DFA-step scenario — deferred",
-    ),
-    // Mode C error validation (§8.3) is not implemented: the framepiler does
-    // not reject an inner/outer alphabet mismatch (E731) or a dynamic
-    // `/@which/` reference (E732). Enforcing these needs cross-fsm resolution
-    // (compare inner vs outer alphabet) and static-resolvability analysis of
-    // the `/@name/` target — a dedicated effort, deferred for v0.1.
-    (
-        "FSM-TEST-703",
-        "Mode C alphabet-mismatch E731 not enforced — needs cross-fsm validation",
-    ),
-    (
-        "FSM-TEST-704",
-        "Mode C dynamic-dispatch E732 not enforced — needs static-resolvability check",
-    ),
 ];
 
 fn manifest() -> PathBuf {

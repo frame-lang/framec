@@ -42,10 +42,22 @@ pub struct FsmDiagnostic {
 /// Validate a parsed `@@fsm` declaration. Returns all findings (not just
 /// the first), so the frontend can report them in one pass.
 pub fn validate_fsm(decl: &FsmDeclAst) -> Vec<FsmDiagnostic> {
+    validate_fsm_in_module(decl, std::slice::from_ref(decl))
+}
+
+/// Validate `decl` with visibility of the other fsms declared in the same
+/// module (`module`, which includes `decl` itself). The extra context is
+/// only needed for Mode C call-out checks (§8.3): resolving a `/@Inner/`
+/// reference to compare its alphabet against the outer fsm (E731). All
+/// other checks are intra-fsm and ignore `module`.
+pub fn validate_fsm_in_module(decl: &FsmDeclAst, module: &[FsmDeclAst]) -> Vec<FsmDiagnostic> {
     let mut v = validator_fsm::FsmValidator::__create();
     v.decl = decl.clone();
     v.validate();
-    v.diagnostics
+    let mut diags = v.diagnostics;
+    diags.extend(check_mode_c(decl, module));
+    diags.extend(check_bare_names(decl));
+    diags
 }
 
 // ---------------------------------------------------------------------------
@@ -398,6 +410,92 @@ fn alphabet_of(decl: &FsmDeclAst) -> Alphabet {
     }
 }
 
+/// The source-spelling of an alphabet, for diagnostics.
+fn alphabet_name(a: Alphabet) -> &'static str {
+    match a {
+        Alphabet::Bytes => "bytes",
+        Alphabet::Char => "char",
+        Alphabet::Token => "token",
+    }
+}
+
+/// E731 / E732 — Mode C call-out (`/@Fsm/`, RFC-0042 §8.3) static checks.
+///
+/// A match stage whose regex body is `@<name>` is a Mode C reference to an
+/// inner fsm (the `/@.../ ` form; `mode_c_inner` in the backends strips the
+/// same leading `@`). Two requirements are enforced statically:
+///
+/// - **E732 — dynamic dispatch (FSM-TEST-704).** `<name>` must name an fsm
+///   *statically*, not select one at run time. If `<name>` is one of this
+///   fsm's parameters or domain fields, the target is a runtime value, which
+///   v0.1 does not support.
+/// - **E731 — alphabet mismatch (FSM-TEST-703).** Mode C drives the inner
+///   recognizer over the *same* input, so the inner fsm must declare the same
+///   alphabet as the outer one (a `char` outer cannot drive a `bytes` inner).
+///   Checked only when `<name>` resolves to a sibling fsm in `module`; an
+///   unresolved name is left to other passes (no false E731/E732).
+///
+/// The two are mutually exclusive per reference: a runtime name is reported
+/// E732 and not also probed for an alphabet match.
+pub(crate) fn check_mode_c(decl: &FsmDeclAst, module: &[FsmDeclAst]) -> Vec<FsmDiagnostic> {
+    let mut out = Vec::new();
+    let outer_alpha = alphabet_of(decl);
+
+    // Parameters and domain fields are the fsm's runtime values; a Mode C
+    // name matching one of these is dynamic dispatch.
+    let mut runtime: HashSet<&str> = decl.params.iter().map(|p| p.name.as_str()).collect();
+    if let Some(dom) = &decl.domain {
+        for v in &dom.vars {
+            runtime.insert(v.name.as_str());
+        }
+    }
+
+    for st in &decl.states {
+        for m in &st.matches {
+            for el in &m.elements {
+                let MatchElement::Stage(stage) = el else {
+                    continue;
+                };
+                let Some(target) = stage.regex.strip_prefix('@') else {
+                    continue;
+                };
+                if runtime.contains(target) {
+                    out.push(FsmDiagnostic {
+                        code: "E732",
+                        span: stage.span.clone(),
+                        message: format!(
+                            "Mode C reference `/@{target}/` is dynamic: `{target}` is a runtime \
+                             value, not a statically-named fsm. v0.1 requires the inner fsm to be \
+                             named statically — use a conditional target with explicit `/@Fsm/` \
+                             alternatives, or Mode A composition from `@@system`."
+                        ),
+                    });
+                    continue;
+                }
+                if let Some(inner) = module.iter().find(|d| d.name == target) {
+                    let inner_alpha = alphabet_of(inner);
+                    if inner_alpha != outer_alpha {
+                        out.push(FsmDiagnostic {
+                            code: "E731",
+                            span: stage.span.clone(),
+                            message: format!(
+                                "Mode C alphabet mismatch: outer fsm `{}` is `{}` but inner fsm \
+                                 `{}` is `{}`. Mode C composition requires matching alphabets — \
+                                 change one declaration so both agree.",
+                                decl.name,
+                                alphabet_name(outer_alpha),
+                                target,
+                                alphabet_name(inner_alpha),
+                            ),
+                        });
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Compile every stage regex through [`fsm_regex::compile`] and surface
 /// its diagnostics, plus the match-level exhaustiveness check:
 ///
@@ -545,6 +643,153 @@ pub(crate) fn check_undeclared_reads(decl: &FsmDeclAst) -> Vec<FsmDiagnostic> {
         }
     }
     out
+}
+
+/// FSM-TEST-033 / E703 — a *bare* identifier (no `self.` prefix) that names
+/// a parameter or domain field. Outside `domain:` initializer expressions,
+/// domain/parameter access requires the `self.` prefix (§4.2): `count` is not
+/// in scope, only `self.count` is. A bare name that collides with a known
+/// field is almost always a missing `self.`, so it is rejected with that hint.
+///
+/// The check is deliberately scoped to names that *match a declared field* so
+/// it cannot misfire on the legitimate bare forms: call/action targets, `@@:`
+/// probes, `$state` refs, native expressions, action-parameter locals, and
+/// `domain:` initializer param references (FSM-TEST-103, which are not walked
+/// here at all).
+pub(crate) fn check_bare_names(decl: &FsmDeclAst) -> Vec<FsmDiagnostic> {
+    let mut fields: HashSet<&str> = decl.params.iter().map(|p| p.name.as_str()).collect();
+    if let Some(dom) = &decl.domain {
+        for v in &dom.vars {
+            fields.insert(v.name.as_str());
+        }
+    }
+
+    // Collect bare `Var` references from body contexts only (never domain
+    // initializers). Each is a candidate missing-`self.`.
+    let mut bares: Vec<(String, Span)> = Vec::new();
+    for st in &decl.states {
+        for m in &st.matches {
+            for el in &m.elements {
+                match el {
+                    MatchElement::BareExpression { expr, span } => {
+                        collect_bare_vars(expr, span, &mut bares)
+                    }
+                    MatchElement::ActionBlock(b) => collect_bare_block(b, &mut bares),
+                    MatchElement::Stage(s) => {
+                        for ea in &s.embedding_actions {
+                            collect_bare_block(&ea.body, &mut bares);
+                        }
+                    }
+                }
+            }
+            if let Some(t) = &m.transition {
+                if let Some(s) = &t.success {
+                    collect_bare_target(s, &mut bares);
+                }
+                if let Some(f) = &t.failure {
+                    collect_bare_target(f, &mut bares);
+                }
+            }
+        }
+    }
+    // Declared-action bodies: a bare name that is one of the action's own
+    // parameters is a local, not a field access — exclude those.
+    if let Some(actions) = &decl.actions {
+        for a in &actions.actions {
+            let locals: HashSet<&str> = a.params.iter().map(|p| p.name.as_str()).collect();
+            let mut body_bares = Vec::new();
+            collect_bare_block(&a.body, &mut body_bares);
+            bares.extend(
+                body_bares
+                    .into_iter()
+                    .filter(|(n, _)| !locals.contains(n.as_str())),
+            );
+        }
+    }
+
+    let mut out = Vec::new();
+    let mut reported: HashSet<String> = HashSet::new();
+    for (name, span) in bares {
+        if fields.contains(name.as_str()) && reported.insert(name.clone()) {
+            out.push(FsmDiagnostic {
+                code: "E703",
+                span,
+                message: format!(
+                    "bare name `{name}` does not refer to the domain field `self.{name}`; \
+                     domain access requires the `self.` prefix outside of initializer \
+                     expressions — write `self.{name}`"
+                ),
+            });
+        }
+    }
+    out
+}
+
+/// Collect bare identifier references (reads and assignment targets) from `e`,
+/// EXCLUDING call/action targets, `self`, and `@@:`/`$` forms. Mirrors
+/// [`walk_expr`] but records only bare `Var`s — the candidates for a missing
+/// `self.` ([`check_bare_names`]).
+fn collect_bare_vars(e: &Expression, ctx: &Span, out: &mut Vec<(String, Span)>) {
+    match e {
+        Expression::Var(name) => {
+            if name != "self" && !name.starts_with("@@:") && !name.starts_with('$') {
+                out.push((name.clone(), ctx.clone()));
+            }
+        }
+        // `self.field` / `obj.field`: walk the object (so `self` is skipped and
+        // a bare `obj` is still caught); the field name is not a bare ref.
+        Expression::Member { object, .. } => collect_bare_vars(object, ctx, out),
+        Expression::Binary { left, right, .. } => {
+            collect_bare_vars(left, ctx, out);
+            collect_bare_vars(right, ctx, out);
+        }
+        Expression::Unary { expr, .. } => collect_bare_vars(expr, ctx, out),
+        // The call target is an action/native name, not a domain-field access;
+        // record only the argument expressions.
+        Expression::Call { args, .. } => {
+            for a in args {
+                collect_bare_vars(a, ctx, out);
+            }
+        }
+        Expression::Assign { target, value } => {
+            collect_bare_vars(target, ctx, out);
+            collect_bare_vars(value, ctx, out);
+        }
+        Expression::Index { object, index } => {
+            collect_bare_vars(object, ctx, out);
+            collect_bare_vars(index, ctx, out);
+        }
+        Expression::Literal(_) | Expression::NativeExpr(_) => {}
+    }
+}
+
+fn collect_bare_block(b: &BlockAst, out: &mut Vec<(String, Span)>) {
+    for s in &b.statements {
+        collect_bare_stmt(s, out);
+    }
+}
+
+fn collect_bare_stmt(s: &Statement, out: &mut Vec<(String, Span)>) {
+    match s {
+        Statement::Expression(e) => collect_bare_vars(&e.expr, &e.span, out),
+        Statement::If(if_ast) => {
+            collect_bare_vars(&if_ast.condition, &if_ast.span, out);
+            collect_bare_stmt(&if_ast.then_branch, out);
+            if let Some(eb) = &if_ast.else_branch {
+                collect_bare_stmt(eb, out);
+            }
+        }
+        Statement::Block(b) => collect_bare_block(b, out),
+        _ => {}
+    }
+}
+
+fn collect_bare_target(t: &FsmTransitionTarget, out: &mut Vec<(String, Span)>) {
+    if let FsmTransitionTarget::Conditional(alts) = t {
+        for alt in alts {
+            collect_bare_vars(&alt.condition, &alt.span, out);
+        }
+    }
 }
 
 /// E731 / E732 — every transition target must name a declared state
@@ -921,6 +1166,101 @@ mod tests {
     fn e713_accepts_char_and_token() {
         assert!(diags(b"@@fsm M(text: char) : bool = false { /a/ true }").is_empty());
         assert!(diags(b"@@fsm M(toks: token) : bool = false { /IDENT/ true }").is_empty());
+    }
+
+    /// FSM-TEST-033 — bare name does not refer to domain. `count = count + 1`
+    /// inside an action block uses the bare name `count`, but domain access
+    /// requires `self.` outside initializer expressions; both the write and the
+    /// read are rejected with E703 pointing at `self.count`.
+    #[test]
+    fn e703_bare_name_not_domain() {
+        let d = diags(
+            b"@@fsm M(text: bytes) : int = 0 { /[0-9]/ { count = count + 1 } self.count \
+              domain: count: int = 0 }",
+        );
+        assert!(
+            d.iter().any(|x| x.code == "E703"),
+            "expected E703 for bare `count`, got {:?}",
+            d
+        );
+        // The `self.`-qualified form is accepted (no E703 from this check).
+        let ok = diags(
+            b"@@fsm M(text: bytes) : int = 0 { /[0-9]/ { self.count = self.count + 1 } self.count \
+              domain: count: int = 0 }",
+        );
+        assert!(
+            !ok.iter().any(|x| x.code == "E703"),
+            "self.count must not raise E703, got {:?}",
+            ok
+        );
+        // FSM-TEST-103 guard: a bare *parameter* reference inside a `domain:`
+        // initializer is legal and must not be flagged.
+        let init = diags(
+            b"@@fsm M(text: bytes, n: int) : int = 0 { /[0-9]/ self.seed \
+              domain: seed: int = n }",
+        );
+        assert!(
+            !init.iter().any(|x| x.code == "E703"),
+            "bare param in a domain initializer must not raise E703, got {:?}",
+            init
+        );
+    }
+
+    /// FSM-TEST-703 — Mode C alphabet mismatch. A `char`-alphabet outer fsm
+    /// `/@A/`-references a `bytes`-alphabet inner fsm; the alphabets disagree,
+    /// so the reference is rejected with E731 (§8.3). A matching-alphabet pair
+    /// is accepted.
+    #[test]
+    fn e731_mode_c_alphabet_mismatch() {
+        let a =
+            parse_fsm_block(b"@@fsm A(text: bytes) : bool = false { /a/ true }").expect("A parses");
+        let b = parse_fsm_block(b"@@fsm B(input: char) : bool = false { /@A/ true }")
+            .expect("B parses");
+        let module = vec![a.clone(), b.clone()];
+        let d = validate_fsm_in_module(&b, &module);
+        assert!(
+            d.iter().any(|x| x.code == "E731"),
+            "expected E731 alphabet mismatch, got {:?}",
+            d
+        );
+        // Same alphabet on both ⇒ no mismatch.
+        let a2 =
+            parse_fsm_block(b"@@fsm A(text: char) : bool = false { /a/ true }").expect("A2 parses");
+        let module2 = vec![a2.clone(), b.clone()];
+        assert!(
+            !validate_fsm_in_module(&b, &module2)
+                .iter()
+                .any(|x| x.code == "E731"),
+            "matching alphabets must not raise E731"
+        );
+    }
+
+    /// FSM-TEST-704 — Mode C dynamic dispatch rejected. `/@which/` where
+    /// `which` is a runtime parameter is not a statically-named fsm, so it is
+    /// rejected with E732 (§8.3).
+    #[test]
+    fn e732_mode_c_dynamic_dispatch() {
+        let d = diags(
+            b"@@fsm M(text: bytes, which: FsmRef) : int = 0 { $m: /@which/  $m.0.return_value }",
+        );
+        assert!(
+            d.iter().any(|x| x.code == "E732"),
+            "expected E732 dynamic dispatch, got {:?}",
+            d
+        );
+        // A statically-named, alphabet-matching inner fsm is accepted.
+        let inner = parse_fsm_block(b"@@fsm Digits(text: bytes) : int = 0 { /[0-9]+/ 0 }")
+            .expect("inner parses");
+        let outer =
+            parse_fsm_block(b"@@fsm M(text: bytes) : int = 0 { $m: /@Digits/  $m.0.return_value }")
+                .expect("outer parses");
+        let module = vec![inner, outer.clone()];
+        assert!(
+            !validate_fsm_in_module(&outer, &module)
+                .iter()
+                .any(|x| x.code == "E731" || x.code == "E732"),
+            "a statically-named matching-alphabet Mode C ref must be accepted"
+        );
     }
 
     /// FSM-TEST-403 — reference to undeclared state.
