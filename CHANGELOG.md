@@ -41,6 +41,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
   sections, and the portable-float guidance (#62) updated to the verbatim-native
   contract. See [4.5.0 migration](docs/releases/4.5.0-migration.md).
 
+### CI
+
+- **PR matrix-smoke now compile-gates the typed targets C++, C#, and Go (#60).**
+  Text snapshots are blind to "looks plausible but doesn't compile/run" codegen
+  bugs on typed targets (cf. #58/#59), and those don't always share a failure
+  mode with the existing Rust/Java representatives. They were previously gated
+  only by the nightly full matrix; now they run on every PR alongside
+  Python/Rust/Java/Erlang.
+
 ## [4.4.0] - 2026-06-06
 
 Ships RFC-0043: the `@@[async]` system-header attribute and a layered
