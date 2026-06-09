@@ -122,12 +122,13 @@ Reads and writes use the bare field name inside member methods
 (`call_count += 1`). The Frame `: type` annotation IS the C++
 type — you write `: std::string`, `: std::vector<int>`, etc.
 
-**Frame's type names map cleanly to C++ types:**
+**Write C++'s own type names directly** — framec passes the annotation
+through verbatim (the name you write *is* the emitted type):
 
-| Frame             | C++             | Notes |
+| You write         | C++ meaning     | Notes |
 |-------------------|-----------------|-------|
 | `int`             | `int`           | platform `int` width |
-| `std::string`     | `std::string`   | preferred; `: str` also works for cross-target Frame |
+| `std::string`     | `std::string`   | write `std::string`, not a generic `str` |
 | `bool`            | `bool`          | |
 | `double`          | `double`        | |
 | `std::vector<T>`  | `std::vector<T>`| Frame passes through verbatim |

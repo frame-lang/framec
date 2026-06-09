@@ -835,15 +835,16 @@ impl KotlinBackend {
         }
     }
 
+    /// Normalize a type annotation for emission. Frame has NO type system:
+    /// user-written type names pass through VERBATIM (docs/frame_language.md).
+    /// Write Kotlin's own names (`Int`, `String`, `Double`, `List<Int>`). The
+    /// arms below are framec-synthesized machinery types only (untyped event
+    /// params, the structural `void` return); there is no `int`->`Int` /
+    /// `str`->`String` alias table — it contradicted the passthrough contract
+    /// and was removed.
     fn map_type(&self, t: &str) -> String {
         match t {
             "Any" | "Object" | "object" => "Any?".to_string(),
-            "string" | "str" => "String".to_string(),
-            "String" => "String".to_string(),
-            "int" | "i32" | "i64" | "number" => "Int".to_string(),
-            "float" | "f64" | "f32" | "double" => "Double".to_string(),
-            "bool" | "boolean" => "Boolean".to_string(),
-            "Boolean" => "Boolean".to_string(),
             "void" => "Unit".to_string(),
             "var" => "Any?".to_string(),
             other => other.to_string(),

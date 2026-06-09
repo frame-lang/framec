@@ -368,7 +368,19 @@ $.<varName> (: <type>)? = <initializer_expr>
 - No duplicates within a state
 - State variable names may shadow domain variables (no ambiguity due to `$.` prefix)
 
-**Portable init expressions:** Use Frame-portable literals for state variable initializers: `""` for strings, `0` for integers, `false` for booleans. framec wraps these to match the target language's type system (e.g., `String::from("")` for Rust, `std::string("")` for C++). Target-language-specific constructors like `String::new()` are NOT portable — the Frame parser may not handle them correctly. If you need a target-specific value, write it as native code and framec will pass it through unchanged.
+**Init values are emitted verbatim.** Frame has no type system and does not interpret or wrap initializer values — the text you write after `=` is passed through to the generated code unchanged, exactly like a domain-field initializer. So write a value that is valid in the **target language** for the declared type:
+
+| Declared type | Write (examples) |
+|---|---|
+| Rust `String` | `String::from("")` (a bare `""` is a `&str` and will not compile) |
+| Rust `f64` / `f32` | `0.0`, `1.0`, `3.14` |
+| C++ `std::string` | `std::string("")` |
+| Java / C# / Kotlin 32-bit `float` | `0.0f` / `0.0F` (a bare `0.0` is a `double`) |
+| Java / C# / Kotlin `double` | `0.0` |
+| Go `float64` | `0.0` (or `0` — untyped constant) |
+| Python / JS / Ruby / Lua (dynamic) | `""`, `0`, `0.0`, `False`/`false` per the target's own literal spelling |
+
+There is no single "portable" literal that is valid across every target — a `String` slot needs `String::from("")` on Rust but `""` on Python; a 32-bit `float` needs `0.0f` on Java but `0.0` on Rust. Write what the target compiler expects. (Earlier versions wrapped a small set of "portable" literals per target; that wrapping was removed — it contradicted the verbatim-passthrough contract.)
 
 ### Event Handlers
 

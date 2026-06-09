@@ -130,12 +130,13 @@ The Frame `: type` annotation IS the Java type — write `: String`,
 `: List<Integer>`, `: Map<String, Object>`, etc. Frame doesn't
 auto-prefix `java.util.` — declare imports in the prolog.
 
-**Frame type names map cleanly to Java types:**
+**Write Java's own type names directly** — framec passes the annotation
+through verbatim (the name you write *is* the emitted type):
 
-| Frame             | Java                | Notes |
+| You write         | Java meaning        | Notes |
 |-------------------|---------------------|-------|
 | `int`             | `int`               | primitive 32-bit |
-| `String`          | `String`            | preferred over `: str` for type-fidelity |
+| `String`          | `String`            | write `String`, not a generic `str` |
 | `boolean`         | `boolean`           | primitive |
 | `double`          | `double`            | primitive 64-bit |
 | `List<T>`         | `java.util.List<T>` | needs `import java.util.List` |

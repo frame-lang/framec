@@ -190,16 +190,18 @@ every C-family target. The `: type` annotation is enforced by
 Godot's runtime if you opt into typed mode, but most user-written
 GDScript leans on the dynamic side.
 
-**Frame's type names map to GDScript types:**
+**Write GDScript's own type names directly** — framec passes the
+annotation through verbatim (there is no `str`/`list`/`map` that framec
+translates; write `String`/`Array`/`Dictionary`):
 
-| Frame  | GDScript     | Notes |
-|--------|--------------|-------|
-| `int`  | `int`        | 64-bit integer |
-| `str`  | `String`     | always Godot's `String`, not `StringName` |
-| `bool` | `bool`       | |
-| `float`| `float`      | 64-bit float |
-| `list` | `Array`      | dynamic, untyped |
-| `map`  | `Dictionary` | |
+| You write    | Notes |
+|--------------|-------|
+| `int`        | 64-bit integer |
+| `String`     | Godot's `String`, not `StringName` |
+| `bool`       | |
+| `float`      | 64-bit float |
+| `Array`      | dynamic, untyped |
+| `Dictionary` | |
 
 For Godot-specific types (`Vector2`, `Vector3`, `Color`, `Node`,
 etc), declare the type with the engine name as the Frame `: type`

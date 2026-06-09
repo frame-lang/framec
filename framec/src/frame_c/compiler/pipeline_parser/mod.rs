@@ -557,9 +557,34 @@ impl Parser {
             Type::Unknown
         };
 
-        let init = if self.check(&Token::Equals)? {
+        // Capture the initializer as raw target-language text (verbatim
+        // passthrough — Frame does not interpret values). Mirrors the
+        // domain-field / return-init scan: bytes from the cursor to end of
+        // line, stopping at a `#` native comment. (Parsing into an
+        // `Expression` and re-serializing corrupted literals — FRAMEC #59.)
+        let initializer_text = if self.check(&Token::Equals)? {
             self.advance()?; // consume `=`
-            Some(self.parse_simple_expression()?)
+            let src = self.lexer.source();
+            let init_start = self.lexer.cursor();
+            let mut pos = init_start;
+            while pos < src.len() && src[pos] != b'\n' && src[pos] != b'#' {
+                pos += 1;
+            }
+            let init_text = std::str::from_utf8(&src[init_start..pos])
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            if pos < src.len() && src[pos] == b'#' {
+                while pos < src.len() && src[pos] != b'\n' {
+                    pos += 1;
+                }
+            }
+            self.lexer.set_cursor(pos);
+            if init_text.is_empty() {
+                None
+            } else {
+                Some(init_text)
+            }
         } else {
             None
         };
@@ -567,7 +592,7 @@ impl Parser {
         Ok(StateVarAst {
             name,
             var_type,
-            init,
+            initializer_text,
             span: Span::new(start, self.lexer.cursor()),
         })
     }

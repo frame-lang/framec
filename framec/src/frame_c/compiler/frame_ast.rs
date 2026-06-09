@@ -224,7 +224,12 @@ pub struct MachineAst {
 pub struct StateVarAst {
     pub name: String,
     pub var_type: Type,
-    pub init: Option<Expression>,
+    /// Initializer as raw target-language text. Frame has no type system
+    /// and does not interpret values — codegen emits this verbatim, exactly
+    /// like `DomainVar::initializer_text`. (Previously parsed into an
+    /// `Expression` and re-serialized, which corrupted literals such as
+    /// `0.0` -> `0`; FRAMEC #59.)
+    pub initializer_text: Option<String>,
     pub span: Span,
 }
 

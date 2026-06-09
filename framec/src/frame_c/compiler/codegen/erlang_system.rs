@@ -253,8 +253,8 @@ pub(crate) fn generate_erlang_system(
             let state_prefix = to_snake_case(&state.name);
             for sv in &state.state_vars {
                 let field_name = format!("sv_{}_{}", state_prefix, sv.name);
-                let init_val = if let Some(ref init) = sv.init {
-                    expression_to_string(init, TargetLanguage::Erlang)
+                let init_val = if let Some(ref init) = sv.initializer_text {
+                    init.clone()
                 } else {
                     "undefined".to_string()
                 };
@@ -740,8 +740,8 @@ pub(crate) fn generate_erlang_system(
                 let mut gen = data_gen;
                 for sv in &state.state_vars {
                     let field_name = format!("sv_{}_{}", state_prefix, sv.name);
-                    let init_val = if let Some(ref init) = sv.init {
-                        expression_to_string(init, TargetLanguage::Erlang)
+                    let init_val = if let Some(ref init) = sv.initializer_text {
+                        init.clone()
                     } else {
                         "undefined".to_string()
                     };
@@ -1609,8 +1609,8 @@ pub(crate) fn generate_erlang_system(
                 let mut gen = 0;
                 for sv in &state.state_vars {
                     let field_name = format!("sv_{}_{}", state_prefix, sv.name);
-                    let init_val = if let Some(ref init) = sv.init {
-                        expression_to_string(init, TargetLanguage::Erlang)
+                    let init_val = if let Some(ref init) = sv.initializer_text {
+                        init.clone()
                     } else {
                         "undefined".to_string()
                     };

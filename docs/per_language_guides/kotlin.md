@@ -93,11 +93,12 @@ var parent: Counter? = null
 Frame doesn't auto-add `?` for nullable types — you must declare
 the nullability explicitly in the type string.
 
-**Frame's type names map cleanly to Kotlin types:**
+**Write Kotlin's own type names directly** — framec passes the
+annotation through verbatim (the name you write *is* the emitted type):
 
-| Frame              | Kotlin             | Notes |
+| You write          | Kotlin meaning     | Notes |
 |--------------------|--------------------|-------|
-| `int` / `Int`      | `Int`              | preferred: `Int` for type-fidelity |
+| `Int`              | `Int`              | write `Int`, not a generic `int` |
 | `String`           | `String`           | |
 | `Boolean`          | `Boolean`          | |
 | `Double`           | `Double`           | |

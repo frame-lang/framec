@@ -104,9 +104,10 @@ List<int> items = [];
 The Frame `: type` annotation IS the Dart type — write `: String`,
 `: List<int>`, `: Map<String, dynamic>`, etc.
 
-**Frame type names map cleanly to Dart types:**
+**Write Dart's own type names directly** — framec passes the annotation
+through verbatim (the name you write *is* the emitted type):
 
-| Frame              | Dart                | Notes |
+| You write          | Dart meaning        | Notes |
 |--------------------|---------------------|-------|
 | `int`              | `int`               | arbitrary-precision on JIT, 64-bit on AOT |
 | `num`              | `num`               | `int` or `double` |

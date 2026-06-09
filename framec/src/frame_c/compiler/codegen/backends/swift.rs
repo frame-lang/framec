@@ -736,23 +736,26 @@ impl SwiftBackend {
         if let Some(base) = t.strip_suffix("[]") {
             return format!("[{}]", self.map_type(base));
         }
+        // Frame has NO type system: user-written type names pass through
+        // VERBATIM (docs/frame_language.md). Write Swift's own names (`Int`,
+        // `String`, `Double`, `[String]`). The arms below are framec-
+        // synthesized machinery types only (untyped event params, the
+        // structural `void` return, the nullable/array shapes handled above);
+        // there is no `int`->`Int` / `str`->`String` alias table — it
+        // contradicted the passthrough contract and was removed.
         match t {
             "Any" | "Object" | "object" => "Any?".to_string(),
-            "string" | "str" => "String".to_string(),
-            "String" => "String".to_string(),
-            "int" | "i32" | "i64" | "number" => "Int".to_string(),
-            "float" | "f64" | "f32" | "double" => "Double".to_string(),
-            "bool" | "boolean" => "Bool".to_string(),
-            "Boolean" => "Bool".to_string(),
             "void" => "Void".to_string(),
             "var" => "Any?".to_string(),
             other => other.to_string(),
         }
     }
 
-    /// Map Frame generic types in raw domain code to Swift types.
-    /// Handles patterns like "name: number = 0" -> "name: Int = 0"
-    /// and "name: string[] = []" -> "name: [String] = []"
+    /// Reformat a raw `name: type[ = init]` domain declaration, normalizing
+    /// the type slot through `map_type`. Under verbatim passthrough this is
+    /// effectively identity for user types (Swift-native names emit as-is);
+    /// it still resolves the nullable/array machinery shapes `map_type`
+    /// handles.
     fn map_domain_types(&self, raw: &str) -> String {
         // Find the colon that separates name from type
         if let Some(colon_pos) = raw.find(':') {
@@ -779,8 +782,8 @@ impl SwiftBackend {
     ///   `<indent>[<vis> ][let|var ]<name>: <type>[ = <init>]\n`
     ///
     /// `let` is emitted when `field.is_const`, `var` otherwise. The
-    /// type is run through `map_type` so Frame-canonical names (`int`,
-    /// `string`) become Swift-canonical (`Int`, `String`). Visibility
+    /// type is run through `map_type`, which passes user-written Swift
+    /// names through verbatim and resolves only machinery shapes. Visibility
     /// `internal` (Frame's `Protected`) becomes Swift's default and
     /// is OMITTED rather than emitted explicitly — matches the
     /// `emit_visibility_swift` empty-string convention used elsewhere.

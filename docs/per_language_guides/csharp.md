@@ -74,9 +74,10 @@ private List<int> items = new List<int>();
 The Frame `: type` annotation IS the C# type — write `: string`,
 `: List<int>`, `: Dictionary<string, int>`, etc.
 
-**Frame type names map cleanly to C# types:**
+**Write C#'s own type names directly** — framec passes the annotation
+through verbatim, so the name you write *is* the emitted type:
 
-| Frame              | C#                  | Notes |
+| You write          | C# meaning          | Notes |
 |--------------------|---------------------|-------|
 | `int`              | `int`               | 32-bit signed |
 | `string`           | `string`            | C# alias for `System.String` |

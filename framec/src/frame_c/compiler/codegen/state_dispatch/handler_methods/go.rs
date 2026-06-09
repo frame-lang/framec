@@ -107,8 +107,8 @@ pub(crate) fn generate_go_handler_method(
     // State-var init (lifecycle enter only).
     if handler.is_enter {
         for var in state_vars_for_init {
-            let init_val = if let Some(ref init) = var.init {
-                expression_to_string(init, lang)
+            let init_val = if let Some(ref init) = var.initializer_text {
+                init.clone()
             } else {
                 state_var_init_value(&var.var_type, lang)
             };
