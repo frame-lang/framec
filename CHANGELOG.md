@@ -19,6 +19,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
   and are emitted exactly like domain-field initializers; the per-target
   "portable init" value wrapping (`""` → `String::from("")`, …) was removed. Write
   the native init value for the declared type.
+- **Section comments now emit verbatim (#58).** framec no longer rewrites a `//`
+  comment leader to the target's native one (`#`/`--`/`%`). Comments pass through
+  unchanged like everything else — write your target's own comment syntax
+  everywhere. This was the last source transform framec performed.
 
 ### Fixed
 
@@ -26,6 +30,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
   (#59).** `$.x: f64 = 0.0` previously parsed-and-reserialized through
   `f64::to_string()` and emitted `0` (uncompilable Rust; wrong on every typed
   target). State-var inits are now verbatim, so the literal is preserved.
+- **A `#` in a structural section no longer throws `E002` (#58).** `#` was
+  rejected as an unexpected byte in `interface:` while passing through verbatim
+  in `domain:`/handlers. The structural scanner now passes `#` through like any
+  non-Frame text, consistent across all sections (the Oceans Model).
 
 ### Docs
 
