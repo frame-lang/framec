@@ -44,6 +44,7 @@ use crate::frame_c::compiler::frame_ast::{
 };
 use crate::frame_c::compiler::fsm_regex::{
     self, size_check::DEFAULT_MAX_DFA_STATES, subset::DfaLabel, Alphabet, CompileError,
+    WordBoundary,
 };
 use std::fmt::Write;
 
@@ -61,6 +62,11 @@ struct StageDfa {
     requires_start: bool,
     /// Trailing `$`/`\z`: the match must end at the input end.
     requires_end: bool,
+    /// Leading `\b`/`\B` (bytes only): a word boundary must be present
+    /// (`Required`) or absent (`Forbidden`) at the match start.
+    start_boundary: Option<WordBoundary>,
+    /// Trailing `\b`/`\B`: same, at the match end.
+    end_boundary: Option<WordBoundary>,
     /// RFC-0042 §8.3 Mode C: when `Some(name)`, this stage is a call-out to
     /// the `@@fsm` `name` rather than a regex DFA match (no DFA; a
     /// placeholder keeps stage indices aligned with the emit walk).
@@ -152,6 +158,8 @@ impl<'a> Generator<'a> {
                                 start: 0,
                                 requires_start: false,
                                 requires_end: false,
+                                start_boundary: None,
+                                end_boundary: None,
                                 mode_c: Some(inner.to_string()),
                             });
                             self.stage_sid.insert((si, ai, ei), sid);
@@ -208,6 +216,8 @@ impl<'a> Generator<'a> {
                     start: compiled.dfa.start,
                     requires_start: compiled.requires_start,
                     requires_end: compiled.requires_end,
+                    start_boundary: compiled.start_boundary,
+                    end_boundary: compiled.end_boundary,
                     mode_c: None,
                 })
             }
@@ -242,6 +252,9 @@ impl<'a> Generator<'a> {
         self.emit_embed_matchers(&mut out)?;
         self.emit_action_functions(&mut out)?;
         self.emit_tok_id(&mut out);
+        if self.uses_word_boundary() {
+            self.emit_word_boundary_helper(&mut out);
+        }
         self.emit_dfa_helpers(&mut out);
         self.emit_dfa_runtime(&mut out);
         Ok(out)
@@ -255,6 +268,67 @@ impl<'a> Generator<'a> {
             Alphabet::Token => "tok_id(element(Pos + 1, Input))",
             _ => "element(Pos + 1, Input)",
         }
+    }
+
+    /// Does any stage carry a `\b`/`\B` edge boundary? Gates the `iswordat`
+    /// helper so erlc does not flag an unused function.
+    fn uses_word_boundary(&self) -> bool {
+        self.stage_dfas
+            .iter()
+            .any(|d| d.start_boundary.is_some() || d.end_boundary.is_some())
+    }
+
+    /// The Erlang guard that must hold for a stage match ending at `r` (over
+    /// state map `base`) to satisfy its boundary anchors — `None` when the
+    /// stage has none. Combines `^`/`$` position anchors with `\b`/`\B` word
+    /// boundaries (a boundary is present iff the two sides' word-ness differs).
+    fn anchor_guard_expr(&self, dfa: &StageDfa, base: &str, r: &str) -> Option<String> {
+        let mut terms: Vec<String> = Vec::new();
+        if dfa.requires_start {
+            terms.push(format!("(maps:get(cursor, {base}) == 0)"));
+        }
+        if dfa.requires_end {
+            terms.push(format!("({r} == maps:get(fsm_n, {base}))"));
+        }
+        if let Some(kind) = dfa.start_boundary {
+            let op = match kind {
+                WordBoundary::Required => "=/=",
+                WordBoundary::Forbidden => "==",
+            };
+            terms.push(format!(
+                "(iswordat({base}, maps:get(cursor, {base}) - 1) {op} iswordat({base}, maps:get(cursor, {base})))"
+            ));
+        }
+        if let Some(kind) = dfa.end_boundary {
+            let op = match kind {
+                WordBoundary::Required => "=/=",
+                WordBoundary::Forbidden => "==",
+            };
+            terms.push(format!(
+                "(iswordat({base}, {r} - 1) {op} iswordat({base}, {r}))"
+            ));
+        }
+        if terms.is_empty() {
+            None
+        } else {
+            Some(terms.join(" andalso "))
+        }
+    }
+
+    /// Emit the `iswordat(St, P)` helper: is the byte at input position `P` a
+    /// word character (`[0-9A-Za-z_]`)? Out-of-range positions are non-word.
+    fn emit_word_boundary_helper(&self, out: &mut String) {
+        out.push_str(
+            "iswordat(St, P) ->\n\
+             \x20   N = maps:get(fsm_n, St),\n\
+             \x20   case (P < 0) orelse (P >= N) of\n\
+             \x20       true -> false;\n\
+             \x20       false ->\n\
+             \x20           C = element(P + 1, maps:get(fsm_input, St)),\n\
+             \x20           ((C >= 48) andalso (C =< 57)) orelse ((C >= 65) andalso (C =< 90))\n\
+             \x20             orelse ((C >= 97) andalso (C =< 122)) orelse (C == 95)\n\
+             \x20   end.\n\n",
+        );
     }
 
     /// Token alphabet: emit the `tok_id/1` atom → id lookup (unknown → -1).
@@ -731,22 +805,12 @@ impl<'a> Generator<'a> {
                 };
                 // Boundary anchors (§6.6) on the selector, as for single-match.
                 let dfa = &self.stage_dfas[my_sid];
-                let reff = if dfa.requires_start || dfa.requires_end {
+                let reff = if let Some(cond) = self.anchor_guard_expr(dfa, &sbase, &r) {
                     let rg = fresh("R", ctr);
-                    let sc = if dfa.requires_start {
-                        format!("(maps:get(cursor, {}) == 0)", sbase)
-                    } else {
-                        "true".to_string()
-                    };
-                    let ec = if dfa.requires_end {
-                        format!("({} == maps:get(fsm_n, {}))", r, sbase)
-                    } else {
-                        "true".to_string()
-                    };
                     writeln!(
                         out,
-                        "{}{} = case {} andalso {} of true -> {}; false -> -1 end,",
-                        ind, rg, sc, ec, r
+                        "{}{} = case {} of true -> {}; false -> -1 end,",
+                        ind, rg, cond, r
                     )
                     .ok();
                     rg
@@ -1007,22 +1071,12 @@ impl<'a> Generator<'a> {
                 // to end at the input end. A violated anchor turns the match
                 // into a miss (`reff = -1`).
                 let dfa = &self.stage_dfas[my_sid];
-                let reff = if dfa.requires_start || dfa.requires_end {
+                let reff = if let Some(cond) = self.anchor_guard_expr(dfa, &base, &r) {
                     let rg = fresh("R", ctr);
-                    let sc = if dfa.requires_start {
-                        format!("(maps:get(cursor, {}) == 0)", base)
-                    } else {
-                        "true".to_string()
-                    };
-                    let ec = if dfa.requires_end {
-                        format!("({} == maps:get(fsm_n, {}))", r, base)
-                    } else {
-                        "true".to_string()
-                    };
                     writeln!(
                         out,
-                        "{}{} = case {} andalso {} of true -> {}; false -> -1 end,",
-                        ind, rg, sc, ec, r
+                        "{}{} = case {} of true -> {}; false -> -1 end,",
+                        ind, rg, cond, r
                     )
                     .ok();
                     rg
@@ -2148,6 +2202,19 @@ mod tests {
         assert_eq!(acc, "true");
         assert_eq!(run(src, "m", "xfoo", "anc_b").unwrap().0, "false");
         assert_eq!(run(src, "m", "", "anc_c").unwrap().0, "false");
+    }
+
+    /// Edge word boundaries (§6.6): `/\bcat\b/` accepts "cat" (boundaries at
+    /// both input edges) but rejects "cats" — the trailing `\b` fails between
+    /// the word bytes `t` and `s`.
+    #[test]
+    fn erl_word_boundary() {
+        let src = "@@fsm M(text: bytes) : bool = false { /\\bcat\\b/ true }";
+        let Some((acc, _)) = run(src, "m", "cat", "wb_a") else {
+            return;
+        };
+        assert_eq!(acc, "true");
+        assert_eq!(run(src, "m", "cats", "wb_b").unwrap().0, "false");
     }
 
     /// A trailing `$` requires the match to reach the end of input.

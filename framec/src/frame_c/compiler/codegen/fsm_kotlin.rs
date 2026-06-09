@@ -31,6 +31,7 @@ use crate::frame_c::compiler::frame_ast::{
 };
 use crate::frame_c::compiler::fsm_regex::{
     self, size_check::DEFAULT_MAX_DFA_STATES, subset::DfaLabel, Alphabet, CompileError,
+    WordBoundary,
 };
 use std::fmt::Write;
 
@@ -46,6 +47,8 @@ struct StageDfa {
     start: usize,
     requires_start: bool,
     requires_end: bool,
+    start_boundary: Option<WordBoundary>,
+    end_boundary: Option<WordBoundary>,
     mode_c: Option<String>,
 }
 
@@ -110,6 +113,8 @@ impl<'a> Generator<'a> {
                                 start: 0,
                                 requires_start: false,
                                 requires_end: false,
+                                start_boundary: None,
+                                end_boundary: None,
                                 mode_c: Some(inner.to_string()),
                             });
                             continue;
@@ -160,6 +165,8 @@ impl<'a> Generator<'a> {
                     start: compiled.dfa.start,
                     requires_start: compiled.requires_start,
                     requires_end: compiled.requires_end,
+                    start_boundary: compiled.start_boundary,
+                    end_boundary: compiled.end_boundary,
                     mode_c: None,
                 })
             }
@@ -263,6 +270,9 @@ impl<'a> Generator<'a> {
         self.emit_state_methods(&mut out)?;
         self.emit_embed_matchers(&mut out)?;
         self.emit_action_methods(&mut out)?;
+        if self.uses_word_boundary() {
+            self.emit_word_boundary_helper(&mut out);
+        }
         out.push_str("}\n");
         Ok(out)
     }
@@ -527,7 +537,11 @@ impl<'a> Generator<'a> {
     /// anchors reassign it.
     fn r_kw(&self, sid: usize) -> &'static str {
         let d = &self.stage_dfas[sid];
-        if d.requires_start || d.requires_end {
+        if d.requires_start
+            || d.requires_end
+            || d.start_boundary.is_some()
+            || d.end_boundary.is_some()
+        {
             "var"
         } else {
             "val"
@@ -758,6 +772,57 @@ impl<'a> Generator<'a> {
             )
             .ok();
         }
+        // Edge `\\b`/`\\B`: a word boundary exists at p iff
+        // `iswordat(p - 1) != iswordat(p)`. The start boundary sits at the
+        // match start (`cursor`), the end boundary at the match end (`_r`).
+        // `_r >= 0` guards the end check so a prior miss stays a miss.
+        if let Some(kind) = dfa.start_boundary {
+            let op = match kind {
+                WordBoundary::Required => "==",
+                WordBoundary::Forbidden => "!=",
+            };
+            writeln!(
+                out,
+                "{ind}if (iswordat(cursor - 1) {op} iswordat(cursor)) _r{sid} = -1",
+            )
+            .ok();
+        }
+        if let Some(kind) = dfa.end_boundary {
+            let op = match kind {
+                WordBoundary::Required => "==",
+                WordBoundary::Forbidden => "!=",
+            };
+            writeln!(
+                out,
+                "{ind}if (_r{sid} >= 0 && iswordat(_r{sid} - 1) {op} iswordat(_r{sid})) _r{sid} = -1",
+            )
+            .ok();
+        }
+    }
+
+    /// Any stage carries an edge `\\b`/`\\B`, requiring the `iswordat` helper.
+    fn uses_word_boundary(&self) -> bool {
+        self.stage_dfas
+            .iter()
+            .any(|d| d.start_boundary.is_some() || d.end_boundary.is_some())
+    }
+
+    /// `iswordat(p)` — is the byte at input position `p` a word character
+    /// (`[0-9A-Za-z_]`)? Out-of-range positions are non-word, so a boundary at
+    /// the input edge resolves correctly. Edge boundaries are bytes-only, so
+    /// the input is always a `String` here and a byte is `text[p].code`.
+    fn emit_word_boundary_helper(&self, out: &mut String) {
+        let inp = &self.decl.params[0].name;
+        writeln!(
+            out,
+            "  private fun iswordat(p: Int): Boolean {{\n\
+             \x20   if (p < 0 || p >= {inp}.length) return false\n\
+             \x20   val b = {inp}[p].code\n\
+             \x20   return (b in 48..57) || (b in 65..90) || (b in 97..122) || b == 95\n\
+             \x20 }}\n",
+            inp = inp,
+        )
+        .ok();
     }
 
     fn emit_success(&self, out: &mut String, m: &MatchAst, ind: &str) {
@@ -1263,6 +1328,18 @@ mod tests {
             return;
         };
         assert_eq!(lines, vec!["true", "false", "true", "false"]);
+    }
+
+    /// Edge `\\b`/`\\B` word boundaries (bytes only): `/\\bcat\\b/` accepts a
+    /// whole-word "cat" but rejects "cats" (no boundary between `t` and `s`).
+    #[test]
+    fn kotlin_word_boundary() {
+        let code = gen("@@fsm M(text: bytes) : bool = false { /\\bcat\\b/ true }");
+        let body = "  for (s in arrayOf(\"cat\", \"cats\")) { println(M(s).accepted) }";
+        let Some(lines) = kt_run(&code, body, "wb") else {
+            return;
+        };
+        assert_eq!(lines, vec!["true", "false"]);
     }
 
     #[test]

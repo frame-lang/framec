@@ -33,6 +33,7 @@ use crate::frame_c::compiler::frame_ast::{
 };
 use crate::frame_c::compiler::fsm_regex::{
     self, size_check::DEFAULT_MAX_DFA_STATES, subset::DfaLabel, Alphabet, CompileError,
+    WordBoundary,
 };
 use std::fmt::Write;
 
@@ -50,6 +51,11 @@ struct StageDfa {
     requires_start: bool,
     /// Trailing `$`/`\z`: the match must end at the input end.
     requires_end: bool,
+    /// Leading `\b`/`\B` (bytes only): a word boundary must be present
+    /// (`Required`) or absent (`Forbidden`) at the match start.
+    start_boundary: Option<WordBoundary>,
+    /// Trailing `\b`/`\B`: same, at the match end.
+    end_boundary: Option<WordBoundary>,
     /// RFC-0042 §8.3 Mode C: when `Some(name)`, this stage is a call-out to
     /// the `@@fsm` `name` rather than a regex DFA match (no DFA; a
     /// placeholder keeps stage indices aligned with the emit walk).
@@ -131,6 +137,8 @@ impl<'a> Generator<'a> {
                                 start: 0,
                                 requires_start: false,
                                 requires_end: false,
+                                start_boundary: None,
+                                end_boundary: None,
                                 mode_c: Some(inner.to_string()),
                             });
                             continue;
@@ -183,6 +191,8 @@ impl<'a> Generator<'a> {
                     start: compiled.dfa.start,
                     requires_start: compiled.requires_start,
                     requires_end: compiled.requires_end,
+                    start_boundary: compiled.start_boundary,
+                    end_boundary: compiled.end_boundary,
                     mode_c: None,
                 })
             }
@@ -389,6 +399,9 @@ impl<'a> Generator<'a> {
         self.emit_state_methods(out)?;
         self.emit_embed_matchers(out)?;
         self.emit_action_methods(out)?;
+        if self.uses_word_boundary() {
+            self.emit_word_boundary_helper(out);
+        }
         out.push_str("}\n");
         Ok(())
     }
@@ -846,7 +859,11 @@ impl<'a> Generator<'a> {
     /// draw an `unused_mut` warning in the generated code).
     fn r_binding(&self, sid: usize) -> &'static str {
         let dfa = &self.stage_dfas[sid];
-        if dfa.requires_start || dfa.requires_end {
+        if dfa.requires_start
+            || dfa.requires_end
+            || dfa.start_boundary.is_some()
+            || dfa.end_boundary.is_some()
+        {
             "let mut _r"
         } else {
             "let _r"
@@ -870,6 +887,56 @@ impl<'a> Generator<'a> {
             )
             .ok();
         }
+        // Word boundaries (§6.6, bytes only): a `\b`/`\B` at the match start
+        // (`self.cursor`) / end (`_r`) is satisfied against the live input via
+        // `iswordat`. A boundary is present iff the two sides differ in
+        // word-ness; `_r >= 0` keeps a prior miss a miss.
+        if let Some(kind) = dfa.start_boundary {
+            let op = match kind {
+                WordBoundary::Required => "==",
+                WordBoundary::Forbidden => "!=",
+            };
+            writeln!(
+                out,
+                "{ind}if self.iswordat(self.cursor as i64 - 1) {op} self.iswordat(self.cursor as i64) {{ _r = -1; }}"
+            )
+            .ok();
+        }
+        if let Some(kind) = dfa.end_boundary {
+            let op = match kind {
+                WordBoundary::Required => "==",
+                WordBoundary::Forbidden => "!=",
+            };
+            writeln!(
+                out,
+                "{ind}if _r >= 0 && self.iswordat(_r - 1) {op} self.iswordat(_r) {{ _r = -1; }}"
+            )
+            .ok();
+        }
+    }
+
+    /// Does any stage carry a `\b`/`\B` edge boundary? Gates the `iswordat`
+    /// helper so it isn't emitted (and flagged dead) when unused.
+    fn uses_word_boundary(&self) -> bool {
+        self.stage_dfas
+            .iter()
+            .any(|d| d.start_boundary.is_some() || d.end_boundary.is_some())
+    }
+
+    /// `iswordat(p)` — is the byte at input position `p` a word character
+    /// (`[0-9A-Za-z_]`)? Out-of-range positions are non-word, so a boundary at
+    /// the input edge resolves correctly. Used by the `\b`/`\B` guards.
+    fn emit_word_boundary_helper(&self, out: &mut String) {
+        let input = &self.decl.params[0].name;
+        writeln!(
+            out,
+            "    fn iswordat(&self, p: i64) -> bool {{\n\
+             \x20       if p < 0 || p as usize >= self.{input}.len() {{ return false; }}\n\
+             \x20       let b = self.{input}[p as usize];\n\
+             \x20       b.is_ascii_alphanumeric() || b == '_'\n\
+             \x20   }}\n"
+        )
+        .ok();
     }
 
     fn emit_element(
@@ -1690,6 +1757,19 @@ mod tests {
         assert_eq!(acc, "true");
         assert_eq!(run(src, "M", "xfoo", "anc_b").unwrap().0, "false");
         assert_eq!(run(src, "M", "", "anc_c").unwrap().0, "false");
+    }
+
+    /// Edge word boundaries (§6.6): `/\bcat\b/` matches "cat" (boundaries at
+    /// both input edges) but not "cats" (the trailing `\b` fails between the
+    /// two word bytes `t` and `s`).
+    #[test]
+    fn rust_word_boundary() {
+        let src = "@@fsm M(text: bytes) : bool = false { /\\bcat\\b/ true }";
+        let Some((acc, _)) = run(src, "M", "cat", "wb_a") else {
+            return;
+        };
+        assert_eq!(acc, "true");
+        assert_eq!(run(src, "M", "cats", "wb_b").unwrap().0, "false");
     }
 
     /// A trailing `$` requires the match to reach the end of input.

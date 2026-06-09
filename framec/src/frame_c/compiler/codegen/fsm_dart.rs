@@ -34,6 +34,7 @@ use crate::frame_c::compiler::frame_ast::{
 };
 use crate::frame_c::compiler::fsm_regex::{
     self, size_check::DEFAULT_MAX_DFA_STATES, subset::DfaLabel, Alphabet, CompileError,
+    WordBoundary,
 };
 use std::fmt::Write;
 
@@ -49,6 +50,8 @@ struct StageDfa {
     start: usize,
     requires_start: bool,
     requires_end: bool,
+    start_boundary: Option<WordBoundary>,
+    end_boundary: Option<WordBoundary>,
     mode_c: Option<String>,
 }
 
@@ -113,6 +116,8 @@ impl<'a> Generator<'a> {
                                 start: 0,
                                 requires_start: false,
                                 requires_end: false,
+                                start_boundary: None,
+                                end_boundary: None,
                                 mode_c: Some(inner.to_string()),
                             });
                             continue;
@@ -163,6 +168,8 @@ impl<'a> Generator<'a> {
                     start: compiled.dfa.start,
                     requires_start: compiled.requires_start,
                     requires_end: compiled.requires_end,
+                    start_boundary: compiled.start_boundary,
+                    end_boundary: compiled.end_boundary,
                     mode_c: None,
                 })
             }
@@ -243,6 +250,9 @@ impl<'a> Generator<'a> {
         self.emit_run(&mut out);
         self.emit_state_methods(&mut out)?;
         self.emit_embed_matchers(&mut out)?;
+        if self.uses_word_boundary() {
+            self.emit_word_boundary_helper(&mut out);
+        }
         self.emit_action_methods(&mut out)?;
         out.push_str("}\n");
         Ok(out)
@@ -750,6 +760,58 @@ impl<'a> Generator<'a> {
             )
             .ok();
         }
+        // Word-boundary edges (`\b`/`\B`): a boundary exists at position `p` iff
+        // the word-ness of the bytes either side of `p` differs. Required (`\b`)
+        // demands a boundary (violation when sides match → `==`); Forbidden
+        // (`\B`) demands no boundary (violation when sides differ → `!=`). The
+        // end check is guarded by `_r >= 0` so a prior miss stays a miss.
+        if let Some(kind) = dfa.start_boundary {
+            let op = match kind {
+                WordBoundary::Required => "==",
+                WordBoundary::Forbidden => "!=",
+            };
+            writeln!(
+                out,
+                "{ind}if (_iswordat(cursor - 1) {op} _iswordat(cursor)) _r{sid} = -1;"
+            )
+            .ok();
+        }
+        if let Some(kind) = dfa.end_boundary {
+            let op = match kind {
+                WordBoundary::Required => "==",
+                WordBoundary::Forbidden => "!=",
+            };
+            writeln!(
+                out,
+                "{ind}if (_r{sid} >= 0 && _iswordat(_r{sid} - 1) {op} _iswordat(_r{sid})) _r{sid} = -1;"
+            )
+            .ok();
+        }
+    }
+
+    /// Whether any stage uses a `\b`/`\B` edge boundary, gating the
+    /// `_iswordat` helper method.
+    fn uses_word_boundary(&self) -> bool {
+        self.stage_dfas
+            .iter()
+            .any(|d| d.start_boundary.is_some() || d.end_boundary.is_some())
+    }
+
+    /// `_iswordat(p)` — is the byte at input position `p` a word character
+    /// (`[0-9A-Za-z_]`)? Out-of-range positions are non-word, so a boundary at
+    /// the input edge resolves correctly. Used by the `\b`/`\B` guards.
+    fn emit_word_boundary_helper(&self, out: &mut String) {
+        let inp = &self.decl.params[0].name;
+        writeln!(
+            out,
+            "  bool _iswordat(int p) {{\n\
+             \x20   if (p < 0 || p >= {inp}.length) return false;\n\
+             \x20   int b = {inp}.codeUnitAt(p);\n\
+             \x20   return (48 <= b && b <= 57) || (65 <= b && b <= 90) || (97 <= b && b <= 122) || b == 95;\n\
+             \x20 }}\n",
+            inp = inp,
+        )
+        .ok();
     }
 
     fn emit_success(&self, out: &mut String, m: &MatchAst, ind: &str) {
@@ -1241,6 +1303,16 @@ mod tests {
             return;
         };
         assert_eq!(l2, vec!["true", "false"]);
+    }
+
+    #[test]
+    fn dart_word_boundary() {
+        let code = gen("@@fsm M(text: bytes) : bool = false { /\\bcat\\b/ true }");
+        let d = "  for (var s in [\"cat\", \"cats\"]) { print(M(s).accepted); }";
+        let Some(l) = dart_run(&code, d, "wb") else {
+            return;
+        };
+        assert_eq!(l, vec!["true", "false"]);
     }
 
     #[test]

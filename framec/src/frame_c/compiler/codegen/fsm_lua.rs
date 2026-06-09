@@ -33,6 +33,7 @@ use crate::frame_c::compiler::frame_ast::{
 };
 use crate::frame_c::compiler::fsm_regex::{
     self, size_check::DEFAULT_MAX_DFA_STATES, subset::DfaLabel, Alphabet, CompileError,
+    WordBoundary,
 };
 use std::fmt::Write;
 
@@ -48,6 +49,8 @@ struct StageDfa {
     start: usize,
     requires_start: bool,
     requires_end: bool,
+    start_boundary: Option<WordBoundary>,
+    end_boundary: Option<WordBoundary>,
     mode_c: Option<String>,
 }
 
@@ -112,6 +115,8 @@ impl<'a> Generator<'a> {
                                 start: 0,
                                 requires_start: false,
                                 requires_end: false,
+                                start_boundary: None,
+                                end_boundary: None,
                                 mode_c: Some(inner.to_string()),
                             });
                             continue;
@@ -162,6 +167,8 @@ impl<'a> Generator<'a> {
                     start: compiled.dfa.start,
                     requires_start: compiled.requires_start,
                     requires_end: compiled.requires_end,
+                    start_boundary: compiled.start_boundary,
+                    end_boundary: compiled.end_boundary,
                     mode_c: None,
                 })
             }
@@ -214,6 +221,9 @@ impl<'a> Generator<'a> {
         self.emit_ctor(&mut out);
         self.emit_tok_id(&mut out);
         self.emit_slice(&mut out);
+        if self.uses_word_boundary() {
+            self.emit_word_boundary_helper(&mut out);
+        }
         self.emit_dfa_matcher(&mut out);
         self.emit_run(&mut out);
         self.emit_state_methods(&mut out)?;
@@ -722,6 +732,63 @@ impl<'a> Generator<'a> {
         if dfa.requires_end {
             writeln!(out, "{}if _r ~= #self.{} then _r = -1 end", ind, input).ok();
         }
+        // Edge `\b`/`\B` (bytes): a boundary exists at position p iff the
+        // word-ness of bytes p-1 and p differ. `\b` (Required) demands they
+        // differ (so equal word-ness → reject, `==`); `\B` (Forbidden)
+        // demands they match (so differing word-ness → reject, `~=`). The
+        // start boundary is checked at `self.cursor`, the end at `_r` (guarded
+        // by `_r >= 0` so a prior miss stays a miss).
+        if let Some(kind) = dfa.start_boundary {
+            let op = match kind {
+                WordBoundary::Required => "==",
+                WordBoundary::Forbidden => "~=",
+            };
+            writeln!(
+                out,
+                "{ind}if self:_iswordat(self.cursor - 1) {op} self:_iswordat(self.cursor) then _r = -1 end"
+            )
+            .ok();
+        }
+        if let Some(kind) = dfa.end_boundary {
+            let op = match kind {
+                WordBoundary::Required => "==",
+                WordBoundary::Forbidden => "~=",
+            };
+            writeln!(
+                out,
+                "{ind}if _r >= 0 and (self:_iswordat(_r - 1) {op} self:_iswordat(_r)) then _r = -1 end"
+            )
+            .ok();
+        }
+    }
+
+    /// Any stage carries an edge `\b`/`\B`, so the `_iswordat` helper is
+    /// emitted.
+    fn uses_word_boundary(&self) -> bool {
+        self.stage_dfas
+            .iter()
+            .any(|d| d.start_boundary.is_some() || d.end_boundary.is_some())
+    }
+
+    /// `_iswordat(p)` — is the byte at 0-indexed input position `p` a word
+    /// character (`[0-9A-Za-z_]`)? Mirrors `element_read`'s convention: the
+    /// 0-indexed `p` reads `string.byte(self.text, p + 1)` (Lua strings are
+    /// 1-indexed). Out-of-range positions are non-word, so a boundary at the
+    /// input edge resolves correctly.
+    fn emit_word_boundary_helper(&self, out: &mut String) {
+        let n = &self.decl.name;
+        let inp = &self.decl.params[0].name;
+        writeln!(out, "function {}:_iswordat(p)", n).ok();
+        writeln!(
+            out,
+            "  if p < 0 or p >= #self.{} then return false end",
+            inp
+        )
+        .ok();
+        writeln!(out, "  local b = string.byte(self.{}, p + 1)", inp).ok();
+        out.push_str(
+            "  return b == 95 or (b >= 48 and b <= 57) or (b >= 65 and b <= 90) or (b >= 97 and b <= 122)\nend\n\n",
+        );
     }
 
     fn emit_success(&self, out: &mut String, m: &MatchAst, ind: &str) {
@@ -1196,6 +1263,19 @@ mod tests {
             return;
         };
         assert_eq!(l2, vec!["true", "false"]);
+    }
+
+    /// Edge `\b` word boundaries (bytes): `/\bcat\b/` accepts "cat" (word
+    /// boundary on both edges against input start/end) but rejects "cats"
+    /// (no boundary between the matched `t` and the following word byte `s`).
+    #[test]
+    fn lua_word_boundary() {
+        let src = "@@fsm M(text: bytes) : bool = false { /\\bcat\\b/ true }";
+        let Some((acc, _)) = run(src, "M.new(\"cat\")", "wb_a") else {
+            return;
+        };
+        assert_eq!(acc, "true");
+        assert_eq!(run(src, "M.new(\"cats\")", "wb_b").unwrap().0, "false");
     }
 
     #[test]

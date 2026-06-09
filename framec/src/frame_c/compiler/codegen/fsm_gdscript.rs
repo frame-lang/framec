@@ -31,9 +31,10 @@
 //! multi-match (`|`) ordered-choice states, captures, bare-expression
 //! returns, action blocks, declared `actions:` methods, all transition
 //! forms, embedding actions, Mode C sub-fsm call-out, all three alphabets,
-//! and boundary anchors. Not yet handled (clear `Unsupported` error):
-//! mid-pattern anchors and `\b`/`\B`, a Mode C stage as a `|` selector, and a
-//! `|` alternative with elements before its first stage.
+//! position anchors, and edge `\b`/`\B` word boundaries (bytes alphabet).
+//! Not yet handled (clear `Unsupported` error): mid-pattern anchors and
+//! `\b`/`\B` on char/token, a Mode C stage as a `|` selector, and a `|`
+//! alternative with elements before its first stage.
 
 use crate::frame_c::compiler::frame_ast::{
     BinaryOp, BlockAst, EmbeddingOp, Expression, FsmDeclAst, FsmStateAst, FsmTransitionTarget,
@@ -41,6 +42,7 @@ use crate::frame_c::compiler::frame_ast::{
 };
 use crate::frame_c::compiler::fsm_regex::{
     self, size_check::DEFAULT_MAX_DFA_STATES, subset::DfaLabel, Alphabet, CompileError,
+    WordBoundary,
 };
 use std::collections::HashMap;
 use std::fmt::Write;
@@ -57,6 +59,8 @@ struct StageDfa {
     start: usize,
     requires_start: bool,
     requires_end: bool,
+    start_boundary: Option<WordBoundary>,
+    end_boundary: Option<WordBoundary>,
     mode_c: Option<String>,
 }
 
@@ -123,6 +127,8 @@ impl<'a> Generator<'a> {
                                 start: 0,
                                 requires_start: false,
                                 requires_end: false,
+                                start_boundary: None,
+                                end_boundary: None,
                                 mode_c: Some(inner.to_string()),
                             });
                         } else {
@@ -168,6 +174,8 @@ impl<'a> Generator<'a> {
                     start: compiled.dfa.start,
                     requires_start: compiled.requires_start,
                     requires_end: compiled.requires_end,
+                    start_boundary: compiled.start_boundary,
+                    end_boundary: compiled.end_boundary,
                     mode_c: None,
                 })
             }
@@ -219,6 +227,7 @@ impl<'a> Generator<'a> {
         self.emit_member_decls(&mut out);
         self.emit_ctor(&mut out);
         self.emit_token_lookup(&mut out);
+        self.emit_word_boundary(&mut out);
         self.emit_dfa_matcher(&mut out);
         self.emit_embed_matchers(&mut out)?;
         self.emit_run(&mut out);
@@ -311,6 +320,33 @@ impl<'a> Generator<'a> {
             return;
         }
         out.push_str("\tfunc _tok_id(t):\n\t\treturn self._TOK_IDS.get(t, -1)\n");
+    }
+
+    /// Any stage in this fsm carries an edge `\b`/`\B`.
+    fn uses_word_boundary(&self) -> bool {
+        self.stage_dfas
+            .iter()
+            .any(|d| d.start_boundary.is_some() || d.end_boundary.is_some())
+    }
+
+    /// `_iswordat(p)` — is the byte at `p` a word byte `[0-9A-Za-z_]`?
+    /// Out-of-bounds (`p < 0` or `p >= len`) is non-word. Bytes only, so the
+    /// code unit from `unicode_at` is the byte value. Emitted only when some
+    /// stage needs a boundary check.
+    fn emit_word_boundary(&self, out: &mut String) {
+        if !self.uses_word_boundary() {
+            return;
+        }
+        writeln!(
+            out,
+            "\tfunc _iswordat(p: int) -> bool:\n\
+             \t\tif p < 0 or p >= len(self.{inp}):\n\
+             \t\t\treturn false\n\
+             \t\tvar c = self.{inp}.unicode_at(p)\n\
+             \t\treturn (c >= 48 and c <= 57) or (c >= 65 and c <= 90) or (c >= 97 and c <= 122) or c == 95",
+            inp = self.input_field()
+        )
+        .ok();
     }
 
     fn emit_dfa_matcher(&self, out: &mut String) {
@@ -572,6 +608,33 @@ impl<'a> Generator<'a> {
                 sid,
                 self.input_field(),
                 sid
+            )
+            .ok();
+        }
+        // Word-boundary guards (§6.6). A boundary exists at position `p` iff
+        // the word-class of byte `p-1` differs from byte `p` (OOB ⇒ non-word).
+        // `\b` (Required) demands the sides differ, so `==` (no boundary) ⇒
+        // reject; `\B` (Forbidden) demands they match, so `!=` ⇒ reject. The
+        // start side tests the match start (`self.cursor`); the end side tests
+        // `_r` (the match end), guarded by `_r >= 0` so a prior failure stays
+        // rejected.
+        if let Some(wb) = dfa.start_boundary {
+            let op = boundary_op(wb);
+            writeln!(
+                out,
+                "{ind}if self._iswordat(self.cursor - 1) {op} self._iswordat(self.cursor):\n\
+                 {ind}\t_r{} = -1",
+                sid
+            )
+            .ok();
+        }
+        if let Some(wb) = dfa.end_boundary {
+            let op = boundary_op(wb);
+            writeln!(
+                out,
+                "{ind}if _r{sid} >= 0 and self._iswordat(_r{sid} - 1) {op} self._iswordat(_r{sid}):\n\
+                 {ind}\t_r{sid} = -1",
+                sid = sid
             )
             .ok();
         }
@@ -954,6 +1017,17 @@ fn gd_bool(b: bool) -> &'static str {
     }
 }
 
+/// The comparison that signals a *violated* boundary. `\b` (Required) needs a
+/// boundary (sides differ): equal word-classes (`==`) ⇒ no boundary ⇒ reject.
+/// `\B` (Forbidden) needs no boundary (sides match): differing classes (`!=`)
+/// ⇒ a boundary ⇒ reject.
+fn boundary_op(wb: WordBoundary) -> &'static str {
+    match wb {
+        WordBoundary::Required => "==",
+        WordBoundary::Forbidden => "!=",
+    }
+}
+
 fn stage_call(stage: &StageAst, sid: usize) -> String {
     if stage.embedding_actions.is_empty() {
         format!("self._dfa_match(self._DFA_{})", sid)
@@ -1193,6 +1267,16 @@ mod tests {
             return;
         };
         assert_eq!(lines, vec!["true", "false", "true", "false"]);
+    }
+
+    #[test]
+    fn gd_word_boundary() {
+        let code = gen("@@fsm M(text: bytes) : bool = false { /\\bcat\\b/ true }");
+        let driver = "\tprint(M.new(\"cat\").accepted)\n\tprint(M.new(\"cats\").accepted)";
+        let Some(lines) = gd_run(&code, driver, "wb") else {
+            return;
+        };
+        assert_eq!(lines, vec!["true", "false"]);
     }
 
     #[test]

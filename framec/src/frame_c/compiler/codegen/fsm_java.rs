@@ -26,9 +26,9 @@
 //! multi-match (`|`) ordered-choice states, captures, bare-expression
 //! returns, action blocks, declared `actions:` methods, all transition
 //! forms, embedding actions, Mode C sub-fsm call-out, all three alphabets,
-//! and boundary anchors. Not yet handled (clear `Unsupported` error):
-//! mid-pattern anchors and `\b`/`\B`, a Mode C stage as a `|` selector, and a
-//! `|` alternative with elements before its first stage.
+//! boundary anchors, and edge word-boundaries (`\b`/`\B`). Not yet handled
+//! (clear `Unsupported` error): mid-pattern anchors, a Mode C stage as a `|`
+//! selector, and a `|` alternative with elements before its first stage.
 
 use crate::frame_c::compiler::frame_ast::{
     BinaryOp, EmbeddingOp, Expression, FsmDeclAst, FsmStateAst, FsmTransitionTarget, Literal,
@@ -36,6 +36,7 @@ use crate::frame_c::compiler::frame_ast::{
 };
 use crate::frame_c::compiler::fsm_regex::{
     self, size_check::DEFAULT_MAX_DFA_STATES, subset::DfaLabel, Alphabet, CompileError,
+    WordBoundary,
 };
 use std::fmt::Write;
 
@@ -51,6 +52,8 @@ struct StageDfa {
     start: usize,
     requires_start: bool,
     requires_end: bool,
+    start_boundary: Option<WordBoundary>,
+    end_boundary: Option<WordBoundary>,
     mode_c: Option<String>,
 }
 
@@ -115,6 +118,8 @@ impl<'a> Generator<'a> {
                                 start: 0,
                                 requires_start: false,
                                 requires_end: false,
+                                start_boundary: None,
+                                end_boundary: None,
                                 mode_c: Some(inner.to_string()),
                             });
                             continue;
@@ -165,6 +170,8 @@ impl<'a> Generator<'a> {
                     start: compiled.dfa.start,
                     requires_start: compiled.requires_start,
                     requires_end: compiled.requires_end,
+                    start_boundary: compiled.start_boundary,
+                    end_boundary: compiled.end_boundary,
                     mode_c: None,
                 })
             }
@@ -250,6 +257,7 @@ impl<'a> Generator<'a> {
         self.emit_ctor(&mut out);
         self.emit_tok_id(&mut out);
         self.emit_slice(&mut out);
+        self.emit_iswordat(&mut out);
         self.emit_dfa_matcher(&mut out);
         self.emit_run(&mut out);
         self.emit_state_methods(&mut out)?;
@@ -394,6 +402,32 @@ impl<'a> Generator<'a> {
         out.push_str("    String[] r = new String[hi - lo];\n");
         out.push_str("    for (int i = lo; i < hi; i++) r[i - lo] = a[i];\n");
         out.push_str("    return r;\n  }\n\n");
+    }
+
+    /// True iff any stage carries a `\b`/`\B` edge boundary, requiring the
+    /// `iswordat` helper to be emitted.
+    fn uses_word_boundary(&self) -> bool {
+        self.stage_dfas
+            .iter()
+            .any(|d| d.start_boundary.is_some() || d.end_boundary.is_some())
+    }
+
+    /// `iswordat(p)` — is the byte at position `p` a word byte
+    /// (`[0-9A-Za-z_]`)? Out-of-bounds positions are non-word (`false`).
+    /// Word boundaries are bytes-only (the engine rejects them on other
+    /// alphabets), so the input is a `String` read via `charAt`.
+    fn emit_iswordat(&self, out: &mut String) {
+        if !self.uses_word_boundary() {
+            return;
+        }
+        let inp = &self.decl.params[0].name;
+        writeln!(out, "  boolean iswordat(int p) {{").ok();
+        writeln!(out, "    if (p < 0 || p >= {}.length()) return false;", inp).ok();
+        writeln!(out, "    char c = {}.charAt(p);", inp).ok();
+        out.push_str(
+            "    return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_';\n",
+        );
+        out.push_str("  }\n\n");
     }
 
     fn emit_dfa_matcher(&self, out: &mut String) {
@@ -759,6 +793,30 @@ impl<'a> Generator<'a> {
                 sid,
                 self.input_len(),
                 sid
+            )
+            .ok();
+        }
+        if let Some(wb) = dfa.start_boundary {
+            let op = match wb {
+                WordBoundary::Required => "==",
+                WordBoundary::Forbidden => "!=",
+            };
+            writeln!(
+                out,
+                "{}if (iswordat(cursor - 1) {} iswordat(cursor)) _r{} = -1;",
+                ind, op, sid
+            )
+            .ok();
+        }
+        if let Some(wb) = dfa.end_boundary {
+            let op = match wb {
+                WordBoundary::Required => "==",
+                WordBoundary::Forbidden => "!=",
+            };
+            writeln!(
+                out,
+                "{}if (_r{} >= 0 && iswordat(_r{} - 1) {} iswordat(_r{})) _r{} = -1;",
+                ind, sid, sid, op, sid, sid
             )
             .ok();
         }
@@ -1288,6 +1346,16 @@ mod tests {
             return;
         };
         assert_eq!(l2, vec!["true", "false"]);
+    }
+
+    #[test]
+    fn java_word_boundary() {
+        let code = gen("@@fsm M(text: bytes) : bool = false { /\\bcat\\b/ true }");
+        let d = "    for (String s : new String[]{\"cat\", \"cats\"}) { System.out.println(new M(s).accepted); }";
+        let Some(lines) = java_run(&code, d, "wb") else {
+            return;
+        };
+        assert_eq!(lines, vec!["true", "false"]);
     }
 
     #[test]

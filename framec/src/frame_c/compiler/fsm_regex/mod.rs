@@ -21,9 +21,12 @@
 //! Lazy quantifiers, lookaround, Unicode general-category classes, named
 //! captures, backreferences, and recursion are all rejected by
 //! `restrictions::check`. Their handling is deferred to v0.2 per RFC-0042
-//! §11. Boundary anchors — a leading `^`/`\A` or trailing `$`/`\z` — are
-//! extracted into [`CompiledRegex::requires_start`]/`requires_end` (§6.6);
-//! mid-pattern anchors and `\b`/`\B` are deferred
+//! §11. Edge anchors — a leading `^`/`\A` or trailing `$`/`\z`, plus (on the
+//! `bytes` alphabet) a leading/trailing `\b`/`\B` — are extracted into
+//! [`CompiledRegex::requires_start`]/`requires_end` and
+//! [`start_boundary`](CompiledRegex::start_boundary)/`end_boundary` (§6.6),
+//! enforced by the matcher. *Interior* (non-edge) anchors/boundaries, and
+//! `\b`/`\B` on `char`/`token`, are deferred
 //! ([`CompileError::UnsupportedAnchors`]).
 //!
 //! # Entry point
@@ -77,6 +80,18 @@ pub struct EngineDiagnostic {
     pub message: String,
 }
 
+/// A word-boundary constraint at a pattern edge (RFC-0042 §6.6). `\b`
+/// requires a boundary at that position; `\B` requires its absence. Like
+/// the position anchors, an edge `\b`/`\B` is stripped from `dfa` and
+/// enforced by the matcher against the live cursor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WordBoundary {
+    /// `\b` — a word boundary must be present at this position.
+    Required,
+    /// `\B` — a word boundary must be absent at this position.
+    Forbidden,
+}
+
 /// A successfully compiled regex: its minimal DFA, collected metrics, and
 /// any non-fatal warnings (e.g. W704 DFA-size-approaching).
 #[derive(Debug, Clone)]
@@ -91,6 +106,14 @@ pub struct CompiledRegex {
     /// A trailing `$`/`\z` anchor was present: the match must end at the
     /// input end. Stripped from `dfa`; enforced by the matcher.
     pub requires_end: bool,
+    /// A leading `\b`/`\B` was present (bytes alphabet only): the matcher
+    /// asserts a word boundary is present/absent between the byte before
+    /// the match start and the first matched byte.
+    pub start_boundary: Option<WordBoundary>,
+    /// A trailing `\b`/`\B` was present: the matcher asserts a word boundary
+    /// is present/absent between the last matched byte and the byte after
+    /// the match end.
+    pub end_boundary: Option<WordBoundary>,
 }
 
 /// Why a regex failed to compile.
@@ -98,11 +121,13 @@ pub struct CompiledRegex {
 pub enum CompileError {
     /// One or more dialect/syntax/size diagnostics (E720–E723).
     Diagnostics(Vec<EngineDiagnostic>),
-    /// The regex uses an anchor the v0.1 engine does not fold into the DFA:
-    /// a mid-pattern `^`/`$`/`\A`/`\z`, or any `\b`/`\B` word boundary.
-    /// (Leading `^`/`\A` and trailing `$`/`\z` *are* supported — extracted
-    /// into [`CompiledRegex::requires_start`]/`requires_end`.) Surfaced as a
-    /// clear limitation rather than a silent miscompile.
+    /// The regex uses an anchor the v0.1 engine does not handle: an *interior*
+    /// (non-edge) `^`/`$`/`\A`/`\z` or `\b`/`\B`, or a `\b`/`\B` on the
+    /// `char`/`token` alphabet (no word classification yet — §11.6). Edge
+    /// `^`/`$`/`\A`/`\z`, and edge `\b`/`\B` on `bytes`, *are* supported —
+    /// extracted into [`CompiledRegex::requires_start`]/`requires_end` and
+    /// [`start_boundary`](CompiledRegex::start_boundary)/`end_boundary`.
+    /// Surfaced as a clear limitation rather than a silent miscompile.
     UnsupportedAnchors(Span),
 }
 
@@ -152,7 +177,16 @@ pub fn compile(
     //    `\b`/`\B`, are not yet folded into the DFA (deferred to v0.2) —
     //    they survive into the NFA and trip the gate below.
     let span = ast.root.span;
-    let (requires_start, requires_end, ast) = extract_boundary_anchors(ast);
+    let (requires_start, requires_end, start_boundary, end_boundary, ast) =
+        extract_boundary_anchors(ast);
+
+    // Word boundaries need a word/non-word classification of the alphabet.
+    // v0.1 supports this for `bytes` (the ASCII word set `[0-9A-Za-z_]`);
+    // `char` needs Unicode word tables (§11.6) and `token` has no character
+    // notion, so an edge `\b`/`\B` there is surfaced as unsupported.
+    if (start_boundary.is_some() || end_boundary.is_some()) && alphabet != Alphabet::Bytes {
+        return Err(CompileError::UnsupportedAnchors(span));
+    }
 
     // 4. Thompson NFA over the anchor-free core.
     let nfa = thompson::build(&ast, alphabet);
@@ -195,73 +229,115 @@ pub fn compile(
         warnings,
         requires_start,
         requires_end,
+        start_boundary,
+        end_boundary,
     })
 }
 
-/// Strip a leading `^`/`\A` and/or trailing `$`/`\z` from the regex,
-/// returning `(requires_start, requires_end, core)`. The core is the
-/// remaining pattern; any anchor it still contains (mid-pattern, or
-/// `\b`/`\B`) survives and is rejected downstream (v0.2 work).
-fn extract_boundary_anchors(regex: ast::RegexAst) -> (bool, bool, ast::RegexAst) {
+/// Strip leading/trailing *edge* anchors from the regex, returning
+/// `(requires_start, requires_end, start_boundary, end_boundary, core)`.
+///
+/// Leading `^`/`\A` → `requires_start`; trailing `$`/`\z` → `requires_end`;
+/// leading `\b`/`\B` → `start_boundary`; trailing `\b`/`\B` → `end_boundary`.
+/// A run of edge anchors is peeled (e.g. `^\bfoo\b$`). The core is the
+/// remaining pattern; any anchor it *still* contains (genuinely mid-pattern,
+/// or an edge `\b`/`\B` whose kind conflicts with one already peeled) survives
+/// and is rejected downstream as unsupported — exactly as interior `^`/`$`
+/// are. Word boundaries are enforced by the matcher (bytes alphabet only).
+fn extract_boundary_anchors(
+    regex: ast::RegexAst,
+) -> (
+    bool,
+    bool,
+    Option<WordBoundary>,
+    Option<WordBoundary>,
+    ast::RegexAst,
+) {
     use ast::{Anchor, RegexAst, RegexNode, SpannedNode};
-
-    fn is_start(a: Anchor) -> bool {
-        matches!(a, Anchor::LineStart | Anchor::InputStart)
-    }
-    fn is_end(a: Anchor) -> bool {
-        matches!(a, Anchor::LineEnd | Anchor::InputEnd)
-    }
 
     let span = regex.root.span;
     let (mut requires_start, mut requires_end) = (false, false);
+    let (mut start_boundary, mut end_boundary): (Option<WordBoundary>, Option<WordBoundary>) =
+        (None, None);
 
-    let root_node = match regex.root.node {
-        RegexNode::Concat(mut items) => {
-            if let Some(SpannedNode {
-                node: RegexNode::Anchor(a),
-                ..
-            }) = items.first()
-            {
-                if is_start(*a) {
-                    requires_start = true;
-                }
-            }
-            if requires_start {
-                items.remove(0);
-            }
-            if let Some(SpannedNode {
-                node: RegexNode::Anchor(a),
-                ..
-            }) = items.last()
-            {
-                if is_end(*a) {
-                    requires_end = true;
-                }
-            }
-            if requires_end {
-                items.pop();
-            }
-            RegexNode::Concat(items)
+    // A bare-anchor root (`/^/`, `/\b/`) is treated as a one-element concat so
+    // the peel loops below produce an empty core with the requirement set.
+    let mut items = match regex.root.node {
+        RegexNode::Concat(items) => items,
+        node @ RegexNode::Anchor(_) => vec![SpannedNode { node, span }],
+        other => {
+            return (
+                false,
+                false,
+                None,
+                None,
+                RegexAst {
+                    root: SpannedNode { node: other, span },
+                },
+            );
         }
-        // A bare anchor regex (`/^/`, `/$/`) is an empty core with the
-        // position requirement.
-        RegexNode::Anchor(a) if is_start(a) => {
-            requires_start = true;
-            RegexNode::Concat(Vec::new())
-        }
-        RegexNode::Anchor(a) if is_end(a) => {
-            requires_end = true;
-            RegexNode::Concat(Vec::new())
-        }
-        other => other,
     };
+
+    let word_kind = |a: Anchor| match a {
+        Anchor::WordBoundary => Some(WordBoundary::Required),
+        Anchor::NonWordBoundary => Some(WordBoundary::Forbidden),
+        _ => None,
+    };
+
+    // Peel leading edge anchors: `^`/`\A` (position) and `\b`/`\B` (boundary).
+    while let Some(SpannedNode {
+        node: RegexNode::Anchor(a),
+        ..
+    }) = items.first()
+    {
+        let a = *a;
+        if matches!(a, Anchor::LineStart | Anchor::InputStart) {
+            requires_start = true;
+            items.remove(0);
+        } else if let Some(kind) = word_kind(a) {
+            // Idempotent on a repeated same-kind boundary; a conflicting
+            // kind (`\b\B…`) is left in the core to be rejected downstream.
+            match start_boundary {
+                None => start_boundary = Some(kind),
+                Some(k) if k == kind => {}
+                Some(_) => break,
+            }
+            items.remove(0);
+        } else {
+            break; // an end-type anchor in leading position → leave for the gate
+        }
+    }
+
+    // Peel trailing edge anchors: `$`/`\z` (position) and `\b`/`\B` (boundary).
+    while let Some(SpannedNode {
+        node: RegexNode::Anchor(a),
+        ..
+    }) = items.last()
+    {
+        let a = *a;
+        if matches!(a, Anchor::LineEnd | Anchor::InputEnd) {
+            requires_end = true;
+            items.pop();
+        } else if let Some(kind) = word_kind(a) {
+            match end_boundary {
+                None => end_boundary = Some(kind),
+                Some(k) if k == kind => {}
+                Some(_) => break,
+            }
+            items.pop();
+        } else {
+            break;
+        }
+    }
 
     (
         requires_start,
         requires_end,
+        start_boundary,
+        end_boundary,
         RegexAst {
             root: SpannedNode {
-                node: root_node,
+                node: RegexNode::Concat(items),
                 span,
             },
         },
@@ -446,14 +522,39 @@ mod engine_tests {
         // A `$` in the middle is not a boundary anchor → deferred (v0.2).
         let err = compile("a$b", Alphabet::Bytes, size_check::DEFAULT_MAX_DFA_STATES).unwrap_err();
         assert!(matches!(err, CompileError::UnsupportedAnchors(_)));
-        // Word boundaries are deferred regardless of position.
-        let wb = compile(
-            "\\bfoo",
+        // An *interior* word boundary (neither leading nor trailing) is still
+        // deferred — exactly as interior `^`/`$` are.
+        let mid =
+            compile("a\\bb", Alphabet::Bytes, size_check::DEFAULT_MAX_DFA_STATES).unwrap_err();
+        assert!(matches!(mid, CompileError::UnsupportedAnchors(_)));
+    }
+
+    #[test]
+    fn edge_word_boundaries_compile() {
+        // Leading `\b` → start_boundary; trailing `\b` → end_boundary; the
+        // core (`foo`) is anchor-free.
+        let r = compile(
+            "\\bfoo\\b",
             Alphabet::Bytes,
             size_check::DEFAULT_MAX_DFA_STATES,
         )
-        .unwrap_err();
-        assert!(matches!(wb, CompileError::UnsupportedAnchors(_)));
+        .expect("\\bfoo\\b compiles");
+        assert_eq!(r.start_boundary, Some(WordBoundary::Required));
+        assert_eq!(r.end_boundary, Some(WordBoundary::Required));
+        // `\B` → Forbidden; mixes with position anchors in one edge run.
+        let r2 = compile(
+            "^\\Bfoo",
+            Alphabet::Bytes,
+            size_check::DEFAULT_MAX_DFA_STATES,
+        )
+        .expect("^\\Bfoo compiles");
+        assert!(r2.requires_start);
+        assert_eq!(r2.start_boundary, Some(WordBoundary::Forbidden));
+        // Word boundaries need byte word-classes: rejected on char/token.
+        assert!(matches!(
+            compile("\\bfoo", Alphabet::Char, size_check::DEFAULT_MAX_DFA_STATES).unwrap_err(),
+            CompileError::UnsupportedAnchors(_)
+        ));
     }
 
     /// FSM-TEST-311 — a pattern whose minimal DFA exceeds the configured

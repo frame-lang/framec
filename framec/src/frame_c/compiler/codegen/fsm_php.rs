@@ -31,6 +31,7 @@ use crate::frame_c::compiler::frame_ast::{
 };
 use crate::frame_c::compiler::fsm_regex::{
     self, size_check::DEFAULT_MAX_DFA_STATES, subset::DfaLabel, Alphabet, CompileError,
+    WordBoundary,
 };
 use std::fmt::Write;
 
@@ -46,6 +47,8 @@ struct StageDfa {
     start: usize,
     requires_start: bool,
     requires_end: bool,
+    start_boundary: Option<WordBoundary>,
+    end_boundary: Option<WordBoundary>,
     mode_c: Option<String>,
 }
 
@@ -110,6 +113,8 @@ impl<'a> Generator<'a> {
                                 start: 0,
                                 requires_start: false,
                                 requires_end: false,
+                                start_boundary: None,
+                                end_boundary: None,
                                 mode_c: Some(inner.to_string()),
                             });
                             continue;
@@ -160,6 +165,8 @@ impl<'a> Generator<'a> {
                     start: compiled.dfa.start,
                     requires_start: compiled.requires_start,
                     requires_end: compiled.requires_end,
+                    start_boundary: compiled.start_boundary,
+                    end_boundary: compiled.end_boundary,
                     mode_c: None,
                 })
             }
@@ -226,6 +233,7 @@ impl<'a> Generator<'a> {
         self.emit_property_decls(&mut out);
         self.emit_ctor(&mut out);
         self.emit_tok_id(&mut out);
+        self.emit_iswordat(&mut out);
         self.emit_dfa_matcher(&mut out);
         self.emit_run(&mut out);
         self.emit_state_methods(&mut out)?;
@@ -746,6 +754,66 @@ impl<'a> Generator<'a> {
         if dfa.requires_end {
             writeln!(out, "{}if ($_r !== {}) $_r = -1;", ind, self.input_len()).ok();
         }
+        // Word boundaries (`\b`/`\B`): a boundary holds at position p iff the
+        // word-ness of byte[p-1] differs from byte[p] (OOB ⇒ non-word). The
+        // start boundary is checked at the match start (`$this->cursor`); the
+        // end boundary at the match end (`$_r`), guarded so a prior reject is
+        // not re-read. `Required` (`\b`) demands a boundary (sides differ, so
+        // the violation test is `==`); `Forbidden` (`\B`) demands none (`!=`).
+        if let Some(b) = dfa.start_boundary {
+            let op = match b {
+                WordBoundary::Required => "==",
+                WordBoundary::Forbidden => "!=",
+            };
+            writeln!(
+                out,
+                "{}if ($this->_iswordat($this->cursor - 1) {} $this->_iswordat($this->cursor)) {{ $_r = -1; }}",
+                ind, op
+            )
+            .ok();
+        }
+        if let Some(b) = dfa.end_boundary {
+            let op = match b {
+                WordBoundary::Required => "==",
+                WordBoundary::Forbidden => "!=",
+            };
+            writeln!(
+                out,
+                "{}if ($_r >= 0 && $this->_iswordat($_r - 1) {} $this->_iswordat($_r)) {{ $_r = -1; }}",
+                ind, op
+            )
+            .ok();
+        }
+    }
+
+    /// True iff any stage uses a word-boundary anchor, gating emission of the
+    /// `_iswordat` helper.
+    fn uses_word_boundary(&self) -> bool {
+        self.stage_dfas
+            .iter()
+            .any(|d| d.start_boundary.is_some() || d.end_boundary.is_some())
+    }
+
+    /// The `_iswordat($p)` helper: is the byte at `$p` a word byte
+    /// (`[0-9A-Za-z_]`)? Out-of-bounds positions are non-word. Bytes-only
+    /// (the engine forbids `\b`/`\B` outside the bytes alphabet).
+    fn emit_iswordat(&self, out: &mut String) {
+        if !self.uses_word_boundary() {
+            return;
+        }
+        let inp = &self.decl.params[0].name;
+        writeln!(out, "  function _iswordat($p) {{").ok();
+        writeln!(
+            out,
+            "    if ($p < 0 || $p >= strlen($this->{})) return false;",
+            inp
+        )
+        .ok();
+        writeln!(out, "    $b = ord($this->{}[$p]);", inp).ok();
+        out.push_str(
+            "    return (48 <= $b && $b <= 57) || (65 <= $b && $b <= 90) || (97 <= $b && $b <= 122) || $b == 95;\n",
+        );
+        out.push_str("  }\n\n");
     }
 
     fn emit_success(&self, out: &mut String, m: &MatchAst, ind: &str) {
@@ -1222,6 +1290,16 @@ mod tests {
             return;
         };
         assert_eq!(l2, vec!["true", "false"]);
+    }
+
+    #[test]
+    fn php_word_boundary() {
+        let wb = gen("@@fsm M(text: bytes) : bool = false { /\\bcat\\b/ true }");
+        let d = "foreach ([\"cat\", \"cats\"] as $s) { echo var_export((new M($s))->accepted, true), \"\\n\"; }";
+        let Some(l) = php_run(&wb, d, "wb") else {
+            return;
+        };
+        assert_eq!(l, vec!["true", "false"]);
     }
 
     #[test]

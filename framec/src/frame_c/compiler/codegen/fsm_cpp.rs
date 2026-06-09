@@ -24,9 +24,10 @@
 //! multi-match (`|`) ordered-choice states, captures, bare-expression
 //! returns, action blocks, declared `actions:` methods, all transition
 //! forms, embedding actions, Mode C sub-fsm call-out, all three alphabets,
-//! and boundary anchors. Not yet handled (clear `Unsupported` error):
-//! mid-pattern anchors and `\b`/`\B`, a Mode C stage as a `|` selector, and a
-//! `|` alternative with elements before its first stage.
+//! and boundary anchors — `^`/`$` plus edge word boundaries `\b`/`\B`
+//! (bytes only). Not yet handled (clear `Unsupported` error): mid-pattern
+//! anchors, a Mode C stage as a `|` selector, and a `|` alternative with
+//! elements before its first stage.
 
 use crate::frame_c::compiler::frame_ast::{
     BinaryOp, EmbeddingOp, Expression, FsmDeclAst, FsmStateAst, FsmTransitionTarget, Literal,
@@ -34,6 +35,7 @@ use crate::frame_c::compiler::frame_ast::{
 };
 use crate::frame_c::compiler::fsm_regex::{
     self, size_check::DEFAULT_MAX_DFA_STATES, subset::DfaLabel, Alphabet, CompileError,
+    WordBoundary,
 };
 use std::fmt::Write;
 
@@ -52,6 +54,8 @@ struct StageDfa {
     start: usize,
     requires_start: bool,
     requires_end: bool,
+    start_boundary: Option<WordBoundary>,
+    end_boundary: Option<WordBoundary>,
     mode_c: Option<String>,
 }
 
@@ -116,6 +120,8 @@ impl<'a> Generator<'a> {
                                 start: 0,
                                 requires_start: false,
                                 requires_end: false,
+                                start_boundary: None,
+                                end_boundary: None,
                                 mode_c: Some(inner.to_string()),
                             });
                             continue;
@@ -166,6 +172,8 @@ impl<'a> Generator<'a> {
                     start: compiled.dfa.start,
                     requires_start: compiled.requires_start,
                     requires_end: compiled.requires_end,
+                    start_boundary: compiled.start_boundary,
+                    end_boundary: compiled.end_boundary,
                     mode_c: None,
                 })
             }
@@ -239,6 +247,9 @@ impl<'a> Generator<'a> {
         self.emit_field_decls(&mut out);
         self.emit_ctor(&mut out);
         self.emit_tok_id(&mut out);
+        if self.uses_word_boundary() {
+            self.emit_word_boundary_helper(&mut out);
+        }
         self.emit_dfa_matcher(&mut out);
         self.emit_run(&mut out);
         self.emit_state_methods(&mut out)?;
@@ -751,6 +762,59 @@ impl<'a> Generator<'a> {
             )
             .ok();
         }
+        // Word-boundary edge anchors (\b / \B). The start boundary is checked
+        // at `cursor` (the run's start); the end boundary at `_r{sid}` (the
+        // longest match end), guarded so a failed match is left untouched.
+        // Required (\b) ⇒ a boundary must exist, so the two sides differing is
+        // the wanted state and `==` is the violation; Forbidden (\B) inverts.
+        if let Some(b) = dfa.start_boundary {
+            let op = match b {
+                WordBoundary::Required => "==",
+                WordBoundary::Forbidden => "!=",
+            };
+            writeln!(
+                out,
+                "{}if (iswordat(cursor - 1) {} iswordat(cursor)) _r{} = -1;",
+                ind, op, sid
+            )
+            .ok();
+        }
+        if let Some(b) = dfa.end_boundary {
+            let op = match b {
+                WordBoundary::Required => "==",
+                WordBoundary::Forbidden => "!=",
+            };
+            writeln!(
+                out,
+                "{}if (_r{} >= 0 && iswordat(_r{} - 1) {} iswordat(_r{})) _r{} = -1;",
+                ind, sid, sid, op, sid, sid
+            )
+            .ok();
+        }
+    }
+
+    /// Any stage uses a word-boundary anchor → emit the `iswordat` helper.
+    fn uses_word_boundary(&self) -> bool {
+        self.stage_dfas
+            .iter()
+            .any(|d| d.start_boundary.is_some() || d.end_boundary.is_some())
+    }
+
+    /// Emit `bool iswordat(int p)`: true iff byte `p` is a word byte
+    /// (`[0-9A-Za-z_]`). Out-of-bounds positions are non-word. Boundaries are
+    /// a bytes-only feature, so the input is always the `std::string` form.
+    fn emit_word_boundary_helper(&self, out: &mut String) {
+        let inp = &self.decl.params[0].name;
+        writeln!(
+            out,
+            "  bool iswordat(int p) {{\n\
+             \x20   if (p < 0 || p >= (int){inp}.size()) return false;\n\
+             \x20   int c = (unsigned char){inp}[p];\n\
+             \x20   return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_';\n\
+             \x20 }}\n\n",
+            inp = inp
+        )
+        .ok();
     }
 
     fn emit_success(&self, out: &mut String, m: &MatchAst, ind: &str) {
@@ -1252,6 +1316,16 @@ mod tests {
             return;
         };
         assert_eq!(lines, vec!["true", "false", "true", "false"]);
+    }
+
+    #[test]
+    fn cpp_word_boundary() {
+        let code = gen("@@fsm M(text: bytes) : bool = false { /\\bcat\\b/ true }");
+        let driver = "  for (std::string s : {\"cat\", \"cats\"}) { M m(s); std::cout << m.accepted << \"\\n\"; }";
+        let Some(lines) = cpp_run(&code, driver, "wb") else {
+            return;
+        };
+        assert_eq!(lines, vec!["true", "false"]);
     }
 
     #[test]

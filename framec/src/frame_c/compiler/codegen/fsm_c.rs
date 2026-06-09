@@ -35,9 +35,9 @@
 //! multi-match (`|`) ordered-choice states, captures, bare-expression
 //! returns, action blocks, declared `actions:` methods, all transition
 //! forms, embedding actions, Mode C sub-fsm call-out, all three alphabets,
-//! and boundary anchors. Not yet handled (clear `Unsupported` error):
-//! mid-pattern anchors and `\b`/`\B`, a Mode C stage as a `|` selector, and a
-//! `|` alternative with elements before its first stage.
+//! boundary anchors, and `\b`/`\B` word-boundary edges. Not yet handled
+//! (clear `Unsupported` error): mid-pattern anchors, a Mode C stage as a `|`
+//! selector, and a `|` alternative with elements before its first stage.
 
 use crate::frame_c::compiler::frame_ast::{
     BinaryOp, EmbeddingOp, Expression, FsmDeclAst, FsmStateAst, FsmTransitionTarget, Literal,
@@ -45,6 +45,7 @@ use crate::frame_c::compiler::frame_ast::{
 };
 use crate::frame_c::compiler::fsm_regex::{
     self, size_check::DEFAULT_MAX_DFA_STATES, subset::DfaLabel, Alphabet, CompileError,
+    WordBoundary,
 };
 use std::fmt::Write;
 
@@ -60,6 +61,8 @@ struct StageDfa {
     start: usize,
     requires_start: bool,
     requires_end: bool,
+    start_boundary: Option<WordBoundary>,
+    end_boundary: Option<WordBoundary>,
     mode_c: Option<String>,
 }
 
@@ -124,6 +127,8 @@ impl<'a> Generator<'a> {
                                 start: 0,
                                 requires_start: false,
                                 requires_end: false,
+                                start_boundary: None,
+                                end_boundary: None,
                                 mode_c: Some(inner.to_string()),
                             });
                             continue;
@@ -174,6 +179,8 @@ impl<'a> Generator<'a> {
                     start: compiled.dfa.start,
                     requires_start: compiled.requires_start,
                     requires_end: compiled.requires_end,
+                    start_boundary: compiled.start_boundary,
+                    end_boundary: compiled.end_boundary,
                     mode_c: None,
                 })
             }
@@ -183,8 +190,7 @@ impl<'a> Generator<'a> {
                 ds.first().map(|d| d.message.as_str()).unwrap_or("")
             )),
             Err(CompileError::UnsupportedAnchors(_)) => Err(format!(
-                "regex `/{}/` uses a mid-pattern or word-boundary anchor, not yet supported by the \
-                 C backend",
+                "regex `/{}/` uses a mid-pattern anchor, not yet supported by the C backend",
                 regex
             )),
         }
@@ -350,6 +356,24 @@ impl<'a> Generator<'a> {
                 "{} {{\n  char* s = (char*)malloc(len + 1);\n  memcpy(s, self->{} + start, len);\n  s[len] = '\\0';\n  return s;\n}}\n",
                 sig,
                 self.input_name()
+            )
+            .ok();
+        }
+        // iswordat: is the byte at index `p` a word byte ([0-9A-Za-z_])?
+        // Out-of-bounds (before start / at-or-past end) is non-word (0). Used
+        // by the `\b`/`\B` edge-boundary guards; bytes alphabet only.
+        if self.uses_word_boundary() {
+            let sig = format!("int {}(struct {}* self, int p)", self.fname("iswordat"), n);
+            protos.push(sig.clone());
+            writeln!(
+                defs,
+                "{sig} {{\n\
+                 \x20 if (p < 0 || p >= self->_len) return 0;\n\
+                 \x20 int b = (int)(unsigned char)self->{inp}[p];\n\
+                 \x20 return (b >= '0' && b <= '9') || (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') || b == '_';\n\
+                 }}\n",
+                sig = sig,
+                inp = self.input_name()
             )
             .ok();
         }
@@ -926,6 +950,40 @@ impl<'a> Generator<'a> {
         if dfa.requires_end {
             writeln!(out, "{}if (_r{} != self->_len) _r{} = -1;", ind, sid, sid).ok();
         }
+        if let Some(b) = dfa.start_boundary {
+            let op = boundary_op(b);
+            let f = self.fname("iswordat");
+            writeln!(
+                out,
+                "{ind}if ({f}(self, self->cursor - 1) {op} {f}(self, self->cursor)) _r{sid} = -1;",
+                ind = ind,
+                f = f,
+                op = op,
+                sid = sid
+            )
+            .ok();
+        }
+        if let Some(b) = dfa.end_boundary {
+            let op = boundary_op(b);
+            let f = self.fname("iswordat");
+            writeln!(
+                out,
+                "{ind}if (_r{sid} >= 0 && {f}(self, _r{sid} - 1) {op} {f}(self, _r{sid})) _r{sid} = -1;",
+                ind = ind,
+                f = f,
+                op = op,
+                sid = sid
+            )
+            .ok();
+        }
+    }
+
+    /// True iff any compiled stage uses a `\b`/`\B` edge boundary, gating the
+    /// `iswordat` helper emission.
+    fn uses_word_boundary(&self) -> bool {
+        self.stage_dfas
+            .iter()
+            .any(|d| d.start_boundary.is_some() || d.end_boundary.is_some())
     }
 
     fn emit_success(&self, out: &mut String, m: &MatchAst, ind: &str) {
@@ -1220,6 +1278,17 @@ fn cap_inst_name(state: &str, label: &str) -> String {
     format!("cap_inst_{}_{}", state, label)
 }
 
+/// `\b` (Required) demands the two sides of the edge differ in word-ness
+/// (`==` would falsify the violation guard), `\B` (Forbidden) demands they
+/// match. The guard fires `_r = -1` when the predicate holds, so the operator
+/// is inverted relative to the semantic: Required→`==`, Forbidden→`!=`.
+fn boundary_op(b: WordBoundary) -> &'static str {
+    match b {
+        WordBoundary::Required => "==",
+        WordBoundary::Forbidden => "!=",
+    }
+}
+
 fn binop(op: &BinaryOp) -> &'static str {
     match op {
         BinaryOp::Add => "+",
@@ -1499,6 +1568,16 @@ mod tests {
             return;
         };
         assert_eq!(lines, vec!["true", "false", "true", "false"]);
+    }
+
+    #[test]
+    fn c_word_boundary() {
+        let code = gen("@@fsm M(text: bytes) : bool = false { /\\bcat\\b/ true }");
+        let driver = "  { struct M m; M_init(&m, \"cat\"); printf(\"%s\\n\", m.accepted?\"true\":\"false\"); }\n  { struct M m; M_init(&m, \"cats\"); printf(\"%s\\n\", m.accepted?\"true\":\"false\"); }";
+        let Some(lines) = c_run(&code, driver, "wb") else {
+            return;
+        };
+        assert_eq!(lines, vec!["true", "false"]);
     }
 
     #[test]

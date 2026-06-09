@@ -30,6 +30,7 @@ use crate::frame_c::compiler::frame_ast::{
 };
 use crate::frame_c::compiler::fsm_regex::{
     self, size_check::DEFAULT_MAX_DFA_STATES, subset::DfaLabel, Alphabet, CompileError,
+    WordBoundary,
 };
 use std::fmt::Write;
 
@@ -45,6 +46,8 @@ struct StageDfa {
     start: usize,
     requires_start: bool,
     requires_end: bool,
+    start_boundary: Option<WordBoundary>,
+    end_boundary: Option<WordBoundary>,
     mode_c: Option<String>,
 }
 
@@ -109,6 +112,8 @@ impl<'a> Generator<'a> {
                                 start: 0,
                                 requires_start: false,
                                 requires_end: false,
+                                start_boundary: None,
+                                end_boundary: None,
                                 mode_c: Some(inner.to_string()),
                             });
                             continue;
@@ -159,6 +164,8 @@ impl<'a> Generator<'a> {
                     start: compiled.dfa.start,
                     requires_start: compiled.requires_start,
                     requires_end: compiled.requires_end,
+                    start_boundary: compiled.start_boundary,
+                    end_boundary: compiled.end_boundary,
                     mode_c: None,
                 })
             }
@@ -200,6 +207,7 @@ impl<'a> Generator<'a> {
         out.push_str("  attr_reader :accepted, :return_value, :cursor, :reject_position\n\n");
         self.emit_ctor(&mut out);
         self.emit_tok_id(&mut out);
+        self.emit_is_word_at(&mut out);
         self.emit_dfa_matcher(&mut out);
         self.emit_run(&mut out);
         self.emit_state_methods(&mut out)?;
@@ -294,6 +302,34 @@ impl<'a> Generator<'a> {
         out.push_str("  def tok_id(t)\n");
         writeln!(out, "    {{{}}}.fetch(t, -1)", items.join(", ")).ok();
         out.push_str("  end\n\n");
+    }
+
+    /// True iff any stage carries a word-boundary anchor (`\b`/`\B`), so the
+    /// `_iswordat` helper is worth emitting.
+    fn uses_word_boundary(&self) -> bool {
+        self.stage_dfas
+            .iter()
+            .any(|d| d.start_boundary.is_some() || d.end_boundary.is_some())
+    }
+
+    /// Emit the `_iswordat(p)` helper: true iff position `p` is in-bounds and
+    /// the byte there is a word byte (`[0-9A-Za-z_]`). Out-of-bounds (`p < 0`
+    /// or `p >= length`) is non-word, matching the edge semantics of `\b`.
+    fn emit_is_word_at(&self, out: &mut String) {
+        if !self.uses_word_boundary() {
+            return;
+        }
+        let input = &self.decl.params[0].name;
+        writeln!(
+            out,
+            "  def _iswordat(p)\n\
+             \x20   return false if p < 0 || p >= @{input}.length\n\
+             \x20   b = @{input}[p].ord\n\
+             \x20   (48..57).include?(b) || (65..90).include?(b) || (97..122).include?(b) || b == 95\n\
+             \x20 end\n",
+            input = input
+        )
+        .ok();
     }
 
     fn emit_dfa_matcher(&self, out: &mut String) {
@@ -661,6 +697,24 @@ impl<'a> Generator<'a> {
         if dfa.requires_end {
             writeln!(out, "{}_r = -1 if _r != @{}.length", ind, input).ok();
         }
+        if let Some(b) = dfa.start_boundary {
+            writeln!(
+                out,
+                "{}_r = -1 if _iswordat(@cursor - 1) {} _iswordat(@cursor)",
+                ind,
+                boundary_op(b)
+            )
+            .ok();
+        }
+        if let Some(b) = dfa.end_boundary {
+            writeln!(
+                out,
+                "{}_r = -1 if _r >= 0 && (_iswordat(_r - 1) {} _iswordat(_r))",
+                ind,
+                boundary_op(b)
+            )
+            .ok();
+        }
     }
 
     fn emit_success(&self, out: &mut String, m: &MatchAst, ind: &str) {
@@ -889,6 +943,17 @@ fn cap_field(state: &str, label: &str) -> String {
 
 fn cap_inst_field(state: &str, label: &str) -> String {
     format!("cap_inst_{}_{}", state, label)
+}
+
+/// A word-boundary guard's comparison operator: `\b` (Required) demands the
+/// two sides differ in word-ness (`==` rejects when they match, i.e. no
+/// boundary); `\B` (Forbidden) demands they agree (`!=` rejects when they
+/// differ, i.e. a boundary is present).
+fn boundary_op(b: WordBoundary) -> &'static str {
+    match b {
+        WordBoundary::Required => "==",
+        WordBoundary::Forbidden => "!=",
+    }
 }
 
 fn binop(op: &BinaryOp) -> &'static str {
@@ -1126,6 +1191,16 @@ mod tests {
             return;
         };
         assert_eq!(l2, vec!["true", "false"]);
+    }
+
+    #[test]
+    fn ruby_word_boundary() {
+        let code = gen("@@fsm M(text: bytes) : bool = false { /\\bcat\\b/ true }");
+        let d = "[\"cat\", \"cats\"].each { |s| puts M.new(s).accepted }";
+        let Some(lines) = rb_run(&code, d, "wb") else {
+            return;
+        };
+        assert_eq!(lines, vec!["true", "false"]);
     }
 
     #[test]
