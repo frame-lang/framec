@@ -71,9 +71,10 @@ items: number[] = [];
 The Frame `: type` annotation IS the TypeScript type — write
 `: string`, `: number[]`, `: Map<string, number>`, etc.
 
-**Frame type names map cleanly to TypeScript types:**
+**Write TypeScript's own type names directly** — framec passes the
+annotation through verbatim (the name you write *is* the emitted type):
 
-| Frame              | TypeScript          | Notes |
+| You write          | TypeScript meaning  | Notes |
 |--------------------|---------------------|-------|
 | `number`           | `number`            | float64 |
 | `string`           | `string`            | |

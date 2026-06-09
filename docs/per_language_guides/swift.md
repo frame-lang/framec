@@ -82,9 +82,10 @@ Reads and writes use `self.field` (with explicit `self.` for
 clarity in handler bodies — Swift requires it inside closures
 and prefers it for readability elsewhere).
 
-**Frame's type names map cleanly to Swift types:**
+**Write Swift's own type names directly** — framec passes the annotation
+through verbatim (the name you write *is* the emitted type):
 
-| Frame              | Swift            | Notes |
+| You write          | Swift meaning    | Notes |
 |--------------------|------------------|-------|
 | `Int`              | `Int`            | platform-width Int |
 | `String`           | `String`         | |

@@ -101,8 +101,8 @@ pub(crate) fn generate_typescript_handler_method(
     // `if not in` guard preserves pop$ restore semantics.
     if handler.is_enter {
         for var in state_vars_for_init {
-            let init_val = if let Some(ref init) = var.init {
-                expression_to_string(init, lang)
+            let init_val = if let Some(ref init) = var.initializer_text {
+                init.clone()
             } else {
                 state_var_init_value(&var.var_type, lang)
             };

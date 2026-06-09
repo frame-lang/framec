@@ -199,47 +199,32 @@ pub(crate) fn state_var_init_value(var_type: &Type, lang: TargetLanguage) -> Str
     }
 }
 
-/// Convert a state var init expression to a type-correct value for the
-/// target language. Frame source uses portable expressions (`""` for
-/// empty string, `0` for integer, `false` for bool). The target language
-/// may need wrapping — e.g. Rust's struct fields are `String` not `&str`,
-/// so a string literal `""` becomes `String::from("")`.
-///
-/// This is the canonical way to emit state var init values. It delegates
-/// to `expression_to_string` for the base serialization, then wraps
-/// based on declared type + target language.
-pub(crate) fn typed_init_expr(expr: &Expression, var_type: &Type, lang: TargetLanguage) -> String {
-    let raw = expression_to_string(expr, lang);
-    let is_string_type = match var_type {
-        Type::Custom(s) => matches!(s.to_lowercase().as_str(), "str" | "string"),
-        Type::Unknown => false,
-    };
-    let is_string_literal = matches!(expr, Expression::Literal(Literal::String(_)));
-    let is_int_literal = matches!(expr, Expression::Literal(Literal::Int(_)));
-
-    match lang {
-        // Rust: struct field is `String`, literal `""` is `&str` → wrap
-        TargetLanguage::Rust if is_string_type && is_string_literal => {
-            format!("String::from({})", raw)
-        }
-        // Rust: parser fallback — String field got Integer(0) because it
-        // couldn't parse a Rust-specific constructor. Substitute default.
-        TargetLanguage::Rust if is_string_type && is_int_literal => "String::new()".to_string(),
-        // C++: std::any storage needs std::string, not const char*
-        TargetLanguage::Cpp if is_string_type && is_string_literal => {
-            format!("std::string({})", raw)
-        }
-        // All other languages: portable expression works as-is
-        _ => raw,
-    }
-}
+// `typed_init_expr` (removed): previously wrapped portable state-var init
+// expressions per target (`""` -> `String::from("")` for Rust, etc.). That
+// contradicted the verbatim-passthrough contract (docs/frame_language.md) and
+// was the parse-and-re-serialize path that corrupted literals like `0.0` ->
+// `0` (FRAMEC #59). State-var initializers now carry raw text
+// (`StateVarAst::initializer_text`) and are emitted verbatim, exactly like
+// domain-field initializers — the user writes their target's native init value.
 
 /// Convert an Expression to a string representation for inline code
 pub(crate) fn expression_to_string(expr: &Expression, lang: TargetLanguage) -> String {
     match expr {
         Expression::Literal(lit) => match lit {
             Literal::Int(n) => n.to_string(),
-            Literal::Float(f) => f.to_string(),
+            Literal::Float(f) => {
+                // `f64::to_string()` drops the decimal for whole numbers
+                // (`0.0` -> `"0"`), which emits an integer literal into a
+                // float slot — uncompilable on typed targets (FRAMEC #59).
+                // Re-add it only for the pure-integer rendering; leave
+                // `1.5` / `1e10` / `inf` / `NaN` untouched.
+                let s = f.to_string();
+                if s.bytes().all(|b| b.is_ascii_digit() || b == b'-') {
+                    format!("{s}.0")
+                } else {
+                    s
+                }
+            }
             Literal::String(s) => format!("\"{}\"", s),
             Literal::Bool(b) => match lang {
                 TargetLanguage::Python3 => {
@@ -680,70 +665,6 @@ mod tests {
             state_var_init_value(&Type::Unknown, TargetLanguage::Python3),
             "None"
         );
-    }
-
-    // =========================================================
-    // typed_init_expr — type-aware wrapping for init expressions
-    // =========================================================
-
-    #[test]
-    fn test_typed_init_expr_rust_string_literal() {
-        let expr = Expression::Literal(Literal::String("hello".into()));
-        let result = typed_init_expr(&expr, &Type::Custom("str".into()), TargetLanguage::Rust);
-        assert_eq!(result, "String::from(\"hello\")");
-    }
-
-    #[test]
-    fn test_typed_init_expr_cpp_string_literal() {
-        let expr = Expression::Literal(Literal::String("hello".into()));
-        let result = typed_init_expr(&expr, &Type::Custom("str".into()), TargetLanguage::Cpp);
-        assert_eq!(result, "std::string(\"hello\")");
-    }
-
-    #[test]
-    fn test_typed_init_expr_rust_int_fallback_for_string() {
-        // Parser produced Integer(0) for unparseable String::new()
-        let expr = Expression::Literal(Literal::Int(0));
-        let result = typed_init_expr(&expr, &Type::Custom("str".into()), TargetLanguage::Rust);
-        assert_eq!(result, "String::new()");
-    }
-
-    #[test]
-    fn test_typed_init_expr_python_string_no_wrap() {
-        let expr = Expression::Literal(Literal::String("hello".into()));
-        let result = typed_init_expr(&expr, &Type::Custom("str".into()), TargetLanguage::Python3);
-        assert_eq!(
-            result, "\"hello\"",
-            "Python should not wrap string literals"
-        );
-    }
-
-    #[test]
-    fn test_typed_init_expr_rust_int_for_int_no_wrap() {
-        let expr = Expression::Literal(Literal::Int(42));
-        let result = typed_init_expr(&expr, &Type::Custom("int".into()), TargetLanguage::Rust);
-        assert_eq!(result, "42", "Int-typed int literal should not be wrapped");
-    }
-
-    #[test]
-    fn test_typed_init_expr_rust_bool_no_wrap() {
-        let expr = Expression::Literal(Literal::Bool(true));
-        let result = typed_init_expr(&expr, &Type::Custom("bool".into()), TargetLanguage::Rust);
-        assert_eq!(result, "true");
-    }
-
-    #[test]
-    fn test_typed_init_expr_rust_empty_string() {
-        let expr = Expression::Literal(Literal::String("".into()));
-        let result = typed_init_expr(&expr, &Type::Custom("str".into()), TargetLanguage::Rust);
-        assert_eq!(result, "String::from(\"\")");
-    }
-
-    #[test]
-    fn test_typed_init_expr_cpp_empty_string() {
-        let expr = Expression::Literal(Literal::String("".into()));
-        let result = typed_init_expr(&expr, &Type::Custom("str".into()), TargetLanguage::Cpp);
-        assert_eq!(result, "std::string(\"\")");
     }
 
     // =========================================================

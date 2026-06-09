@@ -100,8 +100,8 @@ pub(crate) fn generate_unified_state_dispatch(
     if !state_vars.is_empty() && !has_enter_handler {
         code.push_str(&(syn.fmt_if)("$>"));
         for var in state_vars {
-            let init_val = if let Some(ref init) = var.init {
-                expression_to_string(init, syn.lang)
+            let init_val = if let Some(ref init) = var.initializer_text {
+                init.clone()
             } else {
                 state_var_init_value(&var.var_type, syn.lang)
             };
@@ -144,8 +144,8 @@ pub(crate) fn generate_unified_state_dispatch(
         // State var init in enter handler — only the lifecycle `$>` key.
         if event == "$>" && !state_vars.is_empty() {
             for var in state_vars {
-                let init_val = if let Some(ref init) = var.init {
-                    expression_to_string(init, syn.lang)
+                let init_val = if let Some(ref init) = var.initializer_text {
+                    init.clone()
                 } else {
                     state_var_init_value(&var.var_type, syn.lang)
                 };

@@ -747,7 +747,13 @@ impl LanguageBackend for DartBackend {
 }
 
 impl DartBackend {
-    /// Convert type annotation to Dart types
+    /// Normalize a type annotation for emission. Frame has NO type system:
+    /// user-written type names pass through VERBATIM (docs/frame_language.md).
+    /// Write Dart's own names (`int`, `double`, `String`). The arms below are
+    /// framec-synthesized machinery types only (untyped event params, the
+    /// generic stacks, and the nullable/`Record<>` shapes the shared IR
+    /// carries); there is no `int`->`int` / `str`->`String` alias table — it
+    /// contradicted the passthrough contract and was removed.
     fn convert_type(&self, type_str: &str) -> String {
         // Handle TS union types "Type | null" -> "Type?"
         if type_str.contains(" | null") {
@@ -757,10 +763,6 @@ impl DartBackend {
         }
         match type_str {
             "Any" | "any" => "dynamic".to_string(),
-            "int" => "int".to_string(),
-            "float" | "number" => "double".to_string(),
-            "str" | "string" => "String".to_string(),
-            "bool" | "boolean" => "bool".to_string(),
             "None" | "void" => "void".to_string(),
             "List" => "List<dynamic>".to_string(),
             "Dict" => "Map<String, dynamic>".to_string(),

@@ -856,13 +856,15 @@ impl JavaBackend {
         )
     }
 
+    /// Normalize a type annotation for emission. Frame has NO type system:
+    /// user-written type names pass through VERBATIM (docs/frame_language.md).
+    /// Write Java's own names (`int`, `String`, `double`, `List<Integer>`).
+    /// The arms below are framec-synthesized machinery types only; there is no
+    /// `int`->`int` / `str`->`String` alias table — it contradicted the
+    /// passthrough contract and was removed.
     fn map_type(&self, t: &str) -> String {
         match t {
             "Any" => "Object".to_string(),
-            "string" | "String" | "str" => "String".to_string(),
-            "int" | "i32" | "i64" | "number" => "int".to_string(),
-            "float" | "f64" | "f32" => "double".to_string(),
-            "bool" | "boolean" => "boolean".to_string(),
             "void" => "void".to_string(),
             other => other.to_string(),
         }

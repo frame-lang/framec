@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Changed
+
+- **Type annotations now emit verbatim on every backend (#61).** Removed the
+  residual per-backend type-alias tables (`int`→`i64`, `str`→`String`,
+  `float`→`f64`, …) from the Rust pipeline (`rust_system.rs`/`runtime.rs` typed
+  compartment + the return-boxing cast shim) and from `map_type`/`convert_type`
+  on the other backends. Frame has no type system — write your target's own type
+  names; they reach the generated code unchanged. Machinery types (generic
+  stacks, untyped event params) are unaffected.
+- **State-variable initializers now emit verbatim.** Init values carry raw text
+  and are emitted exactly like domain-field initializers; the per-target
+  "portable init" value wrapping (`""` → `String::from("")`, …) was removed. Write
+  the native init value for the declared type.
+
+### Fixed
+
+- **Whole-number float state-var initializers no longer truncate to integers
+  (#59).** `$.x: f64 = 0.0` previously parsed-and-reserialized through
+  `f64::to_string()` and emitted `0` (uncompilable Rust; wrong on every typed
+  target). State-var inits are now verbatim, so the literal is preserved.
+
+### Docs
+
+- Per-language guides, the language reference's type-contract and "init values"
+  sections, and the portable-float guidance (#62) updated to the verbatim-native
+  contract. See [4.5.0 migration](docs/releases/4.5.0-migration.md).
+
 ## [4.4.0] - 2026-06-06
 
 Ships RFC-0043: the `@@[async]` system-header attribute and a layered

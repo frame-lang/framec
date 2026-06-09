@@ -113,6 +113,7 @@ pub const FIXTURES_ALL: &[&str] = &[
     "10_actions",
     "11_consts",
     "12_no_persist",
+    "15_float_state_vars",
 ];
 
 /// Fixtures whose emitted code references external libraries the

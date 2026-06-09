@@ -725,14 +725,12 @@ pub(crate) fn generate_rust_state_dispatch(
             .params
             .iter()
             .map(|p| {
+                // Frame type names pass through verbatim (no int->i64 alias —
+                // docs/frame_language.md). `rust_handler_arg_expr` keys its
+                // Copy-vs-clone decision off the resolved type name directly,
+                // which is just the user's own Rust type.
                 let raw_type = p.symbol_type.as_deref().unwrap_or("String");
-                let resolved = match raw_type {
-                    "int" => "i64",
-                    "float" => "f64",
-                    "str" | "string" => "String",
-                    other => other,
-                };
-                rust_handler_arg_expr(&p.name, raw_type, resolved)
+                rust_handler_arg_expr(&p.name, raw_type, raw_type)
             })
             .collect();
         code.push_str(&format!(
@@ -952,23 +950,14 @@ pub(crate) fn generate_rust_interface_body(
 
     if let Some(ref rt) = method.return_type {
         let raw_type = type_to_string(rt);
-        let _return_type = match raw_type.as_str() {
-            "str" | "string" => "String".to_string(),
-            "int" => "i64".to_string(),
-            "float" => "f64".to_string(),
-            "bool" => "bool".to_string(),
-            "Any" => "String".to_string(),
-            other => other.to_string(),
-        };
         // RFC-0025 Track B.2: pattern-match the typed variant the
         // interface handler emitted, OR the `_Lifecycle` escape-hatch
         // variant a lifecycle handler may have written (downcast to
-        // this method's declared return type).
+        // this method's declared return type). Frame type names pass
+        // through verbatim (no int->i64 alias); only the untyped `Any`
+        // return maps to its `String` storage type.
         let rust_ty = match raw_type.as_str() {
-            "int" => "i64".to_string(),
-            "float" => "f64".to_string(),
-            "bool" => "bool".to_string(),
-            "str" | "string" | "Any" => "String".to_string(),
+            "Any" => "String".to_string(),
             other => other.to_string(),
         };
         code.push_str(&format!(
@@ -1435,17 +1424,17 @@ pub(crate) fn rust_expand_context_data_write(
 /// downcast to exactly the type the enclosing Frame method's return
 /// signature resolves to on Rust.
 ///
-/// Three cases matter:
-///   1. Frame type `str` (or a `"..."` literal with no declared type):
-///      wrap as `String::from("...")`. The downcast expects `String`,
-///      not `&'static str`.
-///   2. Frame type `int`: add `as i64`. Integer literals in Rust default
-///      to `i32`; the interface signature emits `-> i64`, so without
-///      this cast the box contains `i32` and the downcast panics.
-///   3. Frame type `float`: add `as f64` for the same reason.
+/// The case that matters: Frame type `str` (or a `"..."` literal with no
+/// declared type) — wrap as `String::from("...")`, because the typed
+/// return variant / `_Lifecycle` downcast expects an owned `String`, not
+/// `&'static str`; and a borrowed read of a non-Copy field is `.clone()`d
+/// so it can be moved into the variant.
 ///
-/// Non-literal expressions that are already the correct type get a
-/// redundant cast, which the compiler elides.
+/// There is deliberately NO numeric cast (`as i64` / `as f64`) here:
+/// Frame type names pass through verbatim (docs/frame_language.md), and a
+/// bare literal returned through a typed enum variant (`FrameReturn::Gi(0)`)
+/// is inferred to the variant's declared field type by Rust. The old
+/// `int`->`i64` / `float`->`f64` casts were alias artifacts and are gone.
 fn rust_wrap_for_boxing(expr: &str, return_type: &Option<String>) -> String {
     let trimmed = expr.trim();
     let is_string_literal = trimmed.starts_with('"') && trimmed.ends_with('"');
@@ -1470,8 +1459,6 @@ fn rust_wrap_for_boxing(expr: &str, return_type: &Option<String>) -> String {
             && !is_string_literal
     };
     match return_type.as_deref() {
-        Some("int") => format!("({}) as i64", trimmed),
-        Some("float") => format!("({}) as f64", trimmed),
         Some("str") | Some("string") | Some("String") | Some("Any") if is_string_literal => {
             format!("String::from({})", trimmed)
         }
@@ -1557,13 +1544,11 @@ pub(crate) fn rust_context_return_read_typed(
         "bool" => "false",
         _ => "Default::default()",
     };
-    // Map the Frame return type to the Rust type for the _Lifecycle
-    // downcast arm (lifecycle handlers wrote via Rc<dyn Any>).
+    // The Rust type for the _Lifecycle downcast arm (lifecycle handlers
+    // wrote via Rc<dyn Any>). Frame type names pass through verbatim (no
+    // int->i64 alias); only the untyped `Any` return maps to `String`.
     let rust_ty = match frame_type {
-        "int" => "i64",
-        "float" => "f64",
-        "bool" => "bool",
-        "str" | "string" | "String" | "Any" => "String",
+        "Any" => "String",
         other => other,
     };
     if event_name == "$>" || event_name == "$<" {

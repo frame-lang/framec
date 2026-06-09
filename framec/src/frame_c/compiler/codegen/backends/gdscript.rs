@@ -913,15 +913,17 @@ impl LanguageBackend for GDScriptBackend {
 }
 
 impl GDScriptBackend {
-    /// Map Python/generic types to GDScript equivalents
+    /// Normalize a type annotation for emission. Frame has NO type system:
+    /// user-written type names pass through VERBATIM (docs/frame_language.md).
+    /// Write GDScript's own names (`int`, `float`, `String`, `Array`). The
+    /// arms below are framec-synthesized machinery types only (the generic
+    /// stacks as `List`/`Dict`, untyped params, the structural `void`); there
+    /// is no `str`->`String` / `int`->`int` alias table — it contradicted the
+    /// passthrough contract and was removed.
     fn map_type(t: &str) -> &str {
         match t {
-            "list" | "List" => "Array",
-            "dict" | "Dict" => "Dictionary",
-            "str" => "String",
-            "int" => "int",
-            "float" => "float",
-            "bool" => "bool",
+            "List" => "Array",
+            "Dict" => "Dictionary",
             "void" => "void",
             "None" | "NoneType" => "Variant",
             "Any" | "any" | "object" | "Object" => "Variant",

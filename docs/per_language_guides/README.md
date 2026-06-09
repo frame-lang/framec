@@ -57,9 +57,11 @@ Each guide should cover, where relevant:
 
 1. **Foundation** — runtime shape (struct, class, gen_statem,
    pointers, coroutine scope).
-2. **Type system contract** — how Frame's `: type` annotations
-   map to the target's type system. Strongly-typed targets enforce
-   at compile time; dynamic targets pass through.
+2. **Type system contract** — Frame has no type system; `: type`
+   annotations (and init values) pass through to the generated code
+   **verbatim**. You write the target language's own native type names.
+   Strongly-typed targets then enforce them at compile time; dynamic
+   targets ignore them. framec performs no Frame→target translation.
 3. **State machine specifics** — how transitions, HSM, state args,
    and the dispatch loop manifest in the generated code.
 4. **Loop idioms** — does the target have `while`? Is recursion

@@ -721,21 +721,20 @@ impl LanguageBackend for RustBackend {
 }
 
 impl RustBackend {
-    /// Convert type annotation from generic/Python types to Rust types
+    /// Normalize a type annotation for emission. Frame has NO type system:
+    /// user-written type names pass through VERBATIM (docs/frame_language.md).
+    /// Write Rust's own names (`i64`, `String`, `Vec<i32>`, `MyType`). The
+    /// arms below are framec-synthesized machinery types only (untyped event
+    /// params, the generic state/context stacks); there is deliberately no
+    /// `int`->`i64` / `str`->`String` alias table — that contradicted the
+    /// passthrough contract and was removed.
     fn convert_type(&self, type_str: &str) -> String {
         match type_str {
             "Any" => "Box<dyn core::any::Any>".to_string(),
-            "int" => "i64".to_string(),
-            "float" => "f64".to_string(),
-            "str" | "string" | "String" => "String".to_string(),
-            "bool" => "bool".to_string(),
             "None" => "()".to_string(),
             "List" => "Vec<Box<dyn core::any::Any>>".to_string(),
             "Dict" => "alloc::collections::BTreeMap<String, Box<dyn core::any::Any>>".to_string(),
-            // Keep Rust types as-is
-            t if t.starts_with("Vec<") || t.starts_with("HashMap<") || t.starts_with("&") => {
-                t.to_string()
-            }
+            // User Rust types pass through unchanged.
             other => other.to_string(),
         }
     }

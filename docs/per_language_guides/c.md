@@ -209,9 +209,10 @@ types, prefer Approach A.
 
 ## Strings: `char*` and `sprintf`/`snprintf`
 
-C has no built-in string type. Frame's `: str` annotation maps to
-`char*` for C, but ownership is the user's responsibility. The Frame
-runtime does not allocate, copy, or free strings on your behalf.
+C has no built-in string type. Write `char*` directly as the Frame
+`: type` annotation (framec passes it through verbatim) — ownership is
+your responsibility. The Frame runtime does not allocate, copy, or free
+strings on your behalf.
 
 For string concatenation and interpolation, use `sprintf` /
 `snprintf` into a buffer that you own:
