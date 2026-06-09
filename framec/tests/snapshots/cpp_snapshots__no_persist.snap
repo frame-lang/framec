@@ -142,23 +142,23 @@ private:
     }
 
     void _s_Active_hdl_user_bump(NoPersistFrameEvent& __e, std::shared_ptr<NoPersistCompartment> compartment) {
-        self.count = self.count + 1
+        this->count = this->count + 1
 
     }
 
     void _s_Active_hdl_user_get_cache(NoPersistFrameEvent& __e, std::shared_ptr<NoPersistCompartment> compartment) {
-        _context_stack.back()._return = std::any(self.cache);
+        _context_stack.back()._return = std::any(this->cache);
 
     }
 
     void _s_Active_hdl_user_get_count(NoPersistFrameEvent& __e, std::shared_ptr<NoPersistCompartment> compartment) {
-        _context_stack.back()._return = std::any(self.count);
+        _context_stack.back()._return = std::any(this->count);
 
     }
 
     void _s_Active_hdl_user_set_cache(NoPersistFrameEvent& __e, std::shared_ptr<NoPersistCompartment> compartment) {
         auto v = std::any_cast<int>(__e._parameters[0]);
-        self.cache = v
+        this->cache = v
 
     }
 

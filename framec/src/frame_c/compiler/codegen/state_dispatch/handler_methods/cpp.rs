@@ -5,8 +5,8 @@
 use super::super::super::ast::{CodegenNode, Param, Visibility};
 use super::super::super::codegen_utils::{
     cpp_map_type, csharp_map_type, expression_to_string, go_map_type, java_map_type,
-    kotlin_map_type, state_var_init_value, swift_map_type, to_snake_case, type_to_cpp_string,
-    HandlerContext,
+    kotlin_map_type, replace_outside_strings_and_comments, state_var_init_value, swift_map_type,
+    to_snake_case, type_to_cpp_string, HandlerContext,
 };
 use super::super::super::frame_expansion::{
     emit_handler_body_via_statements, normalize_indentation,
@@ -144,6 +144,15 @@ pub(crate) fn generate_cpp_handler_method(
     }
 
     let body_src = emit_handler_body_via_statements(&handler.body_span, source, lang, &ctx);
+    // Lower Frame's `self.<field>` receiver access to C++ member access.
+    // C++ has no `self`; domain fields are members of the system struct,
+    // so `self.n` → `this->n` (boundary-safe: respects `"..."` strings and
+    // `// /* */` comments via the shared helper). `this->` rather than bare
+    // `n` keeps it unambiguous when a handler param shares a field's name.
+    // (The `@@:self.method()` self-call path is lowered separately in
+    // `context_self.rs`.) Cross-system embed calls — `self.sub.method()` on
+    // a `shared_ptr<Sub>` field — still need a `.`→`->` step; tracked in #69.
+    let body_src = replace_outside_strings_and_comments(&body_src, lang, &[("self.", "this->")]);
     body.push_str(&body_src);
 
     let event_type = format!("{}FrameEvent&", system_name);

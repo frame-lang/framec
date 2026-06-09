@@ -134,13 +134,13 @@ private:
     }
 
     void _s_Counting_hdl_user_get_total(ActionsFrameEvent& __e, std::shared_ptr<ActionsCompartment> compartment) {
-        _context_stack.back()._return = std::any(self.total);
+        _context_stack.back()._return = std::any(this->total);
 
     }
 
     void _s_Counting_hdl_user_increment(ActionsFrameEvent& __e, std::shared_ptr<ActionsCompartment> compartment) {
         auto n = std::any_cast<int>(__e._parameters[0]);
-        self._scale(n)
+        this->_scale(n)
 
     }
 

@@ -135,12 +135,12 @@ private:
 
     void _s_Counting_hdl_user_increment(CounterFrameEvent& __e, std::shared_ptr<CounterCompartment> compartment) {
         auto by = std::any_cast<int>(__e._parameters[0]);
-        self.count = self.count + by
+        this->count = this->count + by
 
     }
 
     void _s_Counting_hdl_user_value(CounterFrameEvent& __e, std::shared_ptr<CounterCompartment> compartment) {
-        _context_stack.back()._return = std::any(self.count);
+        _context_stack.back()._return = std::any(this->count);
 
     }
 

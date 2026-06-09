@@ -86,9 +86,9 @@ private:
 };
 ```
 
-Frame's `self.field` lowers to bare `field` (implicit `this` in C++
-member methods) — no explicit `this->` is required, though the
-generated code uses `this->` for clarity in some contexts.
+Frame's `self.field` lowers to `this->field` in C++ member methods —
+`self` has no meaning in C++, and `this->` keeps the access unambiguous
+when a handler parameter shares a field's name.
 Instances can be stack-allocated:
 
 ```cpp

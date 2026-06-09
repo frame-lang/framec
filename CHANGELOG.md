@@ -40,6 +40,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
   `Default::default()` in the parameterless `new()` — uncompilable for non-`Default`
   types. For systems with such fields, framec now skips `new()` and builds
   `__create(<params>)` directly with the params in scope (`inner: Inner::__create(p)`).
+- **C++: `self.field` is now lowered to `this->field` (#69).** It was emitted
+  verbatim as `self.n` — uncompilable, since C++ has no `self`. The C++ handler
+  body now lowers `self.<field>` to `this-><field>` (boundary-safe, respecting
+  strings/comments), matching what `cpp.md` documents. (Cross-system embed calls
+  `self.sub.method()` on a `shared_ptr` field — the `.`→`->` step — remain to do.)
 
 ### Docs
 
