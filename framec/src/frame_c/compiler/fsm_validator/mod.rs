@@ -410,6 +410,14 @@ fn alphabet_of(decl: &FsmDeclAst) -> Alphabet {
     }
 }
 
+/// Does the fsm opt into Unicode `\p{...}` classes via
+/// `@@[allow(unicode_classes)]` (RFC-0042 §11.6)?
+fn allows_unicode_classes(decl: &FsmDeclAst) -> bool {
+    decl.attributes
+        .iter()
+        .any(|a| a == "allow(unicode_classes)")
+}
+
 /// The source-spelling of an alphabet, for diagnostics.
 fn alphabet_name(a: Alphabet) -> &'static str {
     match a {
@@ -553,6 +561,19 @@ pub(crate) fn check_regexes(decl: &FsmDeclAst) -> Vec<FsmDiagnostic> {
                                         code: w.code,
                                         span: stage.span.clone(),
                                         message: w.message,
+                                    });
+                                }
+                                // Opt-in gate (§11.6): a `\p{...}` Unicode class
+                                // compiles only when the fsm carries
+                                // `@@[allow(unicode_classes)]`; otherwise E720.
+                                if compiled.used_unicode_class && !allows_unicode_classes(decl) {
+                                    out.push(FsmDiagnostic {
+                                        code: "E720",
+                                        span: stage.span.clone(),
+                                        message: "Unicode class `\\p{...}` requires the \
+                                             `@@[allow(unicode_classes)]` attribute on the fsm \
+                                             (RFC-0042 §11.6)"
+                                            .to_string(),
                                     });
                                 }
                                 compiled.dfa.states[compiled.dfa.start].is_accept
@@ -1260,6 +1281,36 @@ mod tests {
                 .iter()
                 .any(|x| x.code == "E731" || x.code == "E732"),
             "a statically-named matching-alphabet Mode C ref must be accepted"
+        );
+    }
+
+    /// FSM-TEST-307 — Unicode general-category classes (`\p{...}`) are gated by
+    /// the `@@[allow(unicode_classes)]` opt-in (RFC-0042 §6.7/§11.6). Without it
+    /// a `\p{L}` on the `char` alphabet is rejected E720; with it, accepted. On
+    /// a non-`char` alphabet it is E722 (no codepoint notion) regardless.
+    #[test]
+    fn e720_unicode_class_requires_optin() {
+        let d = diags(b"@@fsm M(text: char) : bool = false { /\\p{L}+/ true }");
+        assert!(
+            d.iter().any(|x| x.code == "E720"),
+            "expected E720 without the opt-in, got {:?}",
+            d
+        );
+        let ok = diags(
+            b"@@[allow(unicode_classes)]\n@@fsm M(text: char) : bool = false { /\\p{L}+/ true }",
+        );
+        assert!(
+            !ok.iter().any(|x| x.code == "E720"),
+            "the opt-in must admit \\p{{...}}, got {:?}",
+            ok
+        );
+        let bytes = diags(
+            b"@@[allow(unicode_classes)]\n@@fsm M(text: bytes) : bool = false { /\\p{L}+/ true }",
+        );
+        assert!(
+            bytes.iter().any(|x| x.code == "E722"),
+            "Unicode class on bytes must be E722, got {:?}",
+            bytes
         );
     }
 

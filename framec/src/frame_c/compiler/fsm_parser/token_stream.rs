@@ -33,6 +33,11 @@ pub enum FsmTokenKind {
     // --- Keywords ---
     /// `@@fsm`
     KwFsm,
+    /// `@@[...]` construct attribute, captured as its inner text (e.g.
+    /// `allow(unicode_classes)`). Emitted in the header before `@@fsm`
+    /// (RFC-0042 §11.6); the decl parser collects these into
+    /// `FsmDeclAst.attributes`.
+    Attribute(String),
     /// `if`
     KwIf,
     /// `else`

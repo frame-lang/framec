@@ -66,6 +66,29 @@
 
                     let b = src[pos];
 
+                    // `@@[...]` construct attribute (RFC-0042 §11.6) — appears
+                    // before `@@fsm`. Captured as one Attribute token holding the
+                    // reconstructed inner text (e.g. `allow(unicode_classes)`),
+                    // using the shared attribute scanner so the lexer and the
+                    // segmenter agree on where the attribute ends.
+                    if b == b'@' && pos + 2 < n && src[pos + 1] == b'@' && src[pos + 2] == b'[' {
+                        let span =
+                            crate::frame_c::compiler::attribute_scanner::scan_attribute(src, pos);
+                        let name = std::str::from_utf8(span.name(src)).unwrap_or("");
+                        let inner = match span.args_with_parens(src) {
+                            Some(args) => {
+                                format!("{}{}", name, std::str::from_utf8(args).unwrap_or(""))
+                            }
+                            None => name.to_string(),
+                        };
+                        self.tokens.push(FsmToken {
+                            kind: FsmTokenKind::Attribute(inner),
+                            span: Span::new(pos, span.end_pos),
+                        });
+                        pos = span.end_pos;
+                        continue;
+                    }
+
                     // `@@fsm` keyword.
                     if b == b'@' && pos + 4 < n && &src[pos..pos + 5] == b"@@fsm" {
                         self.tokens.push(FsmToken {

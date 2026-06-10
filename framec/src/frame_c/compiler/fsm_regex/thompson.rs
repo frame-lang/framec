@@ -370,6 +370,11 @@ fn resolve_class(class: &CharClass, alphabet: Alphabet) -> Vec<(u32, u32)> {
                     ranges.extend(base);
                 }
             }
+            // `\p{...}` members are rewritten to `Range`s by `super::unicode`
+            // before Thompson runs, so none survive here.
+            ClassMember::Unicode { .. } => {
+                unreachable!("Unicode class members are resolved before Thompson construction")
+            }
         }
     }
     let merged = merge_ranges(ranges);

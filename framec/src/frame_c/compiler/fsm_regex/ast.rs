@@ -95,6 +95,13 @@ pub enum ClassMember {
 
     /// `\d`, `\w`, `\s` (negated forms via `Shorthand::negated`).
     Shorthand { kind: ShorthandKind, negated: bool },
+
+    /// `\p{Name}` / `\P{Name}` — a Unicode general-category or script class
+    /// (`negated` for `\P`). Resolved to codepoint ranges by
+    /// [`super::unicode`] before restrictions/Thompson (char alphabet only,
+    /// RFC-0042 §6.7/§11.6); the engine never carries an unresolved member
+    /// into the DFA.
+    Unicode { name: String, negated: bool },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -176,10 +183,6 @@ pub enum ForbiddenConstruct {
 
     /// `(?<!foo)` — negative lookbehind. E720.
     NegativeLookbehind(Box<SpannedNode>),
-
-    /// `\p{L}`, `\p{N}`, `\p{Greek}`, … — Unicode general-category /
-    /// script class. v0.1: E720; deferred to v0.2 per §11.6.
-    UnicodeClass(String),
 
     /// `(?P<name>...)` — named capture. Frame uses stage labels
     /// instead (RFC-0042 §3.5.2). E720.

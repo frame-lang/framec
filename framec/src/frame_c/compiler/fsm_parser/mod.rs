@@ -589,6 +589,24 @@ mod lexer_tests {
         assert_eq!(got, want);
     }
 
+    /// A leading `@@[...]` construct attribute (RFC-0042 §11.6) lexes to one
+    /// `Attribute` token holding its inner text, and the decl parser collects
+    /// it into `FsmDeclAst.attributes`.
+    #[test]
+    fn attribute_lexes_and_parses() {
+        let got =
+            kinds("@@[allow(unicode_classes)] @@fsm M(text: char) : bool = false { /a/ true }");
+        assert_eq!(
+            got.first(),
+            Some(&Attribute("allow(unicode_classes)".to_string()))
+        );
+        let decl = parse_fsm_block(
+            b"@@[allow(unicode_classes)]\n@@fsm M(text: char) : bool = false { /a/ true }",
+        )
+        .expect("attributed fsm parses");
+        assert_eq!(decl.attributes, vec!["allow(unicode_classes)".to_string()]);
+    }
+
     /// `\/` inside a regex literal is an escaped slash, not the closing
     /// delimiter (RFC-0042 §6.2, FSM-TEST-309).
     #[test]

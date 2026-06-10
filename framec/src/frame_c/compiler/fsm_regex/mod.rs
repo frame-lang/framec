@@ -45,6 +45,7 @@ pub mod restrictions;
 pub mod size_check;
 pub mod subset;
 pub mod thompson;
+pub mod unicode;
 
 /// The alphabet of a regex. Determined by the `@@fsm`'s input parameter
 /// type (RFC-0042 §6.1).
@@ -114,6 +115,10 @@ pub struct CompiledRegex {
     /// is present/absent between the last matched byte and the byte after
     /// the match end.
     pub end_boundary: Option<WordBoundary>,
+    /// A `\p{...}`/`\P{...}` Unicode class was resolved into ranges (char
+    /// alphabet only, §11.6). The validator uses this to enforce the
+    /// `@@[allow(unicode_classes)]` opt-in; the DFA itself is range-only.
+    pub used_unicode_class: bool,
 }
 
 /// Why a regex failed to compile.
@@ -145,7 +150,7 @@ pub fn compile(
     max_states: usize,
 ) -> Result<CompiledRegex, CompileError> {
     // 1. Parse. A malformed regex is E722 (invalid regex syntax).
-    let ast = match parser::parse(source, alphabet) {
+    let mut ast = match parser::parse(source, alphabet) {
         Ok(ast) => ast,
         Err(e) => {
             return Err(CompileError::Diagnostics(vec![EngineDiagnostic {
@@ -154,6 +159,15 @@ pub fn compile(
                 message: format!("invalid regex syntax: {:?}", e.kind),
             }]));
         }
+    };
+
+    // 1b. Resolve `\p{...}` Unicode classes to codepoint ranges (char
+    //     alphabet only, §6.7/§11.6). After this the AST is range-only — no
+    //     Unicode member reaches restrictions or Thompson. `used_unicode_class`
+    //     drives the validator's `@@[allow(unicode_classes)]` opt-in gate.
+    let used_unicode_class = match unicode::resolve(&mut ast, alphabet) {
+        Ok(used) => used,
+        Err(d) => return Err(CompileError::Diagnostics(vec![d])),
     };
 
     // 2. Dialect restrictions (E720 / E722 / E723).
@@ -231,6 +245,7 @@ pub fn compile(
         requires_end,
         start_boundary,
         end_boundary,
+        used_unicode_class,
     })
 }
 
@@ -473,11 +488,36 @@ mod engine_tests {
         assert_code("a.*?b", Alphabet::Bytes, "E720");
     }
 
-    /// FSM-TEST-307 — Unicode general-category classes are deferred in v0.1 and
-    /// rejected with E720.
+    /// Unicode classes (§6.7/§11.6): on the `char` alphabet `\p{...}` resolves
+    /// to codepoint ranges (engine accepts; the `@@[allow(unicode_classes)]`
+    /// opt-in is the validator's job — see the `e720_unicode_class_*` tests,
+    /// which carry the FSM-TEST-307 conformance tag). On `bytes`/`token` there
+    /// is no codepoint notion, so it is E722.
     #[test]
-    fn fsm_test_307_unicode_class_rejected() {
-        assert_code("\\p{L}+", Alphabet::Bytes, "E720");
+    fn unicode_class_resolves_on_char() {
+        let r = compile(
+            "\\p{L}+",
+            Alphabet::Char,
+            size_check::DEFAULT_MAX_DFA_STATES,
+        )
+        .expect("\\p{L}+ compiles on char");
+        assert!(r.used_unicode_class);
+        // `\P{N}` (negated) also resolves.
+        assert!(
+            compile("\\P{N}", Alphabet::Char, size_check::DEFAULT_MAX_DFA_STATES)
+                .unwrap()
+                .used_unicode_class
+        );
+        // An ordinary regex does not set the flag.
+        assert!(
+            !compile("[a-z]+", Alphabet::Char, size_check::DEFAULT_MAX_DFA_STATES)
+                .unwrap()
+                .used_unicode_class
+        );
+        // Unknown class name → E722.
+        assert_code("\\p{Nonsense}", Alphabet::Char, "E722");
+        // Unicode class on a non-char alphabet → E722.
+        assert_code("\\p{L}", Alphabet::Bytes, "E722");
     }
 
     /// FSM-TEST-310 — an empty regex (`//`) is rejected with E723.

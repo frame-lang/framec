@@ -564,8 +564,31 @@ impl Parser {
         if let Some((kind, negated)) = shorthand(c) {
             return Ok(ClassMember::Shorthand { kind, negated });
         }
+        // `\p{Name}` / `\P{Name}` inside a class — a Unicode class member,
+        // resolved to ranges later (super::unicode).
+        if c == 'p' || c == 'P' {
+            let name = self.read_pclass_name();
+            return Ok(ClassMember::Unicode {
+                name,
+                negated: c == 'P',
+            });
+        }
         let v = self.escaped_scalar(c)?;
         Ok(ClassMember::Single(v))
+    }
+
+    /// Read the `{Name}` body of a `\p`/`\P` escape (the `\` and `p`/`P` are
+    /// already consumed), or a single following char for the brace-less form.
+    fn read_pclass_name(&mut self) -> String {
+        if self.eat('{') {
+            let body = self.read_name_until('}');
+            self.eat('}');
+            body
+        } else if let Some(ch) = self.bump() {
+            ch.to_string()
+        } else {
+            String::new()
+        }
     }
 
     /// Parse an escape outside a class: anchors, shorthands (as a class),
@@ -619,20 +642,19 @@ impl Parser {
             ));
         }
 
-        // `\p{...}` / `\P{...}` — Unicode class (forbidden).
+        // `\p{...}` / `\P{...}` — a Unicode class, modeled as a one-member
+        // character class. `super::unicode` resolves it to codepoint ranges
+        // (char alphabet only); the validator enforces the opt-in.
         if c == 'p' || c == 'P' {
-            let mut body = String::new();
-            if self.eat('{') {
-                body = self.read_name_until('}');
-                self.eat('}');
-            } else if let Some(ch) = self.bump() {
-                body.push(ch);
-            }
-            return Ok(Self::spanned(
-                RegexNode::Forbidden(ForbiddenConstruct::UnicodeClass(body)),
-                start,
-                self.pos(),
-            ));
+            let name = self.read_pclass_name();
+            let class = CharClass {
+                negated: false,
+                members: vec![ClassMember::Unicode {
+                    name,
+                    negated: c == 'P',
+                }],
+            };
+            return Ok(Self::spanned(RegexNode::Class(class), start, self.pos()));
         }
 
         // Otherwise an escaped scalar value (control char, hex, unicode, or
@@ -1024,8 +1046,27 @@ mod tests {
             root("(?P<year>ab)"),
             RegexNode::Forbidden(ForbiddenConstruct::NamedCapture { .. })
         ));
+        // `\p{L}` now parses to a one-member Unicode character class (the
+        // `super::unicode` pass later resolves it to ranges).
         match root("\\p{L}") {
-            RegexNode::Forbidden(ForbiddenConstruct::UnicodeClass(b)) => assert_eq!(b, "L"),
+            RegexNode::Class(c) => match c.members.as_slice() {
+                [ClassMember::Unicode { name, negated }] => {
+                    assert_eq!(name, "L");
+                    assert!(!negated);
+                }
+                other => panic!("got members {:?}", other),
+            },
+            other => panic!("got {:?}", other),
+        }
+        // `\P{N}` → negated Unicode member.
+        match root("\\P{N}") {
+            RegexNode::Class(c) => match c.members.as_slice() {
+                [ClassMember::Unicode { name, negated }] => {
+                    assert_eq!(name, "N");
+                    assert!(negated);
+                }
+                other => panic!("got members {:?}", other),
+            },
             other => panic!("got {:?}", other),
         }
     }

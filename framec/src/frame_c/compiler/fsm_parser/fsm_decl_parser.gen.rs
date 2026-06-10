@@ -147,6 +147,7 @@ mod _fsm_decl_parser_framec {
         _context_stack: Vec<FsmDeclParserFrameContext>,
         pub tokens: Option<FsmTokenStream>,
         pub name: String,
+        pub attributes: Vec<String>,
         pub params: Vec<FsmParameter>,
         pub return_type: Type,
         pub default_expr: String,
@@ -166,6 +167,7 @@ mod _fsm_decl_parser_framec {
                 _context_stack: Vec::new(),
                 tokens: None,
                 name: String::new(),
+                attributes: Vec::new(),
                 params: Vec::new(),
                 return_type: Type::Unknown,
                 default_expr: String::new(),
@@ -316,6 +318,13 @@ mod _fsm_decl_parser_framec {
 
         fn _s_Header_hdl_frame_enter(&mut self, __e: &FsmDeclParserFrameEvent) {
             let ts = self.tokens.as_mut().unwrap();
+            
+            // Leading `@@[...]` construct attributes (RFC-0042 §11.6),
+            // collected into `attributes` before the `@@fsm` keyword.
+            while let FsmTokenKind::Attribute(a) = ts.peek_kind() {
+                self.attributes.push(a);
+                ts.advance();
+            }
             
             // `@@fsm`
             if !ts.eat(&FsmTokenKind::KwFsm) {
@@ -646,7 +655,7 @@ mod _fsm_decl_parser_framec {
             
             self.result = Some(FsmDeclAst {
                 name: std::mem::take(&mut self.name),
-                attributes: Vec::new(),
+                attributes: std::mem::take(&mut self.attributes),
                 params: std::mem::take(&mut self.params),
                 return_type: std::mem::replace(&mut self.return_type, Type::Unknown),
                 default_expr: std::mem::take(&mut self.default_expr),
@@ -663,3 +672,4 @@ mod _fsm_decl_parser_framec {
     }
 }
 pub use _fsm_decl_parser_framec::*;
+

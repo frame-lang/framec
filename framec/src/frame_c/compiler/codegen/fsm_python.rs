@@ -1885,6 +1885,22 @@ mod tests {
         assert_eq!(run(src, "cat ", "wbc").unwrap().accepted, "True");
     }
 
+    /// Unicode classes (§6.7/§11.6): with `@@[allow(unicode_classes)]`, a
+    /// `\p{L}+` over the `char` alphabet matches Unicode letters across scripts
+    /// (Latin, accented, Greek) and rejects non-letters.
+    #[test]
+    fn fsm_unicode_class() {
+        let src = "@@[allow(unicode_classes)]\n\
+                   @@fsm M(text: char) : bool = false { /\\p{L}+/ true }";
+        let Some(hello) = run(src, "hello", "uca") else {
+            return;
+        };
+        assert_eq!(hello.accepted, "True");
+        assert_eq!(run(src, "Ωμέγα", "ucb").unwrap().accepted, "True"); // Greek
+        assert_eq!(run(src, "café", "ucc").unwrap().accepted, "True"); // accented
+        assert_eq!(run(src, "123", "ucd").unwrap().accepted, "False");
+    }
+
     /// A trailing `$` requires the match to reach the end of input.
     #[test]
     fn end_anchor() {

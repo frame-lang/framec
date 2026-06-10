@@ -182,9 +182,6 @@ fn forbidden_hint(c: &ForbiddenConstruct) -> &'static str {
         | ForbiddenConstruct::NegativeLookbehind(_) => {
             "lookaround is deferred to v0.2 (RFC-0042 §11.5)"
         }
-        ForbiddenConstruct::UnicodeClass(_) => {
-            "Unicode general-category classes are deferred to v0.2 (RFC-0042 §11.6)"
-        }
         ForbiddenConstruct::NamedCapture { .. } => "use a Frame stage label to capture (§3.5.2)",
         ForbiddenConstruct::NonCapturingGroup(_) => "use a plain group `(...)`",
     }
@@ -203,9 +200,6 @@ pub(crate) fn forbidden_message(c: &ForbiddenConstruct) -> &'static str {
         }
         ForbiddenConstruct::PositiveLookbehind(_) | ForbiddenConstruct::NegativeLookbehind(_) => {
             "lookbehind is not supported in v0.1"
-        }
-        ForbiddenConstruct::UnicodeClass(_) => {
-            "Unicode general-category classes are not supported in v0.1"
         }
         ForbiddenConstruct::NamedCapture { .. } => {
             "named captures are replaced by stage labels (RFC-0042 §3.5.2)"
@@ -257,15 +251,12 @@ mod tests {
 
     #[test]
     fn forbidden_constructs_are_e720() {
-        for src in [
-            "\\1",
-            "(?:ab)",
-            "(?=ab)",
-            "(?!ab)",
-            "(?<=ab)",
-            "(?P<n>ab)",
-            "\\p{L}",
-        ] {
+        // NOTE: `\p{L}` is no longer a restriction-level forbidden construct —
+        // it parses to a Unicode class member that the `super::unicode` pass
+        // resolves (char) or rejects (bytes/token, E722) before restrictions
+        // run; the opt-in is enforced by the validator. See the engine test
+        // `unicode_class_resolves_on_char`.
+        for src in ["\\1", "(?:ab)", "(?=ab)", "(?!ab)", "(?<=ab)", "(?P<n>ab)"] {
             assert_eq!(
                 codes(src, Alphabet::Bytes),
                 vec![DiagCode::E720],

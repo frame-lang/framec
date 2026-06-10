@@ -99,7 +99,7 @@ Runtime tests (`codegen/fsm_python.rs`, `pipeline/compiler.rs`) generate recogni
 | FSM-TEST-304 | Alternation precedence | `fsm_test_304_alternation_precedence` <sub>(codegen/fsm_python.rs)</sub> | ✅ |
 | FSM-TEST-305 | Bounded repetition | `fsm_test_305_bounded_repetition_compiles` <sub>(fsm_regex/mod.rs)</sub> | ✅ |
 | FSM-TEST-306 | Greedy quantifier semantics | `fsm_test_306b_lazy_quantifier_rejected` <sub>(fsm_regex/mod.rs)</sub> | ✅ |
-| FSM-TEST-307 | Unicode class rejected | `fsm_test_307_unicode_class_rejected` <sub>(fsm_regex/mod.rs)</sub> | ✅ |
+| FSM-TEST-307 | Unicode class requires opt-in | `e720_unicode_class_requires_optin` <sub>(fsm_validator/mod.rs)</sub><br>`fsm_unicode_class` <sub>(codegen/fsm_python.rs)</sub> | ✅ |
 | FSM-TEST-309 | Escaped slash literal | `regex_escaped_slash` <sub>(fsm_parser/mod.rs)</sub> | ✅ |
 | FSM-TEST-310 | Empty regex rejected | `rejects_empty_with_e723` <sub>(fsm_regex/mod.rs)</sub> | ✅ |
 | FSM-TEST-311 | DFA size limit | `e721_when_dfa_exceeds_limit` <sub>(fsm_regex/mod.rs)</sub> | ✅ |
@@ -181,7 +181,7 @@ These 2 IDs have no backing test by design; each is an explicit, justified entry
 
 ## Running the tests
 ```bash
-cargo test --lib fsm                        # all @@fsm unit + execution tests (438)
+cargo test --lib fsm                        # all @@fsm unit + execution tests (458)
 cargo test --test fsm_conformance_coverage  # the coverage guard
-cargo test                                  # full suite (1197 tests)
+cargo test                                  # full suite (1217 tests)
 ```
