@@ -12,7 +12,7 @@
 //!   emitted separately by `emit_handler_body_via_statements` so
 //!   it lands at a statement boundary.
 
-use super::super::codegen_utils::HandlerContext;
+use super::super::codegen_utils::{to_snake_case, HandlerContext};
 use super::expand_expression;
 use super::utility::strip_outer_parens;
 use crate::frame_c::compiler::native_region_scanner::{RegionSpan, SegmentMetadata};
@@ -113,15 +113,45 @@ pub(super) fn expand_context_self_field_call(
     let is_embed = field_type.is_some_and(|t| ctx.defined_systems.contains(t));
 
     match lang {
-        // C: emit `self->field.method(args)`. For an embed field the existing
-        // C cross-system post-pass rewrites this to `Sys_method(self->field,
-        // args)`; a scalar method stays native. (Stage (d) replaces that
-        // post-pass with direct, segment-driven emission here.)
-        TargetLanguage::C => format!("self->{field}.{method}{args}"),
-        // Erlang: emit `self.field.method(args)`; the domain post-pass threads
-        // `self.field` → `Data#data.field` and the cross-system post-pass
-        // rewrites an embed call to the process dispatch form.
-        TargetLanguage::Erlang => format!("self.{field}.{method}{args}"),
+        // C: a struct has no methods, so an embed call is a cross-system
+        // free-function call `Sys_method(self->field, args)` — emitted directly
+        // from the segment (RFC-0046 d-cross; replaces the textual
+        // `rewrite_c_cross_system_calls` post-pass). A scalar-field method stays
+        // native (`self->field.method(args)`).
+        TargetLanguage::C => {
+            if is_embed {
+                let sys = field_type.map(|s| s.as_str()).unwrap_or("");
+                let inner = strip_outer_parens(&args);
+                if inner.trim().is_empty() {
+                    format!("{sys}_{method}(self->{field})")
+                } else {
+                    format!("{sys}_{method}(self->{field}, {inner})")
+                }
+            } else {
+                format!("self->{field}.{method}{args}")
+            }
+        }
+        // Erlang: an embed field holds a Pid, so a cross-system call is a
+        // module-qualified dispatch `module:method(self.field, args)` — emitted
+        // directly from the segment (RFC-0046 d-cross; replaces the textual
+        // cross-system rewriter). The trailing `self.field` is turned into
+        // `Data#data.field` (the Pid read) by the existing domain post-pass.
+        // (Erlang has no method-call-on-value syntax, so `@@:self.field.method()`
+        // is always a cross-system call; the module name is the field's system
+        // type, snake-cased — matching the field's `@@System()` initializer.)
+        TargetLanguage::Erlang => {
+            if let Some(sys_type) = field_type {
+                let module = to_snake_case(sys_type);
+                let inner = strip_outer_parens(&args);
+                if inner.trim().is_empty() {
+                    format!("{module}:{method}(self.{field})")
+                } else {
+                    format!("{module}:{method}(self.{field}, {inner})")
+                }
+            } else {
+                format!("self.{field}.{method}{args}")
+            }
+        }
         // C++: embed fields are `shared_ptr` (deref with `->`); scalar fields are
         // values (`.`). This is the one target where the field type changes the
         // method-access operator.

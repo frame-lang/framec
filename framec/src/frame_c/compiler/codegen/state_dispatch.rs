@@ -1321,6 +1321,7 @@ fn generate_per_handler_method_for_lang(
             handler_state_var_types,
             state_hsm_parents,
             state_param_types,
+            domain_field_types,
         ),
         _ => unreachable!(
             "generate_per_handler_method_for_lang called with non-per-handler target {:?}",
