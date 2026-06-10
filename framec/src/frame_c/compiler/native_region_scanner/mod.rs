@@ -16,6 +16,7 @@ pub enum FrameSegmentKind {
     SystemInstantiation,        // @@SystemName() - validated system instantiation
     ReturnCall,                 // @@:return(expr) - set return value AND exit handler
     ContextSelfCall,            // @@:self.method(args) - reentrant interface call
+    ContextSelfFieldCall,       // @@:self.field.method(args) - call through a self field (RFC-0046)
     ContextSelf,                // @@:self - bare system instance reference
     ContextSystemState,         // @@:system.state.name - current state name (read-only)
     ContextSystemBare,          // @@:system without recognized member - error E604
@@ -58,6 +59,14 @@ pub enum SegmentMetadata {
     /// Distinguishes the field-access form from a bare `@@:self` (which
     /// carries `None` and is rejected with E603).
     SelfField { field: String },
+    /// `@@:self.field.method(args)` — call through a self field (RFC-0046).
+    /// `field` is a domain field (embedded system → cross-system call;
+    /// scalar → native method call); `args` includes the parens.
+    SelfFieldCall {
+        field: String,
+        method: String,
+        args: String,
+    },
     /// `@@SystemName(args)` (Factory) or `@@!SystemName()` (NoInitialization,
     /// per RFC-0015 D7). `args` is empty for the NoInitialization variant.
     SystemInstantiation {
@@ -366,6 +375,14 @@ pub fn regions_to_statements(
                     }
                     FrameSegmentKind::ContextSelf => {
                         stmts.push(Statement::ContextSelf { span: seg_span });
+                    }
+                    FrameSegmentKind::ContextSelfFieldCall => {
+                        // Must be a Frame statement (not NativeCode) so the body
+                        // walk routes it to the region-expansion arm and keeps
+                        // `frame_idx` aligned with the FrameSegment regions. The
+                        // field/method/args come from the region metadata at
+                        // expansion time, so the statement only needs the span.
+                        stmts.push(Statement::ContextSelfFieldCall { span: seg_span });
                     }
                     FrameSegmentKind::ContextSystemState => {
                         stmts.push(Statement::ContextSystemState { span: seg_span });

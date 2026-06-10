@@ -60,6 +60,7 @@ pub(crate) fn generate_c_handler_method(
         state_hsm_parents: state_hsm_parents.clone(),
         current_return_type: handler.return_type.clone(),
         state_param_types: state_param_types.clone(),
+        domain_field_types: std::collections::HashMap::new(),
     };
 
     let mut body = String::new();

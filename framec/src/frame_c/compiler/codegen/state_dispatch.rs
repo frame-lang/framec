@@ -842,6 +842,28 @@ pub(crate) fn generate_per_handler_methods(
 ) -> Vec<CodegenNode> {
     let mut methods = Vec::new();
 
+    // Domain field name → declared type (clean, e.g. `Ship`). Used by the C++
+    // `@@:self.field.method()` lowering (RFC-0046) to tell an embedded system
+    // (deref with `->`) from a scalar field (`.`). arcanum stores the type as
+    // the Debug-formatted `Type` (`Custom("Ship")`); unwrap to the bare name.
+    let domain_field_types: std::collections::HashMap<String, String> = arcanum
+        .systems
+        .get(system_name)
+        .map(|entry| {
+            entry
+                .domain_symbols
+                .iter()
+                .filter_map(|(name, sym)| {
+                    let ty = sym
+                        .symbol_type
+                        .as_deref()
+                        .and_then(|t| t.strip_prefix("Custom(\"")?.strip_suffix("\")"))?;
+                    Some((name.clone(), ty.to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
     // State → declared HSM parent map for use by transition codegen inside
     // handler bodies (so `-> $Child` where Child => Parent constructs the
     // full chain rather than patching parent_compartment = self.__compartment).
@@ -926,6 +948,7 @@ pub(crate) fn generate_per_handler_methods(
                 &handler_state_var_types,
                 &state_hsm_parents,
                 state_param_types,
+                &domain_field_types,
             );
             methods.push(method);
         }
@@ -959,6 +982,7 @@ pub(crate) fn generate_per_handler_methods(
                 &handler_state_var_types,
                 &state_hsm_parents,
                 state_param_types,
+                &domain_field_types,
             );
             // Per-handler leading comments (from `HandlerAst.leading_comments`
             // / `EnterHandler.leading_comments` / `ExitHandler.leading_comments`,
@@ -1005,6 +1029,7 @@ fn generate_per_handler_method_for_lang(
     handler_state_var_types: &std::collections::HashMap<String, String>,
     state_hsm_parents: &std::collections::HashMap<String, String>,
     state_param_types: &std::collections::HashMap<(String, String), String>,
+    domain_field_types: &std::collections::HashMap<String, String>,
 ) -> CodegenNode {
     match lang {
         TargetLanguage::Python3 => generate_python_handler_method(
@@ -1232,6 +1257,7 @@ fn generate_per_handler_method_for_lang(
             handler_state_var_types,
             state_hsm_parents,
             state_param_types,
+            domain_field_types,
         ),
         TargetLanguage::CSharp => generate_csharp_handler_method(
             system_name,
@@ -1342,6 +1368,7 @@ pub(crate) fn generate_state_method(
         state_hsm_parents: std::collections::HashMap::new(),
         current_return_type: None,
         state_param_types: std::collections::HashMap::new(),
+        domain_field_types: std::collections::HashMap::new(),
     };
 
     // Generate the dispatch body based on __e._message / __e.message
@@ -1589,6 +1616,7 @@ pub(crate) fn generate_handler_from_arcanum(
         state_hsm_parents: state_hsm_parents.clone(),
         current_return_type: handler.return_type.clone(),
         state_param_types: std::collections::HashMap::new(),
+        domain_field_types: std::collections::HashMap::new(),
     };
 
     // Emit handler default return value if present

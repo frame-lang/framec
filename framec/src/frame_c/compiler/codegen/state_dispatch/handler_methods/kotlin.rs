@@ -59,6 +59,7 @@ pub(crate) fn generate_kotlin_handler_method(
         state_hsm_parents: state_hsm_parents.clone(),
         current_return_type: handler.return_type.clone(),
         state_param_types: std::collections::HashMap::new(),
+        domain_field_types: std::collections::HashMap::new(),
     };
 
     let mut body = String::new();

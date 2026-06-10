@@ -391,6 +391,23 @@ impl FrameValidator {
                         }
                     }
 
+                    // E609: `@@:self.field.method()` (RFC-0046) — `field` must be
+                    // a domain field. (Embed-vs-scalar is decided at codegen from
+                    // the field's type; here we only confirm the field exists.)
+                    FrameSegmentKind::ContextSelfFieldCall => {
+                        if let SegmentMetadata::SelfFieldCall { field, .. } = metadata {
+                            if !domain_fields.contains(field) {
+                                self.errors.push(ValidationError::new(
+                                    "E609",
+                                    format!(
+                                        "`@@:self.{}.…()` in {}/{} references no known domain field",
+                                        field, scope_outer, scope_inner
+                                    ),
+                                ));
+                            }
+                        }
+                    }
+
                     // E604: bare @@:system without a recognized member
                     FrameSegmentKind::ContextSystemBare => {
                         self.errors.push(ValidationError::new(

@@ -388,6 +388,11 @@ pub enum Statement {
     },
     /// Bare self reference: @@:self
     ContextSelf { span: Span },
+    /// Call through a self field: @@:self.field.method(args) (RFC-0046).
+    /// Carries only the span — expansion reads the field/method/args from the
+    /// FrameSegment region's metadata; the variant exists so the body walk
+    /// treats it as a Frame statement (not native), keeping `frame_idx` aligned.
+    ContextSelfFieldCall { span: Span },
     /// System state: @@:system.state — current state name
     ContextSystemState { span: Span },
     /// System instantiation:

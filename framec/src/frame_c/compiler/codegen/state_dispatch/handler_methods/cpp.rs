@@ -39,6 +39,7 @@ pub(crate) fn generate_cpp_handler_method(
     handler_state_var_types: &std::collections::HashMap<String, String>,
     state_hsm_parents: &std::collections::HashMap<String, String>,
     state_param_types: &std::collections::HashMap<(String, String), String>,
+    domain_field_types: &std::collections::HashMap<String, String>,
 ) -> CodegenNode {
     let method_name = handler_method_name(state_name, handler);
     let lang = TargetLanguage::Cpp;
@@ -59,6 +60,7 @@ pub(crate) fn generate_cpp_handler_method(
         state_hsm_parents: state_hsm_parents.clone(),
         current_return_type: handler.return_type.clone(),
         state_param_types: std::collections::HashMap::new(),
+        domain_field_types: domain_field_types.clone(),
     };
 
     let mut body = String::new();

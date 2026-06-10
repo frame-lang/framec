@@ -70,6 +70,84 @@ pub(super) fn expand_context_self(
     }
 }
 
+/// `@@:self.field.method(args)` (RFC-0046) — a call through a self field.
+/// If `field` is an embedded system (its declared type is a defined system),
+/// this is a cross-system interface call; framec emits the per-target access +
+/// call punctuation matching the field's storage. Otherwise it is a native
+/// method call on a scalar field's value. No caller-side transition guard is
+/// emitted (the call enters a *different* system's dispatch, if any).
+pub(super) fn expand_context_self_field_call(
+    _body_bytes: &[u8],
+    _span: &RegionSpan,
+    _indent: usize,
+    lang: TargetLanguage,
+    ctx: &HandlerContext,
+    metadata: &SegmentMetadata,
+) -> String {
+    let (field, method, raw_args) = if let SegmentMetadata::SelfFieldCall {
+        field,
+        method,
+        args,
+    } = metadata
+    {
+        (field.as_str(), method.as_str(), args.as_str())
+    } else {
+        return String::new();
+    };
+
+    // Expand any Frame syntax nested in the args (e.g.
+    // `@@:self.ship.fire(@@:self.power)`).
+    let args = if raw_args.len() >= 2 && raw_args.starts_with('(') && raw_args.ends_with(')') {
+        let inner = strip_outer_parens(raw_args);
+        if inner.is_empty() {
+            raw_args.to_string()
+        } else {
+            format!("({})", expand_expression(inner, lang, ctx))
+        }
+    } else {
+        raw_args.to_string()
+    };
+
+    // Embed = the field's declared type is itself a defined system.
+    let field_type = ctx.domain_field_types.get(field);
+    let is_embed = field_type.is_some_and(|t| ctx.defined_systems.contains(t));
+
+    match lang {
+        // C: emit `self->field.method(args)`. For an embed field the existing
+        // C cross-system post-pass rewrites this to `Sys_method(self->field,
+        // args)`; a scalar method stays native. (Stage (d) replaces that
+        // post-pass with direct, segment-driven emission here.)
+        TargetLanguage::C => format!("self->{field}.{method}{args}"),
+        // Erlang: emit `self.field.method(args)`; the domain post-pass threads
+        // `self.field` → `Data#data.field` and the cross-system post-pass
+        // rewrites an embed call to the process dispatch form.
+        TargetLanguage::Erlang => format!("self.{field}.{method}{args}"),
+        // C++: embed fields are `shared_ptr` (deref with `->`); scalar fields are
+        // values (`.`). This is the one target where the field type changes the
+        // method-access operator.
+        TargetLanguage::Cpp => {
+            let mop = if is_embed { "->" } else { "." };
+            format!("this->{field}{mop}{method}{args}")
+        }
+        // PHP: every object method call uses `->`.
+        TargetLanguage::Php => format!("$this->{field}->{method}{args}"),
+        TargetLanguage::Go => format!("s.{field}.{method}{args}"),
+        TargetLanguage::Python3
+        | TargetLanguage::GDScript
+        | TargetLanguage::Ruby
+        | TargetLanguage::Lua
+        | TargetLanguage::Swift
+        | TargetLanguage::Rust => format!("self.{field}.{method}{args}"),
+        TargetLanguage::TypeScript
+        | TargetLanguage::JavaScript
+        | TargetLanguage::Dart
+        | TargetLanguage::Java
+        | TargetLanguage::Kotlin
+        | TargetLanguage::CSharp => format!("this.{field}.{method}{args}"),
+        TargetLanguage::Graphviz => unreachable!(),
+    }
+}
+
 pub(super) fn expand_context_self_call(
     body_bytes: &[u8],
     span: &RegionSpan,

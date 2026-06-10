@@ -311,9 +311,9 @@ fn statement_category(s: &Statement) -> StmtCategory {
         | Statement::ContextSystemState { .. } => StmtCategory::Reference,
 
         // Calls (usable in value position).
-        Statement::ContextSelfCall { .. } | Statement::SystemInstantiation { .. } => {
-            StmtCategory::CallExpr
-        }
+        Statement::ContextSelfCall { .. }
+        | Statement::ContextSelfFieldCall { .. }
+        | Statement::SystemInstantiation { .. } => StmtCategory::CallExpr,
 
         // Not Frame surface syntax (verified: no if/while/for/loop/continue
         // keywords in the lexer; no operator grammar).

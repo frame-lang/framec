@@ -65,6 +65,12 @@ pub(crate) struct HandlerContext {
     /// Used by the C backend to branch on `float`/`double` when emitting
     /// `@@:(expr)` so doubles survive the `void*` return slot.
     pub current_return_type: Option<String>,
+    /// Domain field name → declared type (clean, e.g. `Ship`). Used by
+    /// `@@:self.field.method()` (RFC-0046) to decide whether `field` is an
+    /// embedded system (type ∈ `defined_systems` → cross-system call /
+    /// pointer deref) or a scalar (native value method). Empty where the
+    /// info is unavailable (no embed calls expected there).
+    pub domain_field_types: std::collections::HashMap<String, String>,
 }
 
 /// Get default initialization value for a type

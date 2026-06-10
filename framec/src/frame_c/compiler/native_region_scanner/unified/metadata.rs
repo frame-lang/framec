@@ -144,6 +144,26 @@ pub(super) fn extract_segment_metadata(kind: FrameSegmentKind, text: &str) -> Se
             }
         }
 
+        FrameSegmentKind::ContextSelfFieldCall => {
+            // `@@:self.field.method(args)` (RFC-0046) → field, method, args.
+            if let Some(rest) = text.strip_prefix("@@:self.") {
+                if let Some(dot) = rest.find('.') {
+                    let field = rest[..dot].to_string();
+                    let after = &rest[dot + 1..];
+                    if let Some(paren) = after.find('(') {
+                        let method = after[..paren].to_string();
+                        let args = after[paren..].to_string(); // includes parens
+                        return SegmentMetadata::SelfFieldCall {
+                            field,
+                            method,
+                            args,
+                        };
+                    }
+                }
+            }
+            SegmentMetadata::None
+        }
+
         FrameSegmentKind::ContextSelf => {
             // `@@:self.field` (RFC-0046) → SelfField; bare `@@:self` → None.
             // The parser segments both as ContextSelf; the trailing member
