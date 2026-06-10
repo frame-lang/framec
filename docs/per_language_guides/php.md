@@ -77,7 +77,7 @@ class WithInterface {
 }
 ```
 
-Frame's `self.field` lowers to `$this->field` (PHP's instance
+Frame's `@@:self.field` lowers to `$this->field` (PHP's instance
 reference is `$this` and member access uses `->`).
 
 ---
@@ -231,7 +231,7 @@ to every other backend. The comment leaders are `//` (line),
 ## Idiomatic patterns and common gotchas
 
 **`$this->field`, not `self.field` or `$this.field`.** PHP uses
-`->` for object member access (not `.`). Frame's `self.x` lowers
+`->` for object member access (not `.`). Frame's `@@:self.x` lowers
 to `$this->x`. Frame state-vars `$.x` lower to compartment
 access — internally framec handles this.
 

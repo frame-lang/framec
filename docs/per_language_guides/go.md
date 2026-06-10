@@ -100,7 +100,7 @@ func (s *WithInterface) Greet(name string) string {
 }
 ```
 
-Frame's `self.field` lowers to `s.field` (the receiver name `s`,
+Frame's `@@:self.field` lowers to `s.field` (the receiver name `s`,
 not `self` or `this`). Method calls use `sm.Greet("World")` — Go's
 pointer-method-receiver auto-derefs on call, so you don't write
 `(*sm).Greet(...)`.
@@ -468,7 +468,7 @@ zero-value for primitives (you'd use `0` for int, `""` for
 string).
 
 **`s.field`, not `self.field`.** Inside handler bodies, Frame's
-`self.x` lowers to `s.x` (the receiver name). If you write
+`@@:self.x` lowers to `s.x` (the receiver name). If you write
 native Go inside a handler, use `s.` to access the struct's
 fields.
 

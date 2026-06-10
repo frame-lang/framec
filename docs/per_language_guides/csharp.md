@@ -47,7 +47,7 @@ public class WithInterface {
 }
 ```
 
-Frame's `self.field` lowers to `this.field` in the generated C#.
+Frame's `@@:self.field` lowers to `this.field` in the generated C#.
 Multiple `@@system` blocks per file are supported (no
 one-class-per-file rule).
 
@@ -345,7 +345,7 @@ blocks attached to the corresponding generated declaration.
 lowers to `new WithInterface()` — same as Java.
 
 **`this.field`, not `self.field`.** Inside handler bodies,
-Frame's `self.x` lowers to `this.x`. The `this.` prefix is
+Frame's `@@:self.x` lowers to `this.x`. The `this.` prefix is
 optional in C# but Frame's codegen emits it for clarity.
 
 **`using` directives go in the prolog.** C#'s `using` (the

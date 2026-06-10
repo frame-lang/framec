@@ -50,7 +50,7 @@ class WithInterface {
 }
 ```
 
-Frame's `self.field` lowers to `self.field` (Swift's instance
+Frame's `@@:self.field` lowers to `self.field` (Swift's instance
 reference is `self`). Method calls are `s.greet("World")`. There
 is no explicit type cast at call sites — Swift's strong typing
 infers from context.
@@ -285,7 +285,7 @@ lowers to `WithInterface()`.
 
 **`self.field` everywhere.** Swift requires `self.` inside
 closures (compile error otherwise) and recommends it elsewhere
-for clarity. Frame's `self.x` lowers to `self.x` in the
+for clarity. Frame's `@@:self.x` lowers to `self.x` in the
 generated Swift.
 
 **Optionals (`T?`) require unwrapping.** A property declared

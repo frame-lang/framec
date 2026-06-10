@@ -39,7 +39,7 @@ class WithInterface:
         return result
 ```
 
-Frame's `self.field` lowers to `self.field` directly (Python's
+Frame's `@@:self.field` lowers to `self.field` directly (Python's
 instance reference is `self`). Method calls use `s.greet("World")`.
 
 ---

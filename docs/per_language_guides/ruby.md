@@ -43,9 +43,10 @@ class WithInterface
 end
 ```
 
-Frame's `self.field` lowers to `@field` (Ruby's instance variable
-convention — `@` prefix means an instance variable). Method
-calls use `s.greet("World")`.
+Frame's `@@:self.field` lowers to `self.field` in the generated Ruby —
+domain fields are declared `attr_accessor`, so `self.field` reads and
+writes the backing `@field` instance variable. A bare native `self.field`
+also works (same accessor); `@@:self.field` is the portable spelling.
 
 ---
 
@@ -198,10 +199,11 @@ to every other backend. The comment leader is `#`.
 
 ## Idiomatic patterns and common gotchas
 
-**`@field`, not `self.field`.** Ruby's instance variables use
-the `@` prefix. Frame's `self.x` lowers to `@x`. The bare
-`self.x` form in Ruby refers to a method call, not field
-access.
+**`@@:self.field` for portable field access.** Domain fields are
+declared `attr_accessor`, so Frame's `@@:self.x` lowers to `self.x`
+(the accessor reads/writes the backing `@x`). Inside native Ruby you
+may use either `self.x` (accessor) or `@x` (the instance variable
+directly).
 
 **`.new` for class instantiation.** `Counter.new` (not
 `Counter()` or `new Counter()`). Frame's `@@Counter()` lowers

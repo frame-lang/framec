@@ -514,7 +514,7 @@ domain:
 - Init is optional for static targets that zero-initialize (C, C++, Go): `count : int`
 - Multi-line init uses paren wrapper: `items : list = (\n    [1, 2, 3]\n)`
 
-Domain variables persist across state transitions and are accessible via `self.field` / `this.field` / `this->field` (per target language) in handlers.
+Domain variables persist across state transitions and are accessed via **`@@:self.field`** (RFC-0046) in handler, action, and operation bodies. framec lowers `@@:self.field` to the target's native receiver (`self.field`, `this.field`, `this->field`, `$this->field`, `s.field`, `Data#data.field`, …), so a single spelling is portable across all targets. A bare native `self.` is passthrough — valid only where the host language defines `self`.
 
 ### `const` Modifier
 
@@ -789,12 +789,11 @@ A system can call its own interface methods using `@@:self.<method>(args)`. This
 
 #### Why `@@:self.method()` and not native `self.method()`?
 
-In OO target languages (Python, TypeScript, Rust, Java, Kotlin, Swift, C#, Ruby, PHP, Dart) a plain `self.method()` / `this.method()` inside a handler body *also* reaches the generated interface method and produces the same runtime behavior — the context-stack push/pop and deferred-transition semantics live in the generated interface wrapper, not in the `@@:self.` syntax.
+In OO target languages a plain native `self.method()` / `this.method()` inside a handler body *reaches* the generated interface method (so the call's transition executes), but it is **not** equivalent — and is unsupported. `@@:self.method(args)` is the only correct form, for three reasons:
 
-`@@:self.method(args)` is preferred for two reasons:
-
-1. **Static validation.** The validator checks that `method` exists in the `interface:` block with the right arity (E601/E602). Native calls bypass this.
-2. **Cross-backend portability.** In C and Erlang the handler scope has no `self`/`this` keyword; dispatch goes through a different mechanism. `@@:self.` abstracts that difference so the same Frame source transpiles everywhere.
+1. **Caller-side transition guard (correctness).** `@@:self.method()` emits a guard at the call site: if the callee transitions, the caller's remaining statements are short-circuited (`if _transitioned: return;` / the Erlang `case … of` wrapper). A native self-call gets **no** such guard, so the caller keeps running against a system that has already left the state — a silent bug.
+2. **Static validation.** The validator checks `method` exists in the `interface:` block (or is an action) with the right arity (E601/E602). Native calls bypass this.
+3. **Cross-backend portability.** In C and Erlang the handler scope has no `self`/`this` keyword; dispatch goes through a different mechanism. `@@:self.` abstracts that difference so the same Frame source transpiles everywhere.
 
 ```frame
 $Active {
