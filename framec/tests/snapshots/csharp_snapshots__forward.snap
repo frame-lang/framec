@@ -224,7 +224,7 @@ public class Forward {
     }
 
     private void _s_Start_hdl_user_run(ForwardFrameEvent __e, ForwardCompartment compartment) {
-        self.starts = self.starts + 1;
+        this.starts = this.starts + 1;
         { ForwardCompartment __next = __prepareEnter("Middle", new List<object>(), new List<object>());
         __next.forward_event = __e;
         __transition(__next); }
@@ -238,7 +238,7 @@ public class Forward {
     }
 
     private void _s_Middle_hdl_user_run(ForwardFrameEvent __e, ForwardCompartment compartment) {
-        self.middles = self.middles + 1
+        this.middles = this.middles + 1
     }
 
     private void _s_End_hdl_user_finish(ForwardFrameEvent __e, ForwardCompartment compartment) {

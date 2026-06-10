@@ -224,8 +224,8 @@ func (s *LifecycleArgs) _s_Active_hdl_frame_enter(__e *LifecycleArgsFrameEvent, 
     name := compartment.enterArgs[1].(string)
     _ = name
     {
-    self.sum = count + 1
-    self.label = name
+    s.sum = count + 1
+    s.label = name
     }
 }
 

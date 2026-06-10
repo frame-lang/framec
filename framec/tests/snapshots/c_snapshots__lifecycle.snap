@@ -550,14 +550,14 @@ static void Lifecycle_s_Idle_hdl_user_start(Lifecycle* self, Lifecycle_FrameEven
 }
 
 static void Lifecycle_s_Running_hdl_frame_exit(Lifecycle* self, Lifecycle_FrameEvent* __e, Lifecycle_Compartment* compartment) {
-    self.exited = self.exited + 1
+    self->exited = self->exited + 1
 }
 
 static void Lifecycle_s_Running_hdl_frame_enter(Lifecycle* self, Lifecycle_FrameEvent* __e, Lifecycle_Compartment* compartment) {
     const char* label = (const char*)Lifecycle_FrameVec_get(compartment->enter_args, 0);
     (void)label;
-    self.entered = self.entered + 1;
-    self.tag = label;
+    self->entered = self->entered + 1;
+    self->tag = label;
 }
 
 static void Lifecycle_s_Running_hdl_user_stop(Lifecycle* self, Lifecycle_FrameEvent* __e, Lifecycle_Compartment* compartment) {

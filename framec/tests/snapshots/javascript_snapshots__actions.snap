@@ -196,7 +196,7 @@ export class Actions {
     }
 
     _s_Counting_hdl_user_get_total(__e, compartment) {
-        this._context_stack[this._context_stack.length - 1]._return = self.total;
+        this._context_stack[this._context_stack.length - 1]._return = this.total;
     }
 
     _s_Counting_hdl_user_increment(__e, compartment) {

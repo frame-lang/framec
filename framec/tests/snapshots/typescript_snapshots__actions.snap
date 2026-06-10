@@ -194,7 +194,7 @@ export class Actions {
     }
 
     private _s_Counting_hdl_user_get_total(__e: ActionsFrameEvent, compartment: ActionsCompartment) {
-        this._context_stack[this._context_stack.length - 1]._return = self.total;
+        this._context_stack[this._context_stack.length - 1]._return = this.total;
     }
 
     private _s_Counting_hdl_user_increment(__e: ActionsFrameEvent, compartment: ActionsCompartment) {

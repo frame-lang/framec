@@ -210,7 +210,7 @@ func (s *NoPersist) _state_Active(__e *NoPersistFrameEvent, compartment *NoPersi
 
 func (s *NoPersist) _s_Active_hdl_user_bump(__e *NoPersistFrameEvent, compartment *NoPersistCompartment) {
     {
-    self.count = self.count + 1
+    s.count = s.count + 1
     }
 }
 
@@ -230,7 +230,7 @@ func (s *NoPersist) _s_Active_hdl_user_set_cache(__e *NoPersistFrameEvent, compa
     v := __e._parameters[0].(int)
     _ = v
     {
-    self.cache = v
+    s.cache = v
     }
 }
 

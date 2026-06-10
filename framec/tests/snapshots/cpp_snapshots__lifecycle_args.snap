@@ -159,19 +159,19 @@ private:
     void _s_Active_hdl_frame_enter(LifecycleArgsFrameEvent& __e, std::shared_ptr<LifecycleArgsCompartment> compartment) {
         auto count = std::any_cast<int>(compartment->enter_args[0]);
         auto name = std::any_cast<std::string>(compartment->enter_args[1]);
-        self.sum = count + 1;
-        self.label = name;
+        this->sum = count + 1;
+        this->label = name;
 
     }
 
     void _s_Active_hdl_user_tag(LifecycleArgsFrameEvent& __e, std::shared_ptr<LifecycleArgsCompartment> compartment) {
-        _context_stack.back()._return = std::any(self.label);
+        _context_stack.back()._return = std::any(this->label);
                         return
 
     }
 
     void _s_Active_hdl_user_total(LifecycleArgsFrameEvent& __e, std::shared_ptr<LifecycleArgsCompartment> compartment) {
-        _context_stack.back()._return = std::any(self.sum);
+        _context_stack.back()._return = std::any(this->sum);
                         return
 
     }

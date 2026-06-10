@@ -163,7 +163,7 @@ class Actions {
     }
 
     private fun _s_Counting_hdl_user_get_total(__e: ActionsFrameEvent, compartment: ActionsCompartment) {
-        _context_stack[_context_stack.size - 1]._return = self.total
+        _context_stack[_context_stack.size - 1]._return = this.total
     }
 
     private fun _s_Counting_hdl_user_increment(__e: ActionsFrameEvent, compartment: ActionsCompartment) {

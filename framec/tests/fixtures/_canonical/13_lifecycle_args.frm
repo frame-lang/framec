@@ -13,15 +13,15 @@
 
         $Active {
             $>(count: i32, name: String) {
-                self.sum = count + 1;
-                self.label = name;
+                @@:self.sum = count + 1;
+                @@:self.label = name;
             }
             total(): i32 {
-                @@:(self.sum)
+                @@:(@@:self.sum)
                 return
             }
             tag(): String {
-                @@:(self.label)
+                @@:(@@:self.label)
                 return
             }
         }

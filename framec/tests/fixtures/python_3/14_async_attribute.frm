@@ -6,7 +6,7 @@
     machine:
         $Ready {
             fetch(key: str): str {
-                @@:(self.cache.get(key))
+                @@:(@@:self.cache.get(key))
             }
         }
 

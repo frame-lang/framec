@@ -167,13 +167,13 @@ class Consts {
     }
 
     private fun _s_Running_hdl_user_get_count(__e: ConstsFrameEvent, compartment: ConstsCompartment) {
-        _context_stack[_context_stack.size - 1]._return = self.count
+        _context_stack[_context_stack.size - 1]._return = this.count
     }
 
     private fun _s_Running_hdl_user_tick(__e: ConstsFrameEvent, compartment: ConstsCompartment) {
-        self.count = self.count + self.step
-        if self.count >= self.limit {
-            self.count = 0
+        this.count = this.count + this.step
+        if this.count >= this.limit {
+            this.count = 0
         }
     }
 

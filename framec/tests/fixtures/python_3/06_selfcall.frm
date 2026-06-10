@@ -6,10 +6,10 @@
     machine:
         $Active {
             kick() {
-                self.count = self.count + 1
+                @@:self.count = @@:self.count + 1
                 @@:self.report()
             }
-            report(): int { @@:(self.count) }
+            report(): int { @@:(@@:self.count) }
         }
 
     domain:

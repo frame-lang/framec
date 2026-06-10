@@ -570,5 +570,5 @@ static void LinearFsm_s_Active_hdl_user_finish(LinearFsm* self, LinearFsm_FrameE
 static void LinearFsm_s_Active_hdl_user_progress(LinearFsm* self, LinearFsm_FrameEvent* __e, LinearFsm_Compartment* compartment) {
     int amount = (int)(intptr_t)LinearFsm_FrameVec_get(__e->_parameters, 0);
     (void)amount;
-    self.total = self.total + amount
+    self->total = self->total + amount
 }

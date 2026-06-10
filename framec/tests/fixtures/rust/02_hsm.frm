@@ -12,17 +12,17 @@
         }
 
         $Awake => $Live {
-            $>() { self.awakes = self.awakes + 1 }
+            $>() { @@:self.awakes = @@:self.awakes + 1 }
             signal() {
-                self.last = 1
+                @@:self.last = 1
                 => $^
             }
         }
 
         $Asleep => $Live {
-            $>() { self.sleeps = self.sleeps + 1 }
+            $>() { @@:self.sleeps = @@:self.sleeps + 1 }
             signal() {
-                self.last = 2
+                @@:self.last = 2
                 => $^
             }
             wake() { -> $Awake }

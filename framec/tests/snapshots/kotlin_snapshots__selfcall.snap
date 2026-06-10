@@ -163,13 +163,13 @@ class SelfCall {
     }
 
     private fun _s_Active_hdl_user_kick(__e: SelfCallFrameEvent, compartment: SelfCallCompartment) {
-        self.count = self.count + 1
+        this.count = this.count + 1
         this.report()
         if (_context_stack.isNotEmpty() && _context_stack[_context_stack.size - 1]._transitioned) return
     }
 
     private fun _s_Active_hdl_user_report(__e: SelfCallFrameEvent, compartment: SelfCallCompartment) {
-        _context_stack[_context_stack.size - 1]._return = self.count
+        _context_stack[_context_stack.size - 1]._return = this.count
     }
 
     companion object {

@@ -230,17 +230,17 @@ export class LifecycleArgs {
     private _s_Active_hdl_frame_enter(__e: LifecycleArgsFrameEvent, compartment: LifecycleArgsCompartment) {
         const count = compartment.enter_args[0];
         const name = compartment.enter_args[1];
-        self.sum = count + 1;
-        self.label = name;
+        this.sum = count + 1;
+        this.label = name;
     }
 
     private _s_Active_hdl_user_tag(__e: LifecycleArgsFrameEvent, compartment: LifecycleArgsCompartment) {
-        this._context_stack[this._context_stack.length - 1]._return = self.label;
+        this._context_stack[this._context_stack.length - 1]._return = this.label;
                         return
     }
 
     private _s_Active_hdl_user_total(__e: LifecycleArgsFrameEvent, compartment: LifecycleArgsCompartment) {
-        this._context_stack[this._context_stack.length - 1]._return = self.sum;
+        this._context_stack[this._context_stack.length - 1]._return = this.sum;
                         return
     }
 }

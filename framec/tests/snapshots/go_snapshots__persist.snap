@@ -183,7 +183,7 @@ func (s *Counter) _s_Counting_hdl_user_increment(__e *CounterFrameEvent, compart
     by := __e._parameters[0].(int)
     _ = by
     {
-    self.count = self.count + by
+    s.count = s.count + by
     }
 }
 

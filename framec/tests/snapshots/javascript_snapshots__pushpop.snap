@@ -242,11 +242,11 @@ export class PushPop {
     }
 
     _s_Idle_hdl_user_ping(__e, compartment) {
-        self.pings = self.pings + 1
+        this.pings = this.pings + 1
     }
 
     _s_Nested_hdl_user_leaf(__e, compartment) {
-        self.leaves = self.leaves + 1
+        this.leaves = this.leaves + 1
     }
 
     _s_Nested_hdl_user_unnest(__e, compartment) {

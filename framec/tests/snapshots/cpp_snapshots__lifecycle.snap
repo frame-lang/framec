@@ -157,14 +157,14 @@ private:
     }
 
     void _s_Running_hdl_frame_exit(LifecycleFrameEvent& __e, std::shared_ptr<LifecycleCompartment> compartment) {
-        self.exited = self.exited + 1
+        this->exited = this->exited + 1
 
     }
 
     void _s_Running_hdl_frame_enter(LifecycleFrameEvent& __e, std::shared_ptr<LifecycleCompartment> compartment) {
         auto label = std::any_cast<std::string>(compartment->enter_args[0]);
-        self.entered = self.entered + 1;
-        self.tag = label;
+        this->entered = this->entered + 1;
+        this->tag = label;
 
     }
 

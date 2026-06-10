@@ -196,11 +196,11 @@ export class Counter {
 
     private _s_Counting_hdl_user_increment(__e: CounterFrameEvent, compartment: CounterCompartment) {
         const by = __e._parameters[0];
-        self.count = self.count + by
+        this.count = this.count + by
     }
 
     private _s_Counting_hdl_user_value(__e: CounterFrameEvent, compartment: CounterCompartment) {
-        this._context_stack[this._context_stack.length - 1]._return = self.count;
+        this._context_stack[this._context_stack.length - 1]._return = this.count;
     }
 
     public snapshot(): string {

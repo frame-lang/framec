@@ -245,17 +245,17 @@ public class LifecycleArgs {
     private void _s_Active_hdl_frame_enter(LifecycleArgsFrameEvent __e, LifecycleArgsCompartment compartment) {
         int count = System.Convert.ToInt32(compartment.enter_args[0]);
         string name = (string) compartment.enter_args[1];
-        self.sum = count + 1;
-        self.label = name;
+        this.sum = count + 1;
+        this.label = name;
     }
 
     private void _s_Active_hdl_user_tag(LifecycleArgsFrameEvent __e, LifecycleArgsCompartment compartment) {
-        _context_stack[_context_stack.Count - 1]._return = self.label;
+        _context_stack[_context_stack.Count - 1]._return = this.label;
                         return
     }
 
     private void _s_Active_hdl_user_total(LifecycleArgsFrameEvent __e, LifecycleArgsCompartment compartment) {
-        _context_stack[_context_stack.Count - 1]._return = self.sum;
+        _context_stack[_context_stack.Count - 1]._return = this.sum;
                         return
     }
 }

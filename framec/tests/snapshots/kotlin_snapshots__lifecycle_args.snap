@@ -203,17 +203,17 @@ class LifecycleArgs {
     private fun _s_Active_hdl_frame_enter(__e: LifecycleArgsFrameEvent, compartment: LifecycleArgsCompartment) {
         val count = compartment.enter_args[0] as Int
         val name = compartment.enter_args[1] as String
-        self.sum = count + 1
-        self.label = name
+        this.sum = count + 1
+        this.label = name
     }
 
     private fun _s_Active_hdl_user_tag(__e: LifecycleArgsFrameEvent, compartment: LifecycleArgsCompartment) {
-        _context_stack[_context_stack.size - 1]._return = self.label
+        _context_stack[_context_stack.size - 1]._return = this.label
                         return
     }
 
     private fun _s_Active_hdl_user_total(__e: LifecycleArgsFrameEvent, compartment: LifecycleArgsCompartment) {
-        _context_stack[_context_stack.size - 1]._return = self.sum
+        _context_stack[_context_stack.size - 1]._return = this.sum
                         return
     }
 

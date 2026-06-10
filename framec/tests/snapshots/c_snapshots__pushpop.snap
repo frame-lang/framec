@@ -565,11 +565,11 @@ static void PushPop_s_Idle_hdl_user_nest(PushPop* self, PushPop_FrameEvent* __e,
 }
 
 static void PushPop_s_Idle_hdl_user_ping(PushPop* self, PushPop_FrameEvent* __e, PushPop_Compartment* compartment) {
-    self.pings = self.pings + 1
+    self->pings = self->pings + 1
 }
 
 static void PushPop_s_Nested_hdl_user_leaf(PushPop* self, PushPop_FrameEvent* __e, PushPop_Compartment* compartment) {
-    self.leaves = self.leaves + 1
+    self->leaves = self->leaves + 1
 }
 
 static void PushPop_s_Nested_hdl_user_unnest(PushPop* self, PushPop_FrameEvent* __e, PushPop_Compartment* compartment) {

@@ -164,11 +164,11 @@ class Counter {
 
     private fun _s_Counting_hdl_user_increment(__e: CounterFrameEvent, compartment: CounterCompartment) {
         val by = __e._parameters[0] as Int
-        self.count = self.count + by
+        this.count = this.count + by
     }
 
     private fun _s_Counting_hdl_user_value(__e: CounterFrameEvent, compartment: CounterCompartment) {
-        _context_stack[_context_stack.size - 1]._return = self.count
+        _context_stack[_context_stack.size - 1]._return = this.count
     }
 
     private fun __serComp(comp: CounterCompartment?): Any? {

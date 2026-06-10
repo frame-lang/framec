@@ -195,13 +195,13 @@ class Consts {
     }
 
     private function _s_Running_hdl_user_get_count($__e, $compartment) {
-        $this->_context_stack[count($this->_context_stack) - 1]->_return = self.count;
+        $this->_context_stack[count($this->_context_stack) - 1]->_return = $this->count;
     }
 
     private function _s_Running_hdl_user_tick($__e, $compartment) {
-        self.count = self.count + self.step;
-        if self.count >= self.limit {
-            self.count = 0;
+        $this->count = $this->count + $this->step;
+        if $this->count >= $this->limit {
+            $this->count = 0;
         }
     }
 }

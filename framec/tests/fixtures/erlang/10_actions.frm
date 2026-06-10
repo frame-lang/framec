@@ -8,7 +8,7 @@
             increment(n: integer) {
                 self._scale(n)
             }
-            get_total(): integer { @@:(self.total) }
+            get_total(): integer { @@:(@@:self.total) }
         }
 
     actions:

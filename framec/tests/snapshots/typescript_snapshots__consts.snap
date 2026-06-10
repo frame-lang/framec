@@ -198,13 +198,13 @@ export class Consts {
     }
 
     private _s_Running_hdl_user_get_count(__e: ConstsFrameEvent, compartment: ConstsCompartment) {
-        this._context_stack[this._context_stack.length - 1]._return = self.count;
+        this._context_stack[this._context_stack.length - 1]._return = this.count;
     }
 
     private _s_Running_hdl_user_tick(__e: ConstsFrameEvent, compartment: ConstsCompartment) {
-        self.count = self.count + self.step;
-        if self.count >= self.limit {
-            self.count = 0;
+        this.count = this.count + this.step;
+        if this.count >= this.limit {
+            this.count = 0;
         }
     }
 }

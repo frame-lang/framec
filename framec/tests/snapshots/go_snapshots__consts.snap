@@ -193,9 +193,9 @@ func (s *Consts) _s_Running_hdl_user_get_count(__e *ConstsFrameEvent, compartmen
 
 func (s *Consts) _s_Running_hdl_user_tick(__e *ConstsFrameEvent, compartment *ConstsCompartment) {
     {
-    self.count = self.count + self.step
-    if self.count >= self.limit {
-        self.count = 0
+    s.count = s.count + s.step
+    if s.count >= s.limit {
+        s.count = 0
     }
     }
 }

@@ -134,14 +134,14 @@ private:
     }
 
     void _s_Running_hdl_user_get_count(ConstsFrameEvent& __e, std::shared_ptr<ConstsCompartment> compartment) {
-        _context_stack.back()._return = std::any(self.count);
+        _context_stack.back()._return = std::any(this->count);
 
     }
 
     void _s_Running_hdl_user_tick(ConstsFrameEvent& __e, std::shared_ptr<ConstsCompartment> compartment) {
-        self.count = self.count + self.step;
-        if self.count >= self.limit {
-            self.count = 0;
+        this->count = this->count + this->step;
+        if this->count >= this->limit {
+            this->count = 0;
         }
 
     }

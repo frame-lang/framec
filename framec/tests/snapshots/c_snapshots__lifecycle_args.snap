@@ -571,16 +571,16 @@ static void LifecycleArgs_s_Active_hdl_frame_enter(LifecycleArgs* self, Lifecycl
     (void)count;
     const char* name = (const char*)LifecycleArgs_FrameVec_get(compartment->enter_args, 1);
     (void)name;
-    self.sum = count + 1;
-    self.label = name;
+    self->sum = count + 1;
+    self->label = name;
 }
 
 static void LifecycleArgs_s_Active_hdl_user_tag(LifecycleArgs* self, LifecycleArgs_FrameEvent* __e, LifecycleArgs_Compartment* compartment) {
-    LifecycleArgs_CTX(self)->_return = (void*)(intptr_t)(self.label);
+    LifecycleArgs_CTX(self)->_return = (void*)(intptr_t)(self->label);
                     return
 }
 
 static void LifecycleArgs_s_Active_hdl_user_total(LifecycleArgs* self, LifecycleArgs_FrameEvent* __e, LifecycleArgs_Compartment* compartment) {
-    LifecycleArgs_CTX(self)->_return = (void*)(intptr_t)(self.sum);
+    LifecycleArgs_CTX(self)->_return = (void*)(intptr_t)(self->sum);
                     return
 }
