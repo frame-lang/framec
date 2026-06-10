@@ -145,7 +145,7 @@ private:
     }
 
     void _scale(int n) {
-                    self.total = self.total + n * 2
+                    this->total = this->total + n * 2
 
     }
 

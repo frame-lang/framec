@@ -172,7 +172,7 @@ class Actions {
     }
 
     private fun _scale(n: Int) {
-                    self.total = self.total + n * 2
+                    this.total = this.total + n * 2
     }
 
     companion object {

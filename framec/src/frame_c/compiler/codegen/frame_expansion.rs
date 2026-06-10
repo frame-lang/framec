@@ -31,7 +31,9 @@ use utility::{
     split_transition_return, strip_outer_parens,
 };
 
-pub(crate) use handler_body::{emit_handler_body_via_statements, resolve_state_arg_key};
+pub(crate) use handler_body::{
+    emit_handler_body_via_statements, expand_self_in_body, resolve_state_arg_key,
+};
 pub(crate) use no_init::generate_no_initialization;
 pub(crate) use scanner_dispatch::{
     expand_system_state, expand_system_state_in_code, get_native_scanner,

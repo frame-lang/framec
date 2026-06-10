@@ -97,7 +97,14 @@ fn erlang_rewrite_expr(line: &str, action_names: &[String]) -> String {
             return replaced.replace("(Data, )", "(Data)");
         }
     }
-    replace_outside_strings_and_comments(l, TargetLanguage::Erlang, &[("self.", "Data#data.")])
+    // RFC-0046: `@@:self.field` behaves like native `self.field` on Erlang —
+    // both lower to the `#data` record access. Map the `@@:self.` form first
+    // (longer match) so the bare `self.` rule doesn't leave the `@@:` prefix.
+    replace_outside_strings_and_comments(
+        l,
+        TargetLanguage::Erlang,
+        &[("@@:self.", "Data#data."), ("self.", "Data#data.")],
+    )
 }
 
 // ============================================================================

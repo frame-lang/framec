@@ -205,6 +205,6 @@ export class Actions {
     }
 
     _scale(n) {
-                    self.total = self.total + n * 2
+                    this.total = this.total + n * 2
     }
 }

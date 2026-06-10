@@ -217,6 +217,30 @@ struct CaseFrame {
     current_arm_start: usize,
 }
 
+/// RFC-0046: normalize `@@:self.<field>` to native `self.<field>` so the Erlang
+/// body processor's existing `self.`-based handling (record access + Data
+/// threading) applies. A `@@:self.<method>(...)` **call** is left intact — its
+/// transition-guard wrapping downstream keys on the `@@:self` marker.
+fn erlang_strip_at_self_field(line: &str) -> String {
+    let mut result = line.to_string();
+    let mut from = 0;
+    while let Some(rel) = result[from..].find("@@:self.") {
+        let pos = from + rel;
+        let after = pos + "@@:self.".len();
+        let id_end = result[after..]
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .map(|k| after + k)
+            .unwrap_or(result.len());
+        if result[id_end..].starts_with('(') {
+            from = after; // a call — keep `@@:self.`
+        } else {
+            result.replace_range(pos..after, "self.");
+            from = pos + "self.".len();
+        }
+    }
+    result
+}
+
 pub(super) fn erlang_process_body_lines_full(
     lines: &[&str],
     action_names: &[String],
@@ -224,6 +248,14 @@ pub(super) fn erlang_process_body_lines_full(
     initial_data: &str,
     param_names: &[(&str, String)],
 ) -> ErlangBodyResult {
+    // RFC-0046: lower `@@:self.<field>` to native `self.<field>` up front.
+    let normalized: Vec<String> = lines
+        .iter()
+        .map(|l| erlang_strip_at_self_field(l))
+        .collect();
+    let line_refs: Vec<&str> = normalized.iter().map(|s| s.as_str()).collect();
+    let lines: &[&str] = &line_refs;
+
     let mut result: Vec<String> = Vec::new();
     let mut data_var = initial_data.to_string();
     // Derive the starting generation counter from the initial Data

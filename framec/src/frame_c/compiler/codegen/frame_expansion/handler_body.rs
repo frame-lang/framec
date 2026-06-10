@@ -560,3 +560,85 @@ pub(crate) fn emit_handler_body_via_statements(
         text
     }
 }
+
+/// Expand only the `@@:self.*` constructs in an action or operation body
+/// (RFC-0046), returning the brace-stripped inner code.
+///
+/// Action and operation bodies are native passthrough — they are NOT routed
+/// through `emit_handler_body_via_statements`, so without this pass
+/// `@@:self.field`, `@@:self.field.method()`, and `@@:self.method()` would leak
+/// verbatim into the target. This scans the body span (boundary-safe: the
+/// scanner skips strings/comments), replaces each self segment with its
+/// per-target expansion, and leaves every other construct — `@@:(expr)`,
+/// `@@:system.state`, native code — untouched for the textual
+/// `expand_system_state_in_code` pass that runs next. No transition guard is
+/// emitted (action/operation bodies don't transition).
+pub(crate) fn expand_self_in_body(
+    span: &crate::frame_c::compiler::frame_ast::Span,
+    source: &[u8],
+    lang: TargetLanguage,
+    ctx: &HandlerContext,
+) -> String {
+    use crate::frame_c::compiler::native_region_scanner::RegionSpan;
+
+    if span.start >= source.len() || span.end > source.len() || span.start >= span.end {
+        return String::new();
+    }
+    let body_bytes = &source[span.start..span.end];
+    let open_brace = match body_bytes.iter().position(|&b| b == b'{') {
+        Some(p) => p,
+        None => {
+            return super::super::interface_gen::strip_body_braces(&String::from_utf8_lossy(
+                body_bytes,
+            ))
+        }
+    };
+    let mut scanner = super::scanner_dispatch::get_native_scanner(lang);
+    let scan_result = match scanner.scan(body_bytes, open_brace) {
+        Ok(r) => r,
+        Err(_) => {
+            return super::super::interface_gen::strip_body_braces(&String::from_utf8_lossy(
+                body_bytes,
+            ))
+        }
+    };
+
+    // Collect (start, end, expansion) for the self segments only.
+    let mut edits: Vec<(usize, usize, String)> = Vec::new();
+    for region in &scan_result.regions {
+        if let Region::FrameSegment {
+            span: rspan,
+            kind,
+            indent,
+            metadata,
+        } = region
+        {
+            if matches!(
+                kind,
+                FrameSegmentKind::ContextSelf
+                    | FrameSegmentKind::ContextSelfFieldCall
+                    | FrameSegmentKind::ContextSelfCall
+            ) {
+                let RegionSpan { start, end } = *rspan;
+                let expansion = super::generate_frame_expansion(
+                    body_bytes, rspan, *kind, *indent, lang, ctx, metadata,
+                );
+                edits.push((start, end, expansion));
+            }
+        }
+    }
+
+    // Apply replacements right-to-left so earlier byte offsets stay valid.
+    let mut code = String::from_utf8_lossy(body_bytes).to_string();
+    edits.sort_by_key(|e| std::cmp::Reverse(e.0));
+    for (start, end, exp) in edits {
+        if start <= end
+            && end <= code.len()
+            && code.is_char_boundary(start)
+            && code.is_char_boundary(end)
+        {
+            code.replace_range(start..end, &exp);
+        }
+    }
+    super::super::interface_gen::strip_body_braces(&code)
+}

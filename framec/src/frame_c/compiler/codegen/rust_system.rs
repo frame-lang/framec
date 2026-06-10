@@ -235,7 +235,11 @@ pub fn generate_rust_system(system: &SystemAst, arcanum: &Arcanum, source: &[u8]
     // method node.
     for action in &system.actions {
         methods.extend(super::interface_gen::generate_action(
-            action, &syntax, source,
+            action,
+            &syntax,
+            source,
+            &system.name,
+            arcanum,
         ));
     }
     for operation in &system.operations {
@@ -250,7 +254,11 @@ pub fn generate_rust_system(system: &SystemAst, arcanum: &Arcanum, source: &[u8]
             continue;
         }
         methods.extend(super::interface_gen::generate_operation(
-            operation, &syntax, source,
+            operation,
+            &syntax,
+            source,
+            &system.name,
+            arcanum,
         ));
     }
 

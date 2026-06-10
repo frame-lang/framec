@@ -523,5 +523,5 @@ static void Actions_s_Counting_hdl_user_increment(Actions* self, Actions_FrameEv
 }
 
 static void Actions__scale(Actions* self, int n) {
-                self.total = self.total + n * 2
+                self->total = self->total + n * 2
 }

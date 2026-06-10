@@ -13,7 +13,7 @@
 
     actions:
         _scale(n: i32) {
-            self.total = self.total + n * 2
+            @@:self.total = @@:self.total + n * 2
         }
 
     domain:
