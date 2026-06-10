@@ -19,36 +19,54 @@ use crate::frame_c::compiler::native_region_scanner::{RegionSpan, SegmentMetadat
 use crate::frame_c::visitors::TargetLanguage;
 
 pub(super) fn expand_context_self(
-    body_bytes: &[u8],
-    span: &RegionSpan,
-    indent: usize,
+    _body_bytes: &[u8],
+    _span: &RegionSpan,
+    _indent: usize,
     lang: TargetLanguage,
-    ctx: &HandlerContext,
+    _ctx: &HandlerContext,
     metadata: &SegmentMetadata,
 ) -> String {
-    let segment_text = String::from_utf8_lossy(&body_bytes[span.start..span.end]);
-    let indent_str = " ".repeat(indent);
-
-    // @@:self — bare system instance reference
-    match lang {
+    // Per-target self/instance receiver. Bare `@@:self` is rejected by the
+    // validator (E603); this value is the prefix for `@@:self.<field>`
+    // (RFC-0046) and the existing self-call path.
+    let receiver = match lang {
         TargetLanguage::Python3
         | TargetLanguage::GDScript
         | TargetLanguage::Ruby
         | TargetLanguage::Lua
-        | TargetLanguage::Swift => "self".to_string(),
+        | TargetLanguage::Swift => "self",
         TargetLanguage::TypeScript
         | TargetLanguage::JavaScript
         | TargetLanguage::Java
         | TargetLanguage::Kotlin
         | TargetLanguage::CSharp
-        | TargetLanguage::Dart => "this".to_string(),
-        TargetLanguage::Cpp => "this".to_string(),
-        TargetLanguage::C => "self".to_string(),
-        TargetLanguage::Go => "s".to_string(),
-        TargetLanguage::Php => "$this".to_string(),
-        TargetLanguage::Rust => super::super::rust_system::rust_self_ref().to_string(),
-        TargetLanguage::Erlang => "self".to_string(),
+        | TargetLanguage::Dart => "this",
+        TargetLanguage::Cpp => "this",
+        TargetLanguage::C => "self",
+        TargetLanguage::Go => "s",
+        TargetLanguage::Php => "$this",
+        TargetLanguage::Rust => super::super::rust_system::rust_self_ref(),
+        TargetLanguage::Erlang => "self",
         TargetLanguage::Graphviz => unreachable!(),
+    };
+
+    // `@@:self.<field>` (RFC-0046): portable domain-field reference. Lower to
+    // the target's native member access. Pointer-receiver targets use `->`
+    // (C++ `this->`, PHP `$this->`, C `self->`); the rest use `.`. Erlang
+    // emits `self.field`, which its domain post-pass threads into the `#data`
+    // record (read → `Data#data.field`, write → record update) — the same path
+    // a native `self.field` already takes. Ruby uses `attr_accessor`, so
+    // `self.field` works as both lvalue and rvalue.
+    if let SegmentMetadata::SelfField { field } = metadata {
+        let sep = match lang {
+            TargetLanguage::Cpp | TargetLanguage::Php | TargetLanguage::C => "->",
+            _ => ".",
+        };
+        format!("{receiver}{sep}{field}")
+    } else {
+        // Bare `@@:self` — rejected by the validator before codegen; emit the
+        // receiver so nothing leaks if a caller skips validation.
+        receiver.to_string()
     }
 }
 

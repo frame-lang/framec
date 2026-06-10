@@ -54,6 +54,10 @@ pub enum SegmentMetadata {
     },
     /// `@@:self.method(args)`
     SelfCall { method: String, args: String },
+    /// `@@:self.field` — portable domain-field reference (RFC-0046).
+    /// Distinguishes the field-access form from a bare `@@:self` (which
+    /// carries `None` and is rejected with E603).
+    SelfField { field: String },
     /// `@@SystemName(args)` (Factory) or `@@!SystemName()` (NoInitialization,
     /// per RFC-0015 D7). `args` is empty for the NoInitialization variant.
     SystemInstantiation {
