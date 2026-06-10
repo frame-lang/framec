@@ -864,6 +864,14 @@ pub(crate) fn generate_per_handler_methods(
         })
         .unwrap_or_default();
 
+    // The system's action names (RFC-0046): `@@:self.<action>(args)` is a
+    // direct call and must NOT receive the self-call transition guard.
+    let actions: std::collections::HashSet<String> = arcanum
+        .systems
+        .get(system_name)
+        .map(|entry| entry.actions.clone())
+        .unwrap_or_default();
+
     // State → declared HSM parent map for use by transition codegen inside
     // handler bodies (so `-> $Child` where Child => Parent constructs the
     // full chain rather than patching parent_compartment = self.__compartment).
@@ -939,6 +947,7 @@ pub(crate) fn generate_per_handler_methods(
                 source,
                 has_state_vars,
                 defined_systems,
+                &actions,
                 &empty,
                 is_start_state,
                 state_param_names,
@@ -973,6 +982,7 @@ pub(crate) fn generate_per_handler_methods(
                 source,
                 has_state_vars,
                 defined_systems,
+                &actions,
                 &empty,
                 is_start_state,
                 state_param_names,
@@ -1020,6 +1030,7 @@ fn generate_per_handler_method_for_lang(
     source: &[u8],
     has_state_vars: bool,
     defined_systems: &std::collections::HashSet<String>,
+    actions: &std::collections::HashSet<String>,
     sys_param_locals: &[String],
     is_start_state: bool,
     state_param_names: &std::collections::HashMap<String, Vec<String>>,
@@ -1041,6 +1052,7 @@ fn generate_per_handler_method_for_lang(
             source,
             has_state_vars,
             defined_systems,
+            actions,
             sys_param_locals,
             is_start_state,
             state_param_names,
@@ -1061,6 +1073,7 @@ fn generate_per_handler_method_for_lang(
                 source,
                 has_state_vars,
                 defined_systems,
+                &actions,
                 sys_param_locals,
                 is_start_state,
                 state_param_names,
@@ -1080,6 +1093,7 @@ fn generate_per_handler_method_for_lang(
             source,
             has_state_vars,
             defined_systems,
+            actions,
             sys_param_locals,
             is_start_state,
             state_param_names,
@@ -1098,6 +1112,7 @@ fn generate_per_handler_method_for_lang(
             source,
             has_state_vars,
             defined_systems,
+            actions,
             sys_param_locals,
             is_start_state,
             state_param_names,
@@ -1117,6 +1132,7 @@ fn generate_per_handler_method_for_lang(
             source,
             has_state_vars,
             defined_systems,
+            actions,
             sys_param_locals,
             is_start_state,
             state_param_names,
@@ -1135,6 +1151,7 @@ fn generate_per_handler_method_for_lang(
             source,
             has_state_vars,
             defined_systems,
+            actions,
             sys_param_locals,
             is_start_state,
             state_param_names,
@@ -1154,6 +1171,7 @@ fn generate_per_handler_method_for_lang(
             source,
             has_state_vars,
             defined_systems,
+            actions,
             sys_param_locals,
             is_start_state,
             state_param_names,
@@ -1172,6 +1190,7 @@ fn generate_per_handler_method_for_lang(
             source,
             has_state_vars,
             defined_systems,
+            actions,
             sys_param_locals,
             is_start_state,
             state_param_names,
@@ -1191,6 +1210,7 @@ fn generate_per_handler_method_for_lang(
             source,
             has_state_vars,
             defined_systems,
+            actions,
             sys_param_locals,
             is_start_state,
             state_param_names,
@@ -1210,6 +1230,7 @@ fn generate_per_handler_method_for_lang(
             source,
             has_state_vars,
             defined_systems,
+            actions,
             sys_param_locals,
             is_start_state,
             state_param_names,
@@ -1229,6 +1250,7 @@ fn generate_per_handler_method_for_lang(
             source,
             has_state_vars,
             defined_systems,
+            actions,
             sys_param_locals,
             is_start_state,
             state_param_names,
@@ -1248,6 +1270,7 @@ fn generate_per_handler_method_for_lang(
             source,
             has_state_vars,
             defined_systems,
+            actions,
             sys_param_locals,
             is_start_state,
             state_param_names,
@@ -1268,6 +1291,7 @@ fn generate_per_handler_method_for_lang(
             source,
             has_state_vars,
             defined_systems,
+            actions,
             sys_param_locals,
             is_start_state,
             state_param_names,
@@ -1287,6 +1311,7 @@ fn generate_per_handler_method_for_lang(
             source,
             has_state_vars,
             defined_systems,
+            actions,
             sys_param_locals,
             is_start_state,
             state_param_names,
@@ -1369,6 +1394,7 @@ pub(crate) fn generate_state_method(
         current_return_type: None,
         state_param_types: std::collections::HashMap::new(),
         domain_field_types: std::collections::HashMap::new(),
+        actions: std::collections::HashSet::new(),
     };
 
     // Generate the dispatch body based on __e._message / __e.message
@@ -1540,6 +1566,7 @@ pub(crate) fn generate_handler_from_arcanum(
     lang: TargetLanguage,
     _has_state_vars: bool,
     defined_systems: &std::collections::HashSet<String>,
+    actions: &std::collections::HashSet<String>,
     sys_param_locals: &[String],
     is_start_state: bool,
     non_start_state_param_names: &[String],
@@ -1617,6 +1644,7 @@ pub(crate) fn generate_handler_from_arcanum(
         current_return_type: handler.return_type.clone(),
         state_param_types: std::collections::HashMap::new(),
         domain_field_types: std::collections::HashMap::new(),
+        actions: actions.clone(),
     };
 
     // Emit handler default return value if present

@@ -201,7 +201,7 @@ export class Actions {
 
     _s_Counting_hdl_user_increment(__e, compartment) {
         const n = __e._parameters[0];
-        self._scale(n)
+        this._scale(n);
     }
 
     _scale(n) {

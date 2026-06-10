@@ -202,7 +202,7 @@ public class Actions {
 
     private void _s_Counting_hdl_user_increment(ActionsFrameEvent __e, ActionsCompartment compartment) {
         int n = ((Number) __e._parameters.get(0)).intValue();
-        this._scale(n)
+        this._scale(n);
     }
 
     private void _scale(int n) {

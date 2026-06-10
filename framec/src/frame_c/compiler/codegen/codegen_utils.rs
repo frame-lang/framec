@@ -71,6 +71,11 @@ pub(crate) struct HandlerContext {
     /// pointer deref) or a scalar (native value method). Empty where the
     /// info is unavailable (no embed calls expected there).
     pub domain_field_types: std::collections::HashMap<String, String>,
+    /// The system's action names (RFC-0046). `@@:self.<action>(args)` is a
+    /// *direct* call, not a kernel-dispatched interface call, so it must NOT
+    /// receive the caller-side transition guard. The body walk consults this
+    /// to suppress the guard for action calls.
+    pub actions: std::collections::HashSet<String>,
 }
 
 /// Get default initialization value for a type

@@ -781,6 +781,14 @@ pub(crate) fn generate_rust_handler_methods(
 ) -> Vec<CodegenNode> {
     let mut methods = Vec::new();
 
+    // RFC-0046: action names — `@@:self.<action>(args)` is a direct call that
+    // must NOT receive the self-call transition guard.
+    let rust_actions: std::collections::HashSet<String> = arcanum
+        .systems
+        .get(system_name)
+        .map(|entry| entry.actions.clone())
+        .unwrap_or_default();
+
     // Build the state→parent map once for all handler emissions.
     // Used by transition codegen to propagate state-args through
     // every HSM ancestor's typed StateContext variant.
@@ -856,6 +864,7 @@ pub(crate) fn generate_rust_handler_methods(
                 TargetLanguage::Rust,
                 has_state_vars,
                 defined_systems,
+                &rust_actions,
                 sys_param_locals,
                 is_start_state,
                 &non_start_state_param_names,

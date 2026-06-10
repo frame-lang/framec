@@ -199,7 +199,7 @@ export class Actions {
 
     private _s_Counting_hdl_user_increment(__e: ActionsFrameEvent, compartment: ActionsCompartment) {
         const n = __e._parameters[0];
-        self._scale(n)
+        this._scale(n);
     }
 
     private _scale(n: number) {

@@ -175,6 +175,7 @@ mod tests {
             current_return_type: None,
             state_param_types: std::collections::HashMap::new(),
             domain_field_types: std::collections::HashMap::new(),
+            actions: std::collections::HashSet::new(),
         }
     }
 

@@ -51,6 +51,12 @@ impl FrameValidator {
         let domain_fields: std::collections::HashSet<String> =
             system.domain.iter().map(|d| d.name.clone()).collect();
 
+        // RFC-0046: `@@:self.<action>(args)` is a valid direct action call.
+        // Collect action names so the kind-10 walk accepts them instead of
+        // rejecting with E601.
+        let actions: std::collections::HashSet<String> =
+            system.actions.iter().map(|a| a.name.clone()).collect();
+
         // Validate handler bodies using the scanner (handles comments, strings correctly)
         if let Some(machine) = &system.machine {
             for state in &machine.states {
@@ -64,6 +70,7 @@ impl FrameValidator {
                         body,
                         &interface_methods,
                         &domain_fields,
+                        &actions,
                         &state.name,
                         &handler.event,
                         target,
@@ -83,6 +90,7 @@ impl FrameValidator {
                 body,
                 &interface_methods,
                 &domain_fields,
+                &actions,
                 "(action)",
                 &action.name,
                 target,
@@ -311,6 +319,7 @@ impl FrameValidator {
         body: &[u8],
         interface_methods: &HashMap<String, &InterfaceMethod>,
         domain_fields: &std::collections::HashSet<String>,
+        actions: &std::collections::HashSet<String>,
         scope_outer: &str,
         scope_inner: &str,
         target: crate::frame_c::visitors::TargetLanguage,
@@ -348,11 +357,13 @@ impl FrameValidator {
                                         )
                                     ));
                                 }
-                            } else {
+                            } else if !actions.contains(method.as_str()) {
+                                // Not an interface method and not an action (RFC-0046:
+                                // `@@:self.<action>(args)` is a valid direct call).
                                 self.errors.push(ValidationError::new(
                                     "E601",
                                     format!(
-                                        "@@:self.{}() in {}/{} — method '{}' not found in interface",
+                                        "@@:self.{}() in {}/{} — '{}' is not an interface method or action",
                                         method, scope_outer, scope_inner, method
                                     )
                                 ));

@@ -6,7 +6,7 @@
     machine:
         $Counting {
             increment(n: number) {
-                self._scale(n)
+                @@:self._scale(n)
             }
             get_total(): number { @@:(@@:self.total) }
         }

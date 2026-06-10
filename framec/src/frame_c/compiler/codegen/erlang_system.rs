@@ -625,6 +625,7 @@ pub(crate) fn generate_erlang_system(
                     current_return_type: None,
                     state_param_types: std::collections::HashMap::new(),
                     domain_field_types: std::collections::HashMap::new(),
+                    actions: std::collections::HashSet::new(),
                 };
                 let enter_span = crate::frame_c::compiler::ast::Span {
                     start: enter.body.span.start,
@@ -917,6 +918,7 @@ pub(crate) fn generate_erlang_system(
                     current_return_type: None,
                     state_param_types: std::collections::HashMap::new(),
                     domain_field_types: std::collections::HashMap::new(),
+                    actions: std::collections::HashSet::new(),
                 };
                 // Convert frame_ast::Span to ast::Span
                 let body_span = crate::frame_c::compiler::ast::Span {
@@ -1499,6 +1501,7 @@ pub(crate) fn generate_erlang_system(
                     current_return_type: None,
                     state_param_types: std::collections::HashMap::new(),
                     domain_field_types: std::collections::HashMap::new(),
+                    actions: std::collections::HashSet::new(),
                 };
                 let enter_span = crate::frame_c::compiler::ast::Span {
                     start: enter.body.span.start,
@@ -1578,6 +1581,7 @@ pub(crate) fn generate_erlang_system(
                     current_return_type: None,
                     state_param_types: std::collections::HashMap::new(),
                     domain_field_types: std::collections::HashMap::new(),
+                    actions: std::collections::HashSet::new(),
                 };
                 let enter_span = crate::frame_c::compiler::ast::Span {
                     start: enter.body.span.start,
@@ -1675,6 +1679,7 @@ pub(crate) fn generate_erlang_system(
                     current_return_type: None,
                     state_param_types: std::collections::HashMap::new(),
                     domain_field_types: std::collections::HashMap::new(),
+                    actions: std::collections::HashSet::new(),
                 };
                 let exit_span = crate::frame_c::compiler::ast::Span {
                     start: exit.body.span.start,

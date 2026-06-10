@@ -168,7 +168,7 @@ class Actions {
 
     private fun _s_Counting_hdl_user_increment(__e: ActionsFrameEvent, compartment: ActionsCompartment) {
         val n = __e._parameters[0] as Int
-        self._scale(n)
+        this._scale(n)
     }
 
     private fun _scale(n: Int) {

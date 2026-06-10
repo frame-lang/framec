@@ -496,8 +496,16 @@ pub(crate) fn emit_handler_body_via_statements(
                                 }
                             }
 
-                            // Self-call guard — deferred until native line ends
-                            if *kind == FrameSegmentKind::ContextSelfCall {
+                            // Self-call guard — deferred until native line ends.
+                            // RFC-0046: a `@@:self.<action>(...)` call is a direct
+                            // action call (not a kernel-dispatched interface call),
+                            // so it cannot transition and must NOT get the guard.
+                            let is_action_call = matches!(
+                                metadata,
+                                crate::frame_c::compiler::native_region_scanner::SegmentMetadata::SelfCall { method, .. }
+                                    if ctx.actions.contains(method)
+                            );
+                            if *kind == FrameSegmentKind::ContextSelfCall && !is_action_call {
                                 let guard = super::generate_self_call_guard(
                                     *indent,
                                     lang,
