@@ -621,6 +621,7 @@ pub fn scan_native_regions<S: SyntaxSkipper>(
                         9 => FrameSegmentKind::ReturnCall,
                         10 => FrameSegmentKind::ContextSelfCall,
                         11 => FrameSegmentKind::ContextSelf,
+                        15 => FrameSegmentKind::ContextSelfFieldCall,
                         12 => FrameSegmentKind::ContextSystemState,
                         13 => FrameSegmentKind::ContextSystemBare,
                         14 => FrameSegmentKind::ContextSystemStateReserved,

@@ -12,7 +12,7 @@ mod nested_registry;
 mod persist;
 mod utility;
 
-pub(crate) use extract::{extract_body_content, extract_tagged_system_name};
+pub(crate) use extract::{extract_body_content, extract_tagged_system_name, strip_body_braces};
 
 use dart_types::{dart_conv_expr, parse_dart_type, render_dart_type, DartTypeNode};
 use utility::{frame_return_default, is_dynamic_target};
@@ -992,6 +992,42 @@ self._context_stack.pop_back()"#,
     }).collect()
 }
 
+/// Build the minimal `HandlerContext` needed to lower `@@:self.*` in an
+/// action/operation body (RFC-0046): the system name, the set of defined
+/// systems, and the domain field → type map (for embed `->` vs scalar `.`
+/// on C++). All handler-only fields (state vars, params, transitions) stay
+/// empty — they don't occur in action/operation bodies.
+fn self_expansion_ctx(
+    system_name: &str,
+    arcanum: &crate::frame_c::compiler::arcanum::Arcanum,
+) -> super::codegen_utils::HandlerContext {
+    let defined_systems: std::collections::HashSet<String> =
+        arcanum.systems.keys().cloned().collect();
+    let domain_field_types: std::collections::HashMap<String, String> = arcanum
+        .systems
+        .get(system_name)
+        .map(|entry| {
+            entry
+                .domain_symbols
+                .iter()
+                .filter_map(|(name, sym)| {
+                    let ty = sym
+                        .symbol_type
+                        .as_deref()
+                        .and_then(|t| t.strip_prefix("Custom(\"")?.strip_suffix("\")"))?;
+                    Some((name.clone(), ty.to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    super::codegen_utils::HandlerContext {
+        system_name: system_name.to_string(),
+        defined_systems,
+        domain_field_types,
+        ..Default::default()
+    }
+}
+
 /// Generate action method (and any leading-comment trivia).
 ///
 /// Returns a `Vec<CodegenNode>`: zero-or-more `NativeBlock` comment
@@ -1002,6 +1038,8 @@ pub(crate) fn generate_action(
     action: &ActionAst,
     syntax: &super::backend::ClassSyntax,
     source: &[u8],
+    system_name: &str,
+    arcanum: &crate::frame_c::compiler::arcanum::Arcanum,
 ) -> Vec<CodegenNode> {
     let params: Vec<Param> = action
         .params
@@ -1012,8 +1050,16 @@ pub(crate) fn generate_action(
         })
         .collect();
 
-    // Extract native code from source using span (oceans model)
-    let mut code = extract_body_content(source, &action.body.span);
+    // RFC-0046: lower `@@:self.*` in the action body (native passthrough
+    // otherwise leaks the sigil). Boundary-safe scanner pass; `@@:(expr)` /
+    // `@@:system.state` are left for the textual pass below.
+    let ctx = self_expansion_ctx(system_name, arcanum);
+    let mut code = super::frame_expansion::expand_self_in_body(
+        &action.body.span,
+        source,
+        syntax.language,
+        &ctx,
+    );
 
     // Lower `@@:(expr)` and `@@:system.state` in the action body. Per
     // `_scratch/bug_at_at_colon_paren_in_actions_passthrough.md`, the
@@ -1061,6 +1107,8 @@ pub(crate) fn generate_operation(
     operation: &OperationAst,
     syntax: &super::backend::ClassSyntax,
     source: &[u8],
+    system_name: &str,
+    arcanum: &crate::frame_c::compiler::arcanum::Arcanum,
 ) -> Vec<CodegenNode> {
     let params: Vec<Param> = operation
         .params
@@ -1071,8 +1119,16 @@ pub(crate) fn generate_operation(
         })
         .collect();
 
-    // Extract native code from source using span (oceans model)
-    let mut code = extract_body_content(source, &operation.body.span);
+    // RFC-0046: lower `@@:self.*` in the operation body (non-static operations
+    // can touch domain fields). Boundary-safe scanner pass; `@@:(expr)` /
+    // `@@:system.state` are left for the textual pass below.
+    let ctx = self_expansion_ctx(system_name, arcanum);
+    let mut code = super::frame_expansion::expand_self_in_body(
+        &operation.body.span,
+        source,
+        syntax.language,
+        &ctx,
+    );
 
     // Expand @@:system.state and @@:(expr) in operation bodies.
     // @@:system.state requires `self` (non-static only), but @@:(expr) works in both.

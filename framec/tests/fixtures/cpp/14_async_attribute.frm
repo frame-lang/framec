@@ -6,7 +6,7 @@
     machine:
         $Ready {
             fetch(key: std::string): std::string {
-                @@:(self.cache.get(key))
+                @@:(@@:self.cache.get(key))
             }
         }
 

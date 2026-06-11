@@ -314,7 +314,13 @@ pub fn generate_system_shared(
     // `generate_action` returns a `Vec<CodegenNode>` so trivia
     // (action `leading_comments`) can prepend the method node.
     for action in &system.actions {
-        methods.extend(generate_action(action, &syntax, source));
+        methods.extend(generate_action(
+            action,
+            &syntax,
+            source,
+            &system.name,
+            arcanum,
+        ));
     }
 
     // Operations - same pattern as actions.
@@ -332,7 +338,13 @@ pub fn generate_system_shared(
         if is_framework_managed {
             continue;
         }
-        methods.extend(generate_operation(operation, &syntax, source));
+        methods.extend(generate_operation(
+            operation,
+            &syntax,
+            source,
+            &system.name,
+            arcanum,
+        ));
     }
 
     // Persistence methods (when @@persist is present)

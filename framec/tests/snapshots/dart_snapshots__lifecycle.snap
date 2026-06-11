@@ -219,13 +219,13 @@ class Lifecycle {
     }
 
     void _s_Running_hdl_frame_exit(LifecycleFrameEvent __e, LifecycleCompartment compartment) {
-        self.exited = self.exited + 1
+        this.exited = this.exited + 1
     }
 
     void _s_Running_hdl_frame_enter(LifecycleFrameEvent __e, LifecycleCompartment compartment) {
         final label = compartment.enter_args[0] as String;
-        self.entered = self.entered + 1;
-        self.tag = label;
+        this.entered = this.entered + 1;
+        this.tag = label;
     }
 
     void _s_Running_hdl_user_stop(LifecycleFrameEvent __e, LifecycleCompartment compartment) {

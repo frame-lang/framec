@@ -182,7 +182,7 @@ class Forward {
     }
 
     private fun _s_Start_hdl_user_run(__e: ForwardFrameEvent, compartment: ForwardCompartment) {
-        self.starts = self.starts + 1
+        this.starts = this.starts + 1
         val __compartment = __prepareEnter("Middle", mutableListOf<Any?>(), mutableListOf<Any?>())
         __compartment.forward_event = __e
         __transition(__compartment)
@@ -196,7 +196,7 @@ class Forward {
     }
 
     private fun _s_Middle_hdl_user_run(__e: ForwardFrameEvent, compartment: ForwardCompartment) {
-        self.middles = self.middles + 1
+        this.middles = this.middles + 1
     }
 
     private fun _s_End_hdl_user_finish(__e: ForwardFrameEvent, compartment: ForwardCompartment) {

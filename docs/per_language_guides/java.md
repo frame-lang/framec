@@ -72,7 +72,7 @@ public class WithInterface {
 }
 ```
 
-Frame's `self.field` lowers to `this.field` in the generated Java.
+Frame's `@@:self.field` lowers to `this.field` in the generated Java.
 Domain fields are private by default; interface methods are
 public.
 
@@ -423,7 +423,7 @@ driver. Don't write `WithInterface s = WithInterface()` — that's
 not legal Java.
 
 **`this.field`, not `self.field`.** Inside handler bodies, Frame's
-`self.x` lowers to `this.x` since Java's instance reference is
+`@@:self.x` lowers to `this.x` since Java's instance reference is
 `this`. If you write native Java inside a handler, use `this.`.
 
 **Imports go in the prolog, before `@@system`.** Java's `import`

@@ -59,7 +59,7 @@ end
 return Counter
 ```
 
-Frame's `self.field` lowers to `self.field` (table-key access), and
+Frame's `@@:self.field` lowers to `self.field` (table-key access), and
 method definitions use the colon syntax (`function Counter:method()`)
 so `self` is auto-passed by callers using `instance:method()`.
 

@@ -83,7 +83,7 @@ int Counter_get(Counter* self);
 void Counter_bump(Counter* self, int by);
 ```
 
-Frame's `self.field` lowers to `self->field` (pointer dereference),
+Frame's `@@:self.field` lowers to `self->field` (pointer dereference),
 and method calls are `Counter_method(self, args)` — no implicit
 `this`. The generated header makes the system handle opaque if the
 struct definition stays in the `.c` file, or transparent if you
@@ -415,7 +415,7 @@ Counter_bump(c, 5);
 ```
 
 **`self->field`, not `self.field`.** Inside handler bodies, Frame's
-`self.x` lowers to `self->x` because `self` is a pointer. If you
+`@@:self.x` lowers to `self->x` because `self` is a pointer. If you
 write native C inside a handler that uses `self`, you must use
 `self->`.
 

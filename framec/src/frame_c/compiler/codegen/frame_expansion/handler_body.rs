@@ -496,8 +496,16 @@ pub(crate) fn emit_handler_body_via_statements(
                                 }
                             }
 
-                            // Self-call guard — deferred until native line ends
-                            if *kind == FrameSegmentKind::ContextSelfCall {
+                            // Self-call guard — deferred until native line ends.
+                            // RFC-0046: a `@@:self.<action>(...)` call is a direct
+                            // action call (not a kernel-dispatched interface call),
+                            // so it cannot transition and must NOT get the guard.
+                            let is_action_call = matches!(
+                                metadata,
+                                crate::frame_c::compiler::native_region_scanner::SegmentMetadata::SelfCall { method, .. }
+                                    if ctx.actions.contains(method)
+                            );
+                            if *kind == FrameSegmentKind::ContextSelfCall && !is_action_call {
                                 let guard = super::generate_self_call_guard(
                                     *indent,
                                     lang,
@@ -559,4 +567,145 @@ pub(crate) fn emit_handler_body_via_statements(
     } else {
         text
     }
+}
+
+/// Expand only the `@@:self.*` constructs in an action or operation body
+/// (RFC-0046), returning the brace-stripped inner code.
+///
+/// Action and operation bodies are native passthrough — they are NOT routed
+/// through `emit_handler_body_via_statements`, so without this pass
+/// `@@:self.field`, `@@:self.field.method()`, and `@@:self.method()` would leak
+/// verbatim into the target. This scans the body span (boundary-safe: the
+/// scanner skips strings/comments), replaces each self segment with its
+/// per-target expansion, and leaves every other construct — `@@:(expr)`,
+/// `@@:system.state`, native code — untouched for the textual
+/// `expand_system_state_in_code` pass that runs next. No transition guard is
+/// emitted (action/operation bodies don't transition).
+pub(crate) fn expand_self_in_body(
+    span: &crate::frame_c::compiler::frame_ast::Span,
+    source: &[u8],
+    lang: TargetLanguage,
+    ctx: &HandlerContext,
+) -> String {
+    if span.start >= source.len() || span.end > source.len() || span.start >= span.end {
+        return String::new();
+    }
+    let body_bytes = &source[span.start..span.end];
+    super::super::interface_gen::strip_body_braces(&lower_self_in_code(body_bytes, lang, ctx))
+}
+
+/// Scan a `{ … }` body and lower every `@@:self.*` to its per-target form,
+/// returning the code with its braces still present (the caller strips them).
+/// Self constructs nested inside a native `return <expr>` (action/operation
+/// bodies use native `return`) are lowered too — the scanner groups
+/// `return @@:self.x` into one `ReturnStatement` segment, so the `@@:self`
+/// inside it is reached by recursively lowering the return expression.
+fn lower_self_in_code(body_bytes: &[u8], lang: TargetLanguage, ctx: &HandlerContext) -> String {
+    use crate::frame_c::compiler::native_region_scanner::RegionSpan;
+
+    let open_brace = match body_bytes.iter().position(|&b| b == b'{') {
+        Some(p) => p,
+        None => return String::from_utf8_lossy(body_bytes).to_string(),
+    };
+    let mut scanner = super::scanner_dispatch::get_native_scanner(lang);
+    let scan_result = match scanner.scan(body_bytes, open_brace) {
+        Ok(r) => r,
+        Err(_) => return String::from_utf8_lossy(body_bytes).to_string(),
+    };
+
+    let mut edits: Vec<(usize, usize, String)> = Vec::new();
+    for region in &scan_result.regions {
+        if let Region::FrameSegment {
+            span: rspan,
+            kind,
+            indent,
+            metadata,
+        } = region
+        {
+            let RegionSpan { start, end } = *rspan;
+            match kind {
+                FrameSegmentKind::ContextSelf
+                | FrameSegmentKind::ContextSelfFieldCall
+                | FrameSegmentKind::ContextSelfCall => {
+                    let expansion = super::generate_frame_expansion(
+                        body_bytes, rspan, *kind, *indent, lang, ctx, metadata,
+                    );
+                    edits.push((start, end, expansion));
+                }
+                FrameSegmentKind::ReturnStatement => {
+                    // Native `return <expr>` in an action/operation body: keep
+                    // `return` native, lower any `@@:self.*` in `<expr>`.
+                    let seg = String::from_utf8_lossy(&body_bytes[start..end]);
+                    if let Some(rest) = seg.trim_start().strip_prefix("return") {
+                        if rest.contains("@@:self") {
+                            let exp = format!("return{}", lower_self_in_fragment(rest, lang, ctx));
+                            edits.push((start, end, exp));
+                        }
+                    }
+                }
+                FrameSegmentKind::ContextReturnExpr => {
+                    // `@@:(<expr>)`: the textual `expand_system_state_in_code`
+                    // pass lowers the `@@:(…)` wrapper to `return …`, but it does
+                    // not descend into `<expr>`. Lower any `@@:self.*` in `<expr>`
+                    // here, preserving the `@@:(…)` wrapper for that pass.
+                    let seg = String::from_utf8_lossy(&body_bytes[start..end]).to_string();
+                    if let Some(open) = seg.find("@@:(") {
+                        let inner_start = open + "@@:(".len();
+                        let b = seg.as_bytes();
+                        let mut depth = 1i32;
+                        let mut j = inner_start;
+                        while j < b.len() && depth > 0 {
+                            match b[j] {
+                                b'(' => depth += 1,
+                                b')' => depth -= 1,
+                                _ => {}
+                            }
+                            if depth > 0 {
+                                j += 1;
+                            }
+                        }
+                        if j <= b.len() && seg[inner_start..j].contains("@@:self") {
+                            let lowered = lower_self_in_fragment(&seg[inner_start..j], lang, ctx);
+                            let rebuilt =
+                                format!("{}@@:({}){}", &seg[..open], lowered, &seg[j + 1..]);
+                            edits.push((start, end, rebuilt));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // Apply replacements right-to-left so earlier byte offsets stay valid.
+    let mut code = String::from_utf8_lossy(body_bytes).to_string();
+    edits.sort_by_key(|e| std::cmp::Reverse(e.0));
+    for (start, end, exp) in edits {
+        if start <= end
+            && end <= code.len()
+            && code.is_char_boundary(start)
+            && code.is_char_boundary(end)
+        {
+            code.replace_range(start..end, &exp);
+        }
+    }
+    code
+}
+
+/// Lower `@@:self.*` inside a code fragment that has no surrounding braces
+/// (e.g. a return expression). Wraps it in `{ … }` so the scanner has a body,
+/// reuses `lower_self_in_code`, then unwraps. The fragment carries no native
+/// `return`, so the recursion terminates after one level.
+fn lower_self_in_fragment(fragment: &str, lang: TargetLanguage, ctx: &HandlerContext) -> String {
+    if !fragment.contains("@@:self") {
+        return fragment.to_string();
+    }
+    let wrapped = format!("{{{}}}", fragment);
+    let lowered = lower_self_in_code(wrapped.as_bytes(), lang, ctx);
+    let t = lowered.trim_start();
+    let inner = t
+        .strip_prefix('{')
+        .map(|s| s.strip_suffix('}').unwrap_or(s))
+        .unwrap_or(&lowered);
+    inner.to_string()
 }

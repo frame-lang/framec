@@ -516,12 +516,12 @@ static void Consts_state_Running(Consts* self, Consts_FrameEvent* __e, Consts_Co
 }
 
 static void Consts_s_Running_hdl_user_get_count(Consts* self, Consts_FrameEvent* __e, Consts_Compartment* compartment) {
-    Consts_CTX(self)->_return = (void*)(intptr_t)(self.count);
+    Consts_CTX(self)->_return = (void*)(intptr_t)(self->count);
 }
 
 static void Consts_s_Running_hdl_user_tick(Consts* self, Consts_FrameEvent* __e, Consts_Compartment* compartment) {
-    self.count = self.count + self.step;
-    if self.count >= self.limit {
-        self.count = 0;
+    self->count = self->count + self->step;
+    if self->count >= self->limit {
+        self->count = 0;
     }
 }

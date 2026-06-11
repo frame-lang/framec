@@ -208,7 +208,7 @@ class Forward {
     }
 
     private function _s_Start_hdl_user_run($__e, $compartment) {
-        self.starts = self.starts + 1;
+        $this->starts = $this->starts + 1;
         $__compartment = $this->__prepareEnter("Middle", [], []);
         $__compartment->forward_event = $__e;
         $this->__transition($__compartment);
@@ -222,7 +222,7 @@ class Forward {
     }
 
     private function _s_Middle_hdl_user_run($__e, $compartment) {
-        self.middles = self.middles + 1
+        $this->middles = $this->middles + 1
     }
 
     private function _s_End_hdl_user_finish($__e, $compartment) {

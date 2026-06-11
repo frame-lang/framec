@@ -242,20 +242,20 @@ public class NoPersist {
     }
 
     private void _s_Active_hdl_user_bump(NoPersistFrameEvent __e, NoPersistCompartment compartment) {
-        self.count = self.count + 1
+        this.count = this.count + 1
     }
 
     private void _s_Active_hdl_user_get_cache(NoPersistFrameEvent __e, NoPersistCompartment compartment) {
-        _context_stack[_context_stack.Count - 1]._return = self.cache;
+        _context_stack[_context_stack.Count - 1]._return = this.cache;
     }
 
     private void _s_Active_hdl_user_get_count(NoPersistFrameEvent __e, NoPersistCompartment compartment) {
-        _context_stack[_context_stack.Count - 1]._return = self.count;
+        _context_stack[_context_stack.Count - 1]._return = this.count;
     }
 
     private void _s_Active_hdl_user_set_cache(NoPersistFrameEvent __e, NoPersistCompartment compartment) {
         int v = System.Convert.ToInt32(__e._parameters[0]);
-        self.cache = v
+        this.cache = v
     }
 
     private object __SerComp(NoPersistCompartment comp) {

@@ -29,6 +29,7 @@ pub(crate) fn generate_php_handler_method(
     source: &[u8],
     _has_state_vars: bool,
     defined_systems: &std::collections::HashSet<String>,
+    actions: &std::collections::HashSet<String>,
     _sys_param_locals: &[String],
     _is_start_state: bool,
     state_param_names: &std::collections::HashMap<String, Vec<String>>,
@@ -47,6 +48,7 @@ pub(crate) fn generate_php_handler_method(
         event_name: handler.event.clone(),
         parent_state: parent_state.map(|s| s.to_string()),
         defined_systems: defined_systems.clone(),
+        actions: actions.clone(),
         use_sv_comp: false,
         per_handler: true,
         state_var_types: handler_state_var_types.clone(),
@@ -57,6 +59,7 @@ pub(crate) fn generate_php_handler_method(
         state_hsm_parents: state_hsm_parents.clone(),
         current_return_type: handler.return_type.clone(),
         state_param_types: std::collections::HashMap::new(),
+        domain_field_types: std::collections::HashMap::new(),
     };
 
     let mut body = String::new();

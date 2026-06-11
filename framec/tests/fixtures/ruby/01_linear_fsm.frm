@@ -11,7 +11,7 @@
 
         $Active {
             progress(amount: Integer) {
-                self.total = self.total + amount
+                @@:self.total = @@:self.total + amount
             }
             finish() { -> $Done }
         }

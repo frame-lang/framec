@@ -185,13 +185,13 @@ class Lifecycle {
     }
 
     private fun _s_Running_hdl_frame_exit(__e: LifecycleFrameEvent, compartment: LifecycleCompartment) {
-        self.exited = self.exited + 1
+        this.exited = this.exited + 1
     }
 
     private fun _s_Running_hdl_frame_enter(__e: LifecycleFrameEvent, compartment: LifecycleCompartment) {
         val label = compartment.enter_args[0] as String
-        self.entered = self.entered + 1
-        self.tag = label
+        this.entered = this.entered + 1
+        this.tag = label
     }
 
     private fun _s_Running_hdl_user_stop(__e: LifecycleFrameEvent, compartment: LifecycleCompartment) {

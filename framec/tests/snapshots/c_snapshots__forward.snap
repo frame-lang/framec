@@ -543,7 +543,7 @@ static void Forward_state_End(Forward* self, Forward_FrameEvent* __e, Forward_Co
 }
 
 static void Forward_s_Start_hdl_user_run(Forward* self, Forward_FrameEvent* __e, Forward_Compartment* compartment) {
-    self.starts = self.starts + 1;
+    self->starts = self->starts + 1;
     Forward_Compartment* __compartment = Forward_prepareEnter(self, "Middle", NULL, NULL);
     __compartment->forward_event = __e;
     Forward_transition(self, __compartment);
@@ -561,7 +561,7 @@ static void Forward_s_Middle_hdl_user_finish(Forward* self, Forward_FrameEvent* 
 }
 
 static void Forward_s_Middle_hdl_user_run(Forward* self, Forward_FrameEvent* __e, Forward_Compartment* compartment) {
-    self.middles = self.middles + 1
+    self->middles = self->middles + 1
 }
 
 static void Forward_s_End_hdl_user_finish(Forward* self, Forward_FrameEvent* __e, Forward_Compartment* compartment) {

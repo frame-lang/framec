@@ -231,20 +231,20 @@ export class NoPersist {
     }
 
     _s_Active_hdl_user_bump(__e, compartment) {
-        self.count = self.count + 1
+        this.count = this.count + 1
     }
 
     _s_Active_hdl_user_get_cache(__e, compartment) {
-        this._context_stack[this._context_stack.length - 1]._return = self.cache;
+        this._context_stack[this._context_stack.length - 1]._return = this.cache;
     }
 
     _s_Active_hdl_user_get_count(__e, compartment) {
-        this._context_stack[this._context_stack.length - 1]._return = self.count;
+        this._context_stack[this._context_stack.length - 1]._return = this.count;
     }
 
     _s_Active_hdl_user_set_cache(__e, compartment) {
         const v = __e._parameters[0];
-        self.cache = v
+        this.cache = v
     }
 
     snapshot() {

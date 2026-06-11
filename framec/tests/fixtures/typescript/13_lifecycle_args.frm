@@ -13,15 +13,15 @@
 
         $Active {
             $>(count: number, name: string) {
-                self.sum = count + 1;
-                self.label = name;
+                @@:self.sum = count + 1;
+                @@:self.label = name;
             }
             total(): number {
-                @@:(self.sum)
+                @@:(@@:self.sum)
                 return
             }
             tag(): string {
-                @@:(self.label)
+                @@:(@@:self.label)
                 return
             }
         }

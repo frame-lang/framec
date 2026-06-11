@@ -219,13 +219,13 @@ func (s *PushPop) _s_Idle_hdl_user_nest(__e *PushPopFrameEvent, compartment *Pus
 
 func (s *PushPop) _s_Idle_hdl_user_ping(__e *PushPopFrameEvent, compartment *PushPopCompartment) {
     {
-    self.pings = self.pings + 1
+    s.pings = s.pings + 1
     }
 }
 
 func (s *PushPop) _s_Nested_hdl_user_leaf(__e *PushPopFrameEvent, compartment *PushPopCompartment) {
     {
-    self.leaves = self.leaves + 1
+    s.leaves = s.leaves + 1
     }
 }
 

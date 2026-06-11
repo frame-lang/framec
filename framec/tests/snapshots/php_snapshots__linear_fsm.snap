@@ -230,6 +230,6 @@ class LinearFsm {
 
     private function _s_Active_hdl_user_progress($__e, $compartment) {
         $amount = $__e->_parameters[0];
-        self.total = self.total + amount
+        $this->total = $this->total + amount
     }
 }

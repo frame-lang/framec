@@ -235,17 +235,17 @@ class LifecycleArgs {
     void _s_Active_hdl_frame_enter(LifecycleArgsFrameEvent __e, LifecycleArgsCompartment compartment) {
         final count = compartment.enter_args[0] as int;
         final name = compartment.enter_args[1] as String;
-        self.sum = count + 1;
-        self.label = name;
+        this.sum = count + 1;
+        this.label = name;
     }
 
     void _s_Active_hdl_user_tag(LifecycleArgsFrameEvent __e, LifecycleArgsCompartment compartment) {
-        this._context_stack[this._context_stack.length - 1]._return = self.label;
+        this._context_stack[this._context_stack.length - 1]._return = this.label;
                         return
     }
 
     void _s_Active_hdl_user_total(LifecycleArgsFrameEvent __e, LifecycleArgsCompartment compartment) {
-        this._context_stack[this._context_stack.length - 1]._return = self.sum;
+        this._context_stack[this._context_stack.length - 1]._return = this.sum;
                         return
     }
 }

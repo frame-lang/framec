@@ -6,13 +6,13 @@
     machine:
         $Start {
             run() {
-                self.starts = self.starts + 1
+                @@:self.starts = @@:self.starts + 1
                 -> => $Middle
             }
         }
 
         $Middle {
-            run() { self.middles = self.middles + 1 }
+            run() { @@:self.middles = @@:self.middles + 1 }
             finish() { -> $End }
         }
 

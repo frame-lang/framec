@@ -72,3 +72,48 @@ fn no_persist() {
 fn lifecycle_args() {
     insta::assert_snapshot!(compile_fixture("13_lifecycle_args", "cpp"));
 }
+
+/// Regression test for issue #69 — C++ `@@:self` lowering across all sections.
+///
+/// Snapshot tests only diff TEXT, so an unlowered `@@:self` could freeze into
+/// a `.snap` undetected — the cpp backend has no compile-gate (unlike
+/// js/lua/php/python/ruby/rust, which run `compile_check_all`; cf. #60). This
+/// pipes the dedicated `16_self_member_lowering` fixture through
+/// `g++ -fsyntax-only`. The fixture is valid C++ apart from its `@@:self`
+/// references, so the only thing that can make the compiler reject it is an
+/// unlowered `@@:self` — and it exercises every section the lowering must
+/// reach: a handler body, an `operations:` body, an `actions:` body, a native
+/// `return @@:self.x`, a `@@:(@@:self.x)` return-expr, and a cross-system
+/// embed call (`@@:self.inner.ping()` → `this->inner->ping()`).
+///
+/// Skipped (not failed) when no C++ compiler is on PATH, matching the
+/// RFC-0034 convention in the other backends' compile checks.
+#[test]
+fn issue69_self_member_lowering_compiles() {
+    use std::process::Command;
+    let cxx = match common::find_tool("g++")
+        .or_else(|| common::find_tool("clang++"))
+        .or_else(|| common::find_tool("c++"))
+    {
+        Some(p) => p,
+        None => {
+            eprintln!("issue #69 cpp compile check skipped: no C++ compiler on PATH");
+            return;
+        }
+    };
+    let code = compile_fixture("16_self_member_lowering", "cpp");
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("16_self_member_lowering.cpp");
+    std::fs::write(&path, &code).expect("write tempfile");
+    let out = Command::new(&cxx)
+        .args(["-std=c++17", "-fsyntax-only"])
+        .arg(&path)
+        .output()
+        .expect("c++ process");
+    assert!(
+        out.status.success(),
+        "issue #69: framec emits C++ with an unlowered `@@:self` that the compiler rejects.\n--- stderr ---\n{}\n--- generated source ---\n{}",
+        String::from_utf8_lossy(&out.stderr),
+        code
+    );
+}

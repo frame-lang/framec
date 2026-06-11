@@ -224,20 +224,20 @@ class MiniHsm {
     }
 
     private fun _s_Awake_hdl_frame_enter(__e: MiniHsmFrameEvent, compartment: MiniHsmCompartment) {
-        self.awakes = self.awakes + 1
+        this.awakes = this.awakes + 1
     }
 
     private fun _s_Awake_hdl_user_signal(__e: MiniHsmFrameEvent, compartment: MiniHsmCompartment) {
-        self.last = 1
+        this.last = 1
         _state_Live(__e, compartment.parent_compartment!!)
     }
 
     private fun _s_Asleep_hdl_frame_enter(__e: MiniHsmFrameEvent, compartment: MiniHsmCompartment) {
-        self.sleeps = self.sleeps + 1
+        this.sleeps = this.sleeps + 1
     }
 
     private fun _s_Asleep_hdl_user_signal(__e: MiniHsmFrameEvent, compartment: MiniHsmCompartment) {
-        self.last = 2
+        this.last = 2
         _state_Live(__e, compartment.parent_compartment!!)
     }
 

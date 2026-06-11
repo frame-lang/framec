@@ -603,11 +603,11 @@ static void Counter_state_Counting(Counter* self, Counter_FrameEvent* __e, Count
 static void Counter_s_Counting_hdl_user_increment(Counter* self, Counter_FrameEvent* __e, Counter_Compartment* compartment) {
     int by = (int)(intptr_t)Counter_FrameVec_get(__e->_parameters, 0);
     (void)by;
-    self.count = self.count + by
+    self->count = self->count + by
 }
 
 static void Counter_s_Counting_hdl_user_value(Counter* self, Counter_FrameEvent* __e, Counter_Compartment* compartment) {
-    Counter_CTX(self)->_return = (void*)(intptr_t)(self.count);
+    Counter_CTX(self)->_return = (void*)(intptr_t)(self->count);
 }
 
 static cJSON* Counter_serialize_compartment(Counter_Compartment* comp) {

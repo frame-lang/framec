@@ -196,15 +196,15 @@ export class Actions {
     }
 
     _s_Counting_hdl_user_get_total(__e, compartment) {
-        this._context_stack[this._context_stack.length - 1]._return = self.total;
+        this._context_stack[this._context_stack.length - 1]._return = this.total;
     }
 
     _s_Counting_hdl_user_increment(__e, compartment) {
         const n = __e._parameters[0];
-        self._scale(n)
+        this._scale(n);
     }
 
     _scale(n) {
-                    self.total = self.total + n * 2
+                    this.total = this.total + n * 2
     }
 }

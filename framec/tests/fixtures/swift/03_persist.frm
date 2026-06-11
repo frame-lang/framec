@@ -9,10 +9,10 @@
     machine:
         $Counting {
             increment(by: Int) {
-                self.count = self.count + by
+                @@:self.count = @@:self.count + by
             }
             value(): Int {
-                @@:(self.count)
+                @@:(@@:self.count)
             }
         }
 

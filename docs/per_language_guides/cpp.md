@@ -86,9 +86,10 @@ private:
 };
 ```
 
-Frame's `self.field` lowers to bare `field` (implicit `this` in C++
-member methods) — no explicit `this->` is required, though the
-generated code uses `this->` for clarity in some contexts.
+Frame's `@@:self.field` lowers to `this->field` in the generated C++.
+A bare native `self.field` is passed through verbatim — invalid C++,
+which has no `self` — so use `@@:self.field` (portable) or native
+`this->field`.
 Instances can be stack-allocated:
 
 ```cpp
@@ -364,10 +365,11 @@ explicitly.
 For the first operand of a `+`-chain, use the constructor; the
 rest of the chain promotes via overloads.
 
-**Implicit `this->` works inside member methods.** Frame's
-`self.field` lowers to bare `field` access in the generated C++.
-You do not need to write `this->field` in handler bodies (though
-the codegen does for clarity in some emitted code paths).
+**`this->field`, not `self.field`.** Frame's `@@:self.field` lowers to
+`this->field` in the generated C++ (and `@@:self.embed.method()` derefs a
+`shared_ptr` embed as `this->embed->method()`). A bare native `self.` is
+passed through verbatim — invalid C++ — so write `@@:self.field` for
+portable access, or native `this->field`.
 
 **Domain field defaults use C++11 in-class initializers.** A
 domain field declared `count: int = 0` lowers to `int count = 0;`

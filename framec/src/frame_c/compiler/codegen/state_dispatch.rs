@@ -842,6 +842,36 @@ pub(crate) fn generate_per_handler_methods(
 ) -> Vec<CodegenNode> {
     let mut methods = Vec::new();
 
+    // Domain field name → declared type (clean, e.g. `Ship`). Used by the C++
+    // `@@:self.field.method()` lowering (RFC-0046) to tell an embedded system
+    // (deref with `->`) from a scalar field (`.`). arcanum stores the type as
+    // the Debug-formatted `Type` (`Custom("Ship")`); unwrap to the bare name.
+    let domain_field_types: std::collections::HashMap<String, String> = arcanum
+        .systems
+        .get(system_name)
+        .map(|entry| {
+            entry
+                .domain_symbols
+                .iter()
+                .filter_map(|(name, sym)| {
+                    let ty = sym
+                        .symbol_type
+                        .as_deref()
+                        .and_then(|t| t.strip_prefix("Custom(\"")?.strip_suffix("\")"))?;
+                    Some((name.clone(), ty.to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // The system's action names (RFC-0046): `@@:self.<action>(args)` is a
+    // direct call and must NOT receive the self-call transition guard.
+    let actions: std::collections::HashSet<String> = arcanum
+        .systems
+        .get(system_name)
+        .map(|entry| entry.actions.clone())
+        .unwrap_or_default();
+
     // State → declared HSM parent map for use by transition codegen inside
     // handler bodies (so `-> $Child` where Child => Parent constructs the
     // full chain rather than patching parent_compartment = self.__compartment).
@@ -917,6 +947,7 @@ pub(crate) fn generate_per_handler_methods(
                 source,
                 has_state_vars,
                 defined_systems,
+                &actions,
                 &empty,
                 is_start_state,
                 state_param_names,
@@ -926,6 +957,7 @@ pub(crate) fn generate_per_handler_methods(
                 &handler_state_var_types,
                 &state_hsm_parents,
                 state_param_types,
+                &domain_field_types,
             );
             methods.push(method);
         }
@@ -950,6 +982,7 @@ pub(crate) fn generate_per_handler_methods(
                 source,
                 has_state_vars,
                 defined_systems,
+                &actions,
                 &empty,
                 is_start_state,
                 state_param_names,
@@ -959,6 +992,7 @@ pub(crate) fn generate_per_handler_methods(
                 &handler_state_var_types,
                 &state_hsm_parents,
                 state_param_types,
+                &domain_field_types,
             );
             // Per-handler leading comments (from `HandlerAst.leading_comments`
             // / `EnterHandler.leading_comments` / `ExitHandler.leading_comments`,
@@ -996,6 +1030,7 @@ fn generate_per_handler_method_for_lang(
     source: &[u8],
     has_state_vars: bool,
     defined_systems: &std::collections::HashSet<String>,
+    actions: &std::collections::HashSet<String>,
     sys_param_locals: &[String],
     is_start_state: bool,
     state_param_names: &std::collections::HashMap<String, Vec<String>>,
@@ -1005,6 +1040,7 @@ fn generate_per_handler_method_for_lang(
     handler_state_var_types: &std::collections::HashMap<String, String>,
     state_hsm_parents: &std::collections::HashMap<String, String>,
     state_param_types: &std::collections::HashMap<(String, String), String>,
+    domain_field_types: &std::collections::HashMap<String, String>,
 ) -> CodegenNode {
     match lang {
         TargetLanguage::Python3 => generate_python_handler_method(
@@ -1016,6 +1052,7 @@ fn generate_per_handler_method_for_lang(
             source,
             has_state_vars,
             defined_systems,
+            actions,
             sys_param_locals,
             is_start_state,
             state_param_names,
@@ -1036,6 +1073,7 @@ fn generate_per_handler_method_for_lang(
                 source,
                 has_state_vars,
                 defined_systems,
+                &actions,
                 sys_param_locals,
                 is_start_state,
                 state_param_names,
@@ -1055,6 +1093,7 @@ fn generate_per_handler_method_for_lang(
             source,
             has_state_vars,
             defined_systems,
+            actions,
             sys_param_locals,
             is_start_state,
             state_param_names,
@@ -1073,6 +1112,7 @@ fn generate_per_handler_method_for_lang(
             source,
             has_state_vars,
             defined_systems,
+            actions,
             sys_param_locals,
             is_start_state,
             state_param_names,
@@ -1092,6 +1132,7 @@ fn generate_per_handler_method_for_lang(
             source,
             has_state_vars,
             defined_systems,
+            actions,
             sys_param_locals,
             is_start_state,
             state_param_names,
@@ -1110,6 +1151,7 @@ fn generate_per_handler_method_for_lang(
             source,
             has_state_vars,
             defined_systems,
+            actions,
             sys_param_locals,
             is_start_state,
             state_param_names,
@@ -1129,6 +1171,7 @@ fn generate_per_handler_method_for_lang(
             source,
             has_state_vars,
             defined_systems,
+            actions,
             sys_param_locals,
             is_start_state,
             state_param_names,
@@ -1147,6 +1190,7 @@ fn generate_per_handler_method_for_lang(
             source,
             has_state_vars,
             defined_systems,
+            actions,
             sys_param_locals,
             is_start_state,
             state_param_names,
@@ -1166,6 +1210,7 @@ fn generate_per_handler_method_for_lang(
             source,
             has_state_vars,
             defined_systems,
+            actions,
             sys_param_locals,
             is_start_state,
             state_param_names,
@@ -1185,6 +1230,7 @@ fn generate_per_handler_method_for_lang(
             source,
             has_state_vars,
             defined_systems,
+            actions,
             sys_param_locals,
             is_start_state,
             state_param_names,
@@ -1204,6 +1250,7 @@ fn generate_per_handler_method_for_lang(
             source,
             has_state_vars,
             defined_systems,
+            actions,
             sys_param_locals,
             is_start_state,
             state_param_names,
@@ -1223,6 +1270,7 @@ fn generate_per_handler_method_for_lang(
             source,
             has_state_vars,
             defined_systems,
+            actions,
             sys_param_locals,
             is_start_state,
             state_param_names,
@@ -1232,6 +1280,7 @@ fn generate_per_handler_method_for_lang(
             handler_state_var_types,
             state_hsm_parents,
             state_param_types,
+            domain_field_types,
         ),
         TargetLanguage::CSharp => generate_csharp_handler_method(
             system_name,
@@ -1242,6 +1291,7 @@ fn generate_per_handler_method_for_lang(
             source,
             has_state_vars,
             defined_systems,
+            actions,
             sys_param_locals,
             is_start_state,
             state_param_names,
@@ -1261,6 +1311,7 @@ fn generate_per_handler_method_for_lang(
             source,
             has_state_vars,
             defined_systems,
+            actions,
             sys_param_locals,
             is_start_state,
             state_param_names,
@@ -1270,6 +1321,7 @@ fn generate_per_handler_method_for_lang(
             handler_state_var_types,
             state_hsm_parents,
             state_param_types,
+            domain_field_types,
         ),
         _ => unreachable!(
             "generate_per_handler_method_for_lang called with non-per-handler target {:?}",
@@ -1342,6 +1394,8 @@ pub(crate) fn generate_state_method(
         state_hsm_parents: std::collections::HashMap::new(),
         current_return_type: None,
         state_param_types: std::collections::HashMap::new(),
+        domain_field_types: std::collections::HashMap::new(),
+        actions: std::collections::HashSet::new(),
     };
 
     // Generate the dispatch body based on __e._message / __e.message
@@ -1513,6 +1567,7 @@ pub(crate) fn generate_handler_from_arcanum(
     lang: TargetLanguage,
     _has_state_vars: bool,
     defined_systems: &std::collections::HashSet<String>,
+    actions: &std::collections::HashSet<String>,
     sys_param_locals: &[String],
     is_start_state: bool,
     non_start_state_param_names: &[String],
@@ -1589,6 +1644,8 @@ pub(crate) fn generate_handler_from_arcanum(
         state_hsm_parents: state_hsm_parents.clone(),
         current_return_type: handler.return_type.clone(),
         state_param_types: std::collections::HashMap::new(),
+        domain_field_types: std::collections::HashMap::new(),
+        actions: actions.clone(),
     };
 
     // Emit handler default return value if present

@@ -40,7 +40,7 @@ class WithInterface {
 }
 ```
 
-Frame's `self.field` lowers to `this.field`.
+Frame's `@@:self.field` lowers to `this.field`.
 
 ---
 

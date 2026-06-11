@@ -200,20 +200,20 @@ class NoPersist {
     }
 
     private fun _s_Active_hdl_user_bump(__e: NoPersistFrameEvent, compartment: NoPersistCompartment) {
-        self.count = self.count + 1
+        this.count = this.count + 1
     }
 
     private fun _s_Active_hdl_user_get_cache(__e: NoPersistFrameEvent, compartment: NoPersistCompartment) {
-        _context_stack[_context_stack.size - 1]._return = self.cache
+        _context_stack[_context_stack.size - 1]._return = this.cache
     }
 
     private fun _s_Active_hdl_user_get_count(__e: NoPersistFrameEvent, compartment: NoPersistCompartment) {
-        _context_stack[_context_stack.size - 1]._return = self.count
+        _context_stack[_context_stack.size - 1]._return = this.count
     }
 
     private fun _s_Active_hdl_user_set_cache(__e: NoPersistFrameEvent, compartment: NoPersistCompartment) {
         val v = __e._parameters[0] as Int
-        self.cache = v
+        this.cache = v
     }
 
     private fun __serComp(comp: NoPersistCompartment?): Any? {

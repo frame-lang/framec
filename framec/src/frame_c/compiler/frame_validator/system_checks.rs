@@ -45,6 +45,18 @@ impl FrameValidator {
     ) {
         let interface_methods = self.build_interface_map(system);
 
+        // RFC-0046: `@@:self.<field>` must resolve to a declared domain field
+        // (or an interface method). Collect the domain field names so the
+        // segment walker can reject unknown members with E609.
+        let domain_fields: std::collections::HashSet<String> =
+            system.domain.iter().map(|d| d.name.clone()).collect();
+
+        // RFC-0046: `@@:self.<action>(args)` is a valid direct action call.
+        // Collect action names so the kind-10 walk accepts them instead of
+        // rejecting with E601.
+        let actions: std::collections::HashSet<String> =
+            system.actions.iter().map(|a| a.name.clone()).collect();
+
         // Validate handler bodies using the scanner (handles comments, strings correctly)
         if let Some(machine) = &system.machine {
             for state in &machine.states {
@@ -57,6 +69,8 @@ impl FrameValidator {
                     self.validate_frame_segments_in_body(
                         body,
                         &interface_methods,
+                        &domain_fields,
+                        &actions,
                         &state.name,
                         &handler.event,
                         target,
@@ -75,6 +89,8 @@ impl FrameValidator {
             self.validate_frame_segments_in_body(
                 body,
                 &interface_methods,
+                &domain_fields,
+                &actions,
                 "(action)",
                 &action.name,
                 target,
@@ -302,6 +318,8 @@ impl FrameValidator {
         &mut self,
         body: &[u8],
         interface_methods: &HashMap<String, &InterfaceMethod>,
+        domain_fields: &std::collections::HashSet<String>,
+        actions: &std::collections::HashSet<String>,
         scope_outer: &str,
         scope_inner: &str,
         target: crate::frame_c::visitors::TargetLanguage,
@@ -339,11 +357,13 @@ impl FrameValidator {
                                         )
                                     ));
                                 }
-                            } else {
+                            } else if !actions.contains(method.as_str()) {
+                                // Not an interface method and not an action (RFC-0046:
+                                // `@@:self.<action>(args)` is a valid direct call).
                                 self.errors.push(ValidationError::new(
                                     "E601",
                                     format!(
-                                        "@@:self.{}() in {}/{} — method '{}' not found in interface",
+                                        "@@:self.{}() in {}/{} — '{}' is not an interface method or action",
                                         method, scope_outer, scope_inner, method
                                     )
                                 ));
@@ -351,15 +371,52 @@ impl FrameValidator {
                         }
                     }
 
-                    // E603: bare @@:self without .method()
+                    // ContextSelf covers both bare `@@:self` (→ E603) and the
+                    // RFC-0046 field form `@@:self.<field>` (→ resolve the member).
                     FrameSegmentKind::ContextSelf => {
-                        self.errors.push(ValidationError::new(
-                            "E603",
-                            format!(
-                                "bare `@@:self` in {}/{} — `@@:self` requires a member access (e.g. `@@:self.method(args)`)",
-                                scope_outer, scope_inner
-                            ),
-                        ));
+                        if let SegmentMetadata::SelfField { field } = metadata {
+                            // E609: `@@:self.<field>` must name a domain field or
+                            // an interface method (the latter is the no-paren
+                            // reference form). Unknown → reject; the symbol table
+                            // has the answer at compile time (RFC-0046 D3).
+                            if !domain_fields.contains(field)
+                                && !interface_methods.contains_key(field.as_str())
+                            {
+                                self.errors.push(ValidationError::new(
+                                    "E609",
+                                    format!(
+                                        "`@@:self.{}` in {}/{} references no known domain field or interface method",
+                                        field, scope_outer, scope_inner
+                                    ),
+                                ));
+                            }
+                        } else {
+                            // Bare `@@:self` — requires a member access.
+                            self.errors.push(ValidationError::new(
+                                "E603",
+                                format!(
+                                    "bare `@@:self` in {}/{} — `@@:self` requires a member access (e.g. `@@:self.method(args)`)",
+                                    scope_outer, scope_inner
+                                ),
+                            ));
+                        }
+                    }
+
+                    // E609: `@@:self.field.method()` (RFC-0046) — `field` must be
+                    // a domain field. (Embed-vs-scalar is decided at codegen from
+                    // the field's type; here we only confirm the field exists.)
+                    FrameSegmentKind::ContextSelfFieldCall => {
+                        if let SegmentMetadata::SelfFieldCall { field, .. } = metadata {
+                            if !domain_fields.contains(field) {
+                                self.errors.push(ValidationError::new(
+                                    "E609",
+                                    format!(
+                                        "`@@:self.{}.…()` in {}/{} references no known domain field",
+                                        field, scope_outer, scope_inner
+                                    ),
+                                ));
+                            }
+                        }
                     }
 
                     // E604: bare @@:system without a recognized member

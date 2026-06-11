@@ -189,10 +189,10 @@ func (s *Actions) _s_Counting_hdl_user_increment(__e *ActionsFrameEvent, compart
     n := __e._parameters[0].(int)
     _ = n
     {
-    self._scale(n)
+    s._scale(n)
     }
 }
 
 func (s *Actions) _scale(n int) {
-                self.total = self.total + n * 2
+                s.total = s.total + n * 2
 }

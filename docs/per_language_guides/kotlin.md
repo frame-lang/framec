@@ -56,7 +56,7 @@ class WithInterface {
 }
 ```
 
-Frame's `self.field` lowers to `this.field` (Kotlin's instance
+Frame's `@@:self.field` lowers to `this.field` (Kotlin's instance
 reference is `this`). Method calls are `s.greet("World")` — no
 explicit `this.` needed at call sites.
 
@@ -321,7 +321,7 @@ above.
 lowers to bare `WithInterface()`.
 
 **`this.field`, not `self.field`.** Inside handler bodies,
-Frame's `self.x` lowers to `this.x` (or just `x` since
+Frame's `@@:self.x` lowers to `this.x` (or just `x` since
 Kotlin's resolution is implicit on member access). Native
 passthrough should use `this.` if disambiguation is needed.
 

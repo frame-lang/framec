@@ -46,7 +46,7 @@ class WithInterface {
 }
 ```
 
-Frame's `self.field` lowers to `this.field`. Method calls use
+Frame's `@@:self.field` lowers to `this.field`. Method calls use
 `s.greet("World")`.
 
 ---

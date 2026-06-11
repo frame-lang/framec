@@ -229,20 +229,20 @@ class NoPersist {
     }
 
     void _s_Active_hdl_user_bump(NoPersistFrameEvent __e, NoPersistCompartment compartment) {
-        self.count = self.count + 1
+        this.count = this.count + 1
     }
 
     void _s_Active_hdl_user_get_cache(NoPersistFrameEvent __e, NoPersistCompartment compartment) {
-        this._context_stack[this._context_stack.length - 1]._return = self.cache;
+        this._context_stack[this._context_stack.length - 1]._return = this.cache;
     }
 
     void _s_Active_hdl_user_get_count(NoPersistFrameEvent __e, NoPersistCompartment compartment) {
-        this._context_stack[this._context_stack.length - 1]._return = self.count;
+        this._context_stack[this._context_stack.length - 1]._return = this.count;
     }
 
     void _s_Active_hdl_user_set_cache(NoPersistFrameEvent __e, NoPersistCompartment compartment) {
         final v = __e._parameters[0] as int;
-        self.cache = v
+        this.cache = v
     }
 
     String snapshot() {

@@ -31,7 +31,9 @@ use utility::{
     split_transition_return, strip_outer_parens,
 };
 
-pub(crate) use handler_body::{emit_handler_body_via_statements, resolve_state_arg_key};
+pub(crate) use handler_body::{
+    emit_handler_body_via_statements, expand_self_in_body, resolve_state_arg_key,
+};
 pub(crate) use no_init::generate_no_initialization;
 pub(crate) use scanner_dispatch::{
     expand_system_state, expand_system_state_in_code, get_native_scanner,
@@ -137,6 +139,9 @@ pub(crate) fn generate_frame_expansion(
         FrameSegmentKind::ContextSelfCall => {
             context_self::expand_context_self_call(body_bytes, span, indent, lang, ctx, metadata)
         }
+        FrameSegmentKind::ContextSelfFieldCall => context_self::expand_context_self_field_call(
+            body_bytes, span, indent, lang, ctx, metadata,
+        ),
         FrameSegmentKind::ReturnStatement => {
             return_stmt::expand_return_statement(body_bytes, span, indent, lang, ctx, metadata)
         }
@@ -169,6 +174,8 @@ mod tests {
             state_hsm_parents: std::collections::HashMap::new(),
             current_return_type: None,
             state_param_types: std::collections::HashMap::new(),
+            domain_field_types: std::collections::HashMap::new(),
+            actions: std::collections::HashSet::new(),
         }
     }
 

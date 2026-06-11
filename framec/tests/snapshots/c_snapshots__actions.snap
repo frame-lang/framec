@@ -513,15 +513,15 @@ static void Actions_state_Counting(Actions* self, Actions_FrameEvent* __e, Actio
 }
 
 static void Actions_s_Counting_hdl_user_get_total(Actions* self, Actions_FrameEvent* __e, Actions_Compartment* compartment) {
-    Actions_CTX(self)->_return = (void*)(intptr_t)(self.total);
+    Actions_CTX(self)->_return = (void*)(intptr_t)(self->total);
 }
 
 static void Actions_s_Counting_hdl_user_increment(Actions* self, Actions_FrameEvent* __e, Actions_Compartment* compartment) {
     int n = (int)(intptr_t)Actions_FrameVec_get(__e->_parameters, 0);
     (void)n;
-    self._scale(n)
+    Actions__scale(self, n);
 }
 
 static void Actions__scale(Actions* self, int n) {
-                self.total = self.total + n * 2
+                self->total = self->total + n * 2
 }

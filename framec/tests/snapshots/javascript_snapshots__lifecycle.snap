@@ -218,13 +218,13 @@ export class Lifecycle {
     }
 
     _s_Running_hdl_frame_exit(__e, compartment) {
-        self.exited = self.exited + 1
+        this.exited = this.exited + 1
     }
 
     _s_Running_hdl_frame_enter(__e, compartment) {
         const label = compartment.enter_args[0];
-        self.entered = self.entered + 1;
-        self.tag = label;
+        this.entered = this.entered + 1;
+        this.tag = label;
     }
 
     _s_Running_hdl_user_stop(__e, compartment) {

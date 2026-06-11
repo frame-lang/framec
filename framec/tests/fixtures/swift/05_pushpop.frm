@@ -7,7 +7,7 @@
 
     machine:
         $Idle {
-            ping() { self.pings = self.pings + 1 }
+            ping() { @@:self.pings = @@:self.pings + 1 }
             nest() {
                 push$
                 -> $Nested
@@ -15,7 +15,7 @@
         }
 
         $Nested {
-            leaf() { self.leaves = self.leaves + 1 }
+            leaf() { @@:self.leaves = @@:self.leaves + 1 }
             unnest() { -> pop$ }
         }
 
