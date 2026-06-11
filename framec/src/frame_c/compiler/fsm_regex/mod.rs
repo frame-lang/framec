@@ -41,6 +41,7 @@ pub mod ast;
 pub mod hopcroft;
 pub mod metrics;
 pub mod parser;
+pub mod pike;
 pub mod restrictions;
 pub mod size_check;
 pub mod subset;
@@ -49,9 +50,10 @@ pub mod unicode;
 
 /// The alphabet of a regex. Determined by the `@@fsm`'s input parameter
 /// type (RFC-0042 §6.1).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Alphabet {
     /// Octets 0..=255. Default for `bytes` input.
+    #[default]
     Bytes,
     /// Unicode code points. For `char` input.
     Char,
@@ -119,6 +121,11 @@ pub struct CompiledRegex {
     /// alphabet only, §11.6). The validator uses this to enforce the
     /// `@@[allow(unicode_classes)]` opt-in; the DFA itself is range-only.
     pub used_unicode_class: bool,
+    /// `Some` when the regex contains a lazy quantifier (§11.1): a Pike VM
+    /// program (leftmost-first match-end semantics) replaces the DFA. The
+    /// `dfa` field is then an empty placeholder — matchers route to the Pike
+    /// program. Bytes/char alphabets only (token + lazy is gated out).
+    pub program: Option<pike::Program>,
 }
 
 /// Why a regex failed to compile.
@@ -202,6 +209,35 @@ pub fn compile(
         return Err(CompileError::UnsupportedAnchors(span));
     }
 
+    // 3b. Lazy quantifiers (§11.1) need per-quantifier match-end preference,
+    //     which a single longest-match DFA cannot express. Such stages compile
+    //     to a priority-ordered NFA program run by the Pike VM instead. The
+    //     `dfa` is left an empty placeholder; matchers route to `program`.
+    //     Token + lazy was already rejected (E720, no scalar element notion),
+    //     so this path is bytes/char only.
+    if pike::contains_lazy(&ast) {
+        let program = pike::compile(&ast, alphabet);
+        // The DFA/metrics are unused on the Pike path; emit empty placeholders
+        // so the shared `CompiledRegex` shape holds.
+        let placeholder_dfa = subset::Dfa {
+            states: Vec::new(),
+            start: 0,
+            alphabet,
+        };
+        let metrics = metrics::collect(&placeholder_dfa);
+        return Ok(CompiledRegex {
+            dfa: placeholder_dfa,
+            metrics,
+            warnings: Vec::new(),
+            requires_start,
+            requires_end,
+            start_boundary,
+            end_boundary,
+            used_unicode_class,
+            program: Some(program),
+        });
+    }
+
     // 4. Thompson NFA over the anchor-free core.
     let nfa = thompson::build(&ast, alphabet);
     if subset::nfa_has_anchors(&nfa) {
@@ -246,6 +282,7 @@ pub fn compile(
         start_boundary,
         end_boundary,
         used_unicode_class,
+        program: None,
     })
 }
 
@@ -387,7 +424,13 @@ mod engine_tests {
 
     #[test]
     fn rejects_forbidden_with_e720() {
-        let err = compile("a*?", Alphabet::Bytes, size_check::DEFAULT_MAX_DFA_STATES).unwrap_err();
+        // A backreference is non-regular — still E720.
+        let err = compile(
+            "(a)\\1",
+            Alphabet::Bytes,
+            size_check::DEFAULT_MAX_DFA_STATES,
+        )
+        .unwrap_err();
         match err {
             CompileError::Diagnostics(ds) => assert!(ds.iter().any(|d| d.code == "E720")),
             other => panic!("got {:?}", other),
@@ -481,11 +524,22 @@ mod engine_tests {
         .expect("bounded repetition compiles");
     }
 
-    /// FSM-TEST-306b — lazy quantifiers are deferred in v0.1 and rejected with
-    /// E720 (the greedy-semantics companion FSM-TEST-306 is a runtime test).
+    /// FSM-TEST-306b — lazy quantifiers (v0.2, §11.1). On bytes/char a stage
+    /// with a lazy quantifier compiles to a Pike program (the runtime
+    /// leftmost-first semantics are exercised by `super::pike` + the backend
+    /// execution tests). On the `token` alphabet lazy is unsupported (E720).
     #[test]
-    fn fsm_test_306b_lazy_quantifier_rejected() {
-        assert_code("a.*?b", Alphabet::Bytes, "E720");
+    fn fsm_test_306b_lazy_quantifier_compiles_to_program() {
+        let r = compile("a.*?b", Alphabet::Bytes, size_check::DEFAULT_MAX_DFA_STATES)
+            .expect("lazy compiles on bytes");
+        assert!(r.program.is_some(), "lazy stage must carry a Pike program");
+        assert!(
+            compile("a.*b", Alphabet::Bytes, size_check::DEFAULT_MAX_DFA_STATES)
+                .unwrap()
+                .program
+                .is_none()
+        );
+        assert_code("A*?", Alphabet::Token, "E720");
     }
 
     /// Unicode classes (§6.7/§11.6): on the `char` alphabet `\p{...}` resolves

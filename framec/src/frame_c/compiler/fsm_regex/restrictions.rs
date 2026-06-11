@@ -109,13 +109,17 @@ fn visit(node: &SpannedNode, alphabet: Alphabet, diagnostics: &mut Vec<Diagnosti
         RegexNode::Quantifier {
             inner, laziness, ..
         } => {
-            if *laziness == Laziness::Lazy {
+            // Lazy quantifiers (§11.1) compile to a Pike VM program over the
+            // alphabet's *scalar* element values. The token alphabet matches by
+            // name and has no scalar notion, so lazy + token stays unsupported;
+            // bytes/char are supported via the Pike path.
+            if *laziness == Laziness::Lazy && alphabet == Alphabet::Token {
                 diagnostics.push(Diagnostic {
                     code: DiagCode::E720,
                     span: node.span,
-                    message: "lazy quantifiers are not supported in v0.1".to_string(),
+                    message: "lazy quantifiers are not supported on the token alphabet".to_string(),
                     recovery_hint:
-                        "use the greedy form; lazy matching is deferred to v0.2 (RFC-0042 §11.1)"
+                        "lazy matching needs scalar elements; use the `bytes` or `char` alphabet"
                             .to_string(),
                 });
             }
@@ -244,9 +248,12 @@ mod tests {
         assert_eq!(codes("", Alphabet::Bytes), vec![DiagCode::E723]);
     }
 
+    /// Lazy quantifiers are no longer a dialect restriction on bytes/char — a
+    /// stage with one routes through the Pike VM (§11.1), so
+    /// `restrictions::check` is silent on `a*?`.
     #[test]
-    fn lazy_quantifier_is_e720() {
-        assert_eq!(codes("a*?", Alphabet::Bytes), vec![DiagCode::E720]);
+    fn lazy_quantifier_is_not_a_restriction() {
+        assert!(codes("a*?", Alphabet::Bytes).is_empty());
     }
 
     #[test]
@@ -290,8 +297,8 @@ mod tests {
 
     #[test]
     fn batches_multiple_violations() {
-        // A lazy quantifier and a backreference in one regex → two diags.
-        let cs = codes("a*?\\1", Alphabet::Bytes);
+        // A non-capturing group and a backreference in one regex → two diags.
+        let cs = codes("(?:x)\\1", Alphabet::Bytes);
         assert_eq!(cs.len(), 2);
         assert!(cs.contains(&DiagCode::E720));
     }

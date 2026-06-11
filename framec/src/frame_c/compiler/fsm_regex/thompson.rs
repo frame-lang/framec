@@ -356,7 +356,10 @@ pub fn build(ast: &RegexAst, alphabet: Alphabet) -> Nfa {
 /// Resolve a character class to a set of `(low, high)` scalar ranges,
 /// applying negation against the alphabet's universe. Shorthands use
 /// ASCII definitions (v0.1).
-fn resolve_class(class: &CharClass, alphabet: Alphabet) -> Vec<(u32, u32)> {
+/// Resolve a `[...]` character class to its merged scalar ranges over
+/// `alphabet`. Shared with the Pike VM compiler (`super::pike`), which emits
+/// `Char` instructions directly from these ranges.
+pub fn resolve_class(class: &CharClass, alphabet: Alphabet) -> Vec<(u32, u32)> {
     let mut ranges = Vec::new();
     for m in &class.members {
         match m {
@@ -383,6 +386,13 @@ fn resolve_class(class: &CharClass, alphabet: Alphabet) -> Vec<(u32, u32)> {
     } else {
         merged
     }
+}
+
+/// The scalar ranges matched by `.` over `alphabet`: any element except `\n`
+/// (0x0A). Shared with the Pike VM compiler (`super::pike`), mirroring
+/// `Compiler::dot_frag`.
+pub fn dot_ranges(alphabet: Alphabet) -> Vec<(u32, u32)> {
+    complement_ranges(&[(0x0A, 0x0A)], alphabet)
 }
 
 /// ASCII definitions of the shorthand classes (v0.1).

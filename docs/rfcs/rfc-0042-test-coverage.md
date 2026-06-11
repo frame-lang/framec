@@ -181,7 +181,7 @@ These 2 IDs have no backing test by design; each is an explicit, justified entry
 
 ## Running the tests
 ```bash
-cargo test --lib fsm                        # all @@fsm unit + execution tests (458)
+cargo test --lib fsm                        # all @@fsm unit + execution tests (483)
 cargo test --test fsm_conformance_coverage  # the coverage guard
-cargo test                                  # full suite (1217 tests)
+cargo test                                  # full suite (1242 tests)
 ```

@@ -576,7 +576,18 @@ pub(crate) fn check_regexes(decl: &FsmDeclAst) -> Vec<FsmDiagnostic> {
                                             .to_string(),
                                     });
                                 }
-                                compiled.dfa.states[compiled.dfa.start].is_accept
+                                // Nullability (can the stage match the empty
+                                // string?) drives the E701 exhaustiveness check.
+                                // A lazy stage has an empty placeholder DFA and
+                                // matches via the Pike program, so derive it
+                                // from the program in that case (§11.1).
+                                match &compiled.program {
+                                    Some(prog) => {
+                                        crate::frame_c::compiler::fsm_regex::pike::run(prog, &[], 0)
+                                            .is_some()
+                                    }
+                                    None => compiled.dfa.states[compiled.dfa.start].is_accept,
+                                }
                             }
                             Err(CompileError::Diagnostics(ds)) => {
                                 for d in ds {
@@ -1559,7 +1570,9 @@ mod tests {
     /// engine, located at the stage.
     #[test]
     fn regex_forbidden_is_e720() {
-        let d = diags(b"@@fsm M(text: bytes) : bool = false { /a*?/ true }");
+        // Lookahead is non-regular for v0.1 → E720 (lazy quantifiers, by
+        // contrast, now compile via the Pike VM — see the codegen lazy tests).
+        let d = diags(b"@@fsm M(text: bytes) : bool = false { /a(?=b)/ true }");
         assert!(d.iter().any(|x| x.code == "E720"), "got {:?}", d);
     }
 

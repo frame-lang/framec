@@ -1996,7 +1996,8 @@ mod tests {
     /// diagnostic (E720) through the full pipeline.
     #[test]
     fn fsm_block_regex_e720_errors() {
-        let r = compile_py("@@fsm M(text: bytes) : bool = false { /a*?/ true }\n");
+        // Lookahead is non-regular → E720 (lazy quantifiers now compile).
+        let r = compile_py("@@fsm M(text: bytes) : bool = false { /a(?=b)/ true }\n");
         assert!(
             r.errors.iter().any(|e| e.code == "E720"),
             "expected E720, got {:?}",

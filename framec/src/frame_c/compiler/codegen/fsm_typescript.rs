@@ -27,8 +27,8 @@ use crate::frame_c::compiler::frame_ast::{
     MatchAst, MatchElement, StageAst, Type, UnaryOp,
 };
 use crate::frame_c::compiler::fsm_regex::{
-    self, size_check::DEFAULT_MAX_DFA_STATES, subset::DfaLabel, Alphabet, CompileError,
-    WordBoundary,
+    self, pike::Program, size_check::DEFAULT_MAX_DFA_STATES, subset::DfaLabel, Alphabet,
+    CompileError, WordBoundary,
 };
 use std::fmt::Write;
 
@@ -46,6 +46,10 @@ struct StageDfa {
     requires_end: bool,
     start_boundary: Option<WordBoundary>,
     end_boundary: Option<WordBoundary>,
+    /// `Some` when the stage's regex contains a lazy quantifier (§11.1): a Pike
+    /// program matched by the VM (`_pikeMatch`) instead of the DFA, for
+    /// leftmost-first match-end semantics.
+    program: Option<Program>,
     mode_c: Option<String>,
 }
 
@@ -112,12 +116,26 @@ impl<'a> Generator<'a> {
                                 requires_end: false,
                                 start_boundary: None,
                                 end_boundary: None,
+                                program: None,
                                 mode_c: Some(inner.to_string()),
                             });
                             continue;
                         }
                         match Self::compile_one(self.alphabet, &stage.regex, &mut token_ids) {
-                            Ok(dfa) => self.stage_dfas.push(dfa),
+                            Ok(dfa) => {
+                                // A lazy quantifier matches via the Pike VM,
+                                // which has no per-element scan for embedding
+                                // actions to hook into (§3.5.5/§11.1). Reject
+                                // the combination rather than silently giving
+                                // greedy semantics.
+                                if dfa.program.is_some() && !stage.embedding_actions.is_empty() {
+                                    self.token_ids = token_ids;
+                                    return Err("a lazy quantifier in a stage with embedding \
+                                                actions is not yet supported"
+                                        .to_string());
+                                }
+                                self.stage_dfas.push(dfa);
+                            }
                             Err(e) => {
                                 self.token_ids = token_ids;
                                 return Err(e);
@@ -164,6 +182,7 @@ impl<'a> Generator<'a> {
                     requires_end: compiled.requires_end,
                     start_boundary: compiled.start_boundary,
                     end_boundary: compiled.end_boundary,
+                    program: compiled.program,
                     mode_c: None,
                 })
             }
@@ -237,12 +256,16 @@ impl<'a> Generator<'a> {
         // fsm and its inner — without a duplicate type declaration.
         writeln!(out, "class {} {{", self.decl.name).ok();
         self.emit_field_decls(&mut out);
+        self.emit_pike_consts(&mut out);
         self.emit_ctor(&mut out);
         self.emit_tok_id(&mut out);
         if self.uses_word_boundary() {
             self.emit_word_boundary_helper(&mut out);
         }
         self.emit_dfa_matcher(&mut out);
+        if self.uses_pike() {
+            self.emit_pike_matcher(&mut out);
+        }
         self.emit_run(&mut out);
         self.emit_state_methods(&mut out)?;
         self.emit_embed_matchers(&mut out)?;
@@ -425,6 +448,86 @@ impl<'a> Generator<'a> {
         .ok();
     }
 
+    /// Emit the lazy stages' Pike programs as class fields (`_OPS_<i>` /
+    /// `_RNG_<i>`, two flat `number[]`s per stage; see `pike::encode`). A lazy
+    /// stage carries a Pike program instead of a DFA table.
+    fn emit_pike_consts(&self, out: &mut String) {
+        for (i, dfa) in self.stage_dfas.iter().enumerate() {
+            if let Some(prog) = &dfa.program {
+                let (ops, rng) = fsm_regex::pike::encode(prog);
+                writeln!(out, "  _OPS_{}: number[] = [{}];", i, int_list(&ops)).ok();
+                writeln!(out, "  _RNG_{}: number[] = [{}];", i, int_list(&rng)).ok();
+            }
+        }
+    }
+
+    /// Does any stage match via the Pike VM (a lazy quantifier, §11.1)?
+    fn uses_pike(&self) -> bool {
+        self.stage_dfas.iter().any(|d| d.program.is_some())
+    }
+
+    /// Pike VM (priority NFA simulation) for lazy-quantifier stages, over the
+    /// flat `ops`/`rng` arrays (`pike::encode`). Returns the end position of the
+    /// highest-priority (leftmost-first) match from the cursor, or -1. `ops` is
+    /// 4 ints per instruction `[op, a, b, _]`: 0 Char (a = pair index, b = pair
+    /// count), 1 Split (a/b targets, a higher), 2 Jmp, 3 Match.
+    fn emit_pike_matcher(&self, out: &mut String) {
+        let inp = &self.decl.params[0].name;
+        writeln!(
+            out,
+            "  _pikeAdd(ops: number[], lst: number[], seen: boolean[], pc: number): void {{\n\
+             \x20   if (seen[pc]) return;\n\
+             \x20   seen[pc] = true;\n\
+             \x20   const op = ops[pc * 4];\n\
+             \x20   if (op === 2) {{\n\
+             \x20     this._pikeAdd(ops, lst, seen, ops[pc * 4 + 1]);\n\
+             \x20   }} else if (op === 1) {{\n\
+             \x20     this._pikeAdd(ops, lst, seen, ops[pc * 4 + 1]);\n\
+             \x20     this._pikeAdd(ops, lst, seen, ops[pc * 4 + 2]);\n\
+             \x20   }} else {{\n\
+             \x20     lst.push(pc);\n\
+             \x20   }}\n\
+             \x20 }}\n\n\
+             \x20 _pikeMatch(ops: number[], rng: number[]): number {{\n\
+             \x20   const n = this.{inp}.length;\n\
+             \x20   const ninst = ops.length / 4;\n\
+             \x20   let matched = -1;\n\
+             \x20   let clist: number[] = [];\n\
+             \x20   this._pikeAdd(ops, clist, new Array(ninst).fill(false), 0);\n\
+             \x20   let pos = this.cursor;\n\
+             \x20   while (true) {{\n\
+             \x20     const nlist: number[] = [];\n\
+             \x20     const nseen: boolean[] = new Array(ninst).fill(false);\n\
+             \x20     for (const pc of clist) {{\n\
+             \x20       const op = ops[pc * 4];\n\
+             \x20       if (op === 0) {{\n\
+             \x20         if (pos < n) {{\n\
+             \x20           const v = this.{inp}.charCodeAt(pos);\n\
+             \x20           const rs = ops[pc * 4 + 1];\n\
+             \x20           const rc = ops[pc * 4 + 2];\n\
+             \x20           for (let k = 0; k < rc; k++) {{\n\
+             \x20             if (rng[(rs + k) * 2] <= v && v <= rng[(rs + k) * 2 + 1]) {{\n\
+             \x20               this._pikeAdd(ops, nlist, nseen, pc + 1);\n\
+             \x20               break;\n\
+             \x20             }}\n\
+             \x20           }}\n\
+             \x20         }}\n\
+             \x20       }} else if (op === 3) {{\n\
+             \x20         matched = pos;\n\
+             \x20         break;\n\
+             \x20       }}\n\
+             \x20     }}\n\
+             \x20     if (pos >= n) break;\n\
+             \x20     pos++;\n\
+             \x20     clist = nlist;\n\
+             \x20   }}\n\
+             \x20   return matched;\n\
+             \x20 }}\n\n",
+            inp = inp,
+        )
+        .ok();
+    }
+
     fn emit_dfa_matcher(&self, out: &mut String) {
         let input = &self.decl.params[0].name;
         let read = self.element_read();
@@ -543,11 +646,14 @@ impl<'a> Generator<'a> {
                     let MatchElement::Stage(sel) = &m.elements[fs] else {
                         unreachable!("first_stage indexes a Stage element")
                     };
-                    self.emit_dfa_const(out, my_sid, "    ");
+                    if self.stage_dfas[my_sid].program.is_none() {
+                        self.emit_dfa_const(out, my_sid, "    ");
+                    }
                     writeln!(
                         out,
-                        "    let _r{} = this._dfaMatch(DFA_{}, {});",
-                        my_sid, my_sid, self.stage_dfas[my_sid].start
+                        "    let _r{} = {};",
+                        my_sid,
+                        stage_call(self, sel, my_sid)
                     )
                     .ok();
                     self.emit_anchor_guards(out, my_sid, "    ");
@@ -615,22 +721,17 @@ impl<'a> Generator<'a> {
                     self.emit_mode_c(out, &inner, stage, m, state_label, my_sid, ind, &ind2);
                     return Ok(());
                 }
-                if stage.embedding_actions.is_empty() {
+                if self.stage_dfas[my_sid].program.is_none() && stage.embedding_actions.is_empty() {
                     self.emit_dfa_const(out, my_sid, ind);
-                    writeln!(
-                        out,
-                        "{}let _r{} = this._dfaMatch(DFA_{}, {});",
-                        ind, my_sid, my_sid, self.stage_dfas[my_sid].start
-                    )
-                    .ok();
-                } else {
-                    writeln!(
-                        out,
-                        "{}let _r{} = this._matchStage_{}();",
-                        ind, my_sid, my_sid
-                    )
-                    .ok();
                 }
+                writeln!(
+                    out,
+                    "{}let _r{} = {};",
+                    ind,
+                    my_sid,
+                    stage_call(self, stage, my_sid)
+                )
+                .ok();
                 self.emit_anchor_guards(out, my_sid, ind);
                 writeln!(out, "{}if (_r{} < 0) {{", ind, my_sid).ok();
                 self.emit_failure(out, m, &ind2);
@@ -1100,6 +1201,27 @@ impl<'a> Generator<'a> {
     }
 }
 
+/// Comma-joined `i64` list literal (shared by the Pike `ops`/`rng` arrays).
+fn int_list(xs: &[i64]) -> String {
+    xs.iter()
+        .map(|x| x.to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// The matcher invocation for a stage: the Pike VM (`_pikeMatch`) for a lazy
+/// stage, the specialized `_matchStage_<sid>` when the stage carries embedding
+/// actions, else the shared `_dfaMatch`.
+fn stage_call(gen: &Generator, stage: &StageAst, sid: usize) -> String {
+    if gen.stage_dfas[sid].program.is_some() {
+        format!("this._pikeMatch(this._OPS_{sid}, this._RNG_{sid})")
+    } else if stage.embedding_actions.is_empty() {
+        format!("this._dfaMatch(DFA_{}, {})", sid, gen.stage_dfas[sid].start)
+    } else {
+        format!("this._matchStage_{}()", sid)
+    }
+}
+
 fn cap_field(state: &str, label: &str) -> String {
     format!("cap_{}_{}", state, label)
 }
@@ -1356,5 +1478,24 @@ mod tests {
             parse_fsm_block(b"@@fsm M(text: bytes) : bool = false { /a$b/ true }").expect("parses");
         let err = generate(&decl).unwrap_err();
         assert!(err.contains("anchor"), "got {err}");
+    }
+
+    /// Lazy quantifiers (§11.1) via the Pike VM: `/.*?,/` matches up to the
+    /// FIRST comma (greedy `/.*,/` would take the last), and the mixed
+    /// `/a*?b+/` keeps `b+` greedy ("aabbb" → cursor 5, not 3).
+    #[test]
+    fn ts_lazy_quantifier() {
+        let code = gen("@@fsm M(text: bytes) : bytes = \"\" { /.*?,/ @@:matched }");
+        let driver = "const m = new M(\"ab,cd,ef\"); console.log(String(m.return_value));";
+        let Some(lines) = ts_run(&code, driver, "lazy_a") else {
+            return;
+        };
+        assert_eq!(lines[0], "ab,");
+        let mixed = gen("@@fsm M(text: bytes) : int = 0 { /a*?b+/ @@:cursor }");
+        let d2 = "const m = new M(\"aabbb\"); console.log(String(m.return_value));";
+        let Some(l2) = ts_run(&mixed, d2, "lazy_b") else {
+            return;
+        };
+        assert_eq!(l2[0], "5");
     }
 }
