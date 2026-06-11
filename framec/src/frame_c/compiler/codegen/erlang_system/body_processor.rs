@@ -221,24 +221,66 @@ struct CaseFrame {
 /// body processor's existing `self.`-based handling (record access + Data
 /// threading) applies. A `@@:self.<method>(...)` **call** is left intact — its
 /// transition-guard wrapping downstream keys on the `@@:self` marker.
+///
+/// Boundary-safe: the walk delegates string-literal and comment skipping to
+/// the Erlang `SyntaxSkipper` (the same primitive
+/// `replace_outside_strings_and_comments` uses), so a `"@@:self.x"` inside a
+/// string or `%` comment passes through untouched. A plain substring scan
+/// can't be used here because the rewrite is conditional (field vs call).
 fn erlang_strip_at_self_field(line: &str) -> String {
-    let mut result = line.to_string();
-    let mut from = 0;
-    while let Some(rel) = result[from..].find("@@:self.") {
-        let pos = from + rel;
-        let after = pos + "@@:self.".len();
-        let id_end = result[after..]
-            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-            .map(|k| after + k)
-            .unwrap_or(result.len());
-        if result[id_end..].starts_with('(') {
-            from = after; // a call — keep `@@:self.`
-        } else {
-            result.replace_range(pos..after, "self.");
-            from = pos + "self.".len();
+    const MARKER: &[u8] = b"@@:self.";
+    let skipper = crate::frame_c::compiler::native_region_scanner::create_skipper(
+        crate::frame_c::visitors::TargetLanguage::Erlang,
+    );
+    let bytes = line.as_bytes();
+    let end = bytes.len();
+    let mut out = String::with_capacity(line.len());
+    let mut i = 0;
+    while i < end {
+        if let Some(next) = skipper.skip_string(bytes, i, end) {
+            out.push_str(&line[i..next]);
+            i = next;
+            continue;
         }
+        if let Some(next) = skipper.skip_comment(bytes, i, end) {
+            out.push_str(&line[i..next]);
+            i = next;
+            continue;
+        }
+        if i + MARKER.len() <= end && &bytes[i..i + MARKER.len()] == MARKER {
+            // Scan the member identifier after `@@:self.`.
+            let mut id_end = i + MARKER.len();
+            while id_end < end && (bytes[id_end].is_ascii_alphanumeric() || bytes[id_end] == b'_') {
+                id_end += 1;
+            }
+            if id_end < end && bytes[id_end] == b'(' {
+                // A call — keep the `@@:self.` marker for the guard wrapping.
+                out.push_str(&line[i..id_end]);
+            } else {
+                // A field access — drop the `@@:` prefix.
+                out.push_str("self.");
+                out.push_str(&line[i + MARKER.len()..id_end]);
+            }
+            i = id_end;
+            continue;
+        }
+        // Plain character — copy through at full UTF-8 width so multibyte
+        // sequences aren't split (same convention as
+        // `replace_outside_strings_and_comments`).
+        let width = if bytes[i] < 0x80 {
+            1
+        } else if bytes[i] >= 0xF0 {
+            4
+        } else if bytes[i] >= 0xE0 {
+            3
+        } else {
+            2
+        };
+        let next = (i + width).min(end);
+        out.push_str(&line[i..next]);
+        i = next;
     }
-    result
+    out
 }
 
 pub(super) fn erlang_process_body_lines_full(
