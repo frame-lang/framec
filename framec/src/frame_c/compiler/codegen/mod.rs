@@ -166,6 +166,7 @@ pub mod ast;
 pub mod backend;
 pub mod backends;
 pub mod block_transform;
+pub(crate) mod c_marshal;
 pub mod codegen_utils;
 pub mod erlang_system;
 pub mod frame_expansion;

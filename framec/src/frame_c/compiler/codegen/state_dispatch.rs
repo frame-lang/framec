@@ -411,28 +411,17 @@ pub(super) fn emit_handler_return_init(
             indent, init_expr
         ),
         TargetLanguage::C => {
-            // Doubles don't survive `(void*)(intptr_t)(val)` — the
-            // intptr_t cast truncates. Bit-pun through memcpy via the
-            // generated `Sys_pack_double` helper.
-            let is_dbl = handler
-                .return_type
-                .as_deref()
-                .map(|t| {
-                    let t = t.trim();
-                    t == "float" || t == "double"
-                })
-                .unwrap_or(false);
-            if is_dbl {
-                format!(
-                    "{}{}_CTX(self)->_return = {}_pack_double({});\n",
-                    indent, system_name, system_name, init_expr
-                )
-            } else {
-                format!(
-                    "{}{}_CTX(self)->_return = (void*)(intptr_t)({});\n",
-                    indent, system_name, init_expr
-                )
-            }
+            // Marshalled per `c_marshal::c_return_write` (#72): doubles
+            // bit-pun via `Sys_pack_double` (`(intptr_t)(42.0)` truncates),
+            // structs heap-box; the categorization is shared with every
+            // read site so pack and unpack cannot drift.
+            let ty = handler.return_type.as_deref().unwrap_or("int");
+            let slot = format!("{}_CTX(self)->_return", system_name);
+            format!(
+                "{}{}\n",
+                indent,
+                super::c_marshal::c_return_write(system_name, &slot, init_expr, ty)
+            )
         }
         TargetLanguage::Rust => {
             // RFC-0025 Track B.2: handler default-return inits the
