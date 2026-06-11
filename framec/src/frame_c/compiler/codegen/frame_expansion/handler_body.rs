@@ -76,22 +76,19 @@ pub(super) fn context_return_read_typed(
             "this._context_stack[this._context_stack.length - 1]._return".to_string()
         }
         TargetLanguage::C => {
-            // C's `_return` slot is a `void*` — a per-category cast back
-            // is forced by the ABI: `double` rides via the memcpy
-            // bit-pun, a string is already a pointer, everything else
-            // fits in the integer width. (See type-ignorant-codegen.md
-            // category 3.)
+            // C's `_return` slot is a `void*` — the per-category unpack
+            // comes from `c_marshal::c_return_read` (#72), the same
+            // categorization every write site uses, so pack and unpack
+            // cannot drift: `double` rides via the memcpy bit-pun, a
+            // string is already a pointer, ints fit the integer width,
+            // and a struct deref-copies its heap box (NOT freed here —
+            // the context is still live; the interface wrapper owns the
+            // single free at end-of-call).
             let raw = format!("{}_RETURN(self)", system_name);
-            match frame_type {
-                "float" | "double" | "f32" | "f64" => {
-                    format!("{}_unpack_double({})", system_name, raw)
-                }
-                "str" | "string" | "String" | "char*" | "const char*" => {
-                    format!("((const char*){})", raw)
-                }
-                "int" | "bool" => format!("((int)(intptr_t){})", raw),
-                _ => raw,
-            }
+            format!(
+                "({})",
+                super::super::c_marshal::c_return_read(system_name, &raw, frame_type)
+            )
         }
         TargetLanguage::Rust => super::super::rust_system::rust_context_return_read_typed(
             frame_type,

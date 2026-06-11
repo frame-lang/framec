@@ -341,18 +341,30 @@ finally:
                 let sys = &system.name;
 
                 // Build parameters dict creation (with semicolon).
-                // Float/double params route through `Sys_pack_double`
-                // (memcpy bit-pun) — `(void*)(intptr_t)(0.5)` truncates
-                // to integer and breaks any float-typed interface arg.
+                // Marshalling per `c_marshal_of` (#72): float/double params
+                // route through `Sys_pack_double` (memcpy bit-pun —
+                // `(void*)(intptr_t)(0.5)` truncates); struct-by-value
+                // params travel as the address of a STACK box (the kernel
+                // dispatch is synchronous, so the wrapper's locals outlive
+                // every reader; see c_marshal.rs § Boxed ownership).
                 let params_code = if method.params.is_empty() {
                     format!("{}_FrameEvent* __e = {}_FrameEvent_new(\"{}\", NULL, 0);", sys, sys, method.name)
                 } else {
                     let mut code = format!("{}_FrameVec* __params = {}_FrameVec_new();\n", sys, sys);
                     for p in &method.params {
                         let p_type = type_to_string(&p.param_type);
-                        let push_arg = match p_type.trim() {
-                            "float" | "double" | "f32" | "f64" => {
+                        let push_arg = match super::c_marshal::c_marshal_of(&p_type) {
+                            super::c_marshal::CMarshal::Dbl => {
                                 format!("{}_pack_double({})", sys, p.name)
+                            }
+                            super::c_marshal::CMarshal::Boxed => {
+                                code.push_str(&format!(
+                                    "{} __box_{} = {};\n",
+                                    p_type.trim(),
+                                    p.name,
+                                    p.name
+                                ));
+                                format!("(void*)&__box_{}", p.name)
                             }
                             _ => format!("(void*)(intptr_t){}", p.name),
                         };
@@ -381,36 +393,47 @@ finally:
                     .map(|s| s != "void" && s != "None")
                     .unwrap_or(false);
 
-                // Set default return value after context creation. For
-                // float/double returns, pack via the memcpy helper since
-                // `(void*)(intptr_t)(3.14)` truncates to an integer.
-                let is_double_return = return_type_str
-                    .as_ref()
-                    .map(|s| s == "double")
-                    .unwrap_or(false);
+                // Set default return value after context creation —
+                // marshalled per `c_return_write` (#72): doubles pack via
+                // the memcpy helper (`(void*)(intptr_t)(3.14)` truncates),
+                // structs heap-box.
                 let default_init = if let Some(ref init_expr) = method.return_init {
-                    if is_double_return {
-                        format!("\n__ctx->_return = {}_pack_double({});", sys, init_expr)
-                    } else {
-                        format!("\n__ctx->_return = (void*)(intptr_t)({});", init_expr)
-                    }
+                    let ty = return_type_str.as_deref().unwrap_or("int");
+                    format!(
+                        "\n{}",
+                        super::c_marshal::c_return_write(sys, "__ctx->_return", init_expr, ty)
+                    )
                 } else {
                     String::new()
                 };
 
                 if let (true, Some(return_type_str)) = (has_return_value, return_type_str) {
-                    // Unpack based on declared return type:
-                    //   bool/int  → `(intptr_t)__ctx->_return`  (truncates to int size)
-                    //   double    → `Sys_unpack_double(...)`     (memcpy round-trip)
-                    //   str/ptr   → `(T)__ctx->_return`          (pointer already fits)
-                    let extract = if return_type_str == "double" {
-                        format!("{}_unpack_double(__result_ctx->_return)", sys)
+                    // Unpack via `c_return_read` (#72) — the categorization
+                    // is shared with the write side (c_return_assign /
+                    // c_marshal) so pack and unpack cannot drift apart:
+                    //   bool/int  → `(T)(intptr_t)…`
+                    //   float/dbl → `Sys_unpack_double(…)` (memcpy round-trip)
+                    //   str/ptr   → `(T)…` (pointer already fits)
+                    //   struct    → `*(T*)…` deref-copy, then free the box
+                    let extract = super::c_marshal::c_return_read(
+                        sys,
+                        "__result_ctx->_return",
+                        &return_type_str,
+                    );
+                    // Boxed returns: free the heap box after the deref-copy
+                    // (the single owner-free; see c_marshal.rs). Guard the
+                    // deref against a never-written NULL slot.
+                    let is_boxed = matches!(
+                        super::c_marshal::c_marshal_of(&return_type_str),
+                        super::c_marshal::CMarshal::Boxed
+                    );
+                    let result_decl = if is_boxed {
+                        format!(
+                            "{t} __result; memset(&__result, 0, sizeof(__result));\nif (__result_ctx->_return) {{ __result = {extract}; free(__result_ctx->_return); }}",
+                            t = return_type_str, extract = extract
+                        )
                     } else {
-                        let cast = match return_type_str.as_str() {
-                            "bool" | "int" => "(intptr_t)",
-                            _ => "",
-                        };
-                        format!("({}){}__result_ctx->_return", return_type_str, cast)
+                        format!("{} __result = {};", return_type_str, extract)
                     };
                     CodegenNode::NativeBlock {
                         code: format!(
@@ -419,12 +442,12 @@ finally:
 {}_FrameVec_push(self->_context_stack, __ctx);
 {}_kernel(self, __e);
 {}_FrameContext* __result_ctx = ({}_FrameContext*){}_FrameVec_pop(self->_context_stack);
-{} __result = {};
+{}
 {}_FrameContext_destroy(__result_ctx);
 {}_FrameEvent_destroy(__e);
 return __result;"#,
                             params_code, sys, sys, default_init, sys, sys, sys, sys, sys,
-                            return_type_str, extract, sys, sys
+                            result_decl, sys, sys
                         ),
                         span: None,
                     }

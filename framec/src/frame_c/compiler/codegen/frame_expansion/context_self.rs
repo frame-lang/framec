@@ -108,9 +108,14 @@ pub(super) fn expand_context_self_field_call(
         raw_args.to_string()
     };
 
-    // Embed = the field's declared type is itself a defined system.
+    // Embed = the field's declared type is itself a defined system. The
+    // declared spelling may be pointer-qualified — the C guide's idiomatic
+    // cross-system field is `inner: Inner*` (#73) — so strip trailing `*`s
+    // to get the base system name for the check (and for C's free-function
+    // family / Erlang's module name below).
     let field_type = ctx.domain_field_types.get(field);
-    let is_embed = field_type.is_some_and(|t| ctx.defined_systems.contains(t));
+    let embed_base: Option<&str> = field_type.map(|t| t.trim().trim_end_matches('*').trim_end());
+    let is_embed = embed_base.is_some_and(|base| ctx.defined_systems.contains(base));
 
     match lang {
         // C: a struct has no methods, so an embed call is a cross-system
@@ -120,7 +125,7 @@ pub(super) fn expand_context_self_field_call(
         // native (`self->field.method(args)`).
         TargetLanguage::C => {
             if is_embed {
-                let sys = field_type.map(|s| s.as_str()).unwrap_or("");
+                let sys = embed_base.unwrap_or("");
                 let inner = strip_outer_parens(&args);
                 if inner.trim().is_empty() {
                     format!("{sys}_{method}(self->{field})")
@@ -140,8 +145,8 @@ pub(super) fn expand_context_self_field_call(
         // is always a cross-system call; the module name is the field's system
         // type, snake-cased — matching the field's `@@System()` initializer.)
         TargetLanguage::Erlang => {
-            if let Some(sys_type) = field_type {
-                let module = to_snake_case(sys_type);
+            if let Some(base) = embed_base {
+                let module = to_snake_case(base);
                 let inner = strip_outer_parens(&args);
                 if inner.trim().is_empty() {
                     format!("{module}:{method}(self.{field})")

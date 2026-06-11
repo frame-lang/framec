@@ -22,37 +22,21 @@
 //!   whitespace from spliced handler text so generated code lines
 //!   up at column 0 before re-indentation downstream.
 
-/// C `_return` assignment with double-aware marshalling.
+/// C `_return` assignment with category-aware marshalling.
 ///
-/// The `_return` slot is `void*`. Ints/bools/pointers travel via
-/// `(void*)(intptr_t)(val)` cleanly. Doubles don't — `(intptr_t)(42.0)`
-/// truncates the fractional part. When the handler's declared return
-/// type is `float`/`double`, pack via a memcpy helper the runtime emits
-/// (`Sys_pack_double`).
+/// The `_return` slot is `void*`. Marshalling routes through
+/// `c_marshal::c_return_write` (#72) — the single categorization shared
+/// with every read site, so pack and unpack cannot drift: ints/bools/
+/// pointers via `(void*)(intptr_t)`, floats/doubles via the `pack_double`
+/// memcpy helper (`(intptr_t)(42.0)` truncates), structs via a heap box.
 pub(super) fn c_return_assign(
     system_name: &str,
     expanded_expr: &str,
     return_type: &Option<String>,
 ) -> String {
-    let is_dbl = return_type
-        .as_deref()
-        .map(|t| {
-            let t = t.trim();
-            t == "float" || t == "double"
-        })
-        .unwrap_or(false);
-    if is_dbl {
-        format!(
-            "{sys}_CTX(self)->_return = {sys}_pack_double({expr});",
-            sys = system_name,
-            expr = expanded_expr,
-        )
-    } else {
-        format!(
-            "{}_CTX(self)->_return = (void*)(intptr_t)({});",
-            system_name, expanded_expr
-        )
-    }
+    let ty = return_type.as_deref().unwrap_or("int");
+    let slot = format!("{}_CTX(self)->_return", system_name);
+    super::super::c_marshal::c_return_write(system_name, &slot, expanded_expr, ty)
 }
 
 /// Strip the outer parentheses from `(inner)` → `inner`.
