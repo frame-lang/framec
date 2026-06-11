@@ -1034,11 +1034,7 @@ fn self_expansion_ctx(
                 .domain_symbols
                 .iter()
                 .filter_map(|(name, sym)| {
-                    let ty = sym
-                        .symbol_type
-                        .as_deref()
-                        .and_then(|t| t.strip_prefix("Custom(\"")?.strip_suffix("\")"))?;
-                    Some((name.clone(), ty.to_string()))
+                    Some((name.clone(), sym.symbol_type.as_deref()?.to_string()))
                 })
                 .collect()
         })

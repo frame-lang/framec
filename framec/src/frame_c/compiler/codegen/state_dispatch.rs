@@ -831,10 +831,10 @@ pub(crate) fn generate_per_handler_methods(
 ) -> Vec<CodegenNode> {
     let mut methods = Vec::new();
 
-    // Domain field name → declared type (clean, e.g. `Ship`). Used by the C++
-    // `@@:self.field.method()` lowering (RFC-0046) to tell an embedded system
-    // (deref with `->`) from a scalar field (`.`). arcanum stores the type as
-    // the Debug-formatted `Type` (`Custom("Ship")`); unwrap to the bare name.
+    // Domain field name → declared type (the user's verbatim type text,
+    // e.g. `Ship`). Used by the C++ `@@:self.field.method()` lowering
+    // (RFC-0046) to tell an embedded system (deref with `->`) from a scalar
+    // field (`.`). arcanum's domain symbols carry the clean type directly.
     let domain_field_types: std::collections::HashMap<String, String> = arcanum
         .systems
         .get(system_name)
@@ -843,11 +843,7 @@ pub(crate) fn generate_per_handler_methods(
                 .domain_symbols
                 .iter()
                 .filter_map(|(name, sym)| {
-                    let ty = sym
-                        .symbol_type
-                        .as_deref()
-                        .and_then(|t| t.strip_prefix("Custom(\"")?.strip_suffix("\")"))?;
-                    Some((name.clone(), ty.to_string()))
+                    Some((name.clone(), sym.symbol_type.as_deref()?.to_string()))
                 })
                 .collect()
         })

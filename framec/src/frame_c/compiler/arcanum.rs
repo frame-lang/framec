@@ -412,7 +412,11 @@ fn build_system_entry_from_frame_ast(system: &FrameSystemAst) -> SystemEntry {
         entry.domain_vars.insert(var.name.clone(), VarType::Native);
     }
 
-    // Phase 7: Extract domain variables with full symbol info
+    // Phase 7: Extract domain variables with full symbol info.
+    // `symbol_type` carries the user's verbatim type text (None when the
+    // declaration is untyped) — the same clean convention the param symbols
+    // below use via `type_to_string`. Consumers read it directly; nothing
+    // should ever have to parse a Debug-formatted `Type` out of it.
     for var in &system.domain {
         let symbol = FrameSymbol {
             name: var.name.clone(),
@@ -421,7 +425,10 @@ fn build_system_entry_from_frame_ast(system: &FrameSystemAst) -> SystemEntry {
                 start: var.span.start,
                 end: var.span.end,
             },
-            symbol_type: Some(format!("{:?}", var.var_type)),
+            symbol_type: match &var.var_type {
+                Type::Custom(t) => Some(t.clone()),
+                Type::Unknown => None,
+            },
             default_value: None,
         };
         entry.domain_symbols.insert(var.name.clone(), symbol);
