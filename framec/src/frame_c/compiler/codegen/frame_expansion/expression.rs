@@ -181,31 +181,35 @@ fn expand_state_vars_in_expr(expr: &str, lang: TargetLanguage, ctx: &HandlerCont
                     ));
                 }
                 TargetLanguage::C => {
+                    // Category-aware unpack via c_marshal (#77), mirroring
+                    // `expand_state_var`'s C arm: float/double state-vars
+                    // bit-pun through the void* slot — `(int)(intptr_t)`
+                    // truncates them.
                     let c_type = ctx
                         .state_var_types
                         .get(&var_name)
                         .map(|s| s.as_str())
                         .unwrap_or("int");
-                    let cast = match c_type {
-                        "char*" | "const char*" | "str" | "string" | "String" => "(const char*)",
-                        _ => "(int)(intptr_t)",
-                    };
-                    if ctx.per_handler {
-                        result.push_str(&format!(
-                            "{}{}_FrameDict_get(compartment->state_vars, \"{}\")",
-                            cast, ctx.system_name, var_name
-                        ))
+                    let comp = if ctx.per_handler {
+                        "compartment"
                     } else if ctx.use_sv_comp {
-                        result.push_str(&format!(
-                            "{}{}_FrameDict_get(__sv_comp->state_vars, \"{}\")",
-                            cast, ctx.system_name, var_name
-                        ))
+                        "__sv_comp"
                     } else {
-                        result.push_str(&format!(
-                            "{}{}_FrameDict_get(self->__compartment->state_vars, \"{}\")",
-                            cast, ctx.system_name, var_name
-                        ))
-                    }
+                        "self->__compartment"
+                    };
+                    let slot = format!(
+                        "{}_FrameDict_get({}->state_vars, \"{}\")",
+                        ctx.system_name, comp, var_name
+                    );
+                    use super::super::c_marshal::{c_marshal_of, CMarshal};
+                    let read = match c_marshal_of(c_type) {
+                        CMarshal::Str => format!("(const char*){}", slot),
+                        CMarshal::Dbl => {
+                            format!("{}_unpack_double({})", ctx.system_name, slot)
+                        }
+                        _ => format!("(int)(intptr_t){}", slot),
+                    };
+                    result.push_str(&read);
                 }
                 TargetLanguage::Cpp => {
                     let cpp_type = ctx

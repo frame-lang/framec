@@ -171,6 +171,9 @@ pub(crate) fn generate_c_handler_method(
     }
 
     // State-var init (lifecycle enter only). Uses FrameDict_has + FrameDict_set.
+    // Packing per c_marshal (#77): float/double state-vars bit-pun via
+    // pack_double — `(void*)(intptr_t)(0.0)` truncates. The matching read-side
+    // unpack lives in `expand_state_var`'s C arm.
     if handler.is_enter {
         for var in state_vars_for_init {
             let init_val = if let Some(ref init) = var.initializer_text {
@@ -178,9 +181,20 @@ pub(crate) fn generate_c_handler_method(
             } else {
                 state_var_init_value(&var.var_type, lang)
             };
+            let packed = {
+                use crate::frame_c::compiler::codegen::c_marshal::{c_marshal_of, CMarshal};
+                let declared = match &var.var_type {
+                    crate::frame_c::compiler::frame_ast::Type::Custom(t) => t.as_str(),
+                    _ => "",
+                };
+                match c_marshal_of(declared) {
+                    CMarshal::Dbl => format!("{}_pack_double({})", system_name, init_val),
+                    _ => format!("(void*)(intptr_t)({})", init_val),
+                }
+            };
             body.push_str(&format!(
-                "if (!{}_FrameDict_has(compartment->state_vars, \"{}\")) {{\n    {}_FrameDict_set(compartment->state_vars, \"{}\", (void*)(intptr_t)({}));\n}}\n",
-                system_name, var.name, system_name, var.name, init_val
+                "if (!{}_FrameDict_has(compartment->state_vars, \"{}\")) {{\n    {}_FrameDict_set(compartment->state_vars, \"{}\", {});\n}}\n",
+                system_name, var.name, system_name, var.name, packed
             ));
         }
     }

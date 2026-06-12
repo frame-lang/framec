@@ -117,3 +117,50 @@ fn issue69_self_member_lowering_compiles() {
         code
     );
 }
+
+/// RUNTIME gate for the C++ backend (#78) — compiles AND EXECUTES the
+/// `17_float_any_roundtrip` fixture. #77 (float literals stored as double
+/// in std::any; declared-type any_cast<float> reads throw bad_any_cast)
+/// compiled cleanly, so the -fsyntax-only gate (#60) blessed it; only
+/// execution catches the erased-type round-trip class. The fixture's main
+/// asserts the values and exits non-zero on any mismatch or uncaught cast.
+///
+/// Skipped (not failed) when no C++ compiler is on PATH.
+#[test]
+fn issue78_float_any_roundtrip_runs() {
+    use std::process::Command;
+    let cxx = match common::find_tool("g++")
+        .or_else(|| common::find_tool("clang++"))
+        .or_else(|| common::find_tool("c++"))
+    {
+        Some(p) => p,
+        None => {
+            eprintln!("#78 cpp runtime gate skipped: no C++ compiler on PATH");
+            return;
+        }
+    };
+    let code = compile_fixture("17_float_any_roundtrip", "cpp");
+    let dir = tempfile::tempdir().expect("tempdir");
+    let src = dir.path().join("17_float_any_roundtrip.cpp");
+    let bin = dir.path().join("rt");
+    std::fs::write(&src, &code).expect("write tempfile");
+    let build = Command::new(&cxx)
+        .args(["-std=c++17", "-o"])
+        .arg(&bin)
+        .arg(&src)
+        .output()
+        .expect("c++ process");
+    assert!(
+        build.status.success(),
+        "#78: float-any fixture failed to compile.\n--- stderr ---\n{}\n--- generated source ---\n{}",
+        String::from_utf8_lossy(&build.stderr),
+        code
+    );
+    let run = Command::new(&bin).output().expect("run process");
+    assert!(
+        run.status.success(),
+        "#77/#78: float-any fixture FAILED AT RUNTIME (the class -fsyntax-only cannot catch).\n--- stdout ---\n{}\n--- stderr ---\n{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+}

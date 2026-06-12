@@ -62,6 +62,16 @@ pub(super) fn expand_context_return(
         // form there produces `Variant((expr))` (clippy::double_parens).
         // So the Rust arm uses `raw_expr` (unwrapped).
         let expanded_expr = paren_wrap_if_multiline(&raw_expr);
+        // #77: coerce to the DECLARED return type before the value enters
+        // the erased `_return` slot (bare literals deduce/box to the default
+        // float width; the wrapper's declared-type exact-match read then
+        // crashes at runtime). No-op for non-float-family declarations and
+        // non-erased targets; C marshals via c_return_assign below.
+        let expanded_expr = super::super::codegen_utils::erased_write_coercion(
+            lang,
+            ctx.current_return_type.as_deref().unwrap_or(""),
+            &expanded_expr,
+        );
         match lang {
             TargetLanguage::Python3 | TargetLanguage::GDScript => format!(
                 "{}self._context_stack[-1]._return = {}",
@@ -242,6 +252,14 @@ pub(super) fn expand_context_return_expr(
     // it, so it takes the unwrapped `raw_expr` to avoid `Variant((expr))`
     // (clippy::double_parens). Other backends need the multiline paren wrap.
     let expanded_expr = paren_wrap_if_multiline(&raw_expr);
+    // #77: coerce to the DECLARED return type before the value enters the
+    // erased `_return` slot (see expand_context_return above). No-op for
+    // non-float-family declarations and non-erased targets.
+    let expanded_expr = super::super::codegen_utils::erased_write_coercion(
+        lang,
+        ctx.current_return_type.as_deref().unwrap_or(""),
+        &expanded_expr,
+    );
     // Standalone @@ constructs include indent_str on all lines.
     // The scanner trims trailing whitespace from preceding native
     // text for standalone constructs (computed_indent > 0), so
