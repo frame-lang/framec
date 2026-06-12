@@ -174,6 +174,8 @@ mod tests {
             state_hsm_parents: std::collections::HashMap::new(),
             current_return_type: None,
             state_param_types: std::collections::HashMap::new(),
+            state_enter_param_types: std::collections::HashMap::new(),
+            state_exit_param_types: std::collections::HashMap::new(),
             domain_field_types: std::collections::HashMap::new(),
             actions: std::collections::HashSet::new(),
         }

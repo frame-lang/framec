@@ -649,6 +649,8 @@ pub(crate) fn generate_erlang_system(
                     state_hsm_parents: std::collections::HashMap::new(),
                     current_return_type: None,
                     state_param_types: std::collections::HashMap::new(),
+                    state_enter_param_types: std::collections::HashMap::new(),
+                    state_exit_param_types: std::collections::HashMap::new(),
                     domain_field_types: domain_field_types.clone(),
                     actions: std::collections::HashSet::new(),
                 };
@@ -942,6 +944,8 @@ pub(crate) fn generate_erlang_system(
                     state_hsm_parents: std::collections::HashMap::new(),
                     current_return_type: None,
                     state_param_types: std::collections::HashMap::new(),
+                    state_enter_param_types: std::collections::HashMap::new(),
+                    state_exit_param_types: std::collections::HashMap::new(),
                     domain_field_types: domain_field_types.clone(),
                     actions: std::collections::HashSet::new(),
                 };
@@ -1525,6 +1529,8 @@ pub(crate) fn generate_erlang_system(
                     state_hsm_parents: std::collections::HashMap::new(),
                     current_return_type: None,
                     state_param_types: std::collections::HashMap::new(),
+                    state_enter_param_types: std::collections::HashMap::new(),
+                    state_exit_param_types: std::collections::HashMap::new(),
                     domain_field_types: domain_field_types.clone(),
                     actions: std::collections::HashSet::new(),
                 };
@@ -1605,6 +1611,8 @@ pub(crate) fn generate_erlang_system(
                     state_hsm_parents: std::collections::HashMap::new(),
                     current_return_type: None,
                     state_param_types: std::collections::HashMap::new(),
+                    state_enter_param_types: std::collections::HashMap::new(),
+                    state_exit_param_types: std::collections::HashMap::new(),
                     domain_field_types: domain_field_types.clone(),
                     actions: std::collections::HashSet::new(),
                 };
@@ -1703,6 +1711,8 @@ pub(crate) fn generate_erlang_system(
                     state_hsm_parents: std::collections::HashMap::new(),
                     current_return_type: None,
                     state_param_types: std::collections::HashMap::new(),
+                    state_enter_param_types: std::collections::HashMap::new(),
+                    state_exit_param_types: std::collections::HashMap::new(),
                     domain_field_types: domain_field_types.clone(),
                     actions: std::collections::HashSet::new(),
                 };

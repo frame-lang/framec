@@ -420,10 +420,10 @@ pub(super) fn emit_handler_return_init(
             indent, init_expr
         ),
         TargetLanguage::C => {
-            // Marshalled per `c_marshal::c_return_write` (#72): doubles
-            // bit-pun via `Sys_pack_double` (`(intptr_t)(42.0)` truncates),
-            // structs heap-box; the categorization is shared with every
-            // read site so pack and unpack cannot drift.
+            // Marshalled per `c_marshal::c_return_write` (#72, #81):
+            // doubles and structs heap-box (`(intptr_t)(42.0)` truncates);
+            // the categorization is shared with every read site so pack
+            // and unpack cannot drift.
             let ty = handler.return_type.as_deref().unwrap_or("int");
             let slot = format!("{}_CTX(self)->_return", system_name);
             format!(
@@ -858,6 +858,35 @@ pub(crate) fn generate_per_handler_methods(
         })
         .unwrap_or_default();
 
+    // Companion type maps for enter / exit handler params, mirroring
+    // `state_param_types`: (state_name, param_name) → declared type string.
+    // Used by the C transition codegen to pack each enter/exit arg per its
+    // declared category (#81 — float/double args must heap-box via
+    // pack_double and push owned; the historical `(void*)(intptr_t)` push
+    // truncates, and the handler-side read derefs a box).
+    fn param_type_str(p: &crate::frame_c::compiler::frame_ast::EventParam) -> String {
+        match &p.param_type {
+            crate::frame_c::compiler::frame_ast::Type::Custom(t) => t.clone(),
+            crate::frame_c::compiler::frame_ast::Type::Unknown => "int".to_string(),
+        }
+    }
+    let mut state_enter_param_types: std::collections::HashMap<(String, String), String> =
+        std::collections::HashMap::new();
+    let mut state_exit_param_types: std::collections::HashMap<(String, String), String> =
+        std::collections::HashMap::new();
+    for s in &machine.states {
+        if let Some(ref e) = s.enter {
+            for p in &e.params {
+                state_enter_param_types.insert((s.name.clone(), p.name.clone()), param_type_str(p));
+            }
+        }
+        if let Some(ref e) = s.exit {
+            for p in &e.params {
+                state_exit_param_types.insert((s.name.clone(), p.name.clone()), param_type_str(p));
+            }
+        }
+    }
+
     // The system's action names (RFC-0046): `@@:self.<action>(args)` is a
     // direct call and must NOT receive the self-call transition guard.
     let actions: std::collections::HashSet<String> = arcanum
@@ -951,6 +980,8 @@ pub(crate) fn generate_per_handler_methods(
                 &handler_state_var_types,
                 &state_hsm_parents,
                 state_param_types,
+                &state_enter_param_types,
+                &state_exit_param_types,
                 &domain_field_types,
             );
             methods.push(method);
@@ -986,6 +1017,8 @@ pub(crate) fn generate_per_handler_methods(
                 &handler_state_var_types,
                 &state_hsm_parents,
                 state_param_types,
+                &state_enter_param_types,
+                &state_exit_param_types,
                 &domain_field_types,
             );
             // Per-handler leading comments (from `HandlerAst.leading_comments`
@@ -1034,6 +1067,8 @@ fn generate_per_handler_method_for_lang(
     handler_state_var_types: &std::collections::HashMap<String, String>,
     state_hsm_parents: &std::collections::HashMap<String, String>,
     state_param_types: &std::collections::HashMap<(String, String), String>,
+    state_enter_param_types: &std::collections::HashMap<(String, String), String>,
+    state_exit_param_types: &std::collections::HashMap<(String, String), String>,
     domain_field_types: &std::collections::HashMap<String, String>,
 ) -> CodegenNode {
     match lang {
@@ -1315,6 +1350,8 @@ fn generate_per_handler_method_for_lang(
             handler_state_var_types,
             state_hsm_parents,
             state_param_types,
+            state_enter_param_types,
+            state_exit_param_types,
             domain_field_types,
         ),
         _ => unreachable!(
@@ -1388,6 +1425,8 @@ pub(crate) fn generate_state_method(
         state_hsm_parents: std::collections::HashMap::new(),
         current_return_type: None,
         state_param_types: std::collections::HashMap::new(),
+        state_enter_param_types: std::collections::HashMap::new(),
+        state_exit_param_types: std::collections::HashMap::new(),
         domain_field_types: std::collections::HashMap::new(),
         actions: std::collections::HashSet::new(),
     };
@@ -1638,6 +1677,8 @@ pub(crate) fn generate_handler_from_arcanum(
         state_hsm_parents: state_hsm_parents.clone(),
         current_return_type: handler.return_type.clone(),
         state_param_types: std::collections::HashMap::new(),
+        state_enter_param_types: std::collections::HashMap::new(),
+        state_exit_param_types: std::collections::HashMap::new(),
         domain_field_types: std::collections::HashMap::new(),
         actions: actions.clone(),
     };
