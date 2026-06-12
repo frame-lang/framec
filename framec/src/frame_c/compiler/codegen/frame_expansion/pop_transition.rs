@@ -232,6 +232,13 @@ pub(super) fn generate_pop_transition(
                 }
                 TargetLanguage::Rust => {}
                 TargetLanguage::C => {
+                    // The popped target state is runtime-determined, so the
+                    // declared enter-param type is statically unknowable —
+                    // this push keeps the historical intptr_t fallback.
+                    // Float/double pop-args are therefore UNSUPPORTED on C
+                    // (the typed read would deref a non-box, #81): tracked
+                    // as a follow-up; do not silently route through
+                    // pack_double here without a type to key on.
                     code.push_str(&format!(
                         "{}{}_FrameVec_push(__saved->enter_args, (void*)(intptr_t)({}));\n",
                         indent, ctx.system_name, value

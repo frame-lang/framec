@@ -378,7 +378,7 @@ pub(super) fn expand_state_var_assign(
     // default float width (double/Double/float64) and the declared-type
     // exact-match read then crashes at runtime. No-op for non-float
     // declarations and for non-erased targets. (C is handled in its own
-    // arm below — it bit-puns via pack_double, there is no typed box.)
+    // arm below — it heap-boxes a double via pack_double, #81.)
     let declared = ctx
         .state_var_types
         .get(var_name)
@@ -492,33 +492,39 @@ pub(super) fn expand_state_var_assign(
             &expanded_expr,
         ),
         TargetLanguage::C => {
-            // Category-aware pack via c_marshal (#77): float/double
-            // state-vars bit-pun through the void* slot via pack_double —
-            // `(void*)(intptr_t)` truncates them. The matching read-side
-            // unpack lives in `expand_state_var` above.
-            let packed = {
+            // Category-aware pack via c_marshal (#77, #81): float/double
+            // state-vars heap-box via pack_double — `(void*)(intptr_t)`
+            // truncates them, and bit-punning corrupts on 32-bit pointers.
+            // The box is stored OWNED so the dict frees it on overwrite
+            // and destroy, and deep-copies it on compartment copy. The
+            // matching read-side unpack lives in `expand_state_var` above.
+            let (packed, setter) = {
                 use super::super::c_marshal::{c_marshal_of, CMarshal};
                 match c_marshal_of(declared) {
-                    CMarshal::Dbl => {
-                        format!("{}_pack_double({})", ctx.system_name, expanded_expr)
-                    }
-                    _ => format!("(void*)(intptr_t)({})", expanded_expr),
+                    CMarshal::Dbl => (
+                        format!("{}_pack_double({})", ctx.system_name, expanded_expr),
+                        "FrameDict_set_owned",
+                    ),
+                    _ => (
+                        format!("(void*)(intptr_t)({})", expanded_expr),
+                        "FrameDict_set",
+                    ),
                 }
             };
             if ctx.per_handler {
                 format!(
-                    "{}{}_FrameDict_set(compartment->state_vars, \"{}\", {});",
-                    indent_str, ctx.system_name, var_name, packed
+                    "{}{}_{}(compartment->state_vars, \"{}\", {});",
+                    indent_str, ctx.system_name, setter, var_name, packed
                 )
             } else if ctx.use_sv_comp {
                 format!(
-                    "{}{}_FrameDict_set(__sv_comp->state_vars, \"{}\", {});",
-                    indent_str, ctx.system_name, var_name, packed
+                    "{}{}_{}(__sv_comp->state_vars, \"{}\", {});",
+                    indent_str, ctx.system_name, setter, var_name, packed
                 )
             } else {
                 format!(
-                    "{}{}_FrameDict_set(self->__compartment->state_vars, \"{}\", {});",
-                    indent_str, ctx.system_name, var_name, packed
+                    "{}{}_{}(self->__compartment->state_vars, \"{}\", {});",
+                    indent_str, ctx.system_name, setter, var_name, packed
                 )
             }
         }

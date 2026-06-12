@@ -14,7 +14,8 @@
 //!
 //! | Category | write (pack)                          | read (unpack)              |
 //! |----------|---------------------------------------|----------------------------|
-//! | `Dbl`    | `Sys_pack_double(v)` (bit-pun)        | `Sys_unpack_double(p)`     |
+//! | `Dbl`    | `Sys_pack_double(v)` (**heap box**)   | `Sys_unpack_double(p)`     |
+//! |          |                                       | (NULL-safe deref)          |
 //! | `Int`    | `(void*)(intptr_t)(v)`                | `(T)(intptr_t)p`           |
 //! | `Str`    | `(void*)(intptr_t)(v)` (ptr fits)     | `(const char*)p`           |
 //! | `Ptr`    | `(void*)(intptr_t)(v)` (ptr fits)     | `(T)p`                     |
@@ -43,9 +44,27 @@
 //!   A mid-handler `@@:return` read deref-copies WITHOUT freeing (the
 //!   context is still live).
 //!
+//! ## Dbl ownership contract (#81)
+//!
+//! `Dbl` used to bit-pun the double into the pointer itself, which silently
+//! corrupts on 32-bit pointer targets (wasm32). It now travels as a real
+//! heap box (`pack_double` mallocs an 8-byte cell; `unpack_double` is a
+//! NULL-safe deref), so it follows the same ownership shape as `Boxed`:
+//!
+//! - **Params**: the interface wrapper stack-boxes (`double __box_p = p;`
+//!   push `&__box_p`) — zero allocations, locals outlive the synchronous
+//!   dispatch.
+//! - **Returns**: each `_return` write frees any previous box, then
+//!   heap-boxes; the interface wrapper frees after its final read.
+//! - **Containers** (state-vars, state-args): stored via the runtime's
+//!   owned-entry APIs (`FrameDict_set_owned` / `FrameVec_push_owned`) —
+//!   the container frees on overwrite/destroy and deep-copies on
+//!   compartment copy.
+//!
 //! State-args / enter-args / exit-args keep their historical `intptr_t`
-//! fallback: the transition push sites are a separate surface and struct
-//! state-args have never been supported on C (tracked as follow-up in #72).
+//! fallback for NON-Dbl unknowns: the transition push sites are a separate
+//! surface and struct state-args have never been supported on C (tracked
+//! as follow-up in #72).
 
 /// How a declared type travels through the C runtime's `void*` slots.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,7 +105,12 @@ pub(crate) fn c_marshal_of(type_str: &str) -> CMarshal {
 /// returns heap-box (freeing any previous box — see module docs).
 pub(crate) fn c_return_write(sys: &str, slot: &str, expr: &str, type_str: &str) -> String {
     match c_marshal_of(type_str) {
-        CMarshal::Dbl => format!("{slot} = {sys}_pack_double({expr});"),
+        // pack_double heap-boxes (#81) — free any previous box first,
+        // mirroring the Boxed arm. Only Dbl writes can have written the
+        // slot for a Dbl-returning method, so the free is type-safe.
+        CMarshal::Dbl => {
+            format!("{{ if ({slot}) free({slot}); {slot} = {sys}_pack_double({expr}); }}")
+        }
         CMarshal::Boxed => format!(
             "{{ {t}* __rbox = ({t}*)malloc(sizeof(*__rbox)); *__rbox = ({expr}); \
              if ({slot}) free({slot}); {slot} = __rbox; }}",
@@ -149,6 +173,9 @@ mod tests {
         let w = c_return_write("Demo", "SLOT", "2.5", "float");
         let r = c_return_read("Demo", "SLOT", "float");
         assert!(w.contains("Demo_pack_double(2.5)"), "{w}");
+        // #81: pack_double heap-boxes, so the write must free any
+        // previous box (repeated @@:return writes in one dispatch).
+        assert!(w.contains("if (SLOT) free(SLOT);"), "{w}");
         assert!(r.contains("Demo_unpack_double(SLOT)"), "{r}");
     }
 

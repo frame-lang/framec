@@ -94,6 +94,28 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
                 .collect()
         })
         .unwrap_or_default();
+    // (state_name, [(var_name, declared_type)]) for `$.var` declarations —
+    // state_vars round-trip through the same typed persist_pack/_unpack
+    // dispatch as state_args (#81: the old generic dict walk int-punned
+    // every entry, which serialized a heap-box POINTER for doubles and a
+    // char* for strings; only ints ever round-tripped).
+    let state_var_types: Vec<(String, Vec<(String, String)>)> = system
+        .machine
+        .as_ref()
+        .map(|m| {
+            m.states
+                .iter()
+                .map(|s| {
+                    let vars: Vec<(String, String)> = s
+                        .state_vars
+                        .iter()
+                        .map(|v| (v.name.clone(), type_to_string(&v.var_type)))
+                        .collect();
+                    (s.name.clone(), vars)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     let c_mangle_type = |t: &str| -> String {
         let t = t.trim();
         let canonical = match t {
@@ -141,17 +163,30 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         "    {}_FrameDict* sv = comp->state_vars;\n",
         system.name
     ));
+    // Typed per-state packing (#81): each declared `$.var` routes through
+    // persist_pack_<type> — the generic dict walk that int-punned every
+    // entry serialized a heap-box pointer for doubles. Only vars present
+    // in the dict are written, preserving restore-skips-init fidelity.
     serialize_helper.push_str("    if (sv) {\n");
-    serialize_helper.push_str("        for (int i = 0; i < sv->bucket_count; i++) {\n");
-    serialize_helper.push_str(&format!(
-        "            {}_FrameDictEntry* entry = sv->buckets[i];\n",
-        system.name
-    ));
-    serialize_helper.push_str("            while (entry) {\n");
-    serialize_helper.push_str("                cJSON_AddNumberToObject(vars, entry->key, (double)(intptr_t)entry->value);\n");
-    serialize_helper.push_str("                entry = entry->next;\n");
-    serialize_helper.push_str("            }\n");
-    serialize_helper.push_str("        }\n");
+    for (state_name, vars) in &state_var_types {
+        if vars.is_empty() {
+            continue;
+        }
+        serialize_helper.push_str(&format!(
+            "        if (strcmp(comp->state, \"{}\") == 0) {{\n",
+            state_name
+        ));
+        for (var_name, t) in vars {
+            let val_expr = format!("{}_FrameDict_get(sv, \"{}\")", system.name, var_name);
+            serialize_helper.push_str(&format!(
+                "            if ({sys}_FrameDict_has(sv, \"{name}\")) cJSON_AddItemToObject(vars, \"{name}\", {pack});\n",
+                sys = system.name,
+                name = var_name,
+                pack = c_pack_for(t, &val_expr, &system.name)
+            ));
+        }
+        serialize_helper.push_str("        }\n");
+    }
     serialize_helper.push_str("    }\n");
     serialize_helper.push_str("    cJSON_AddItemToObject(obj, \"state_vars\", vars);\n");
     serialize_helper.push_str("    cJSON* sa = cJSON_CreateArray();\n");
@@ -211,15 +246,42 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     deserialize_helper.push_str("    if (!data || cJSON_IsNull(data)) return NULL;\n");
     deserialize_helper.push_str("    cJSON* state_item = cJSON_GetObjectItem(data, \"state\");\n");
     deserialize_helper.push_str(&format!(
-        "    {}_Compartment* comp = {}_Compartment_new(strdup(state_item->valuestring));\n",
-        system.name, system.name
+        "    {}_Compartment* comp = {}_Compartment_new({}_strdup_(state_item->valuestring));\n",
+        system.name, system.name, system.name
     ));
     deserialize_helper.push_str("    cJSON* vars = cJSON_GetObjectItem(data, \"state_vars\");\n");
+    // Typed per-state restore mirroring the serialize side (#81). Doubles
+    // come back as heap boxes from persist_unpack_double and are stored
+    // OWNED so the dict frees/deep-copies them.
     deserialize_helper.push_str("    if (vars) {\n");
-    deserialize_helper.push_str("        cJSON* var_item;\n");
-    deserialize_helper.push_str("        cJSON_ArrayForEach(var_item, vars) {\n");
-    deserialize_helper.push_str(&format!("            {}_FrameDict_set(comp->state_vars, var_item->string, (void*)(intptr_t)(int)var_item->valuedouble);\n", system.name));
-    deserialize_helper.push_str("        }\n");
+    for (state_name, vars) in &state_var_types {
+        if vars.is_empty() {
+            continue;
+        }
+        deserialize_helper.push_str(&format!(
+            "        if (strcmp(comp->state, \"{}\") == 0) {{\n",
+            state_name
+        ));
+        for (var_name, t) in vars {
+            let setter = if c_mangle_type(t) == "double" {
+                "FrameDict_set_owned"
+            } else {
+                "FrameDict_set"
+            };
+            deserialize_helper.push_str(&format!(
+                "            cJSON* var_{name} = cJSON_GetObjectItem(vars, \"{name}\");\n",
+                name = var_name
+            ));
+            deserialize_helper.push_str(&format!(
+                "            if (var_{name}) {sys}_{setter}(comp->state_vars, \"{name}\", {unpack});\n",
+                sys = system.name,
+                setter = setter,
+                name = var_name,
+                unpack = c_unpack_for(t, &format!("var_{var_name}"), &system.name)
+            ));
+        }
+        deserialize_helper.push_str("        }\n");
+    }
     deserialize_helper.push_str("    }\n");
     deserialize_helper.push_str("    cJSON* sa = cJSON_GetObjectItem(data, \"state_args\");\n");
     deserialize_helper.push_str("    if (sa) {\n");
@@ -232,13 +294,20 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
             state_name
         ));
         for (i, t) in types.iter().enumerate() {
+            // Doubles come back as heap boxes — push OWNED (#81).
+            let push_fn = if c_mangle_type(t) == "double" {
+                "FrameVec_push_owned"
+            } else {
+                "FrameVec_push"
+            };
             deserialize_helper.push_str(&format!(
                 "            cJSON* sa_item_{i} = cJSON_GetArrayItem(sa, {i});\n"
             ));
             deserialize_helper.push_str(&format!(
-                "            if (sa_item_{i}) {sys}_FrameVec_push(comp->state_args, {unpack});\n",
+                "            if (sa_item_{i}) {sys}_{push_fn}(comp->state_args, {unpack});\n",
                 i = i,
                 sys = system.name,
+                push_fn = push_fn,
                 unpack = c_unpack_for(t, &format!("sa_item_{i}"), &system.name)
             ));
         }
@@ -256,13 +325,20 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
             state_name
         ));
         for (i, t) in types.iter().enumerate() {
+            // Doubles come back as heap boxes — push OWNED (#81).
+            let push_fn = if c_mangle_type(t) == "double" {
+                "FrameVec_push_owned"
+            } else {
+                "FrameVec_push"
+            };
             deserialize_helper.push_str(&format!(
                 "            cJSON* ea_item_{i} = cJSON_GetArrayItem(ea, {i});\n"
             ));
             deserialize_helper.push_str(&format!(
-                "            if (ea_item_{i}) {sys}_FrameVec_push(comp->enter_args, {unpack});\n",
+                "            if (ea_item_{i}) {sys}_{push_fn}(comp->enter_args, {unpack});\n",
                 i = i,
                 sys = system.name,
+                push_fn = push_fn,
                 unpack = c_unpack_for(t, &format!("ea_item_{i}"), &system.name)
             ));
         }

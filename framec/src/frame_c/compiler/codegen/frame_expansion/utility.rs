@@ -25,10 +25,11 @@
 /// C `_return` assignment with category-aware marshalling.
 ///
 /// The `_return` slot is `void*`. Marshalling routes through
-/// `c_marshal::c_return_write` (#72) — the single categorization shared
-/// with every read site, so pack and unpack cannot drift: ints/bools/
-/// pointers via `(void*)(intptr_t)`, floats/doubles via the `pack_double`
-/// memcpy helper (`(intptr_t)(42.0)` truncates), structs via a heap box.
+/// `c_marshal::c_return_write` (#72, #81) — the single categorization
+/// shared with every read site, so pack and unpack cannot drift: ints/
+/// bools/pointers via `(void*)(intptr_t)`, floats/doubles AND structs via
+/// a heap box (`(intptr_t)(42.0)` truncates; the old double bit-pun
+/// overflowed 32-bit pointers).
 pub(super) fn c_return_assign(
     system_name: &str,
     expanded_expr: &str,

@@ -12,9 +12,20 @@ expression: "compile_fixture(\"09_return_explicit\", \"c\")"
 // ReturnExplicit_FrameDict - String-keyed dictionary
 // ============================================================================
 
+static char* ReturnExplicit_strdup_(const char* s) {
+    size_t n = strlen(s) + 1;
+    char* p = (char*)malloc(n);
+    memcpy(p, s, n);
+    return p;
+}
+
 typedef struct ReturnExplicit_FrameDictEntry {
     char* key;
     void* value;
+    // 1 when `value` is a heap box this dict owns (a malloc'd
+    // double from pack_double — #81): freed on overwrite and in
+    // destroy, deep-copied by FrameDict_copy.
+    int owned;
     struct ReturnExplicit_FrameDictEntry* next;
 } ReturnExplicit_FrameDictEntry;
 
@@ -41,19 +52,31 @@ static ReturnExplicit_FrameDict* ReturnExplicit_FrameDict_new(void) {
     return d;
 }
 
+static void ReturnExplicit_FrameDict_set_(ReturnExplicit_FrameDict* d, const char* key, void* value, int owned);
 static void ReturnExplicit_FrameDict_set(ReturnExplicit_FrameDict* d, const char* key, void* value) {
+    ReturnExplicit_FrameDict_set_(d, key, value, 0);
+}
+
+static void ReturnExplicit_FrameDict_set_owned(ReturnExplicit_FrameDict* d, const char* key, void* value) {
+    ReturnExplicit_FrameDict_set_(d, key, value, 1);
+}
+
+static void ReturnExplicit_FrameDict_set_(ReturnExplicit_FrameDict* d, const char* key, void* value, int owned) {
     unsigned int idx = ReturnExplicit_hash_string(key) % d->bucket_count;
     ReturnExplicit_FrameDictEntry* entry = d->buckets[idx];
     while (entry) {
         if (strcmp(entry->key, key) == 0) {
+            if (entry->owned && entry->value) free(entry->value);
             entry->value = value;
+            entry->owned = owned;
             return;
         }
         entry = entry->next;
     }
     ReturnExplicit_FrameDictEntry* new_entry = malloc(sizeof(ReturnExplicit_FrameDictEntry));
-    new_entry->key = strdup(key);
+    new_entry->key = ReturnExplicit_strdup_(key);
     new_entry->value = value;
+    new_entry->owned = owned;
     new_entry->next = d->buckets[idx];
     d->buckets[idx] = new_entry;
     d->size++;
@@ -88,7 +111,16 @@ static ReturnExplicit_FrameDict* ReturnExplicit_FrameDict_copy(ReturnExplicit_Fr
     for (int i = 0; i < src->bucket_count; i++) {
         ReturnExplicit_FrameDictEntry* entry = src->buckets[i];
         while (entry) {
-            ReturnExplicit_FrameDict_set(dst, entry->key, entry->value);
+            if (entry->owned && entry->value) {
+                // Owned values are heap-boxed doubles (#81): deep-copy
+                // so src and dst never alias (a shallow copy would
+                // dangle when either side frees on overwrite/destroy).
+                void* nb = malloc(sizeof(double));
+                memcpy(nb, entry->value, sizeof(double));
+                ReturnExplicit_FrameDict_set_(dst, entry->key, nb, 1);
+            } else {
+                ReturnExplicit_FrameDict_set_(dst, entry->key, entry->value, 0);
+            }
             entry = entry->next;
         }
     }
@@ -100,6 +132,7 @@ static void ReturnExplicit_FrameDict_destroy(ReturnExplicit_FrameDict* d) {
         ReturnExplicit_FrameDictEntry* entry = d->buckets[i];
         while (entry) {
             ReturnExplicit_FrameDictEntry* next = entry->next;
+            if (entry->owned && entry->value) free(entry->value);
             free(entry->key);
             free(entry);
             entry = next;
@@ -115,6 +148,10 @@ static void ReturnExplicit_FrameDict_destroy(ReturnExplicit_FrameDict* d) {
 
 typedef struct {
     void** items;
+    // owned[i] == 1 when items[i] is a heap box this vec owns (a
+    // malloc'd double from pack_double — #81): freed in destroy,
+    // deep-copied by FrameVec_copy.
+    unsigned char* owned;
     int size;
     int capacity;
 } ReturnExplicit_FrameVec;
@@ -124,15 +161,48 @@ static ReturnExplicit_FrameVec* ReturnExplicit_FrameVec_new(void) {
     v->capacity = 8;
     v->size = 0;
     v->items = malloc(sizeof(void*) * v->capacity);
+    v->owned = calloc(v->capacity, 1);
     return v;
 }
 
-static void ReturnExplicit_FrameVec_push(ReturnExplicit_FrameVec* v, void* item) {
+static void ReturnExplicit_FrameVec_push_(ReturnExplicit_FrameVec* v, void* item, unsigned char owned) {
     if (v->size >= v->capacity) {
         v->capacity *= 2;
         v->items = realloc(v->items, sizeof(void*) * v->capacity);
+        v->owned = realloc(v->owned, v->capacity);
+        memset(v->owned + v->size, 0, v->capacity - v->size);
     }
+    v->owned[v->size] = owned;
     v->items[v->size++] = item;
+}
+
+static void ReturnExplicit_FrameVec_push(ReturnExplicit_FrameVec* v, void* item) {
+    ReturnExplicit_FrameVec_push_(v, item, 0);
+}
+
+static void ReturnExplicit_FrameVec_push_owned(ReturnExplicit_FrameVec* v, void* item) {
+    ReturnExplicit_FrameVec_push_(v, item, 1);
+}
+
+static void ReturnExplicit_FrameVec_clear(ReturnExplicit_FrameVec* v) {
+    if (!v) return;
+    for (int i = 0; i < v->size; i++) {
+        if (v->owned[i] && v->items[i]) free(v->items[i]);
+    }
+    v->size = 0;
+}
+
+static void ReturnExplicit_FrameVec_extend(ReturnExplicit_FrameVec* dst, ReturnExplicit_FrameVec* src) {
+    if (!src) return;
+    for (int i = 0; i < src->size; i++) {
+        if (src->owned[i] && src->items[i]) {
+            void* nb = malloc(sizeof(double));
+            memcpy(nb, src->items[i], sizeof(double));
+            ReturnExplicit_FrameVec_push_(dst, nb, 1);
+        } else {
+            ReturnExplicit_FrameVec_push_(dst, src->items[i], 0);
+        }
+    }
 }
 
 static void* ReturnExplicit_FrameVec_pop(ReturnExplicit_FrameVec* v) {
@@ -156,6 +226,10 @@ static int ReturnExplicit_FrameVec_size(ReturnExplicit_FrameVec* v) {
 
 static void ReturnExplicit_FrameVec_destroy(ReturnExplicit_FrameVec* v) {
     if (!v) return;
+    for (int i = 0; i < v->size; i++) {
+        if (v->owned[i] && v->items[i]) free(v->items[i]);
+    }
+    free(v->owned);
     free(v->items);
     free(v);
 }
@@ -163,26 +237,23 @@ static void ReturnExplicit_FrameVec_destroy(ReturnExplicit_FrameVec* v) {
 static ReturnExplicit_FrameVec* ReturnExplicit_FrameVec_copy(ReturnExplicit_FrameVec* src) {
     if (!src) return NULL;
     ReturnExplicit_FrameVec* v = ReturnExplicit_FrameVec_new();
-    for (int i = 0; i < src->size; i++) {
-        ReturnExplicit_FrameVec_push(v, src->items[i]);
-    }
+    ReturnExplicit_FrameVec_extend(v, src);
     return v;
 }
 
 // ============================================================================
-// ReturnExplicit_pack_double / ReturnExplicit_unpack_double — bit-pun doubles through void*
+// ReturnExplicit_pack_double / ReturnExplicit_unpack_double — heap-boxed doubles (#81:
+// pointer-width independent; the old void* bit-pun overflowed on 32-bit)
 // ============================================================================
 
 static inline void* ReturnExplicit_pack_double(double v) {
-    void* p = 0;
-    memcpy(&p, &v, sizeof(double));
-    return p;
+    double* p = (double*)malloc(sizeof(double));
+    *p = v;
+    return (void*)p;
 }
 
 static inline double ReturnExplicit_unpack_double(void* p) {
-    double d;
-    memcpy(&d, &p, sizeof(double));
-    return d;
+    return p ? *(double*)p : 0.0;
 }
 
 // ============================================================================
@@ -378,12 +449,10 @@ static ReturnExplicit_Compartment* ReturnExplicit_prepareEnter(ReturnExplicit* s
     ReturnExplicit_Compartment* comp = NULL;
     for (int i = 0; i < n; i++) {
         ReturnExplicit_Compartment* nc = ReturnExplicit_Compartment_new(chain[i]);
-        if (state_args) {
-            for (int j = 0; j < state_args->size; j++) ReturnExplicit_FrameVec_push(nc->state_args, state_args->items[j]);
-        }
-        if (enter_args) {
-            for (int j = 0; j < enter_args->size; j++) ReturnExplicit_FrameVec_push(nc->enter_args, enter_args->items[j]);
-        }
+        // FrameVec_extend deep-copies vec-owned heap boxes (#81: doubles)
+        // so the caller can destroy its arg vecs after this returns.
+        ReturnExplicit_FrameVec_extend(nc->state_args, state_args);
+        ReturnExplicit_FrameVec_extend(nc->enter_args, enter_args);
         nc->parent_compartment = comp;  // adopts ref
         comp = nc;
     }
@@ -393,11 +462,10 @@ static ReturnExplicit_Compartment* ReturnExplicit_prepareEnter(ReturnExplicit* s
 static void ReturnExplicit_prepareExit(ReturnExplicit* self, ReturnExplicit_FrameVec* exit_args) {
     ReturnExplicit_Compartment* comp = self->__compartment;
     while (comp != NULL) {
-        // Clear any prior exit_args before copying the new ones in.
-        while (comp->exit_args->size > 0) comp->exit_args->size--;
-        if (exit_args) {
-            for (int j = 0; j < exit_args->size; j++) ReturnExplicit_FrameVec_push(comp->exit_args, exit_args->items[j]);
-        }
+        // Clear any prior exit_args (freeing vec-owned boxes, #81) before
+        // copying the new ones in; extend deep-copies owned entries.
+        ReturnExplicit_FrameVec_clear(comp->exit_args);
+        ReturnExplicit_FrameVec_extend(comp->exit_args, exit_args);
         comp = comp->parent_compartment;
     }
 }

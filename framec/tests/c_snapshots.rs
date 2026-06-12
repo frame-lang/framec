@@ -157,3 +157,56 @@ fn issue78_float_roundtrip_runs() {
         String::from_utf8_lossy(&run.stderr)
     );
 }
+
+/// wasm32 RUNTIME gate for the C backend (#81) — compiles the
+/// `17_float_roundtrip` fixture with Emscripten (32-bit pointers) and
+/// executes it under node. This is the exact configuration the old
+/// double-through-`void*` bit-pun silently corrupted: `sizeof(void*) == 4 <
+/// sizeof(double) == 8`, so every float collapsed toward 0 while the
+/// 64-bit native leg above stayed green. Doubles now travel as heap/stack
+/// boxes, which is pointer-width independent — this leg locks that.
+///
+/// Skipped (not failed) when emcc or node is not on PATH, matching the
+/// RFC-0034 toolchain-availability convention.
+#[test]
+fn issue81_float_roundtrip_runs_wasm32() {
+    use std::process::Command;
+    let emcc = match common::find_tool("emcc") {
+        Some(p) => p,
+        None => {
+            eprintln!("#81 wasm32 runtime gate skipped: emcc not on PATH");
+            return;
+        }
+    };
+    let node = match common::find_tool("node") {
+        Some(p) => p,
+        None => {
+            eprintln!("#81 wasm32 runtime gate skipped: node not on PATH");
+            return;
+        }
+    };
+    let code = compile_fixture("17_float_roundtrip", "c");
+    let dir = tempfile::tempdir().expect("tempdir");
+    let src = dir.path().join("17_float_roundtrip.c");
+    let js = dir.path().join("rt.js");
+    std::fs::write(&src, &code).expect("write tempfile");
+    let build = Command::new(&emcc)
+        .args(["-std=c11", "-o"])
+        .arg(&js)
+        .arg(&src)
+        .output()
+        .expect("emcc process");
+    assert!(
+        build.status.success(),
+        "#81: float fixture failed to compile for wasm32.\n--- stderr ---\n{}\n--- generated source ---\n{}",
+        String::from_utf8_lossy(&build.stderr),
+        code
+    );
+    let run = Command::new(&node).arg(&js).output().expect("node process");
+    assert!(
+        run.status.success(),
+        "#81: float fixture FAILED AT RUNTIME ON wasm32 (doubles corrupted through a 4-byte void* slot).\n--- stdout ---\n{}\n--- stderr ---\n{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+}

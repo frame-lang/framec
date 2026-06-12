@@ -61,6 +61,17 @@ pub(crate) struct HandlerContext {
     /// typed-language per-handler emit so the prefetch cast/declaration
     /// matches the declared type instead of defaulting to `int`.
     pub state_param_types: std::collections::HashMap<(String, String), String>,
+    /// (state_name, param_name) → declared type of the state's `$>` enter
+    /// handler params. Used by the C transition codegen (#81) to pack each
+    /// enter arg per its declared marshal category (float/double heap-box
+    /// via pack_double, pushed owned). Empty on backends that don't need
+    /// write-side categorization (erased containers carry the type).
+    pub state_enter_param_types: std::collections::HashMap<(String, String), String>,
+    /// (state_name, param_name) → declared type of the state's `<$` exit
+    /// handler params. C transition codegen write-side mirror of
+    /// `state_enter_param_types` (#81); keyed by the transition's SOURCE
+    /// state (the one being exited).
+    pub state_exit_param_types: std::collections::HashMap<(String, String), String>,
     /// Declared return type of the handler currently being expanded.
     /// Used by the C backend to branch on `float`/`double` when emitting
     /// `@@:(expr)` so doubles survive the `void*` return slot.

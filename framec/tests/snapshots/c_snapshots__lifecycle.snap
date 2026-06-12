@@ -12,9 +12,20 @@ expression: "compile_fixture(\"08_lifecycle\", \"c\")"
 // Lifecycle_FrameDict - String-keyed dictionary
 // ============================================================================
 
+static char* Lifecycle_strdup_(const char* s) {
+    size_t n = strlen(s) + 1;
+    char* p = (char*)malloc(n);
+    memcpy(p, s, n);
+    return p;
+}
+
 typedef struct Lifecycle_FrameDictEntry {
     char* key;
     void* value;
+    // 1 when `value` is a heap box this dict owns (a malloc'd
+    // double from pack_double — #81): freed on overwrite and in
+    // destroy, deep-copied by FrameDict_copy.
+    int owned;
     struct Lifecycle_FrameDictEntry* next;
 } Lifecycle_FrameDictEntry;
 
@@ -41,19 +52,31 @@ static Lifecycle_FrameDict* Lifecycle_FrameDict_new(void) {
     return d;
 }
 
+static void Lifecycle_FrameDict_set_(Lifecycle_FrameDict* d, const char* key, void* value, int owned);
 static void Lifecycle_FrameDict_set(Lifecycle_FrameDict* d, const char* key, void* value) {
+    Lifecycle_FrameDict_set_(d, key, value, 0);
+}
+
+static void Lifecycle_FrameDict_set_owned(Lifecycle_FrameDict* d, const char* key, void* value) {
+    Lifecycle_FrameDict_set_(d, key, value, 1);
+}
+
+static void Lifecycle_FrameDict_set_(Lifecycle_FrameDict* d, const char* key, void* value, int owned) {
     unsigned int idx = Lifecycle_hash_string(key) % d->bucket_count;
     Lifecycle_FrameDictEntry* entry = d->buckets[idx];
     while (entry) {
         if (strcmp(entry->key, key) == 0) {
+            if (entry->owned && entry->value) free(entry->value);
             entry->value = value;
+            entry->owned = owned;
             return;
         }
         entry = entry->next;
     }
     Lifecycle_FrameDictEntry* new_entry = malloc(sizeof(Lifecycle_FrameDictEntry));
-    new_entry->key = strdup(key);
+    new_entry->key = Lifecycle_strdup_(key);
     new_entry->value = value;
+    new_entry->owned = owned;
     new_entry->next = d->buckets[idx];
     d->buckets[idx] = new_entry;
     d->size++;
@@ -88,7 +111,16 @@ static Lifecycle_FrameDict* Lifecycle_FrameDict_copy(Lifecycle_FrameDict* src) {
     for (int i = 0; i < src->bucket_count; i++) {
         Lifecycle_FrameDictEntry* entry = src->buckets[i];
         while (entry) {
-            Lifecycle_FrameDict_set(dst, entry->key, entry->value);
+            if (entry->owned && entry->value) {
+                // Owned values are heap-boxed doubles (#81): deep-copy
+                // so src and dst never alias (a shallow copy would
+                // dangle when either side frees on overwrite/destroy).
+                void* nb = malloc(sizeof(double));
+                memcpy(nb, entry->value, sizeof(double));
+                Lifecycle_FrameDict_set_(dst, entry->key, nb, 1);
+            } else {
+                Lifecycle_FrameDict_set_(dst, entry->key, entry->value, 0);
+            }
             entry = entry->next;
         }
     }
@@ -100,6 +132,7 @@ static void Lifecycle_FrameDict_destroy(Lifecycle_FrameDict* d) {
         Lifecycle_FrameDictEntry* entry = d->buckets[i];
         while (entry) {
             Lifecycle_FrameDictEntry* next = entry->next;
+            if (entry->owned && entry->value) free(entry->value);
             free(entry->key);
             free(entry);
             entry = next;
@@ -115,6 +148,10 @@ static void Lifecycle_FrameDict_destroy(Lifecycle_FrameDict* d) {
 
 typedef struct {
     void** items;
+    // owned[i] == 1 when items[i] is a heap box this vec owns (a
+    // malloc'd double from pack_double — #81): freed in destroy,
+    // deep-copied by FrameVec_copy.
+    unsigned char* owned;
     int size;
     int capacity;
 } Lifecycle_FrameVec;
@@ -124,15 +161,48 @@ static Lifecycle_FrameVec* Lifecycle_FrameVec_new(void) {
     v->capacity = 8;
     v->size = 0;
     v->items = malloc(sizeof(void*) * v->capacity);
+    v->owned = calloc(v->capacity, 1);
     return v;
 }
 
-static void Lifecycle_FrameVec_push(Lifecycle_FrameVec* v, void* item) {
+static void Lifecycle_FrameVec_push_(Lifecycle_FrameVec* v, void* item, unsigned char owned) {
     if (v->size >= v->capacity) {
         v->capacity *= 2;
         v->items = realloc(v->items, sizeof(void*) * v->capacity);
+        v->owned = realloc(v->owned, v->capacity);
+        memset(v->owned + v->size, 0, v->capacity - v->size);
     }
+    v->owned[v->size] = owned;
     v->items[v->size++] = item;
+}
+
+static void Lifecycle_FrameVec_push(Lifecycle_FrameVec* v, void* item) {
+    Lifecycle_FrameVec_push_(v, item, 0);
+}
+
+static void Lifecycle_FrameVec_push_owned(Lifecycle_FrameVec* v, void* item) {
+    Lifecycle_FrameVec_push_(v, item, 1);
+}
+
+static void Lifecycle_FrameVec_clear(Lifecycle_FrameVec* v) {
+    if (!v) return;
+    for (int i = 0; i < v->size; i++) {
+        if (v->owned[i] && v->items[i]) free(v->items[i]);
+    }
+    v->size = 0;
+}
+
+static void Lifecycle_FrameVec_extend(Lifecycle_FrameVec* dst, Lifecycle_FrameVec* src) {
+    if (!src) return;
+    for (int i = 0; i < src->size; i++) {
+        if (src->owned[i] && src->items[i]) {
+            void* nb = malloc(sizeof(double));
+            memcpy(nb, src->items[i], sizeof(double));
+            Lifecycle_FrameVec_push_(dst, nb, 1);
+        } else {
+            Lifecycle_FrameVec_push_(dst, src->items[i], 0);
+        }
+    }
 }
 
 static void* Lifecycle_FrameVec_pop(Lifecycle_FrameVec* v) {
@@ -156,6 +226,10 @@ static int Lifecycle_FrameVec_size(Lifecycle_FrameVec* v) {
 
 static void Lifecycle_FrameVec_destroy(Lifecycle_FrameVec* v) {
     if (!v) return;
+    for (int i = 0; i < v->size; i++) {
+        if (v->owned[i] && v->items[i]) free(v->items[i]);
+    }
+    free(v->owned);
     free(v->items);
     free(v);
 }
@@ -163,26 +237,23 @@ static void Lifecycle_FrameVec_destroy(Lifecycle_FrameVec* v) {
 static Lifecycle_FrameVec* Lifecycle_FrameVec_copy(Lifecycle_FrameVec* src) {
     if (!src) return NULL;
     Lifecycle_FrameVec* v = Lifecycle_FrameVec_new();
-    for (int i = 0; i < src->size; i++) {
-        Lifecycle_FrameVec_push(v, src->items[i]);
-    }
+    Lifecycle_FrameVec_extend(v, src);
     return v;
 }
 
 // ============================================================================
-// Lifecycle_pack_double / Lifecycle_unpack_double — bit-pun doubles through void*
+// Lifecycle_pack_double / Lifecycle_unpack_double — heap-boxed doubles (#81:
+// pointer-width independent; the old void* bit-pun overflowed on 32-bit)
 // ============================================================================
 
 static inline void* Lifecycle_pack_double(double v) {
-    void* p = 0;
-    memcpy(&p, &v, sizeof(double));
-    return p;
+    double* p = (double*)malloc(sizeof(double));
+    *p = v;
+    return (void*)p;
 }
 
 static inline double Lifecycle_unpack_double(void* p) {
-    double d;
-    memcpy(&d, &p, sizeof(double));
-    return d;
+    return p ? *(double*)p : 0.0;
 }
 
 // ============================================================================
@@ -397,12 +468,10 @@ static Lifecycle_Compartment* Lifecycle_prepareEnter(Lifecycle* self, const char
     Lifecycle_Compartment* comp = NULL;
     for (int i = 0; i < n; i++) {
         Lifecycle_Compartment* nc = Lifecycle_Compartment_new(chain[i]);
-        if (state_args) {
-            for (int j = 0; j < state_args->size; j++) Lifecycle_FrameVec_push(nc->state_args, state_args->items[j]);
-        }
-        if (enter_args) {
-            for (int j = 0; j < enter_args->size; j++) Lifecycle_FrameVec_push(nc->enter_args, enter_args->items[j]);
-        }
+        // FrameVec_extend deep-copies vec-owned heap boxes (#81: doubles)
+        // so the caller can destroy its arg vecs after this returns.
+        Lifecycle_FrameVec_extend(nc->state_args, state_args);
+        Lifecycle_FrameVec_extend(nc->enter_args, enter_args);
         nc->parent_compartment = comp;  // adopts ref
         comp = nc;
     }
@@ -412,11 +481,10 @@ static Lifecycle_Compartment* Lifecycle_prepareEnter(Lifecycle* self, const char
 static void Lifecycle_prepareExit(Lifecycle* self, Lifecycle_FrameVec* exit_args) {
     Lifecycle_Compartment* comp = self->__compartment;
     while (comp != NULL) {
-        // Clear any prior exit_args before copying the new ones in.
-        while (comp->exit_args->size > 0) comp->exit_args->size--;
-        if (exit_args) {
-            for (int j = 0; j < exit_args->size; j++) Lifecycle_FrameVec_push(comp->exit_args, exit_args->items[j]);
-        }
+        // Clear any prior exit_args (freeing vec-owned boxes, #81) before
+        // copying the new ones in; extend deep-copies owned entries.
+        Lifecycle_FrameVec_clear(comp->exit_args);
+        Lifecycle_FrameVec_extend(comp->exit_args, exit_args);
         comp = comp->parent_compartment;
     }
 }

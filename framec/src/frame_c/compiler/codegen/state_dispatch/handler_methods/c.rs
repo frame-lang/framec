@@ -41,6 +41,8 @@ pub(crate) fn generate_c_handler_method(
     handler_state_var_types: &std::collections::HashMap<String, String>,
     state_hsm_parents: &std::collections::HashMap<String, String>,
     state_param_types: &std::collections::HashMap<(String, String), String>,
+    state_enter_param_types: &std::collections::HashMap<(String, String), String>,
+    state_exit_param_types: &std::collections::HashMap<(String, String), String>,
     domain_field_types: &std::collections::HashMap<String, String>,
 ) -> CodegenNode {
     let method_name = handler_method_name(state_name, handler);
@@ -63,6 +65,8 @@ pub(crate) fn generate_c_handler_method(
         state_hsm_parents: state_hsm_parents.clone(),
         current_return_type: handler.return_type.clone(),
         state_param_types: state_param_types.clone(),
+        state_enter_param_types: state_enter_param_types.clone(),
+        state_exit_param_types: state_exit_param_types.clone(),
         domain_field_types: domain_field_types.clone(),
     };
 
@@ -72,15 +76,17 @@ pub(crate) fn generate_c_handler_method(
     // come from `c_marshal::c_marshal_of` (#72) — the same source of truth
     // the wrapper's pack side uses, so write and read cannot drift:
     // `str` → `const char*`, `bool` → `int`, `float`/`double` → `double`
-    // (via the runtime's `Sys_unpack_double` bit-pun — `(intptr_t)(0.5)`
-    // truncates), `T*` → typed cast.
+    // (via `Sys_unpack_double`, a NULL-safe deref of the heap/stack box
+    // the push side built — #81; `(intptr_t)(0.5)` truncates), `T*` →
+    // typed cast.
     //
     // The Boxed fallback (structs / unknown typedefs) differs by slot:
     // EVENT params are pushed by the interface wrapper as stack-box
     // addresses → deref-copy here (`T v = *(T*)val`). STATE/enter/exit
-    // args are pushed by the transition sites, which still use the
-    // historical `(void*)(intptr_t)` form → keep the int fallback there
-    // (struct state-args have never been supported on C; #72 follow-up).
+    // args are pushed by the transition sites, which keep the historical
+    // `(void*)(intptr_t)` form for non-Dbl unknowns → keep the int
+    // fallback there (struct state-args have never been supported on C;
+    // #72 follow-up).
     //
     // Returns (decl_type, full_extract_expr) where the extractor takes
     // the void* value placeholder `{val}`.
@@ -171,9 +177,11 @@ pub(crate) fn generate_c_handler_method(
     }
 
     // State-var init (lifecycle enter only). Uses FrameDict_has + FrameDict_set.
-    // Packing per c_marshal (#77): float/double state-vars bit-pun via
-    // pack_double — `(void*)(intptr_t)(0.0)` truncates. The matching read-side
-    // unpack lives in `expand_state_var`'s C arm.
+    // Packing per c_marshal (#77, #81): float/double state-vars heap-box via
+    // pack_double — `(void*)(intptr_t)(0.0)` truncates, and bit-punning
+    // corrupts on 32-bit pointers. Stored OWNED so the dict frees/deep-copies
+    // the box. The matching read-side unpack lives in `expand_state_var`'s
+    // C arm.
     if handler.is_enter {
         for var in state_vars_for_init {
             let init_val = if let Some(ref init) = var.initializer_text {
@@ -181,20 +189,23 @@ pub(crate) fn generate_c_handler_method(
             } else {
                 state_var_init_value(&var.var_type, lang)
             };
-            let packed = {
+            let (packed, setter) = {
                 use crate::frame_c::compiler::codegen::c_marshal::{c_marshal_of, CMarshal};
                 let declared = match &var.var_type {
                     crate::frame_c::compiler::frame_ast::Type::Custom(t) => t.as_str(),
                     _ => "",
                 };
                 match c_marshal_of(declared) {
-                    CMarshal::Dbl => format!("{}_pack_double({})", system_name, init_val),
-                    _ => format!("(void*)(intptr_t)({})", init_val),
+                    CMarshal::Dbl => (
+                        format!("{}_pack_double({})", system_name, init_val),
+                        "FrameDict_set_owned",
+                    ),
+                    _ => (format!("(void*)(intptr_t)({})", init_val), "FrameDict_set"),
                 }
             };
             body.push_str(&format!(
-                "if (!{}_FrameDict_has(compartment->state_vars, \"{}\")) {{\n    {}_FrameDict_set(compartment->state_vars, \"{}\", {});\n}}\n",
-                system_name, var.name, system_name, var.name, packed
+                "if (!{}_FrameDict_has(compartment->state_vars, \"{}\")) {{\n    {}_{}(compartment->state_vars, \"{}\", {});\n}}\n",
+                system_name, var.name, system_name, setter, var.name, packed
             ));
         }
     }

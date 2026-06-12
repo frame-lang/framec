@@ -12,9 +12,20 @@ expression: "compile_fixture(\"03_persist\", \"c\")"
 // Counter_FrameDict - String-keyed dictionary
 // ============================================================================
 
+static char* Counter_strdup_(const char* s) {
+    size_t n = strlen(s) + 1;
+    char* p = (char*)malloc(n);
+    memcpy(p, s, n);
+    return p;
+}
+
 typedef struct Counter_FrameDictEntry {
     char* key;
     void* value;
+    // 1 when `value` is a heap box this dict owns (a malloc'd
+    // double from pack_double — #81): freed on overwrite and in
+    // destroy, deep-copied by FrameDict_copy.
+    int owned;
     struct Counter_FrameDictEntry* next;
 } Counter_FrameDictEntry;
 
@@ -41,19 +52,31 @@ static Counter_FrameDict* Counter_FrameDict_new(void) {
     return d;
 }
 
+static void Counter_FrameDict_set_(Counter_FrameDict* d, const char* key, void* value, int owned);
 static void Counter_FrameDict_set(Counter_FrameDict* d, const char* key, void* value) {
+    Counter_FrameDict_set_(d, key, value, 0);
+}
+
+static void Counter_FrameDict_set_owned(Counter_FrameDict* d, const char* key, void* value) {
+    Counter_FrameDict_set_(d, key, value, 1);
+}
+
+static void Counter_FrameDict_set_(Counter_FrameDict* d, const char* key, void* value, int owned) {
     unsigned int idx = Counter_hash_string(key) % d->bucket_count;
     Counter_FrameDictEntry* entry = d->buckets[idx];
     while (entry) {
         if (strcmp(entry->key, key) == 0) {
+            if (entry->owned && entry->value) free(entry->value);
             entry->value = value;
+            entry->owned = owned;
             return;
         }
         entry = entry->next;
     }
     Counter_FrameDictEntry* new_entry = malloc(sizeof(Counter_FrameDictEntry));
-    new_entry->key = strdup(key);
+    new_entry->key = Counter_strdup_(key);
     new_entry->value = value;
+    new_entry->owned = owned;
     new_entry->next = d->buckets[idx];
     d->buckets[idx] = new_entry;
     d->size++;
@@ -88,7 +111,16 @@ static Counter_FrameDict* Counter_FrameDict_copy(Counter_FrameDict* src) {
     for (int i = 0; i < src->bucket_count; i++) {
         Counter_FrameDictEntry* entry = src->buckets[i];
         while (entry) {
-            Counter_FrameDict_set(dst, entry->key, entry->value);
+            if (entry->owned && entry->value) {
+                // Owned values are heap-boxed doubles (#81): deep-copy
+                // so src and dst never alias (a shallow copy would
+                // dangle when either side frees on overwrite/destroy).
+                void* nb = malloc(sizeof(double));
+                memcpy(nb, entry->value, sizeof(double));
+                Counter_FrameDict_set_(dst, entry->key, nb, 1);
+            } else {
+                Counter_FrameDict_set_(dst, entry->key, entry->value, 0);
+            }
             entry = entry->next;
         }
     }
@@ -100,6 +132,7 @@ static void Counter_FrameDict_destroy(Counter_FrameDict* d) {
         Counter_FrameDictEntry* entry = d->buckets[i];
         while (entry) {
             Counter_FrameDictEntry* next = entry->next;
+            if (entry->owned && entry->value) free(entry->value);
             free(entry->key);
             free(entry);
             entry = next;
@@ -115,6 +148,10 @@ static void Counter_FrameDict_destroy(Counter_FrameDict* d) {
 
 typedef struct {
     void** items;
+    // owned[i] == 1 when items[i] is a heap box this vec owns (a
+    // malloc'd double from pack_double — #81): freed in destroy,
+    // deep-copied by FrameVec_copy.
+    unsigned char* owned;
     int size;
     int capacity;
 } Counter_FrameVec;
@@ -124,15 +161,48 @@ static Counter_FrameVec* Counter_FrameVec_new(void) {
     v->capacity = 8;
     v->size = 0;
     v->items = malloc(sizeof(void*) * v->capacity);
+    v->owned = calloc(v->capacity, 1);
     return v;
 }
 
-static void Counter_FrameVec_push(Counter_FrameVec* v, void* item) {
+static void Counter_FrameVec_push_(Counter_FrameVec* v, void* item, unsigned char owned) {
     if (v->size >= v->capacity) {
         v->capacity *= 2;
         v->items = realloc(v->items, sizeof(void*) * v->capacity);
+        v->owned = realloc(v->owned, v->capacity);
+        memset(v->owned + v->size, 0, v->capacity - v->size);
     }
+    v->owned[v->size] = owned;
     v->items[v->size++] = item;
+}
+
+static void Counter_FrameVec_push(Counter_FrameVec* v, void* item) {
+    Counter_FrameVec_push_(v, item, 0);
+}
+
+static void Counter_FrameVec_push_owned(Counter_FrameVec* v, void* item) {
+    Counter_FrameVec_push_(v, item, 1);
+}
+
+static void Counter_FrameVec_clear(Counter_FrameVec* v) {
+    if (!v) return;
+    for (int i = 0; i < v->size; i++) {
+        if (v->owned[i] && v->items[i]) free(v->items[i]);
+    }
+    v->size = 0;
+}
+
+static void Counter_FrameVec_extend(Counter_FrameVec* dst, Counter_FrameVec* src) {
+    if (!src) return;
+    for (int i = 0; i < src->size; i++) {
+        if (src->owned[i] && src->items[i]) {
+            void* nb = malloc(sizeof(double));
+            memcpy(nb, src->items[i], sizeof(double));
+            Counter_FrameVec_push_(dst, nb, 1);
+        } else {
+            Counter_FrameVec_push_(dst, src->items[i], 0);
+        }
+    }
 }
 
 static void* Counter_FrameVec_pop(Counter_FrameVec* v) {
@@ -156,6 +226,10 @@ static int Counter_FrameVec_size(Counter_FrameVec* v) {
 
 static void Counter_FrameVec_destroy(Counter_FrameVec* v) {
     if (!v) return;
+    for (int i = 0; i < v->size; i++) {
+        if (v->owned[i] && v->items[i]) free(v->items[i]);
+    }
+    free(v->owned);
     free(v->items);
     free(v);
 }
@@ -163,26 +237,23 @@ static void Counter_FrameVec_destroy(Counter_FrameVec* v) {
 static Counter_FrameVec* Counter_FrameVec_copy(Counter_FrameVec* src) {
     if (!src) return NULL;
     Counter_FrameVec* v = Counter_FrameVec_new();
-    for (int i = 0; i < src->size; i++) {
-        Counter_FrameVec_push(v, src->items[i]);
-    }
+    Counter_FrameVec_extend(v, src);
     return v;
 }
 
 // ============================================================================
-// Counter_pack_double / Counter_unpack_double — bit-pun doubles through void*
+// Counter_pack_double / Counter_unpack_double — heap-boxed doubles (#81:
+// pointer-width independent; the old void* bit-pun overflowed on 32-bit)
 // ============================================================================
 
 static inline void* Counter_pack_double(double v) {
-    void* p = 0;
-    memcpy(&p, &v, sizeof(double));
-    return p;
+    double* p = (double*)malloc(sizeof(double));
+    *p = v;
+    return (void*)p;
 }
 
 static inline double Counter_unpack_double(void* p) {
-    double d;
-    memcpy(&d, &p, sizeof(double));
-    return d;
+    return p ? *(double*)p : 0.0;
 }
 
 // ============================================================================
@@ -209,7 +280,7 @@ static cJSON* Counter_persist_pack_double(void* v) { return cJSON_CreateNumber(C
 static void* Counter_persist_unpack_double(cJSON* j) { return Counter_pack_double(j ? j->valuedouble : 0.0); }
 
 static cJSON* Counter_persist_pack_str(void* v) { return cJSON_CreateString(v ? (const char*)v : ""); }
-static void* Counter_persist_unpack_str(cJSON* j) { const char* s = (j && j->valuestring) ? j->valuestring : ""; return (void*)strdup(s); }
+static void* Counter_persist_unpack_str(cJSON* j) { const char* s = (j && j->valuestring) ? j->valuestring : ""; return (void*)Counter_strdup_(s); }
 
 static cJSON* Counter_persist_pack_bool(void* v) { return cJSON_CreateBool((intptr_t)v != 0); }
 static void* Counter_persist_unpack_bool(cJSON* j) { return (void*)(intptr_t)(j && cJSON_IsTrue(j) ? 1 : 0); }
@@ -265,7 +336,7 @@ static void Counter_persist_unpack_field_double(cJSON* j, void* p) { *(double*)p
 static cJSON* Counter_persist_pack_field_bool(void* p) { return cJSON_CreateBool(*(bool*)p); }
 static void Counter_persist_unpack_field_bool(cJSON* j, void* p) { *(bool*)p = (bool)(j && cJSON_IsTrue(j)); }
 static cJSON* Counter_persist_pack_field_str(void* p) { const char* s = *(const char**)p; return cJSON_CreateString(s ? s : ""); }
-static void Counter_persist_unpack_field_str(cJSON* j, void* p) { const char* s = (j && j->valuestring) ? j->valuestring : ""; *(char**)p = strdup(s); }
+static void Counter_persist_unpack_field_str(cJSON* j, void* p) { const char* s = (j && j->valuestring) ? j->valuestring : ""; *(char**)p = Counter_strdup_(s); }
 static cJSON* Counter_persist_pack_field_list(void* p) { return Counter_persist_pack_list(*(Counter_FrameVec**)p); }
 static void Counter_persist_unpack_field_list(cJSON* j, void* p) { *(Counter_FrameVec**)p = (Counter_FrameVec*)Counter_persist_unpack_list(j); }
 static cJSON* Counter_persist_pack_field_dict(void* p) { return Counter_persist_pack_dict(*(Counter_FrameDict**)p); }
@@ -471,12 +542,10 @@ static Counter_Compartment* Counter_prepareEnter(Counter* self, const char* leaf
     Counter_Compartment* comp = NULL;
     for (int i = 0; i < n; i++) {
         Counter_Compartment* nc = Counter_Compartment_new(chain[i]);
-        if (state_args) {
-            for (int j = 0; j < state_args->size; j++) Counter_FrameVec_push(nc->state_args, state_args->items[j]);
-        }
-        if (enter_args) {
-            for (int j = 0; j < enter_args->size; j++) Counter_FrameVec_push(nc->enter_args, enter_args->items[j]);
-        }
+        // FrameVec_extend deep-copies vec-owned heap boxes (#81: doubles)
+        // so the caller can destroy its arg vecs after this returns.
+        Counter_FrameVec_extend(nc->state_args, state_args);
+        Counter_FrameVec_extend(nc->enter_args, enter_args);
         nc->parent_compartment = comp;  // adopts ref
         comp = nc;
     }
@@ -486,11 +555,10 @@ static Counter_Compartment* Counter_prepareEnter(Counter* self, const char* leaf
 static void Counter_prepareExit(Counter* self, Counter_FrameVec* exit_args) {
     Counter_Compartment* comp = self->__compartment;
     while (comp != NULL) {
-        // Clear any prior exit_args before copying the new ones in.
-        while (comp->exit_args->size > 0) comp->exit_args->size--;
-        if (exit_args) {
-            for (int j = 0; j < exit_args->size; j++) Counter_FrameVec_push(comp->exit_args, exit_args->items[j]);
-        }
+        // Clear any prior exit_args (freeing vec-owned boxes, #81) before
+        // copying the new ones in; extend deep-copies owned entries.
+        Counter_FrameVec_clear(comp->exit_args);
+        Counter_FrameVec_extend(comp->exit_args, exit_args);
         comp = comp->parent_compartment;
     }
 }
@@ -617,13 +685,6 @@ static cJSON* Counter_serialize_compartment(Counter_Compartment* comp) {
     cJSON* vars = cJSON_CreateObject();
     Counter_FrameDict* sv = comp->state_vars;
     if (sv) {
-        for (int i = 0; i < sv->bucket_count; i++) {
-            Counter_FrameDictEntry* entry = sv->buckets[i];
-            while (entry) {
-                cJSON_AddNumberToObject(vars, entry->key, (double)(intptr_t)entry->value);
-                entry = entry->next;
-            }
-        }
     }
     cJSON_AddItemToObject(obj, "state_vars", vars);
     cJSON* sa = cJSON_CreateArray();
@@ -641,13 +702,9 @@ static cJSON* Counter_serialize_compartment(Counter_Compartment* comp) {
 static Counter_Compartment* Counter_deserialize_compartment(cJSON* data) {
     if (!data || cJSON_IsNull(data)) return NULL;
     cJSON* state_item = cJSON_GetObjectItem(data, "state");
-    Counter_Compartment* comp = Counter_Compartment_new(strdup(state_item->valuestring));
+    Counter_Compartment* comp = Counter_Compartment_new(Counter_strdup_(state_item->valuestring));
     cJSON* vars = cJSON_GetObjectItem(data, "state_vars");
     if (vars) {
-        cJSON* var_item;
-        cJSON_ArrayForEach(var_item, vars) {
-            Counter_FrameDict_set(comp->state_vars, var_item->string, (void*)(intptr_t)(int)var_item->valuedouble);
-        }
     }
     cJSON* sa = cJSON_GetObjectItem(data, "state_args");
     if (sa) {
