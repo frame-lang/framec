@@ -366,7 +366,13 @@ pub fn resolve_class(class: &CharClass, alphabet: Alphabet) -> Vec<(u32, u32)> {
             ClassMember::Single(v) => ranges.push((*v, *v)),
             ClassMember::Range { low, high } => ranges.push((*low, *high)),
             ClassMember::Shorthand { kind, negated } => {
-                let base = shorthand_ranges(*kind);
+                // On the `char` alphabet `\d`/`\w`/`\s` use Unicode-equivalent
+                // sets (RFC-0042 §6.7); `bytes` keeps the ASCII definitions.
+                let base = if alphabet == Alphabet::Char {
+                    super::unicode::perl_ranges(*kind)
+                } else {
+                    shorthand_ranges(*kind)
+                };
                 if *negated {
                     ranges.extend(complement_ranges(&base, alphabet));
                 } else {

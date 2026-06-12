@@ -13,8 +13,28 @@
 //! every `ClassMember::Unicode` into concrete `ClassMember::Range`s so no
 //! unresolved Unicode member ever reaches the DFA construction.
 
-use super::ast::{CharClass, ClassMember, RegexAst, RegexNode, SpannedNode};
+use super::ast::{CharClass, ClassMember, RegexAst, RegexNode, ShorthandKind, SpannedNode};
 use super::{Alphabet, EngineDiagnostic};
+
+/// Unicode codepoint ranges for a Perl shorthand class (`\d`/`\w`/`\s`) on the
+/// `char` alphabet (RFC-0042 §6.7), sourced from `regex-syntax`. The `bytes`
+/// alphabet keeps ASCII definitions (`super::thompson::shorthand_ranges`); the
+/// three fixed patterns always parse, so an empty result is unreachable.
+pub fn perl_ranges(kind: ShorthandKind) -> Vec<(u32, u32)> {
+    use regex_syntax::hir::{Class, HirKind};
+    let pat = match kind {
+        ShorthandKind::Digit => "\\d",
+        ShorthandKind::Word => "\\w",
+        ShorthandKind::Whitespace => "\\s",
+    };
+    match regex_syntax::parse(pat).map(|h| h.into_kind()) {
+        Ok(HirKind::Class(Class::Unicode(c))) => c
+            .iter()
+            .map(|r| (r.start() as u32, r.end() as u32))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
 
 /// Resolve every `\p{}`/`\P{}` member in `ast` into codepoint ranges, in
 /// place. Returns `true` if any Unicode class was resolved (so the caller can

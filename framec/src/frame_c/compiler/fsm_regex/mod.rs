@@ -542,6 +542,28 @@ mod engine_tests {
         assert_code("A*?", Alphabet::Token, "E720");
     }
 
+    /// Unicode shorthands (§6.7): on `char`, `\d`/`\w`/`\s` resolve to Unicode
+    /// sets (many ranges); on `bytes` they stay ASCII (a handful).
+    #[test]
+    fn shorthands_are_unicode_on_char() {
+        // A Unicode `\w` produces far more ranges than the 4 ASCII ones.
+        let ch = compile("\\w", Alphabet::Char, size_check::DEFAULT_MAX_DFA_STATES)
+            .expect("\\w compiles on char");
+        let by = compile("\\w", Alphabet::Bytes, size_check::DEFAULT_MAX_DFA_STATES)
+            .expect("\\w compiles on bytes");
+        let ranges = |r: &CompiledRegex| {
+            r.dfa
+                .states
+                .iter()
+                .map(|s| s.transitions.len())
+                .sum::<usize>()
+        };
+        assert!(
+            ranges(&ch) > ranges(&by),
+            "char \\w must be Unicode (more ranges) than bytes ASCII \\w"
+        );
+    }
+
     /// Unicode classes (§6.7/§11.6): on the `char` alphabet `\p{...}` resolves
     /// to codepoint ranges (engine accepts; the `@@[allow(unicode_classes)]`
     /// opt-in is the validator's job — see the `e720_unicode_class_*` tests,

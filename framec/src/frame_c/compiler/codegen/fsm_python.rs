@@ -1815,6 +1815,23 @@ mod tests {
         );
     }
 
+    /// Unicode-aware shorthands (§6.7): on the `char` alphabet `\w`/`\d`/`\s`
+    /// use Unicode sets — `\w+` matches letters across scripts (Greek, CJK) and
+    /// Arabic-Indic digits, not just ASCII.
+    #[test]
+    fn fsm_unicode_shorthand() {
+        let src = "@@fsm M(text: char) : bool = false { /\\w+/ true }";
+        let Some(h) = run(src, "Ωμέγα", "uwa") else {
+            return;
+        };
+        assert_eq!(h.accepted, "True"); // Greek letters
+        assert_eq!(run(src, "日本語", "uwb").unwrap().accepted, "True"); // CJK
+        assert_eq!(run(src, "...", "uwc").unwrap().accepted, "False");
+        // `\d` is Unicode too: Arabic-Indic digits match.
+        let d = "@@fsm M(text: char) : bool = false { /\\d+/ true }";
+        assert_eq!(run(d, "١٢٣", "uwd").unwrap().accepted, "True");
+    }
+
     /// Lazy quantifiers (§11.1) via the Pike VM: `/.*?,/` matches up to the
     /// FIRST comma (greedy `/.*,/` would take the last), and the mixed
     /// `/a*?b+/` keeps `b+` greedy ("aabbb" → cursor 5, not 3).
