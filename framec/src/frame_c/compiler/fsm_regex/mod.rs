@@ -192,33 +192,31 @@ pub fn compile(
         ));
     }
 
-    // 3. Boundary anchors (§6.6). A leading `^`/`\A` and/or trailing
-    //    `$`/`\z` are extracted into position requirements the matcher
-    //    enforces; the core is anchor-free. Anchors anywhere else, and
-    //    `\b`/`\B`, are not yet folded into the DFA (deferred to v0.2) —
-    //    they survive into the NFA and trip the gate below.
+    // 3. Anchors (§6.6). Two paths:
+    //    - Fast DFA path: an anchor-free core, optionally with leading `^`/`\A`,
+    //      trailing `$`/`\z`, and (on `bytes`) edge `\b`/`\B` — these extract to
+    //      position flags the matcher enforces around a pure-DFA match.
+    //    - Pike path: any *interior* anchor, or `\b`/`\B` on `char`, or a lazy
+    //      quantifier — handled by the priority NFA VM with zero-width `Assert`
+    //      instructions (interior anchors, multiline, Unicode/interior `\b`).
     let span = ast.root.span;
     let (requires_start, requires_end, start_boundary, end_boundary, ast) =
         extract_boundary_anchors(ast);
 
-    // Word boundaries need a word/non-word classification of the alphabet.
-    // v0.1 supports this for `bytes` (the ASCII word set `[0-9A-Za-z_]`);
-    // `char` needs Unicode word tables (§11.6) and `token` has no character
-    // notion, so an edge `\b`/`\B` there is surfaced as unsupported.
+    // Word boundaries need a word/non-word classification of the alphabet. The
+    // fast DFA path supports `bytes` (ASCII word set); `char`/interior `\b` and
+    // interior anchors route to the Pike VM (assertion path) — gated on until
+    // every backend evaluates `Assert` (Phase 2). For now those remain
+    // UnsupportedAnchors, exactly as before; the Pike `Assert` capability is
+    // exercised by the `fsm_regex::pike` unit tests.
     if (start_boundary.is_some() || end_boundary.is_some()) && alphabet != Alphabet::Bytes {
         return Err(CompileError::UnsupportedAnchors(span));
     }
 
-    // 3b. Lazy quantifiers (§11.1) need per-quantifier match-end preference,
-    //     which a single longest-match DFA cannot express. Such stages compile
-    //     to a priority-ordered NFA program run by the Pike VM instead. The
-    //     `dfa` is left an empty placeholder; matchers route to `program`.
-    //     Token + lazy was already rejected (E720, no scalar element notion),
-    //     so this path is bytes/char only.
+    // 3b. Lazy quantifiers (§11.1) → Pike VM (per-quantifier match-end). Token
+    //     + lazy was already rejected; bytes/char only.
     if pike::contains_lazy(&ast) {
         let program = pike::compile(&ast, alphabet);
-        // The DFA/metrics are unused on the Pike path; emit empty placeholders
-        // so the shared `CompiledRegex` shape holds.
         let placeholder_dfa = subset::Dfa {
             states: Vec::new(),
             start: 0,
@@ -287,6 +285,25 @@ pub fn compile(
 }
 
 /// Strip leading/trailing *edge* anchors from the regex, returning
+/// Does the regex AST contain any anchor node (`^ $ \A \z \b \B`)? Used to
+/// route interior-anchor stages to the Pike path (the fast DFA path only
+/// handles cleanly-extracted edge anchors). Wired in Phase 2 (the per-backend
+/// `Assert` evaluation); kept here as the engine capability lands first.
+#[allow(dead_code)]
+fn ast_has_anchor(regex: &ast::RegexAst) -> bool {
+    use ast::{RegexNode, SpannedNode};
+    fn walk(n: &SpannedNode) -> bool {
+        match &n.node {
+            RegexNode::Anchor(_) => true,
+            RegexNode::Quantifier { inner, .. } | RegexNode::Group(inner) => walk(inner),
+            RegexNode::Concat(items) | RegexNode::Alt(items) => items.iter().any(walk),
+            _ => false,
+        }
+    }
+    walk(&regex.root)
+}
+
+/// Strip a leading/trailing edge anchor run, returning
 /// `(requires_start, requires_end, start_boundary, end_boundary, core)`.
 ///
 /// Leading `^`/`\A` → `requires_start`; trailing `$`/`\z` → `requires_end`;

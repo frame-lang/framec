@@ -583,8 +583,15 @@ pub(crate) fn check_regexes(decl: &FsmDeclAst) -> Vec<FsmDiagnostic> {
                                 // from the program in that case (§11.1).
                                 match &compiled.program {
                                     Some(prog) => {
-                                        crate::frame_c::compiler::fsm_regex::pike::run(prog, &[], 0)
-                                            .is_some()
+                                        // Empty input ⇒ no word chars; pass an
+                                        // empty word table for the `\b` predicate.
+                                        crate::frame_c::compiler::fsm_regex::pike::run(
+                                            prog,
+                                            &[],
+                                            0,
+                                            &[],
+                                        )
+                                        .is_some()
                                     }
                                     None => compiled.dfa.states[compiled.dfa.start].is_accept,
                                 }
