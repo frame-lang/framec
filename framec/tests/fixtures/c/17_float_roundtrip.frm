@@ -17,6 +17,7 @@
         bump()
         peek(): float
         radius(): float
+        early(): float
     machine:
         $S {
             $.cool: float = 0.0
@@ -24,6 +25,7 @@
             bump() { $.cool = $.cool + 1.5 }
             peek(): float { @@:($.cool) }
             radius(): float { @@:(32.0) }
+            early(): float { @@:return(18.0) }
         }
     domain:
         r: float = 1.0
@@ -37,6 +39,8 @@ int main() {
     if (got != 3.0) { printf("FAIL peek: %f\n", got); return 1; }
     double rad = Roundtrip_radius(p);
     if (rad != 32.0) { printf("FAIL radius: %f\n", rad); return 1; }
+    double er = Roundtrip_early(p);
+    if (er != 18.0) { printf("FAIL early: %f\n", er); return 1; }
     printf("PASS: 17_float_roundtrip\n");
     Roundtrip_destroy(p);
     return 0;
