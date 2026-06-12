@@ -103,21 +103,19 @@ pub(super) fn expand_state_var(
             super::super::rust_system::rust_expand_state_var_read(ctx, &var_name)
         }
         TargetLanguage::C => {
-            // For C, access via FrameDict_get with type-aware cast.
-            // Per-handler takes precedence — read from the handler's
-            // named `compartment` param. When use_sv_comp is set in
-            // the legacy path, read from `__sv_comp` pointer (walked
-            // up to owning state at dispatch entry); otherwise
-            // default to `self->__compartment`.
+            // For C, access via FrameDict_get with category-aware unpack
+            // (c_marshal, #77): float/double state-vars travel through the
+            // void* slot via the bit-pun pack/unpack pair —
+            // `(int)(intptr_t)` truncates them. Per-handler takes
+            // precedence — read from the handler's named `compartment`
+            // param. When use_sv_comp is set in the legacy path, read from
+            // `__sv_comp` pointer (walked up to owning state at dispatch
+            // entry); otherwise default to `self->__compartment`.
             let c_type = ctx
                 .state_var_types
                 .get(var_name.as_str())
                 .map(|s| s.as_str())
                 .unwrap_or("int");
-            let cast = match c_type {
-                "char*" | "const char*" | "str" | "string" | "String" => "(const char*)",
-                _ => "(int)(intptr_t)",
-            };
             let comp = if ctx.per_handler {
                 "compartment"
             } else if ctx.use_sv_comp {
@@ -125,10 +123,16 @@ pub(super) fn expand_state_var(
             } else {
                 "self->__compartment"
             };
-            format!(
-                "{}{}_FrameDict_get({}->state_vars, \"{}\")",
-                cast, ctx.system_name, comp, var_name
-            )
+            let slot = format!(
+                "{}_FrameDict_get({}->state_vars, \"{}\")",
+                ctx.system_name, comp, var_name
+            );
+            use super::super::c_marshal::{c_marshal_of, CMarshal};
+            match c_marshal_of(c_type) {
+                CMarshal::Str => format!("(const char*){}", slot),
+                CMarshal::Dbl => format!("{}_unpack_double({})", ctx.system_name, slot),
+                _ => format!("(int)(intptr_t){}", slot),
+            }
         }
         TargetLanguage::Cpp => {
             let cpp_type = ctx
@@ -369,6 +373,19 @@ pub(super) fn expand_state_var_assign(
     };
     // Expand state vars in the expression
     let expanded_expr = expand_expression(expr, lang, ctx);
+    // #77: coerce the value to the DECLARED float-family type before it
+    // enters the erased container — a bare literal deduces/boxes to the
+    // default float width (double/Double/float64) and the declared-type
+    // exact-match read then crashes at runtime. No-op for non-float
+    // declarations and for non-erased targets. (C is handled in its own
+    // arm below — it bit-puns via pack_double, there is no typed box.)
+    let declared = ctx
+        .state_var_types
+        .get(var_name)
+        .map(|s| s.as_str())
+        .unwrap_or("");
+    let expanded_expr =
+        super::super::codegen_utils::erased_write_coercion(lang, declared, &expanded_expr);
 
     match lang {
         TargetLanguage::Python3 | TargetLanguage::GDScript => {
@@ -475,19 +492,34 @@ pub(super) fn expand_state_var_assign(
             &expanded_expr,
         ),
         TargetLanguage::C => {
+            // Category-aware pack via c_marshal (#77): float/double
+            // state-vars bit-pun through the void* slot via pack_double —
+            // `(void*)(intptr_t)` truncates them. The matching read-side
+            // unpack lives in `expand_state_var` above.
+            let packed = {
+                use super::super::c_marshal::{c_marshal_of, CMarshal};
+                match c_marshal_of(declared) {
+                    CMarshal::Dbl => {
+                        format!("{}_pack_double({})", ctx.system_name, expanded_expr)
+                    }
+                    _ => format!("(void*)(intptr_t)({})", expanded_expr),
+                }
+            };
             if ctx.per_handler {
                 format!(
-                    "{}{}_FrameDict_set(compartment->state_vars, \"{}\", (void*)(intptr_t)({}));",
-                    indent_str, ctx.system_name, var_name, expanded_expr
+                    "{}{}_FrameDict_set(compartment->state_vars, \"{}\", {});",
+                    indent_str, ctx.system_name, var_name, packed
                 )
             } else if ctx.use_sv_comp {
                 format!(
-                    "{}{}_FrameDict_set(__sv_comp->state_vars, \"{}\", (void*)(intptr_t)({}));",
-                    indent_str, ctx.system_name, var_name, expanded_expr
+                    "{}{}_FrameDict_set(__sv_comp->state_vars, \"{}\", {});",
+                    indent_str, ctx.system_name, var_name, packed
                 )
             } else {
-                format!("{}{}_FrameDict_set(self->__compartment->state_vars, \"{}\", (void*)(intptr_t)({}));",
-                            indent_str, ctx.system_name, var_name, expanded_expr)
+                format!(
+                    "{}{}_FrameDict_set(self->__compartment->state_vars, \"{}\", {});",
+                    indent_str, ctx.system_name, var_name, packed
+                )
             }
         }
         TargetLanguage::Cpp => {

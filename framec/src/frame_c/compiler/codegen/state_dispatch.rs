@@ -401,6 +401,15 @@ pub(super) fn emit_handler_return_init(
     let Some(ref init_expr) = handler.return_init else {
         return String::new();
     };
+    // #77: coerce to the DECLARED return type before the init value enters
+    // the erased `_return` slot (bare literals deduce/box to the default
+    // float width; the declared-type exact-match read then crashes at
+    // runtime). No-op elsewhere; C marshals via c_return_write below.
+    let init_expr = &super::codegen_utils::erased_write_coercion(
+        lang,
+        handler.return_type.as_deref().unwrap_or(""),
+        init_expr,
+    );
     let assign = match lang {
         TargetLanguage::Python3 => format!(
             "{}self._context_stack[-1]._return = {}\n",

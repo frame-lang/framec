@@ -118,6 +118,17 @@ pub(crate) fn generate_swift_handler_method(
             } else {
                 state_var_init_value(&var.var_type, lang)
             };
+            // #77: coerce the initializer to the DECLARED float-family type
+            // before it enters the erased container (a bare literal deduces
+            // to the default float width; the declared-type exact-match read
+            // then crashes at runtime). No-op for other types.
+            let init_val = {
+                let declared = match &var.var_type {
+                    crate::frame_c::compiler::frame_ast::Type::Custom(t) => t.as_str(),
+                    _ => "",
+                };
+                super::super::super::codegen_utils::erased_write_coercion(lang, declared, &init_val)
+            };
             body.push_str(&format!(
                 "if compartment.state_vars[\"{}\"] == nil {{\n    compartment.state_vars[\"{}\"] = {}\n}}\n",
                 var.name, var.name, init_val

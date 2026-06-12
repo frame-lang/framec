@@ -78,6 +78,40 @@ pub(crate) struct HandlerContext {
     pub actions: std::collections::HashSet<String>,
 }
 
+/// Coerce a value expression to its DECLARED float-family type at the point
+/// it enters a target's type-erasure layer (#77).
+///
+/// The type-erased backends store state-vars / the return slot in an erased
+/// container (`std::any`, `object`, `Object`, `Any`, `interface{}`) and read
+/// back with an EXACT-match cast of the declared type. A bare literal,
+/// however, deduces/boxes to the target's default float width (`0.0` →
+/// C++ `double`, Java `Double`, Go `float64`, …), so a `float`-declared slot
+/// stores a double and every read crashes at runtime (`std::bad_any_cast` /
+/// `InvalidCastException` / `ClassCastException` / `as!` trap / interface
+/// panic) — while compiling cleanly. Third sighting of the typed-erasure
+/// round-trip class (#59 Rust literals, #72 C `void*`, #77 this).
+///
+/// The discipline: every WRITE into an erased slot coerces to the declared
+/// type; reads stay exact. Coercion is a no-op when the expression already
+/// has the declared type, so it is safe to apply unconditionally at the
+/// write chokepoints. Only the float family needs it (the only case where a
+/// valid literal's deduced type differs from a declared native type);
+/// everything else returns the expression unchanged. C is handled separately
+/// via `c_marshal` (bit-pun pack/unpack — there is no typed box to match).
+pub(crate) fn erased_write_coercion(lang: TargetLanguage, declared: &str, expr: &str) -> String {
+    let t = declared.trim();
+    match lang {
+        TargetLanguage::Cpp if t == "float" || t == "double" => format!("({t})({expr})"),
+        TargetLanguage::CSharp if t == "float" || t == "double" => format!("({t})({expr})"),
+        TargetLanguage::Java if t == "float" || t == "double" => format!("({t})({expr})"),
+        TargetLanguage::Kotlin if t == "Float" => format!("({expr}).toFloat()"),
+        TargetLanguage::Kotlin if t == "Double" => format!("({expr}).toDouble()"),
+        TargetLanguage::Swift if t == "Float" || t == "Double" => format!("{t}({expr})"),
+        TargetLanguage::Go if t == "float32" || t == "float64" => format!("{t}({expr})"),
+        _ => expr.to_string(),
+    }
+}
+
 /// Get default initialization value for a type
 pub(crate) fn state_var_init_value(var_type: &Type, lang: TargetLanguage) -> String {
     match var_type {
