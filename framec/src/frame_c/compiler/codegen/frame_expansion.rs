@@ -46,8 +46,8 @@ pub(crate) use utility::{
 
 use super::codegen_utils::{
     cpp_map_type, cpp_wrap_any_arg, csharp_map_type, expression_to_string, go_map_type,
-    java_map_type, kotlin_map_type, replace_outside_strings_and_comments, state_var_init_value,
-    swift_map_type, to_snake_case, type_to_cpp_string, HandlerContext,
+    java_map_type, kotlin_map_type, replace_outside_strings_and_comments, swift_map_type,
+    to_snake_case, type_to_cpp_string, HandlerContext,
 };
 use crate::frame_c::compiler::frame_ast::Type;
 use crate::frame_c::compiler::native_region_scanner::{

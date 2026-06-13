@@ -5,7 +5,7 @@
 use super::super::super::ast::{CodegenNode, Param, Visibility};
 use super::super::super::codegen_utils::{
     cpp_map_type, csharp_map_type, expression_to_string, go_map_type, java_map_type,
-    kotlin_map_type, state_var_init_value, swift_map_type, to_snake_case, type_to_cpp_string,
+    kotlin_map_type, state_var_initializer, swift_map_type, to_snake_case, type_to_cpp_string,
     HandlerContext,
 };
 use super::super::super::frame_expansion::{
@@ -88,11 +88,7 @@ pub(crate) fn generate_ruby_handler_method(
     // State-var init — lifecycle enter only, guarded via `unless key?`.
     if handler.is_enter {
         for var in state_vars_for_init {
-            let init_val = if let Some(ref init) = var.initializer_text {
-                init.clone()
-            } else {
-                state_var_init_value(&var.var_type, lang)
-            };
+            let init_val = state_var_initializer(var);
             body.push_str(&format!(
                 "unless compartment.state_vars.key?(\"{}\")\n    compartment.state_vars[\"{}\"] = {}\nend\n",
                 var.name, var.name, init_val

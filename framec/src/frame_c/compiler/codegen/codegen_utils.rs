@@ -123,136 +123,22 @@ pub(crate) fn erased_write_coercion(lang: TargetLanguage, declared: &str, expr: 
     }
 }
 
-/// Get default initialization value for a type
-pub(crate) fn state_var_init_value(var_type: &Type, lang: TargetLanguage) -> String {
-    match var_type {
-        Type::Custom(name) => {
-            match name.to_lowercase().as_str() {
-                "int" | "i32" | "i64" | "u32" | "u64" | "number" => "0".to_string(),
-                "float" | "f32" | "f64" => "0.0".to_string(),
-                "bool" | "boolean" => match lang {
-                    TargetLanguage::Python3 => "False".to_string(),
-                    TargetLanguage::GDScript
-                    | TargetLanguage::TypeScript
-                    | TargetLanguage::JavaScript
-                    | TargetLanguage::Rust
-                    | TargetLanguage::C
-                    | TargetLanguage::Cpp
-                    | TargetLanguage::Java
-                    | TargetLanguage::Kotlin
-                    | TargetLanguage::Swift
-                    | TargetLanguage::CSharp
-                    | TargetLanguage::Go
-                    | TargetLanguage::Php
-                    | TargetLanguage::Ruby
-                    | TargetLanguage::Erlang
-                    | TargetLanguage::Lua
-                    | TargetLanguage::Dart => "false".to_string(),
-                    TargetLanguage::Graphviz => unreachable!(),
-                },
-                "str" | "string" => match lang {
-                    // Rust: `""` is `&str`, not `String`. The Default impl
-                    // for typed XContext structs needs a `String` value.
-                    TargetLanguage::Rust => "String::new()".to_string(),
-                    // C++: `""` is `const char*`, not `std::string`. Values
-                    // stored in `std::any("")` fail `std::any_cast<std::string>`.
-                    TargetLanguage::Cpp => "std::string()".to_string(),
-                    _ => "\"\"".to_string(),
-                },
-                "list" | "array" => match lang {
-                    TargetLanguage::Python3 | TargetLanguage::GDScript => "[]".to_string(),
-                    TargetLanguage::Rust => "Vec::new()".to_string(),
-                    TargetLanguage::TypeScript
-                    | TargetLanguage::JavaScript
-                    | TargetLanguage::Dart => "[]".to_string(),
-                    TargetLanguage::Java => "new java.util.ArrayList<>()".to_string(),
-                    TargetLanguage::Kotlin => "mutableListOf()".to_string(),
-                    TargetLanguage::Swift => "[]".to_string(),
-                    TargetLanguage::CSharp => "new List<object>()".to_string(),
-                    TargetLanguage::Cpp => "std::vector<std::any>()".to_string(),
-                    TargetLanguage::Go => "[]interface{}{}".to_string(),
-                    TargetLanguage::Php => "[]".to_string(),
-                    TargetLanguage::Ruby | TargetLanguage::Lua => "{}".to_string(),
-                    TargetLanguage::C => "NULL".to_string(),
-                    TargetLanguage::Erlang => "[]".to_string(),
-                    TargetLanguage::Graphviz => unreachable!(),
-                },
-                "dict" | "dictionary" | "map" => match lang {
-                    TargetLanguage::Python3 => "{}".to_string(),
-                    TargetLanguage::GDScript => "{}".to_string(),
-                    TargetLanguage::Rust => "HashMap::new()".to_string(),
-                    TargetLanguage::TypeScript | TargetLanguage::JavaScript => "{}".to_string(),
-                    TargetLanguage::Java => "new java.util.HashMap<>()".to_string(),
-                    TargetLanguage::Kotlin => "mutableMapOf()".to_string(),
-                    TargetLanguage::Swift => "[:]".to_string(),
-                    TargetLanguage::CSharp => "new Dictionary<string, object>()".to_string(),
-                    TargetLanguage::Cpp => {
-                        "std::unordered_map<std::string, std::any>()".to_string()
-                    }
-                    TargetLanguage::Go => "map[string]interface{}{}".to_string(),
-                    TargetLanguage::Php => "[]".to_string(),
-                    TargetLanguage::Ruby => "{}".to_string(),
-                    TargetLanguage::Lua => "{}".to_string(),
-                    TargetLanguage::Dart => "{}".to_string(),
-                    TargetLanguage::C => "NULL".to_string(),
-                    TargetLanguage::Erlang => "#{}".to_string(),
-                    TargetLanguage::Graphviz => unreachable!(),
-                },
-                "set" => match lang {
-                    TargetLanguage::Python3 => "set()".to_string(),
-                    TargetLanguage::GDScript => "{}".to_string(),
-                    TargetLanguage::Rust => "HashSet::new()".to_string(),
-                    TargetLanguage::TypeScript | TargetLanguage::JavaScript => {
-                        "new Set()".to_string()
-                    }
-                    TargetLanguage::Java => "new HashSet<>()".to_string(),
-                    TargetLanguage::Kotlin => "mutableSetOf()".to_string(),
-                    TargetLanguage::Swift => "Set<AnyHashable>()".to_string(),
-                    TargetLanguage::CSharp => "new HashSet<object>()".to_string(),
-                    TargetLanguage::Dart => "<dynamic>{}".to_string(),
-                    _ => "null".to_string(),
-                },
-                _ => match lang {
-                    TargetLanguage::Python3 | TargetLanguage::Rust => "None".to_string(),
-                    TargetLanguage::Cpp => "nullptr".to_string(),
-                    TargetLanguage::Go
-                    | TargetLanguage::Swift
-                    | TargetLanguage::Ruby
-                    | TargetLanguage::Lua => "nil".to_string(),
-                    TargetLanguage::C => "NULL".to_string(),
-                    TargetLanguage::Erlang => "undefined".to_string(),
-                    TargetLanguage::GDScript
-                    | TargetLanguage::Dart
-                    | TargetLanguage::TypeScript
-                    | TargetLanguage::JavaScript
-                    | TargetLanguage::Java
-                    | TargetLanguage::Kotlin
-                    | TargetLanguage::CSharp
-                    | TargetLanguage::Php => "null".to_string(),
-                    TargetLanguage::Graphviz => unreachable!(),
-                },
-            }
-        }
-        Type::Unknown => match lang {
-            TargetLanguage::Python3 | TargetLanguage::Rust => "None".to_string(),
-            TargetLanguage::Cpp => "nullptr".to_string(),
-            TargetLanguage::Go
-            | TargetLanguage::Swift
-            | TargetLanguage::Ruby
-            | TargetLanguage::Lua => "nil".to_string(),
-            TargetLanguage::C => "NULL".to_string(),
-            TargetLanguage::Erlang => "undefined".to_string(),
-            TargetLanguage::GDScript
-            | TargetLanguage::Dart
-            | TargetLanguage::TypeScript
-            | TargetLanguage::JavaScript
-            | TargetLanguage::Java
-            | TargetLanguage::Kotlin
-            | TargetLanguage::CSharp
-            | TargetLanguage::Php => "null".to_string(),
-            TargetLanguage::Graphviz => unreachable!(),
-        },
-    }
+/// The state-var initializer, verbatim.
+///
+/// E610 rejects state-vars without an initializer before codegen runs, so
+/// the text is always present here. Frame does not synthesize default
+/// values — the per-target default table that used to live here picked a
+/// value by lowercase-matching the TYPE NAME, the alias-table species the
+/// 4.5.0 verbatim-passthrough release exterminated (issue #84).
+pub(crate) fn state_var_initializer(
+    var: &crate::frame_c::compiler::frame_ast::StateVarAst,
+) -> String {
+    var.initializer_text.clone().unwrap_or_else(|| {
+        unreachable!(
+            "state-var '$.{}' has no initializer — E610 must reject this before codegen",
+            var.name
+        )
+    })
 }
 
 // `typed_init_expr` (removed): previously wrapped portable state-var init
@@ -640,87 +526,35 @@ mod tests {
     use crate::frame_c::visitors::TargetLanguage;
 
     // =========================================================
-    // state_var_init_value — type-correct defaults per language
+    // =========================================================
+    // state_var_initializer — verbatim passthrough, no synthesis
     // =========================================================
 
     #[test]
-    fn test_state_var_init_string_rust() {
-        assert_eq!(
-            state_var_init_value(&Type::Custom("str".into()), TargetLanguage::Rust),
-            "String::new()"
-        );
-        assert_eq!(
-            state_var_init_value(&Type::Custom("string".into()), TargetLanguage::Rust),
-            "String::new()"
-        );
+    fn test_state_var_initializer_is_verbatim() {
+        // The user's initializer text is emitted untouched — Frame does
+        // not interpret values (issue #84; E610 guarantees presence).
+        let var = crate::frame_c::compiler::frame_ast::StateVarAst {
+            name: "cool".to_string(),
+            var_type: Type::Custom("float".to_string()),
+            initializer_text: Some("0.25f /* native */".to_string()),
+            span: crate::frame_c::compiler::frame_ast::Span::new(0, 0),
+        };
+        assert_eq!(state_var_initializer(&var), "0.25f /* native */");
     }
 
     #[test]
-    fn test_state_var_init_string_cpp() {
-        assert_eq!(
-            state_var_init_value(&Type::Custom("str".into()), TargetLanguage::Cpp),
-            "std::string()"
-        );
-        assert_eq!(
-            state_var_init_value(&Type::Custom("string".into()), TargetLanguage::Cpp),
-            "std::string()"
-        );
-    }
-
-    #[test]
-    fn test_state_var_init_string_python() {
-        assert_eq!(
-            state_var_init_value(&Type::Custom("str".into()), TargetLanguage::Python3),
-            "\"\""
-        );
-    }
-
-    #[test]
-    fn test_state_var_init_int() {
-        assert_eq!(
-            state_var_init_value(&Type::Custom("int".into()), TargetLanguage::Rust),
-            "0"
-        );
-        assert_eq!(
-            state_var_init_value(&Type::Custom("i64".into()), TargetLanguage::Cpp),
-            "0"
-        );
-        assert_eq!(
-            state_var_init_value(&Type::Custom("number".into()), TargetLanguage::Python3),
-            "0"
-        );
-    }
-
-    #[test]
-    fn test_state_var_init_bool_python() {
-        assert_eq!(
-            state_var_init_value(&Type::Custom("bool".into()), TargetLanguage::Python3),
-            "False"
-        );
-    }
-
-    #[test]
-    fn test_state_var_init_bool_rust() {
-        assert_eq!(
-            state_var_init_value(&Type::Custom("bool".into()), TargetLanguage::Rust),
-            "false"
-        );
-    }
-
-    #[test]
-    fn test_state_var_init_unknown_rust() {
-        assert_eq!(
-            state_var_init_value(&Type::Unknown, TargetLanguage::Rust),
-            "None"
-        );
-    }
-
-    #[test]
-    fn test_state_var_init_unknown_python() {
-        assert_eq!(
-            state_var_init_value(&Type::Unknown, TargetLanguage::Python3),
-            "None"
-        );
+    #[should_panic(expected = "E610")]
+    fn test_state_var_initializer_missing_is_unreachable() {
+        // E610 rejects this before codegen; reaching the helper without
+        // an initializer is an internal invariant violation.
+        let var = crate::frame_c::compiler::frame_ast::StateVarAst {
+            name: "cool".to_string(),
+            var_type: Type::Custom("int".to_string()),
+            initializer_text: None,
+            span: crate::frame_c::compiler::frame_ast::Span::new(0, 0),
+        };
+        let _ = state_var_initializer(&var);
     }
 
     // =========================================================

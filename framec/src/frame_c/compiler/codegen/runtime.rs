@@ -7,7 +7,7 @@
 mod c;
 
 use super::ast::{CodegenNode, Field, Param, Visibility};
-use super::codegen_utils::{expression_to_string, state_var_init_value, type_to_string};
+use super::codegen_utils::{expression_to_string, type_to_string};
 use crate::frame_c::compiler::frame_ast::{Expression, SystemAst, Type};
 use crate::frame_c::visitors::TargetLanguage;
 pub use c::generate_c_compartment_types;
