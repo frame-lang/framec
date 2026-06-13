@@ -2070,8 +2070,9 @@ mod tests {
         assert_eq!(run(src, "123x", "tea_end_b").unwrap().accepted, "False");
     }
 
-    /// An interior anchor (`a$b`) routes to the Pike VM, which evaluates the
-    /// zero-width `Assert`: the `$` can never hold mid-string, so it rejects.
+    /// FSM-TEST-313 — Interior anchor (Pike VM). `a$b` routes to the Pike VM,
+    /// which evaluates the zero-width `Assert`: the `$` can never hold
+    /// mid-string, so it rejects.
     #[test]
     fn interior_anchor_runs_on_pike_vm() {
         let src = "@@fsm M(text: bytes) : bool = false { /a$b/ true }";
@@ -2085,8 +2086,9 @@ mod tests {
         assert_eq!(r.accepted, "False");
     }
 
-    /// A word boundary on the `char` alphabet routes to the Pike VM with the
-    /// Unicode `\w` word table: `\bcat\b` matches a free-standing `cat`.
+    /// FSM-TEST-314 — Word boundary on the char alphabet (Pike VM). A `\b` on
+    /// the `char` alphabet routes to the Pike VM with the Unicode `\w` word
+    /// table: `\bcat\b` matches a free-standing `cat`.
     #[test]
     fn word_boundary_runs_on_pike_vm() {
         let src = "@@fsm M(text: char) : bool = false { /\\bcat\\b/ true }";
@@ -2095,6 +2097,61 @@ mod tests {
         };
         assert_eq!(hit.accepted, "True");
         assert_eq!(run(src, "cats", "wb_miss").unwrap().accepted, "False");
+    }
+
+    /// FSM-TEST-315 — Inline flags. `(?i)` case-insensitivity (§6.5): the
+    /// parser folds each letter into a two-case class, so `cat` matches
+    /// `CAT`/`Cat` and a class folds too.
+    #[test]
+    fn inline_flag_caseless() {
+        let src = "@@fsm M(text: bytes) : bool = false { /(?i)cat/ true }";
+        let Some(up) = run(src, "CAT", "ci_up") else {
+            return;
+        };
+        assert_eq!(up.accepted, "True");
+        assert_eq!(run(src, "Cat", "ci_mix").unwrap().accepted, "True");
+        // Without the flag, the match is exact.
+        let plain = "@@fsm M(text: bytes) : bool = false { /cat/ true }";
+        assert_eq!(run(plain, "CAT", "ci_plain").unwrap().accepted, "False");
+    }
+
+    /// `(?s)` dotall (§6.5): `.` matches `\n`. `/(?s)a.b/` accepts "a\nb"; the
+    /// default `.` excludes `\n` and rejects it.
+    #[test]
+    fn inline_flag_dotall() {
+        let src = "@@fsm M(text: bytes) : bool = false { /(?s)a.b/ true }";
+        let Some(hit) = run(src, "a\nb", "ds_hit") else {
+            return;
+        };
+        assert_eq!(hit.accepted, "True");
+        let plain = "@@fsm M(text: bytes) : bool = false { /a.b/ true }";
+        assert_eq!(run(plain, "a\nb", "ds_plain").unwrap().accepted, "False");
+    }
+
+    /// `(?m)` multiline (§6.5): `$` matches before a `\n`, routed to the Pike
+    /// VM. `/(?m)a$/` accepts "a\nb" (line end at the `\n`); the default `$`
+    /// is the absolute input end and rejects it.
+    #[test]
+    fn inline_flag_multiline() {
+        let src = "@@fsm M(text: bytes) : bool = false { /(?m)a$/ true }";
+        let Some(hit) = run(src, "a\nb", "ml_hit") else {
+            return;
+        };
+        assert_eq!(hit.accepted, "True");
+        let plain = "@@fsm M(text: bytes) : bool = false { /a$/ true }";
+        assert_eq!(run(plain, "a\nb", "ml_plain").unwrap().accepted, "False");
+    }
+
+    /// A scoped flag group `(?i:...)` applies only within the group: `(?i:ab)c`
+    /// matches "ABc" but not "ABC" (the `c` stays case-sensitive).
+    #[test]
+    fn inline_flag_scoped() {
+        let src = "@@fsm M(text: bytes) : bool = false { /(?i:ab)c/ true }";
+        let Some(hit) = run(src, "ABc", "sc_hit") else {
+            return;
+        };
+        assert_eq!(hit.accepted, "True");
+        assert_eq!(run(src, "ABC", "sc_miss").unwrap().accepted, "False");
     }
 
     /// Sentinel for the python3-absent skip path in tests that can't use

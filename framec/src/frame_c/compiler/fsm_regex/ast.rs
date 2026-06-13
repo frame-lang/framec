@@ -31,8 +31,8 @@ pub enum RegexNode {
     /// shorthand escapes. `negated` flips the membership.
     Class(CharClass),
 
-    /// `.` — any element except `\n` by default. The
-    /// `@@[dot_matches_newline]` attribute on the fsm changes this.
+    /// `.` — any element except `\n`. Under the `(?s)` dotall flag the parser
+    /// emits a negated-empty class (`[^]`, every element) instead of this node.
     Dot,
 
     /// Concatenation; children evaluate left-to-right. An empty
@@ -143,9 +143,13 @@ pub enum Laziness {
 
 #[derive(Debug, Clone, Copy)]
 pub enum Anchor {
-    /// `^` — start of input, or post-`\n` in `@@[multiline]` mode.
+    /// Line start — `^` under the `(?m)` flag: matches at input start and
+    /// immediately after any `\n`. Without `(?m)` the parser emits
+    /// [`Anchor::InputStart`] for `^` instead.
     LineStart,
-    /// `$` — end of input, or pre-`\n` in `@@[multiline]` mode.
+    /// Line end — `$` under the `(?m)` flag: matches at input end and
+    /// immediately before any `\n`. Without `(?m)` the parser emits
+    /// [`Anchor::InputEnd`] for `$` instead.
     LineEnd,
     /// `\A` — absolute start of input (always).
     InputStart,

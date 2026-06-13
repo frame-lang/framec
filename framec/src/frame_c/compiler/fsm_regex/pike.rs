@@ -144,13 +144,17 @@ impl Compiler {
                 laziness,
             } => self.emit_quant(inner, *kind, *laziness == Laziness::Lazy),
             // An anchor compiles to a zero-width `Assert` the VM evaluates
-            // against the live position. `^`/`$` are input-start/end outside
-            // multiline mode (multiline is a Phase-3 flag).
+            // against the live position. `\A`/`\z` are absolute input
+            // boundaries; `^`/`$` carry `LineStart`/`LineEnd` only under
+            // `(?m)` (the parser bakes the multiline flag into the anchor
+            // variant), where they match adjacent to `\n`.
             RegexNode::Anchor(a) => {
                 use super::ast::Anchor;
                 let kind = match a {
-                    Anchor::InputStart | Anchor::LineStart => AssertKind::InputStart,
-                    Anchor::InputEnd | Anchor::LineEnd => AssertKind::InputEnd,
+                    Anchor::InputStart => AssertKind::InputStart,
+                    Anchor::InputEnd => AssertKind::InputEnd,
+                    Anchor::LineStart => AssertKind::LineStart,
+                    Anchor::LineEnd => AssertKind::LineEnd,
                     Anchor::WordBoundary => AssertKind::WordBoundary,
                     Anchor::NonWordBoundary => AssertKind::NonWordBoundary,
                 };

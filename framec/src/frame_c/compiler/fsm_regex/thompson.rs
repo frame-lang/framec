@@ -588,11 +588,12 @@ mod tests {
 
     #[test]
     fn anchor_is_zero_width_label() {
+        // Outside `(?m)`, `^` is the absolute input start (`InputStart`).
         let n = nfa("^a");
         assert_eq!(
             count(&n, |l| matches!(
                 l,
-                TransitionLabel::Anchor(Anchor::LineStart)
+                TransitionLabel::Anchor(Anchor::InputStart)
             )),
             1
         );

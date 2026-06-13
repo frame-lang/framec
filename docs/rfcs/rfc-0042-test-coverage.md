@@ -5,8 +5,8 @@
 
 ## Summary
 
-- **88** RFC conformance IDs
-- **86** backed by an executing test
+- **91** RFC conformance IDs
+- **89** backed by an executing test
 - **2** documented deferrals (see end)
 
 Runtime tests (`codegen/fsm_python.rs`, `pipeline/compiler.rs`) generate recognizer source and **execute it through `python3`**, asserting `accepted`/`return_value`/`cursor`. Front-end tests (`fsm_parser`/`fsm_validator`/`fsm_regex`) assert parse results and diagnostic codes. The Python backend is the reference; the other 16 backends have their own `fsm_<lang>.rs` execution tests.
@@ -104,6 +104,9 @@ Runtime tests (`codegen/fsm_python.rs`, `pipeline/compiler.rs`) generate recogni
 | FSM-TEST-310 | Empty regex rejected | `rejects_empty_with_e723` <sub>(fsm_regex/mod.rs)</sub> | ✅ |
 | FSM-TEST-311 | DFA size limit | `e721_when_dfa_exceeds_limit` <sub>(fsm_regex/mod.rs)</sub> | ✅ |
 | FSM-TEST-312 | Anchors | `fsm_test_312_start_anchor` <sub>(codegen/fsm_python.rs)</sub><br>`rust_start_anchor` <sub>(codegen/fsm_rust.rs)</sub> | ✅ |
+| FSM-TEST-313 | Interior anchor (Pike VM) | `interior_anchor_runs_on_pike_vm` <sub>(codegen/fsm_python.rs)</sub><br>`rust_interior_anchor_runs_on_pike_vm` <sub>(codegen/fsm_rust.rs)</sub> | ✅ |
+| FSM-TEST-314 | Word boundary on char (Pike VM) | `word_boundary_runs_on_pike_vm` <sub>(codegen/fsm_python.rs)</sub><br>`rust_word_boundary_runs_on_pike_vm` <sub>(codegen/fsm_rust.rs)</sub> | ✅ |
+| FSM-TEST-315 | Inline flags `(?i)`/`(?s)`/`(?m)` | `inline_flag_caseless`/`inline_flag_dotall`/`inline_flag_multiline`/`inline_flag_scoped` <sub>(codegen/fsm_python.rs)</sub><br>`rust_inline_flags` <sub>(codegen/fsm_rust.rs)</sub><br>`inline_flag_*` <sub>(fsm_regex/parser.rs)</sub> | ✅ |
 
 ## Transitions and targets (§3.5.4, §4.4)
 
@@ -181,7 +184,7 @@ These 2 IDs have no backing test by design; each is an explicit, justified entry
 
 ## Running the tests
 ```bash
-cargo test --lib fsm                        # all @@fsm unit + execution tests (483)
+cargo test --lib fsm                        # all @@fsm unit + execution tests (500)
 cargo test --test fsm_conformance_coverage  # the coverage guard
-cargo test                                  # full suite (1242 tests)
+cargo test                                  # full suite (1259 tests)
 ```

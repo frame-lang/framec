@@ -1550,7 +1550,7 @@ mod tests {
         let code = generate(&decl).expect("fixture must generate");
         let chars: String = input
             .chars()
-            .map(|c| format!("'{}'", c))
+            .map(|c| format!("'{}'", c.escape_default()))
             .collect::<Vec<_>>()
             .join(", ");
         let driver = format!(
@@ -1614,6 +1614,23 @@ mod tests {
             return;
         };
         assert_eq!(ret, "3");
+    }
+
+    /// Inline flags (§6.5): `(?i)` case folds, `(?s)` dotall, `(?m)` line-end.
+    /// `(?m)` exercises the Pike VM's `LineEnd` assert on a second backend.
+    #[test]
+    fn rust_inline_flags() {
+        let ci = "@@fsm M(text: bytes) : bool = false { /(?i)cat/ true }";
+        let Some((acc, _)) = run(ci, "M", "CAT", "if_ci") else {
+            return;
+        };
+        assert_eq!(acc, "true");
+        let ds = "@@fsm M(text: bytes) : bool = false { /(?s)a.b/ true }";
+        assert_eq!(run(ds, "M", "a\nb", "if_ds").unwrap().0, "true");
+        let ml = "@@fsm M(text: bytes) : bool = false { /(?m)a$/ true }";
+        assert_eq!(run(ml, "M", "a\nb", "if_ml").unwrap().0, "true");
+        let plain = "@@fsm M(text: bytes) : bool = false { /a$/ true }";
+        assert_eq!(run(plain, "M", "a\nb", "if_pl").unwrap().0, "false");
     }
 
     /// Stage capture: `.n/[0-9]+/` captures the matched slice as `$s.n`.

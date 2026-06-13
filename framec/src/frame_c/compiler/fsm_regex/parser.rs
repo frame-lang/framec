@@ -56,6 +56,17 @@ pub fn parse(source: &str, alphabet: Alphabet) -> Result<RegexAst, ParseError> {
     Ok(RegexAst { root })
 }
 
+/// Inline-flag state (RFC-0042 §6.5): `i` case-insensitive, `m` multiline
+/// (`^`/`$` match line boundaries), `s` dotall (`.` matches `\n`). Set by
+/// `(?ims)` / `(?ims:...)` / `(?-ims:...)` groups and baked into the emitted
+/// AST so neither the engine routing nor the backends need flag awareness.
+#[derive(Debug, Clone, Copy, Default)]
+struct Flags {
+    caseless: bool,
+    multiline: bool,
+    dotall: bool,
+}
+
 /// Recursive-descent cursor over the regex body.
 struct Parser {
     /// `(byte_offset, char)` for each source char, for span tracking.
@@ -65,6 +76,8 @@ struct Parser {
     /// Index into `chars`.
     idx: usize,
     alphabet: Alphabet,
+    /// Active inline flags at the current parse position.
+    flags: Flags,
 }
 
 impl Parser {
@@ -74,6 +87,7 @@ impl Parser {
             end: source.len(),
             idx: 0,
             alphabet,
+            flags: Flags::default(),
         }
     }
 
@@ -300,23 +314,37 @@ impl Parser {
             '[' => self.parse_class(),
             '.' => {
                 self.bump();
-                Ok(Self::spanned(RegexNode::Dot, start, self.pos()))
+                // `(?s)` dotall: `.` matches `\n` too — emit `[^]` (negated
+                // empty class = every element), else the default `.`.
+                let node = if self.flags.dotall {
+                    RegexNode::Class(CharClass {
+                        negated: true,
+                        members: Vec::new(),
+                    })
+                } else {
+                    RegexNode::Dot
+                };
+                Ok(Self::spanned(node, start, self.pos()))
             }
             '^' => {
                 self.bump();
-                Ok(Self::spanned(
-                    RegexNode::Anchor(Anchor::LineStart),
-                    start,
-                    self.pos(),
-                ))
+                // `(?m)` multiline: `^` matches at line starts (post-`\n`),
+                // routed to the Pike VM; otherwise it is the input start.
+                let a = if self.flags.multiline {
+                    Anchor::LineStart
+                } else {
+                    Anchor::InputStart
+                };
+                Ok(Self::spanned(RegexNode::Anchor(a), start, self.pos()))
             }
             '$' => {
                 self.bump();
-                Ok(Self::spanned(
-                    RegexNode::Anchor(Anchor::LineEnd),
-                    start,
-                    self.pos(),
-                ))
+                let a = if self.flags.multiline {
+                    Anchor::LineEnd
+                } else {
+                    Anchor::InputEnd
+                };
+                Ok(Self::spanned(RegexNode::Anchor(a), start, self.pos()))
             }
             '\\' => self.parse_escape(),
             '*' | '+' | '?' => {
@@ -343,13 +371,33 @@ impl Parser {
             }
             _ => {
                 self.bump();
-                Ok(Self::spanned(
-                    RegexNode::Literal(self.make_literal(c)),
-                    start,
-                    self.pos(),
-                ))
+                let base = self.make_literal(c);
+                Ok(self.literal_node(c as u32, base, start))
             }
         }
+    }
+
+    /// Emit a single-element literal at `[start, pos())`, applying `(?i)`
+    /// case-insensitivity: a letter with a distinct fold becomes a small
+    /// class `[Aa]` (both cases), so the backends need no flag awareness.
+    /// `base` is the already-resolved [`Literal`] for the non-folded case.
+    fn literal_node(&self, v: u32, base: Literal, start: usize) -> SpannedNode {
+        if self.flags.caseless {
+            let folds = case_folds(v, self.alphabet);
+            if !folds.is_empty() {
+                let mut members = vec![ClassMember::Single(v)];
+                members.extend(folds.into_iter().map(ClassMember::Single));
+                return Self::spanned(
+                    RegexNode::Class(CharClass {
+                        negated: false,
+                        members,
+                    }),
+                    start,
+                    self.pos(),
+                );
+            }
+        }
+        Self::spanned(RegexNode::Literal(base), start, self.pos())
     }
 
     /// `(` ... — a plain group, or a `(?...)` special form (all of which
@@ -360,7 +408,11 @@ impl Parser {
         if self.peek() == Some('?') {
             return self.parse_special_group(start);
         }
+        // A `(?i)` flag-set inside this group scopes to it: save and restore
+        // the active flags around the group body (RFC-0042 §6.5).
+        let saved = self.flags;
         let inner = self.parse_alt()?;
+        self.flags = saved;
         if !self.eat(')') {
             return Err(ParseError {
                 kind: ParseErrorKind::UnclosedGroup,
@@ -378,6 +430,16 @@ impl Parser {
     /// non-capturing group. The leading `(` is consumed; `?` is current.
     fn parse_special_group(&mut self, start: usize) -> Result<SpannedNode, ParseError> {
         self.bump(); // `?`
+                     // Inline-flag group (§6.5): `(?ims)` sets flags for the rest of the
+                     // enclosing group; `(?ims:...)` / `(?-ims:...)` scope them to the
+                     // group. A leading `-` followed by a digit is recursion (`(?-1)`),
+                     // not a flag removal, so it is excluded here.
+        let flag_start = matches!(self.peek(), Some('i') | Some('m') | Some('s'))
+            || (self.peek() == Some('-')
+                && matches!(self.peek2(), Some('i') | Some('m') | Some('s')));
+        if flag_start {
+            return self.parse_flag_group(start);
+        }
         let forbidden = match self.peek() {
             Some(':') => {
                 self.bump();
@@ -452,8 +514,8 @@ impl Parser {
                 ForbiddenConstruct::Recursion
             }
             _ => {
-                // Inline flags `(?i)` etc. — unsupported; treat the rest as
-                // an unrecognized special group (recover by skipping to `)`).
+                // An unrecognized `(?...)` form — recover by skipping to `)`
+                // and reporting it as a forbidden construct.
                 while !matches!(self.peek(), Some(')') | None) {
                     self.bump();
                 }
@@ -466,6 +528,62 @@ impl Parser {
             start,
             self.pos(),
         ))
+    }
+
+    /// `(?ims)` / `(?ims:...)` / `(?-ims:...)` inline-flag group (§6.5). The
+    /// `?` is consumed; a flag letter or `-` is current. The bare form sets
+    /// flags for the rest of the enclosing group (an epsilon node); the
+    /// colon form scopes them to the group, restoring on exit.
+    fn parse_flag_group(&mut self, start: usize) -> Result<SpannedNode, ParseError> {
+        let mut new_flags = self.flags;
+        let mut removing = false;
+        loop {
+            match self.peek() {
+                Some('i') => {
+                    new_flags.caseless = !removing;
+                    self.bump();
+                }
+                Some('m') => {
+                    new_flags.multiline = !removing;
+                    self.bump();
+                }
+                Some('s') => {
+                    new_flags.dotall = !removing;
+                    self.bump();
+                }
+                Some('-') => {
+                    removing = true;
+                    self.bump();
+                }
+                Some(':') => {
+                    self.bump();
+                    let saved = self.flags;
+                    self.flags = new_flags;
+                    let inner = self.parse_alt()?;
+                    self.expect_group_close(start)?;
+                    self.flags = saved;
+                    return Ok(Self::spanned(
+                        RegexNode::Group(Box::new(inner)),
+                        start,
+                        self.pos(),
+                    ));
+                }
+                Some(')') => {
+                    self.bump();
+                    // Flag-set: applies to the remainder of the enclosing
+                    // group (restored at the group boundary in `parse_group`).
+                    self.flags = new_flags;
+                    return Ok(Self::spanned(
+                        RegexNode::Concat(Vec::new()),
+                        start,
+                        self.pos(),
+                    ));
+                }
+                other => {
+                    return Err(self.error(ParseErrorKind::Unexpected(other.unwrap_or('?'))));
+                }
+            }
+        }
     }
 
     fn expect_group_close(&mut self, start: usize) -> Result<(), ParseError> {
@@ -518,6 +636,11 @@ impl Parser {
                 kind: ParseErrorKind::EmptyClass,
                 span: Span::new(start, self.pos()),
             });
+        }
+        // `(?i)` case-insensitivity: add each member's case fold before the
+        // negation (if any) is applied, so `[a-f]` matches `A`..`F` too.
+        if self.flags.caseless {
+            case_fold_members(&mut members, self.alphabet);
         }
         Ok(Self::spanned(
             RegexNode::Class(CharClass { negated, members }),
@@ -660,11 +783,8 @@ impl Parser {
         // Otherwise an escaped scalar value (control char, hex, unicode, or
         // escaped punctuation).
         let v = self.escaped_scalar(c)?;
-        Ok(Self::spanned(
-            RegexNode::Literal(self.make_scalar_literal(v)),
-            start,
-            self.pos(),
-        ))
+        let base = self.make_scalar_literal(v);
+        Ok(self.literal_node(v, base, start))
     }
 
     /// Resolve `\X` (the `X` already consumed) to a scalar value, handling
@@ -769,6 +889,80 @@ fn shorthand(c: char) -> Option<(ShorthandKind, bool)> {
         'S' => Some((ShorthandKind::Whitespace, true)),
         _ => None,
     }
+}
+
+/// The distinct case folds of code point `v` under `(?i)` — the *other* cased
+/// forms, excluding `v` itself. On `bytes`, ASCII letter flip (`a`↔`A`); on
+/// `char`, the simple single-scalar upper/lower folds (multi-scalar folds like
+/// `ß`→`SS` are skipped); `token` references are not case-folded.
+fn case_folds(v: u32, alphabet: Alphabet) -> Vec<u32> {
+    match alphabet {
+        Alphabet::Bytes => {
+            if (0x41..=0x5A).contains(&v) {
+                vec![v + 0x20]
+            } else if (0x61..=0x7A).contains(&v) {
+                vec![v - 0x20]
+            } else {
+                vec![]
+            }
+        }
+        Alphabet::Char => {
+            let Some(c) = char::from_u32(v) else {
+                return vec![];
+            };
+            let mut out = Vec::new();
+            let up: Vec<char> = c.to_uppercase().collect();
+            if up.len() == 1 && up[0] != c {
+                out.push(up[0] as u32);
+            }
+            let lo: Vec<char> = c.to_lowercase().collect();
+            if lo.len() == 1 && lo[0] != c && !out.contains(&(lo[0] as u32)) {
+                out.push(lo[0] as u32);
+            }
+            out
+        }
+        Alphabet::Token => vec![],
+    }
+}
+
+/// The overlap of `[a, b]` with `[lo, hi]`, or `None` if disjoint.
+fn intersect(a: u32, b: u32, lo: u32, hi: u32) -> Option<(u32, u32)> {
+    let l = a.max(lo);
+    let h = b.min(hi);
+    (l <= h).then_some((l, h))
+}
+
+/// Append the `(?i)` case folds of each class member in place: each `Single`
+/// gains its folds ([`case_folds`]); a `Range` gains the ASCII-letter portion
+/// shifted to the other case (covering `[a-z]`/`[A-Z]`). Shorthand and Unicode
+/// members are already case-symmetric or left as-is.
+fn case_fold_members(members: &mut Vec<ClassMember>, alphabet: Alphabet) {
+    let mut extra: Vec<ClassMember> = Vec::new();
+    for m in members.iter() {
+        match m {
+            ClassMember::Single(v) => {
+                for f in case_folds(*v, alphabet) {
+                    extra.push(ClassMember::Single(f));
+                }
+            }
+            ClassMember::Range { low, high } => {
+                if let Some((l, h)) = intersect(*low, *high, 0x61, 0x7A) {
+                    extra.push(ClassMember::Range {
+                        low: l - 0x20,
+                        high: h - 0x20,
+                    });
+                }
+                if let Some((l, h)) = intersect(*low, *high, 0x41, 0x5A) {
+                    extra.push(ClassMember::Range {
+                        low: l + 0x20,
+                        high: h + 0x20,
+                    });
+                }
+            }
+            ClassMember::Shorthand { .. } | ClassMember::Unicode { .. } => {}
+        }
+    }
+    members.extend(extra);
 }
 
 /// Parse failure — a syntactically malformed regex that cannot be
@@ -962,12 +1156,104 @@ mod tests {
     #[test]
     fn dot_and_anchors() {
         assert!(matches!(root("."), RegexNode::Dot));
-        assert!(matches!(root("^"), RegexNode::Anchor(Anchor::LineStart)));
-        assert!(matches!(root("$"), RegexNode::Anchor(Anchor::LineEnd)));
+        // Outside `(?m)`, `^`/`$` are the absolute input boundaries; `(?m)`
+        // (see `inline_flags_*`) makes them `LineStart`/`LineEnd`.
+        assert!(matches!(root("^"), RegexNode::Anchor(Anchor::InputStart)));
+        assert!(matches!(root("$"), RegexNode::Anchor(Anchor::InputEnd)));
         assert!(matches!(
             root("\\b"),
             RegexNode::Anchor(Anchor::WordBoundary)
         ));
+    }
+
+    /// The trailing non-epsilon items of a flag-prefixed pattern's root
+    /// concat (the leading `(?flags)` epsilon node is dropped).
+    fn flag_items(src: &str) -> Vec<RegexNode> {
+        match parse_bytes(src).root.node {
+            RegexNode::Concat(items) => items
+                .into_iter()
+                .map(|i| i.node)
+                .filter(|n| !matches!(n, RegexNode::Concat(c) if c.is_empty()))
+                .collect(),
+            other => vec![other],
+        }
+    }
+
+    #[test]
+    fn inline_flag_caseless_bakes_class() {
+        // `(?i)a` → a two-case class `[aA]`; the backends see only a class.
+        let items = flag_items("(?i)a");
+        match &items[0] {
+            RegexNode::Class(c) => {
+                assert!(c
+                    .members
+                    .iter()
+                    .any(|m| matches!(m, ClassMember::Single(v) if *v == b'a' as u32)));
+                assert!(c
+                    .members
+                    .iter()
+                    .any(|m| matches!(m, ClassMember::Single(v) if *v == b'A' as u32)));
+            }
+            other => panic!("got {:?}", other),
+        }
+        // A class folds its range: `(?i)[a-c]` gains `A`..`C`.
+        match &flag_items("(?i)[a-c]")[0] {
+            RegexNode::Class(c) => assert!(c
+                .members
+                .iter()
+                .any(|m| matches!(m, ClassMember::Range { low, high } if *low == b'A' as u32 && *high == b'C' as u32))),
+            other => panic!("got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn inline_flag_dotall_bakes_any() {
+        // `(?s).` → `[^]` (negated empty class = every element incl. `\n`).
+        match &flag_items("(?s).")[0] {
+            RegexNode::Class(c) => {
+                assert!(c.negated && c.members.is_empty());
+            }
+            other => panic!("got {:?}", other),
+        }
+        // Without the flag, `.` is the default dot node.
+        assert!(matches!(root("."), RegexNode::Dot));
+    }
+
+    #[test]
+    fn inline_flag_multiline_bakes_line_anchors() {
+        // `(?m)^`/`$` carry `LineStart`/`LineEnd`; default stays input-absolute.
+        assert!(matches!(
+            flag_items("(?m)^")[0],
+            RegexNode::Anchor(Anchor::LineStart)
+        ));
+        assert!(matches!(
+            flag_items("(?m)$")[0],
+            RegexNode::Anchor(Anchor::LineEnd)
+        ));
+        assert!(matches!(root("^"), RegexNode::Anchor(Anchor::InputStart)));
+    }
+
+    #[test]
+    fn inline_flag_scoped_and_removed() {
+        // `(?i:a)b`: the `a` folds inside the group; the trailing `b` does not.
+        match parse_bytes("(?i:a)b").root.node {
+            RegexNode::Concat(items) => {
+                assert!(matches!(&items[0].node, RegexNode::Group(_)));
+                assert!(matches!(
+                    &items[1].node,
+                    RegexNode::Literal(Literal::Byte(b'b'))
+                ));
+            }
+            other => panic!("got {:?}", other),
+        }
+        // `(?-i:...)` clears an outer `(?i)`: `(?i)(?-i:a)` leaves `a` exact.
+        match &flag_items("(?i)(?-i:a)")[0] {
+            RegexNode::Group(inner) => assert!(matches!(
+                inner.node,
+                RegexNode::Literal(Literal::Byte(b'a'))
+            )),
+            other => panic!("got {:?}", other),
+        }
     }
 
     #[test]

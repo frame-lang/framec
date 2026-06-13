@@ -372,7 +372,7 @@ fn extract_boundary_anchors(
     }) = items.first()
     {
         let a = *a;
-        if matches!(a, Anchor::LineStart | Anchor::InputStart) {
+        if matches!(a, Anchor::InputStart) {
             requires_start = true;
             items.remove(0);
         } else if let Some(kind) = word_kind(a) {
@@ -396,7 +396,7 @@ fn extract_boundary_anchors(
     }) = items.last()
     {
         let a = *a;
-        if matches!(a, Anchor::LineEnd | Anchor::InputEnd) {
+        if matches!(a, Anchor::InputEnd) {
             requires_end = true;
             items.pop();
         } else if let Some(kind) = word_kind(a) {
