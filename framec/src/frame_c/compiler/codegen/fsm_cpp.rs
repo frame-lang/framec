@@ -24,10 +24,10 @@
 //! multi-match (`|`) ordered-choice states, captures, bare-expression
 //! returns, action blocks, declared `actions:` methods, all transition
 //! forms, embedding actions, Mode C sub-fsm call-out, all three alphabets,
-//! and boundary anchors — `^`/`$` plus edge word boundaries `\b`/`\B`
-//! (bytes only). Not yet handled (clear `Unsupported` error): mid-pattern
-//! anchors, a Mode C stage as a `|` selector, and a `|` alternative with
-//! elements before its first stage.
+//! edge anchors (`^`/`$`), `\b`/`\B` word boundaries, interior anchors, and
+//! lazy quantifiers (the last three via the Pike VM with zero-width
+//! `Assert`s). Not yet handled (clear `Unsupported` error): a Mode C stage as
+//! a `|` selector, and a `|` alternative with elements before its first stage.
 
 use crate::frame_c::compiler::frame_ast::{
     BinaryOp, EmbeddingOp, Expression, FsmDeclAst, FsmStateAst, FsmTransitionTarget, Literal,
@@ -452,25 +452,48 @@ impl<'a> Generator<'a> {
     fn emit_pike_matcher(&self, out: &mut String) {
         let inp = &self.decl.params[0].name;
         let read = self.element_read();
+        writeln!(
+            out,
+            "  bool pikeIsWord(int p, const std::vector<int>& word) {{\n\
+             \x20   if (p < 0 || p >= (int){inp}.size()) return false;\n\
+             \x20   int v = (int){inp}[p];\n\
+             \x20   for (int k = 0; k < (int)word.size() / 2; k++) {{\n\
+             \x20     if (word[k*2] <= v && v <= word[k*2+1]) return true;\n\
+             \x20   }}\n\
+             \x20   return false;\n\
+             \x20 }}\n\n\
+             \x20 bool pikeAssert(int kind, int pos, const std::vector<int>& word) {{\n\
+             \x20   int n = (int){inp}.size();\n\
+             \x20   if (kind == 0) return pos == 0;\n\
+             \x20   if (kind == 1) return pos == n;\n\
+             \x20   if (kind == 2) return pos == 0 || (int){inp}[pos-1] == 10;\n\
+             \x20   if (kind == 3) return pos == n || (int){inp}[pos] == 10;\n\
+             \x20   if (kind == 4) return pikeIsWord(pos-1, word) != pikeIsWord(pos, word);\n\
+             \x20   return pikeIsWord(pos-1, word) == pikeIsWord(pos, word);\n\
+             \x20 }}\n\n",
+            inp = inp
+        )
+        .ok();
         out.push_str(
-            "  void pikeAdd(const std::vector<int>& ops, std::vector<int>& lst, std::vector<char>& seen, int pc) {\n\
+            "  void pikeAdd(const std::vector<int>& ops, const std::vector<int>& word, std::vector<int>& lst, std::vector<char>& seen, int pc, int pos) {\n\
              \x20   if (seen[pc]) return;\n\
              \x20   seen[pc] = 1;\n\
              \x20   int op = ops[pc*4];\n\
-             \x20   if (op == 2) { pikeAdd(ops, lst, seen, ops[pc*4+1]); }\n\
-             \x20   else if (op == 1) { pikeAdd(ops, lst, seen, ops[pc*4+1]); pikeAdd(ops, lst, seen, ops[pc*4+2]); }\n\
+             \x20   if (op == 2) { pikeAdd(ops, word, lst, seen, ops[pc*4+1], pos); }\n\
+             \x20   else if (op == 1) { pikeAdd(ops, word, lst, seen, ops[pc*4+1], pos); pikeAdd(ops, word, lst, seen, ops[pc*4+2], pos); }\n\
+             \x20   else if (op == 4) { if (pikeAssert(ops[pc*4+1], pos, word)) pikeAdd(ops, word, lst, seen, pc+1, pos); }\n\
              \x20   else { lst.push_back(pc); }\n\
              \x20 }\n\n",
         );
         writeln!(
             out,
-            "  int pikeMatch(const std::vector<int>& ops, const std::vector<int>& rng) {{\n\
+            "  int pikeMatch(const std::vector<int>& ops, const std::vector<int>& rng, const std::vector<int>& word) {{\n\
              \x20   int n = (int){inp}.size();\n\
              \x20   int ninst = (int)ops.size() / 4;\n\
              \x20   int matched = -1;\n\
              \x20   std::vector<int> clist;\n\
              \x20   std::vector<char> cseen(ninst, 0);\n\
-             \x20   pikeAdd(ops, clist, cseen, 0);\n\
+             \x20   pikeAdd(ops, word, clist, cseen, 0, cursor);\n\
              \x20   int pos = cursor;\n\
              \x20   while (true) {{\n\
              \x20     std::vector<int> nlist;\n\
@@ -482,7 +505,7 @@ impl<'a> Generator<'a> {
              \x20           int v = {read};\n\
              \x20           int rs = ops[pc*4+1], rc = ops[pc*4+2];\n\
              \x20           for (int k = 0; k < rc; k++) {{\n\
-             \x20             if (rng[(rs+k)*2] <= v && v <= rng[(rs+k)*2+1]) {{ pikeAdd(ops, nlist, nseen, pc+1); break; }}\n\
+             \x20             if (rng[(rs+k)*2] <= v && v <= rng[(rs+k)*2+1]) {{ pikeAdd(ops, word, nlist, nseen, pc+1, pos+1); break; }}\n\
              \x20           }}\n\
              \x20         }}\n\
              \x20       }} else if (op == 3) {{\n\
@@ -1062,10 +1085,19 @@ impl<'a> Generator<'a> {
                 int_list(&rng)
             )
             .ok();
+            let word = fsm_regex::pike::program_word_table(prog, self.alphabet);
             writeln!(
                 out,
-                "{}int _r{} = pikeMatch(ops{}, rng{});",
-                ind, sid, sid, sid
+                "{}std::vector<int> word{} = {{{}}};",
+                ind,
+                sid,
+                int_list(&word)
+            )
+            .ok();
+            writeln!(
+                out,
+                "{}int _r{} = pikeMatch(ops{}, rng{}, word{});",
+                ind, sid, sid, sid, sid
             )
             .ok();
         } else {
@@ -1468,11 +1500,15 @@ mod tests {
         assert_eq!(lines, vec!["true", "false"]);
     }
 
+    /// An interior anchor (`a$b`) routes to the Pike VM; the `$` assert can
+    /// never hold mid-string, so it rejects.
     #[test]
-    fn cpp_unsupported_errors() {
-        let decl =
-            parse_fsm_block(b"@@fsm M(text: bytes) : bool = false { /a$b/ true }").expect("parses");
-        let err = generate(&decl).unwrap_err();
-        assert!(err.contains("anchor"), "got {err}");
+    fn cpp_interior_anchor() {
+        let code = gen("@@fsm M(text: bytes) : bool = false { /a$b/ true }");
+        let driver = "  M m(\"ab\"); std::cout << m.accepted << \"\\n\";";
+        let Some(lines) = cpp_run(&code, driver, "ia_mid") else {
+            return;
+        };
+        assert_eq!(lines, vec!["false"]);
     }
 }

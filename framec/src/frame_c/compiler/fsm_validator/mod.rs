@@ -1597,15 +1597,15 @@ mod tests {
         assert!(!d.iter().any(|x| x.code == "E722"), "got {:?}", d);
     }
 
-    /// A mid-pattern anchor (`a$b`) is deferred — reported as E722 with an
-    /// anchor message, not miscompiled.
+    /// A mid-pattern anchor (`a$b`) is now supported via the Pike VM's
+    /// zero-width assertions — it validates cleanly (no E722), the engine
+    /// compiles it to an assertion-bearing program.
     #[test]
-    fn regex_mid_anchor_is_deferred() {
+    fn regex_mid_anchor_is_supported() {
         let d = diags(b"@@fsm M(text: bytes) : bool = false { /a$b/ true }");
         assert!(
-            d.iter()
-                .any(|x| x.code == "E722" && x.message.contains("anchor")),
-            "got {:?}",
+            !d.iter().any(|x| x.code == "E722"),
+            "interior anchors no longer deferred: {:?}",
             d
         );
     }

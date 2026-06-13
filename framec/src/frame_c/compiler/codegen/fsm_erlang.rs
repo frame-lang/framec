@@ -292,33 +292,38 @@ impl<'a> Generator<'a> {
     /// are 1-indexed tuples; the 0-based `pc`/pair indices map via `*4+1`/`*2+1`.
     fn emit_pike_runtime(&self, out: &mut String) {
         out.push_str(
-            "pike_match(St, Ops, Rng) ->\n\
+            "pike_match(St, Ops, Rng, Word) ->\n\
              \x20   Input = maps:get(fsm_input, St),\n\
              \x20   N = maps:get(fsm_n, St),\n\
              \x20   Start = maps:get(cursor, St),\n\
-             \x20   {CList, _} = pike_add(Ops, 0, [], []),\n\
-             \x20   pike_loop(Ops, Rng, Input, N, CList, Start, -1).\n\n\
-             pike_add(Ops, Pc, Acc, Seen) ->\n\
+             \x20   {CList, _} = pike_add(Ops, Word, Input, N, Start, 0, [], []),\n\
+             \x20   pike_loop(Ops, Rng, Word, Input, N, CList, Start, -1).\n\n\
+             pike_add(Ops, Word, Input, N, Pos, Pc, Acc, Seen) ->\n\
              \x20   case lists:member(Pc, Seen) of\n\
              \x20       true -> {Acc, Seen};\n\
              \x20       false ->\n\
              \x20           Seen2 = [Pc | Seen],\n\
              \x20           case element(Pc * 4 + 1, Ops) of\n\
-             \x20               2 -> pike_add(Ops, element(Pc * 4 + 2, Ops), Acc, Seen2);\n\
+             \x20               2 -> pike_add(Ops, Word, Input, N, Pos, element(Pc * 4 + 2, Ops), Acc, Seen2);\n\
              \x20               1 ->\n\
-             \x20                   {Acc2, Seen3} = pike_add(Ops, element(Pc * 4 + 2, Ops), Acc, Seen2),\n\
-             \x20                   pike_add(Ops, element(Pc * 4 + 3, Ops), Acc2, Seen3);\n\
+             \x20                   {Acc2, Seen3} = pike_add(Ops, Word, Input, N, Pos, element(Pc * 4 + 2, Ops), Acc, Seen2),\n\
+             \x20                   pike_add(Ops, Word, Input, N, Pos, element(Pc * 4 + 3, Ops), Acc2, Seen3);\n\
+             \x20               4 ->\n\
+             \x20                   case pike_assert(element(Pc * 4 + 2, Ops), Pos, Input, N, Word) of\n\
+             \x20                       true -> pike_add(Ops, Word, Input, N, Pos, Pc + 1, Acc, Seen2);\n\
+             \x20                       false -> {Acc, Seen2}\n\
+             \x20                   end;\n\
              \x20               _ -> {Acc ++ [Pc], Seen2}\n\
              \x20           end\n\
              \x20   end.\n\n\
-             pike_loop(Ops, Rng, Input, N, CList, Pos, Matched) ->\n\
-             \x20   {NList, Matched2} = pike_step(Ops, Rng, Input, N, CList, Pos, [], [], Matched),\n\
+             pike_loop(Ops, Rng, Word, Input, N, CList, Pos, Matched) ->\n\
+             \x20   {NList, Matched2} = pike_step(Ops, Rng, Word, Input, N, CList, Pos, [], [], Matched),\n\
              \x20   case Pos >= N of\n\
              \x20       true -> Matched2;\n\
-             \x20       false -> pike_loop(Ops, Rng, Input, N, NList, Pos + 1, Matched2)\n\
+             \x20       false -> pike_loop(Ops, Rng, Word, Input, N, NList, Pos + 1, Matched2)\n\
              \x20   end.\n\n\
-             pike_step(_Ops, _Rng, _Input, _N, [], _Pos, NList, _NSeen, Matched) -> {NList, Matched};\n\
-             pike_step(Ops, Rng, Input, N, [Pc | Rest], Pos, NList, NSeen, Matched) ->\n\
+             pike_step(_Ops, _Rng, _Word, _Input, _N, [], _Pos, NList, _NSeen, Matched) -> {NList, Matched};\n\
+             pike_step(Ops, Rng, Word, Input, N, [Pc | Rest], Pos, NList, NSeen, Matched) ->\n\
              \x20   case element(Pc * 4 + 1, Ops) of\n\
              \x20       0 ->\n\
              \x20           Hit = case Pos < N of\n\
@@ -329,13 +334,13 @@ impl<'a> Generator<'a> {
              \x20           end,\n\
              \x20           case Hit of\n\
              \x20               true ->\n\
-             \x20                   {NList2, NSeen2} = pike_add(Ops, Pc + 1, NList, NSeen),\n\
-             \x20                   pike_step(Ops, Rng, Input, N, Rest, Pos, NList2, NSeen2, Matched);\n\
+             \x20                   {NList2, NSeen2} = pike_add(Ops, Word, Input, N, Pos + 1, Pc + 1, NList, NSeen),\n\
+             \x20                   pike_step(Ops, Rng, Word, Input, N, Rest, Pos, NList2, NSeen2, Matched);\n\
              \x20               false ->\n\
-             \x20                   pike_step(Ops, Rng, Input, N, Rest, Pos, NList, NSeen, Matched)\n\
+             \x20                   pike_step(Ops, Rng, Word, Input, N, Rest, Pos, NList, NSeen, Matched)\n\
              \x20           end;\n\
              \x20       3 -> {NList, Pos};\n\
-             \x20       _ -> pike_step(Ops, Rng, Input, N, Rest, Pos, NList, NSeen, Matched)\n\
+             \x20       _ -> pike_step(Ops, Rng, Word, Input, N, Rest, Pos, NList, NSeen, Matched)\n\
              \x20   end.\n\n\
              pike_in_ranges(_Rng, _Rs, 0, _V) -> false;\n\
              pike_in_ranges(Rng, Rs, Rc, V) ->\n\
@@ -344,6 +349,26 @@ impl<'a> Generator<'a> {
              \x20   case (Lo =< V) andalso (V =< Hi) of\n\
              \x20       true -> true;\n\
              \x20       false -> pike_in_ranges(Rng, Rs + 1, Rc - 1, V)\n\
+             \x20   end.\n\n\
+             pike_assert(0, Pos, _Input, _N, _Word) -> Pos == 0;\n\
+             pike_assert(1, Pos, _Input, N, _Word) -> Pos == N;\n\
+             pike_assert(2, Pos, Input, _N, _Word) -> (Pos == 0) orelse (element(Pos, Input) == 10);\n\
+             pike_assert(3, Pos, Input, N, _Word) -> (Pos == N) orelse (element(Pos + 1, Input) == 10);\n\
+             pike_assert(4, Pos, Input, N, Word) ->\n\
+             \x20   pike_isword(Input, N, Pos - 1, Word) =/= pike_isword(Input, N, Pos, Word);\n\
+             pike_assert(_, Pos, Input, N, Word) ->\n\
+             \x20   pike_isword(Input, N, Pos - 1, Word) == pike_isword(Input, N, Pos, Word).\n\n\
+             pike_isword(_Input, N, P, _Word) when (P < 0) orelse (P >= N) -> false;\n\
+             pike_isword(Input, _N, P, Word) ->\n\
+             \x20   V = element(P + 1, Input),\n\
+             \x20   pike_word_member(Word, 0, tuple_size(Word) div 2, V).\n\n\
+             pike_word_member(_Word, K, Half, _V) when K >= Half -> false;\n\
+             pike_word_member(Word, K, Half, V) ->\n\
+             \x20   Lo = element(K * 2 + 1, Word),\n\
+             \x20   Hi = element(K * 2 + 2, Word),\n\
+             \x20   case (Lo =< V) andalso (V =< Hi) of\n\
+             \x20       true -> true;\n\
+             \x20       false -> pike_word_member(Word, K + 1, Half, V)\n\
              \x20   end.\n",
         );
     }
@@ -880,7 +905,10 @@ impl<'a> Generator<'a> {
                 // An embedding selector threads its (mutated) state map.
                 let sbase = if sel.embedding_actions.is_empty() {
                     let call = if self.stage_dfas[my_sid].program.is_some() {
-                        format!("pike_match({}, ops_{}(), rng_{}())", sv, my_sid, my_sid)
+                        format!(
+                            "pike_match({}, ops_{}(), rng_{}(), word_{}())",
+                            sv, my_sid, my_sid, my_sid
+                        )
                     } else {
                         format!("dfa_match({}, dfa_{}())", sv, my_sid)
                     };
@@ -1148,7 +1176,10 @@ impl<'a> Generator<'a> {
                 // embedding stage, else the incoming `st`).
                 let base = if stage.embedding_actions.is_empty() {
                     let call = if self.stage_dfas[my_sid].program.is_some() {
-                        format!("pike_match({}, ops_{}(), rng_{}())", st, my_sid, my_sid)
+                        format!(
+                            "pike_match({}, ops_{}(), rng_{}(), word_{}())",
+                            st, my_sid, my_sid, my_sid
+                        )
                     } else {
                         format!("dfa_match({}, dfa_{}())", st, my_sid)
                     };
@@ -1568,8 +1599,10 @@ impl<'a> Generator<'a> {
             // instead of a DFA table.
             if let Some(prog) = &dfa.program {
                 let (ops, rng) = fsm_regex::pike::encode(prog);
+                let word = fsm_regex::pike::program_word_table(prog, self.alphabet);
                 writeln!(out, "ops_{}() -> {{{}}}.", sid, int_list(&ops)).ok();
                 writeln!(out, "rng_{}() -> {{{}}}.", sid, int_list(&rng)).ok();
+                writeln!(out, "word_{}() -> {{{}}}.", sid, int_list(&word)).ok();
                 continue;
             }
             let states: Vec<String> = dfa
@@ -2357,12 +2390,28 @@ mod tests {
         assert_eq!(run(src, "m", "123x", "anc_f").unwrap().0, "false");
     }
 
-    /// A mid-pattern anchor is outside the v0.1 cut and errors clearly.
+    /// An interior anchor (`a$b`) routes to the Pike VM; the `$` assert can
+    /// never hold mid-string, so it rejects.
     #[test]
-    fn erl_unsupported_errors() {
-        let decl =
-            parse_fsm_block(b"@@fsm M(text: bytes) : bool = false { /a$b/ true }").expect("parses");
-        let err = generate(&decl).unwrap_err();
-        assert!(err.contains("anchor"), "got {err}");
+    fn erl_interior_anchor() {
+        let src = "@@fsm M(text: bytes) : bool = false { /a$b/ true }";
+        let decl = parse_fsm_block(src.as_bytes()).expect("parses");
+        generate(&decl).expect("interior anchor compiles to a Pike program");
+        let Some((acc, _)) = run(src, "m", "ab", "ia_mid") else {
+            return;
+        };
+        assert_eq!(acc, "false");
+    }
+
+    /// An interior word boundary on the `char` alphabet runs on the Pike VM
+    /// with the Unicode `\w` word table: `\bcat\b` matches a free-standing word.
+    #[test]
+    fn erl_word_boundary_on_pike_vm() {
+        let src = "@@fsm M(text: char) : bool = false { /\\bcat\\b/ true }";
+        let Some((acc, _)) = run(src, "m", "cat", "wbp_a") else {
+            return;
+        };
+        assert_eq!(acc, "true");
+        assert_eq!(run(src, "m", "cats", "wbp_b").unwrap().0, "false");
     }
 }

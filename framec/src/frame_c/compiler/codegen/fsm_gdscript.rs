@@ -31,10 +31,10 @@
 //! multi-match (`|`) ordered-choice states, captures, bare-expression
 //! returns, action blocks, declared `actions:` methods, all transition
 //! forms, embedding actions, Mode C sub-fsm call-out, all three alphabets,
-//! position anchors, and edge `\b`/`\B` word boundaries (bytes alphabet).
-//! Not yet handled (clear `Unsupported` error): mid-pattern anchors and
-//! `\b`/`\B` on char/token, a Mode C stage as a `|` selector, and a `|`
-//! alternative with elements before its first stage.
+//! edge anchors, `\b`/`\B` word boundaries (incl. char), interior anchors,
+//! and lazy quantifiers (the last three via the Pike VM with zero-width
+//! `Assert`s). Not yet handled (clear `Unsupported` error): a Mode C stage as
+//! a `|` selector, and a `|` alternative with elements before its first stage.
 
 use crate::frame_c::compiler::frame_ast::{
     BinaryOp, BlockAst, EmbeddingOp, Expression, FsmDeclAst, FsmStateAst, FsmTransitionTarget,
@@ -265,8 +265,10 @@ impl<'a> Generator<'a> {
             // arrays) instead of a DFA table; only its program is referenced.
             if let Some(prog) = &dfa.program {
                 let (ops, rng) = fsm_regex::pike::encode(prog);
+                let word = fsm_regex::pike::program_word_table(prog, self.alphabet);
                 writeln!(out, "\tvar _OPS_{} = [{}]", i, int_list(&ops)).ok();
                 writeln!(out, "\tvar _RNG_{} = [{}]", i, int_list(&rng)).ok();
+                writeln!(out, "\tvar _WORD_{} = [{}]", i, int_list(&word)).ok();
             } else {
                 writeln!(out, "\tvar _DFA_{} = {}", i, dfa_literal(dfa)).ok();
             }
@@ -416,7 +418,7 @@ impl<'a> Generator<'a> {
     /// the shared `_dfa_match`.
     fn stage_call(&self, stage: &StageAst, sid: usize) -> String {
         if self.stage_dfas[sid].program.is_some() {
-            format!("self._pike_match(self._OPS_{sid}, self._RNG_{sid})")
+            format!("self._pike_match(self._OPS_{sid}, self._RNG_{sid}, self._WORD_{sid})")
         } else if stage.embedding_actions.is_empty() {
             format!("self._dfa_match(self._DFA_{sid})")
         } else {
@@ -435,23 +437,48 @@ impl<'a> Generator<'a> {
         let read = self.element_read();
         writeln!(
             out,
-            "\tfunc _pike_add(ops, lst, seen, pc):\n\
+            "\tfunc _pike_is_word(p, word) -> bool:\n\
+             \t\tif p < 0 or p >= len(self.{inp}):\n\
+             \t\t\treturn false\n\
+             \t\tvar v = self.{inp}.unicode_at(p)\n\
+             \t\tfor k in range(word.size() / 2):\n\
+             \t\t\tif word[k * 2] <= v and v <= word[k * 2 + 1]:\n\
+             \t\t\t\treturn true\n\
+             \t\treturn false\n\
+             \tfunc _pike_assert(kind, pos, word) -> bool:\n\
+             \t\tvar n = len(self.{inp})\n\
+             \t\tif kind == 0:\n\
+             \t\t\treturn pos == 0\n\
+             \t\tif kind == 1:\n\
+             \t\t\treturn pos == n\n\
+             \t\tif kind == 2:\n\
+             \t\t\treturn pos == 0 or self.{inp}.unicode_at(pos - 1) == 10\n\
+             \t\tif kind == 3:\n\
+             \t\t\treturn pos == n or self.{inp}.unicode_at(pos) == 10\n\
+             \t\tif kind == 4:\n\
+             \t\t\treturn self._pike_is_word(pos - 1, word) != self._pike_is_word(pos, word)\n\
+             \t\treturn self._pike_is_word(pos - 1, word) == self._pike_is_word(pos, word)\n\
+             \tfunc _pike_add(ops, word, lst, seen, pc, pos):\n\
              \t\tif seen[pc]:\n\
              \t\t\treturn\n\
              \t\tseen[pc] = true\n\
              \t\tvar op = ops[pc * 4]\n\
              \t\tif op == 2:\n\
-             \t\t\tself._pike_add(ops, lst, seen, ops[pc * 4 + 1])\n\
+             \t\t\tself._pike_add(ops, word, lst, seen, ops[pc * 4 + 1], pos)\n\
              \t\telif op == 1:\n\
-             \t\t\tself._pike_add(ops, lst, seen, ops[pc * 4 + 1])\n\
-             \t\t\tself._pike_add(ops, lst, seen, ops[pc * 4 + 2])\n\
+             \t\t\tself._pike_add(ops, word, lst, seen, ops[pc * 4 + 1], pos)\n\
+             \t\t\tself._pike_add(ops, word, lst, seen, ops[pc * 4 + 2], pos)\n\
+             \t\telif op == 4:\n\
+             \t\t\tif self._pike_assert(ops[pc * 4 + 1], pos, word):\n\
+             \t\t\t\tself._pike_add(ops, word, lst, seen, pc + 1, pos)\n\
              \t\telse:\n\
-             \t\t\tlst.append(pc)"
+             \t\t\tlst.append(pc)",
+            inp = self.input_field()
         )
         .ok();
         writeln!(
             out,
-            "\tfunc _pike_match(ops, rng) -> int:\n\
+            "\tfunc _pike_match(ops, rng, word) -> int:\n\
              \t\tvar n = len(self.{inp})\n\
              \t\tvar ninst = ops.size() / 4\n\
              \t\tvar matched = -1\n\
@@ -459,7 +486,7 @@ impl<'a> Generator<'a> {
              \t\tvar cseen = []\n\
              \t\tfor i in range(ninst):\n\
              \t\t\tcseen.append(false)\n\
-             \t\tself._pike_add(ops, clist, cseen, 0)\n\
+             \t\tself._pike_add(ops, word, clist, cseen, 0, self.cursor)\n\
              \t\tvar pos = self.cursor\n\
              \t\twhile true:\n\
              \t\t\tvar nlist = []\n\
@@ -475,7 +502,7 @@ impl<'a> Generator<'a> {
              \t\t\t\t\t\tvar rc = ops[pc * 4 + 2]\n\
              \t\t\t\t\t\tfor k in range(rc):\n\
              \t\t\t\t\t\t\tif rng[(rs + k) * 2] <= v and v <= rng[(rs + k) * 2 + 1]:\n\
-             \t\t\t\t\t\t\t\tself._pike_add(ops, nlist, nseen, pc + 1)\n\
+             \t\t\t\t\t\t\t\tself._pike_add(ops, word, nlist, nseen, pc + 1, pos + 1)\n\
              \t\t\t\t\t\t\t\tbreak\n\
              \t\t\t\telif op == 3:\n\
              \t\t\t\t\tmatched = pos\n\
@@ -1415,10 +1442,13 @@ mod tests {
     }
 
     #[test]
-    fn gd_unsupported_errors() {
-        let decl =
-            parse_fsm_block(b"@@fsm M(text: bytes) : bool = false { /a$b/ true }").expect("parses");
-        let err = generate(&decl).unwrap_err();
-        assert!(err.contains("anchor"), "got {err}");
+    fn gd_interior_anchor() {
+        // `a$b` routes to the Pike VM; the `$` assert can never hold mid-string.
+        let code = gen("@@fsm M(text: bytes) : bool = false { /a$b/ true }");
+        let driver = "\tprint(M.new(\"ab\").accepted)";
+        let Some(lines) = gd_run(&code, driver, "ia_mid") else {
+            return;
+        };
+        assert_eq!(lines, vec!["false"]);
     }
 }

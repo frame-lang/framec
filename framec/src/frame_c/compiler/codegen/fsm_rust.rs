@@ -21,11 +21,12 @@
 //! small integer ids), with the `@@:matched` / `to_int` / `to_str` / `len`
 //! built-ins, Mode C sub-fsm call-out (`/@Inner/`, §8.3 — constructs the
 //! inner fsm over the input at the cursor, exposing it via
-//! `$state.label.return_value`), and boundary anchors (a leading `^`/`\A`,
-//! a trailing `$`/`\z`, §6.6). This is full parity with the Python reference
-//! backend. Not yet handled (clear `Unsupported` error, never a silent
-//! miscompile): mid-pattern anchors and `\b`/`\B` (deferred to v0.2 in both
-//! backends).
+//! `$state.label.return_value`), edge anchors (`^`/`\A`, `$`/`\z`, §6.6),
+//! `\b`/`\B` word boundaries, interior anchors, and lazy quantifiers (the
+//! last three via the Pike VM with zero-width `Assert`s). This is full parity
+//! with the Python reference backend. Not yet handled (clear `Unsupported`
+//! error, never a silent miscompile): a Mode C stage as a `|` selector, and a
+//! `|` alternative with elements before its first stage.
 
 use crate::frame_c::compiler::frame_ast::{
     BinaryOp, EmbeddingOp, Expression, FsmDeclAst, FsmStateAst, FsmTransitionTarget, Literal,
@@ -581,24 +582,50 @@ impl<'a> Generator<'a> {
         let input = &self.decl.params[0].name;
         writeln!(
             out,
-            "    fn pike_add(ops: &[i64], pc: usize, list: &mut Vec<usize>, seen: &mut [bool]) {{\n\
+            "    fn pike_is_word(&self, p: i64, word: &[i64]) -> bool {{\n\
+             \x20       if p < 0 || p as usize >= self.{input}.len() {{ return false; }}\n\
+             \x20       let v = self.{input}[p as usize] as i64;\n\
+             \x20       let mut k = 0;\n\
+             \x20       while k < word.len() / 2 {{\n\
+             \x20           if word[k * 2] <= v && v <= word[k * 2 + 1] {{ return true; }}\n\
+             \x20           k += 1;\n\
+             \x20       }}\n\
+             \x20       false\n\
+             \x20   }}\n\n\
+             \x20   fn pike_assert(&self, kind: i64, pos: usize, word: &[i64]) -> bool {{\n\
+             \x20       let n = self.{input}.len();\n\
+             \x20       match kind {{\n\
+             \x20           0 => pos == 0,\n\
+             \x20           1 => pos == n,\n\
+             \x20           2 => pos == 0 || self.{input}[pos - 1] as i64 == 10,\n\
+             \x20           3 => pos == n || self.{input}[pos] as i64 == 10,\n\
+             \x20           4 => self.pike_is_word(pos as i64 - 1, word) != self.pike_is_word(pos as i64, word),\n\
+             \x20           _ => self.pike_is_word(pos as i64 - 1, word) == self.pike_is_word(pos as i64, word),\n\
+             \x20       }}\n\
+             \x20   }}\n\n\
+             \x20   fn pike_add(&self, ops: &[i64], word: &[i64], pc: usize, pos: usize, list: &mut Vec<usize>, seen: &mut [bool]) {{\n\
              \x20       if seen[pc] {{ return; }}\n\
              \x20       seen[pc] = true;\n\
              \x20       match ops[pc * 4] {{\n\
-             \x20           2 => Self::pike_add(ops, ops[pc * 4 + 1] as usize, list, seen),\n\
+             \x20           2 => self.pike_add(ops, word, ops[pc * 4 + 1] as usize, pos, list, seen),\n\
              \x20           1 => {{\n\
-             \x20               Self::pike_add(ops, ops[pc * 4 + 1] as usize, list, seen);\n\
-             \x20               Self::pike_add(ops, ops[pc * 4 + 2] as usize, list, seen);\n\
+             \x20               self.pike_add(ops, word, ops[pc * 4 + 1] as usize, pos, list, seen);\n\
+             \x20               self.pike_add(ops, word, ops[pc * 4 + 2] as usize, pos, list, seen);\n\
+             \x20           }}\n\
+             \x20           4 => {{\n\
+             \x20               if self.pike_assert(ops[pc * 4 + 1], pos, word) {{\n\
+             \x20                   self.pike_add(ops, word, pc + 1, pos, list, seen);\n\
+             \x20               }}\n\
              \x20           }}\n\
              \x20           _ => list.push(pc),\n\
              \x20       }}\n\
              \x20   }}\n\n\
-             \x20   fn pike_match(&self, ops: &[i64], rng: &[i64]) -> i64 {{\n\
+             \x20   fn pike_match(&self, ops: &[i64], rng: &[i64], word: &[i64]) -> i64 {{\n\
              \x20       let ninst = ops.len() / 4;\n\
              \x20       let n = self.{input}.len();\n\
              \x20       let mut clist: Vec<usize> = Vec::new();\n\
              \x20       let mut cseen = vec![false; ninst];\n\
-             \x20       Self::pike_add(ops, 0, &mut clist, &mut cseen);\n\
+             \x20       self.pike_add(ops, word, 0, self.cursor, &mut clist, &mut cseen);\n\
              \x20       let mut matched: i64 = -1;\n\
              \x20       let mut pos = self.cursor;\n\
              \x20       loop {{\n\
@@ -612,7 +639,7 @@ impl<'a> Generator<'a> {
              \x20                           let (rs, rc) = (ops[pc * 4 + 1] as usize, ops[pc * 4 + 2] as usize);\n\
              \x20                           for k in 0..rc {{\n\
              \x20                               if rng[(rs + k) * 2] <= v && v <= rng[(rs + k) * 2 + 1] {{\n\
-             \x20                                   Self::pike_add(ops, pc + 1, &mut nlist, &mut nseen);\n\
+             \x20                                   self.pike_add(ops, word, pc + 1, pos + 1, &mut nlist, &mut nseen);\n\
              \x20                                   break;\n\
              \x20                               }}\n\
              \x20                           }}\n\
@@ -880,7 +907,7 @@ impl<'a> Generator<'a> {
                     if sel.embedding_actions.is_empty() {
                         self.emit_dfa_const(out, my_sid, "        ");
                         let call = if self.stage_dfas[my_sid].program.is_some() {
-                            format!("self.pike_match(OPS_{my_sid}, RNG_{my_sid})")
+                            format!("self.pike_match(OPS_{my_sid}, RNG_{my_sid}, WORD_{my_sid})")
                         } else {
                             format!(
                                 "self.dfa_match(DFA_{}, {})",
@@ -1051,7 +1078,7 @@ impl<'a> Generator<'a> {
                 if stage.embedding_actions.is_empty() {
                     self.emit_dfa_const(out, my_sid, ind);
                     let call = if self.stage_dfas[my_sid].program.is_some() {
-                        format!("self.pike_match(OPS_{my_sid}, RNG_{my_sid})")
+                        format!("self.pike_match(OPS_{my_sid}, RNG_{my_sid}, WORD_{my_sid})")
                     } else {
                         format!(
                             "self.dfa_match(DFA_{}, {})",
@@ -1317,6 +1344,15 @@ impl<'a> Generator<'a> {
                 ind,
                 sid,
                 int_list(&rng)
+            )
+            .ok();
+            let word = fsm_regex::pike::program_word_table(prog, self.alphabet);
+            writeln!(
+                out,
+                "{}const WORD_{}: &[i64] = &[{}];",
+                ind,
+                sid,
+                int_list(&word)
             )
             .ok();
             return;
@@ -1915,12 +1951,28 @@ mod tests {
         assert_eq!(run(src, "M", "123x", "anc_f").unwrap().0, "false");
     }
 
-    /// A mid-pattern anchor is outside the v0.1 cut and errors clearly.
+    /// An interior anchor routes to the Pike VM (no longer an `Unsupported`
+    /// error): `a$b` compiles and rejects (the `$` can't hold mid-string).
     #[test]
-    fn rust_unsupported_errors() {
-        let decl =
-            parse_fsm_block(b"@@fsm M(text: bytes) : bool = false { /a$b/ true }").expect("parses");
-        let err = generate(&decl).unwrap_err();
-        assert!(err.contains("anchor"), "got {err}");
+    fn rust_interior_anchor_runs_on_pike_vm() {
+        // `a$b` routes to the Pike VM; the `$` assert can never hold mid-string.
+        let src = "@@fsm M(text: bytes) : bool = false { /a$b/ true }";
+        let decl = parse_fsm_block(src.as_bytes()).expect("parses");
+        generate(&decl).expect("interior anchor compiles to a Pike program");
+        let Some((acc, _)) = run(src, "M", "ab", "ia_mid") else {
+            return;
+        };
+        assert_eq!(acc, "false");
+    }
+
+    /// `\bcat\b` on `char` runs on the Pike VM with the Unicode `\w` word table.
+    #[test]
+    fn rust_word_boundary_runs_on_pike_vm() {
+        let src = "@@fsm M(text: char) : bool = false { /\\bcat\\b/ true }";
+        let Some((hit, _)) = run(src, "M", "cat", "wb_hit") else {
+            return;
+        };
+        assert_eq!(hit, "true");
+        assert_eq!(run(src, "M", "cats", "wb_miss").unwrap().0, "false");
     }
 }

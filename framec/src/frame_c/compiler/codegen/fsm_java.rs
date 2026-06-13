@@ -26,8 +26,9 @@
 //! multi-match (`|`) ordered-choice states, captures, bare-expression
 //! returns, action blocks, declared `actions:` methods, all transition
 //! forms, embedding actions, Mode C sub-fsm call-out, all three alphabets,
-//! boundary anchors, and edge word-boundaries (`\b`/`\B`). Not yet handled
-//! (clear `Unsupported` error): mid-pattern anchors, a Mode C stage as a `|`
+//! edge anchors, `\b`/`\B` word boundaries, interior anchors, and lazy
+//! quantifiers (the last three via the Pike VM with zero-width `Assert`s).
+//! Not yet handled (clear `Unsupported` error): a Mode C stage as a `|`
 //! selector, and a `|` alternative with elements before its first stage.
 
 use crate::frame_c::compiler::frame_ast::{
@@ -488,25 +489,44 @@ impl<'a> Generator<'a> {
         let inp = &self.decl.params[0].name;
         writeln!(
             out,
-            "  void pikeAdd(int[] ops, java.util.List<Integer> lst, boolean[] seen, int pc) {{\n\
+            "  boolean pikeIsWord(int p, int[] word) {{\n\
+             \x20   if (p < 0 || p >= {len}) return false;\n\
+             \x20   int v = {inp}.charAt(p);\n\
+             \x20   for (int k = 0; k < word.length / 2; k++) {{\n\
+             \x20     if (word[k * 2] <= v && v <= word[k * 2 + 1]) return true;\n\
+             \x20   }}\n\
+             \x20   return false;\n\
+             \x20 }}\n\n\
+             \x20 boolean pikeAssert(int kind, int pos, int[] word) {{\n\
+             \x20   int n = {len};\n\
+             \x20   if (kind == 0) return pos == 0;\n\
+             \x20   if (kind == 1) return pos == n;\n\
+             \x20   if (kind == 2) return pos == 0 || {inp}.charAt(pos - 1) == 10;\n\
+             \x20   if (kind == 3) return pos == n || {inp}.charAt(pos) == 10;\n\
+             \x20   if (kind == 4) return pikeIsWord(pos - 1, word) != pikeIsWord(pos, word);\n\
+             \x20   return pikeIsWord(pos - 1, word) == pikeIsWord(pos, word);\n\
+             \x20 }}\n\n\
+             \x20 void pikeAdd(int[] ops, int[] word, java.util.List<Integer> lst, boolean[] seen, int pc, int pos) {{\n\
              \x20   if (seen[pc]) return;\n\
              \x20   seen[pc] = true;\n\
              \x20   int op = ops[pc * 4];\n\
              \x20   if (op == 2) {{\n\
-             \x20     pikeAdd(ops, lst, seen, ops[pc * 4 + 1]);\n\
+             \x20     pikeAdd(ops, word, lst, seen, ops[pc * 4 + 1], pos);\n\
              \x20   }} else if (op == 1) {{\n\
-             \x20     pikeAdd(ops, lst, seen, ops[pc * 4 + 1]);\n\
-             \x20     pikeAdd(ops, lst, seen, ops[pc * 4 + 2]);\n\
+             \x20     pikeAdd(ops, word, lst, seen, ops[pc * 4 + 1], pos);\n\
+             \x20     pikeAdd(ops, word, lst, seen, ops[pc * 4 + 2], pos);\n\
+             \x20   }} else if (op == 4) {{\n\
+             \x20     if (pikeAssert(ops[pc * 4 + 1], pos, word)) pikeAdd(ops, word, lst, seen, pc + 1, pos);\n\
              \x20   }} else {{\n\
              \x20     lst.add(pc);\n\
              \x20   }}\n\
              \x20 }}\n\n\
-             \x20 int pikeMatch(int[] ops, int[] rng) {{\n\
+             \x20 int pikeMatch(int[] ops, int[] rng, int[] word) {{\n\
              \x20   int n = {len};\n\
              \x20   int ninst = ops.length / 4;\n\
              \x20   int matched = -1;\n\
              \x20   java.util.List<Integer> clist = new java.util.ArrayList<>();\n\
-             \x20   pikeAdd(ops, clist, new boolean[ninst], 0);\n\
+             \x20   pikeAdd(ops, word, clist, new boolean[ninst], 0, cursor);\n\
              \x20   int pos = cursor;\n\
              \x20   while (true) {{\n\
              \x20     java.util.List<Integer> nlist = new java.util.ArrayList<>();\n\
@@ -520,7 +540,7 @@ impl<'a> Generator<'a> {
              \x20           int rc = ops[pc * 4 + 2];\n\
              \x20           for (int k = 0; k < rc; k++) {{\n\
              \x20             if (rng[(rs + k) * 2] <= v && v <= rng[(rs + k) * 2 + 1]) {{\n\
-             \x20               pikeAdd(ops, nlist, nseen, pc + 1);\n\
+             \x20               pikeAdd(ops, word, nlist, nseen, pc + 1, pos + 1);\n\
              \x20               break;\n\
              \x20             }}\n\
              \x20           }}\n\
@@ -1075,12 +1095,14 @@ impl<'a> Generator<'a> {
         let dfa = &self.stage_dfas[sid];
         if let Some(prog) = &dfa.program {
             let (ops, rng) = fsm_regex::pike::encode(prog);
+            let word = fsm_regex::pike::program_word_table(prog, self.alphabet);
             writeln!(out, "{}int[] ops{} = {{{}}};", ind, sid, int_list(&ops)).ok();
             writeln!(out, "{}int[] rng{} = {{{}}};", ind, sid, int_list(&rng)).ok();
+            writeln!(out, "{}int[] word{} = {{{}}};", ind, sid, int_list(&word)).ok();
             writeln!(
                 out,
-                "{}int _r{} = pikeMatch(ops{}, rng{});",
-                ind, sid, sid, sid
+                "{}int _r{} = pikeMatch(ops{}, rng{}, word{});",
+                ind, sid, sid, sid, sid
             )
             .ok();
         } else if stage.embedding_actions.is_empty() {
@@ -1482,10 +1504,13 @@ mod tests {
     }
 
     #[test]
-    fn java_unsupported_errors() {
-        let decl =
-            parse_fsm_block(b"@@fsm M(text: bytes) : bool = false { /a$b/ true }").expect("parses");
-        let err = generate(&decl).unwrap_err();
-        assert!(err.contains("anchor"), "got {err}");
+    fn java_interior_anchor_runs_on_pike_vm() {
+        let src = "@@fsm M(text: bytes) : bool = false { /a$b/ true }";
+        let decl = parse_fsm_block(src.as_bytes()).expect("parses");
+        generate(&decl).expect("interior anchor compiles to a Pike program");
+        let Some((acc, _)) = run(src, "M(\"ab\")", "ia_mid") else {
+            return;
+        };
+        assert_eq!(acc, "false");
     }
 }

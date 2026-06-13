@@ -18,9 +18,10 @@
 //! bare-expression returns, action blocks, declared `actions:` methods, all
 //! transition forms (static / conditional / stage-ref / failure-only),
 //! embedding actions, Mode C sub-fsm call-out, all three alphabets, and
-//! boundary anchors. Not yet handled (clear `Unsupported` error): mid-pattern
-//! anchors and `\b`/`\B`, a Mode C stage as a `|` selector, and a `|`
-//! alternative with elements before its first stage.
+//! edge anchors, `\b`/`\B` word boundaries, interior anchors, and lazy
+//! quantifiers (the last three via the Pike VM with zero-width `Assert`s).
+//! Not yet handled (clear `Unsupported` error): a Mode C stage as a `|`
+//! selector, and a `|` alternative with elements before its first stage.
 
 use crate::frame_c::compiler::frame_ast::{
     BinaryOp, EmbeddingOp, Expression, FsmDeclAst, FsmStateAst, FsmTransitionTarget, Literal,
@@ -455,8 +456,10 @@ impl<'a> Generator<'a> {
         for (i, dfa) in self.stage_dfas.iter().enumerate() {
             if let Some(prog) = &dfa.program {
                 let (ops, rng) = fsm_regex::pike::encode(prog);
+                let word = fsm_regex::pike::program_word_table(prog, self.alphabet);
                 writeln!(out, "  _OPS_{}: number[] = [{}];", i, int_list(&ops)).ok();
                 writeln!(out, "  _RNG_{}: number[] = [{}];", i, int_list(&rng)).ok();
+                writeln!(out, "  _WORD_{}: number[] = [{}];", i, int_list(&word)).ok();
             }
         }
     }
@@ -475,25 +478,44 @@ impl<'a> Generator<'a> {
         let inp = &self.decl.params[0].name;
         writeln!(
             out,
-            "  _pikeAdd(ops: number[], lst: number[], seen: boolean[], pc: number): void {{\n\
+            "  _pikeIsWord(p: number, word: number[]): boolean {{\n\
+             \x20   if (p < 0 || p >= this.{inp}.length) return false;\n\
+             \x20   const v = this.{inp}.charCodeAt(p);\n\
+             \x20   for (let k = 0; k < word.length / 2; k++) {{\n\
+             \x20     if (word[k * 2] <= v && v <= word[k * 2 + 1]) return true;\n\
+             \x20   }}\n\
+             \x20   return false;\n\
+             \x20 }}\n\n\
+             \x20 _pikeAssert(kind: number, pos: number, word: number[]): boolean {{\n\
+             \x20   const n = this.{inp}.length;\n\
+             \x20   if (kind === 0) return pos === 0;\n\
+             \x20   if (kind === 1) return pos === n;\n\
+             \x20   if (kind === 2) return pos === 0 || this.{inp}.charCodeAt(pos - 1) === 10;\n\
+             \x20   if (kind === 3) return pos === n || this.{inp}.charCodeAt(pos) === 10;\n\
+             \x20   if (kind === 4) return this._pikeIsWord(pos - 1, word) !== this._pikeIsWord(pos, word);\n\
+             \x20   return this._pikeIsWord(pos - 1, word) === this._pikeIsWord(pos, word);\n\
+             \x20 }}\n\n\
+             \x20 _pikeAdd(ops: number[], word: number[], lst: number[], seen: boolean[], pc: number, pos: number): void {{\n\
              \x20   if (seen[pc]) return;\n\
              \x20   seen[pc] = true;\n\
              \x20   const op = ops[pc * 4];\n\
              \x20   if (op === 2) {{\n\
-             \x20     this._pikeAdd(ops, lst, seen, ops[pc * 4 + 1]);\n\
+             \x20     this._pikeAdd(ops, word, lst, seen, ops[pc * 4 + 1], pos);\n\
              \x20   }} else if (op === 1) {{\n\
-             \x20     this._pikeAdd(ops, lst, seen, ops[pc * 4 + 1]);\n\
-             \x20     this._pikeAdd(ops, lst, seen, ops[pc * 4 + 2]);\n\
+             \x20     this._pikeAdd(ops, word, lst, seen, ops[pc * 4 + 1], pos);\n\
+             \x20     this._pikeAdd(ops, word, lst, seen, ops[pc * 4 + 2], pos);\n\
+             \x20   }} else if (op === 4) {{\n\
+             \x20     if (this._pikeAssert(ops[pc * 4 + 1], pos, word)) this._pikeAdd(ops, word, lst, seen, pc + 1, pos);\n\
              \x20   }} else {{\n\
              \x20     lst.push(pc);\n\
              \x20   }}\n\
              \x20 }}\n\n\
-             \x20 _pikeMatch(ops: number[], rng: number[]): number {{\n\
+             \x20 _pikeMatch(ops: number[], rng: number[], word: number[]): number {{\n\
              \x20   const n = this.{inp}.length;\n\
              \x20   const ninst = ops.length / 4;\n\
              \x20   let matched = -1;\n\
              \x20   let clist: number[] = [];\n\
-             \x20   this._pikeAdd(ops, clist, new Array(ninst).fill(false), 0);\n\
+             \x20   this._pikeAdd(ops, word, clist, new Array(ninst).fill(false), 0, this.cursor);\n\
              \x20   let pos = this.cursor;\n\
              \x20   while (true) {{\n\
              \x20     const nlist: number[] = [];\n\
@@ -507,7 +529,7 @@ impl<'a> Generator<'a> {
              \x20           const rc = ops[pc * 4 + 2];\n\
              \x20           for (let k = 0; k < rc; k++) {{\n\
              \x20             if (rng[(rs + k) * 2] <= v && v <= rng[(rs + k) * 2 + 1]) {{\n\
-             \x20               this._pikeAdd(ops, nlist, nseen, pc + 1);\n\
+             \x20               this._pikeAdd(ops, word, nlist, nseen, pc + 1, pos + 1);\n\
              \x20               break;\n\
              \x20             }}\n\
              \x20           }}\n\
@@ -1214,7 +1236,7 @@ fn int_list(xs: &[i64]) -> String {
 /// actions, else the shared `_dfaMatch`.
 fn stage_call(gen: &Generator, stage: &StageAst, sid: usize) -> String {
     if gen.stage_dfas[sid].program.is_some() {
-        format!("this._pikeMatch(this._OPS_{sid}, this._RNG_{sid})")
+        format!("this._pikeMatch(this._OPS_{sid}, this._RNG_{sid}, this._WORD_{sid})")
     } else if stage.embedding_actions.is_empty() {
         format!("this._dfaMatch(DFA_{}, {})", sid, gen.stage_dfas[sid].start)
     } else {
@@ -1472,12 +1494,16 @@ mod tests {
         assert_eq!(lines, vec!["true", "false"]);
     }
 
+    /// An interior anchor (`a$b`) routes to the Pike VM, whose zero-width
+    /// `Assert` for `$` can never hold mid-string → reject.
     #[test]
-    fn ts_unsupported_errors() {
-        let decl =
-            parse_fsm_block(b"@@fsm M(text: bytes) : bool = false { /a$b/ true }").expect("parses");
-        let err = generate(&decl).unwrap_err();
-        assert!(err.contains("anchor"), "got {err}");
+    fn ts_interior_anchor() {
+        let code = gen("@@fsm M(text: bytes) : bool = false { /a$b/ true }");
+        let driver = "const m = new M(\"ab\"); console.log(String(m.accepted));";
+        let Some(lines) = ts_run(&code, driver, "ia_mid") else {
+            return;
+        };
+        assert_eq!(lines[0], "false");
     }
 
     /// Lazy quantifiers (§11.1) via the Pike VM: `/.*?,/` matches up to the

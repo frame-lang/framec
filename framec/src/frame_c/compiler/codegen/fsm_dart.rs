@@ -24,9 +24,10 @@
 //! multi-match (`|`) ordered-choice states, captures, bare-expression
 //! returns, action blocks, declared `actions:` methods, all transition
 //! forms, embedding actions, Mode C sub-fsm call-out, all three alphabets,
-//! and boundary anchors. Not yet handled (clear `Unsupported` error):
-//! mid-pattern anchors and `\b`/`\B`, a Mode C stage as a `|` selector, and a
-//! `|` alternative with elements before its first stage.
+//! edge anchors, `\b`/`\B` word boundaries, interior anchors, and lazy
+//! quantifiers (the last three via the Pike VM with zero-width `Assert`s).
+//! Not yet handled (clear `Unsupported` error): a Mode C stage as a `|`
+//! selector, and a `|` alternative with elements before its first stage.
 
 use crate::frame_c::compiler::frame_ast::{
     BinaryOp, EmbeddingOp, Expression, FsmDeclAst, FsmStateAst, FsmTransitionTarget, Literal,
@@ -446,10 +447,12 @@ impl<'a> Generator<'a> {
         let dfa = &self.stage_dfas[sid];
         if let Some(prog) = &dfa.program {
             let (ops, rng) = fsm_regex::pike::encode(prog);
+            let word = fsm_regex::pike::program_word_table(prog, self.alphabet);
             format!(
-                "pikeMatch(<int>[{}], <int>[{}])",
+                "pikeMatch(<int>[{}], <int>[{}], <int>[{}])",
                 int_list(&ops),
-                int_list(&rng)
+                int_list(&rng),
+                int_list(&word)
             )
         } else if stage.embedding_actions.is_empty() {
             format!("dfaMatch({}, {})", self.dfa_literal(sid), dfa.start)
@@ -469,25 +472,44 @@ impl<'a> Generator<'a> {
         let input = &self.decl.params[0].name;
         writeln!(
             out,
-            "  void pikeAdd(List<int> ops, List<int> lst, List<bool> seen, int pc) {{\n\
+            "  bool pikeIsWord(int p, List<int> word) {{\n\
+             \x20   if (p < 0 || p >= {input}.length) return false;\n\
+             \x20   int v = {input}.codeUnitAt(p);\n\
+             \x20   for (int k = 0; k < word.length ~/ 2; k++) {{\n\
+             \x20     if (word[k * 2] <= v && v <= word[k * 2 + 1]) return true;\n\
+             \x20   }}\n\
+             \x20   return false;\n\
+             \x20 }}\n\n\
+             \x20 bool pikeAssert(int kind, int pos, List<int> word) {{\n\
+             \x20   int n = {input}.length;\n\
+             \x20   if (kind == 0) return pos == 0;\n\
+             \x20   if (kind == 1) return pos == n;\n\
+             \x20   if (kind == 2) return pos == 0 || {input}.codeUnitAt(pos - 1) == 10;\n\
+             \x20   if (kind == 3) return pos == n || {input}.codeUnitAt(pos) == 10;\n\
+             \x20   if (kind == 4) return pikeIsWord(pos - 1, word) != pikeIsWord(pos, word);\n\
+             \x20   return pikeIsWord(pos - 1, word) == pikeIsWord(pos, word);\n\
+             \x20 }}\n\n\
+             \x20 void pikeAdd(List<int> ops, List<int> word, List<int> lst, List<bool> seen, int pc, int pos) {{\n\
              \x20   if (seen[pc]) return;\n\
              \x20   seen[pc] = true;\n\
              \x20   int op = ops[pc * 4];\n\
              \x20   if (op == 2) {{\n\
-             \x20     pikeAdd(ops, lst, seen, ops[pc * 4 + 1]);\n\
+             \x20     pikeAdd(ops, word, lst, seen, ops[pc * 4 + 1], pos);\n\
              \x20   }} else if (op == 1) {{\n\
-             \x20     pikeAdd(ops, lst, seen, ops[pc * 4 + 1]);\n\
-             \x20     pikeAdd(ops, lst, seen, ops[pc * 4 + 2]);\n\
+             \x20     pikeAdd(ops, word, lst, seen, ops[pc * 4 + 1], pos);\n\
+             \x20     pikeAdd(ops, word, lst, seen, ops[pc * 4 + 2], pos);\n\
+             \x20   }} else if (op == 4) {{\n\
+             \x20     if (pikeAssert(ops[pc * 4 + 1], pos, word)) pikeAdd(ops, word, lst, seen, pc + 1, pos);\n\
              \x20   }} else {{\n\
              \x20     lst.add(pc);\n\
              \x20   }}\n\
              \x20 }}\n\n\
-             \x20 int pikeMatch(List<int> ops, List<int> rng) {{\n\
+             \x20 int pikeMatch(List<int> ops, List<int> rng, List<int> word) {{\n\
              \x20   int n = {input}.length;\n\
              \x20   int ninst = ops.length ~/ 4;\n\
              \x20   int matched = -1;\n\
              \x20   List<int> clist = <int>[];\n\
-             \x20   pikeAdd(ops, clist, List<bool>.filled(ninst, false), 0);\n\
+             \x20   pikeAdd(ops, word, clist, List<bool>.filled(ninst, false), 0, cursor);\n\
              \x20   int pos = cursor;\n\
              \x20   while (true) {{\n\
              \x20     List<int> nlist = <int>[];\n\
@@ -501,7 +523,7 @@ impl<'a> Generator<'a> {
              \x20           int rc = ops[pc * 4 + 2];\n\
              \x20           for (int k = 0; k < rc; k++) {{\n\
              \x20             if (rng[(rs + k) * 2] <= v && v <= rng[(rs + k) * 2 + 1]) {{\n\
-             \x20               pikeAdd(ops, nlist, nseen, pc + 1);\n\
+             \x20               pikeAdd(ops, word, nlist, nseen, pc + 1, pos + 1);\n\
              \x20               break;\n\
              \x20             }}\n\
              \x20           }}\n\
@@ -1453,10 +1475,13 @@ mod tests {
     }
 
     #[test]
-    fn dart_unsupported_errors() {
-        let decl =
-            parse_fsm_block(b"@@fsm M(text: bytes) : bool = false { /a$b/ true }").expect("parses");
-        let err = generate(&decl).unwrap_err();
-        assert!(err.contains("anchor"), "got {err}");
+    fn dart_interior_anchor_runs_on_pike_vm() {
+        let src = "@@fsm M(text: bytes) : bool = false { /a$b/ true }";
+        let decl = parse_fsm_block(src.as_bytes()).expect("parses");
+        generate(&decl).expect("interior anchor compiles to a Pike program");
+        let Some((acc, _)) = run(src, "M(\"ab\")", "ia_mid") else {
+            return;
+        };
+        assert_eq!(acc, "false");
     }
 }

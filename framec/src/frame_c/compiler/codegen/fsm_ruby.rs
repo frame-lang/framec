@@ -20,9 +20,10 @@
 //! multi-match (`|`) ordered-choice states, captures, bare-expression
 //! returns, action blocks, declared `actions:` methods, all transition
 //! forms, embedding actions, Mode C sub-fsm call-out, all three alphabets,
-//! and boundary anchors. Not yet handled (clear `Unsupported` error):
-//! mid-pattern anchors and `\b`/`\B`, a Mode C stage as a `|` selector, and a
-//! `|` alternative with elements before its first stage.
+//! edge anchors, `\b`/`\B` word boundaries, interior anchors, and lazy
+//! quantifiers (the last three via the Pike VM with zero-width `Assert`s).
+//! Not yet handled (clear `Unsupported` error): a Mode C stage as a `|`
+//! selector, and a `|` alternative with elements before its first stage.
 
 use crate::frame_c::compiler::frame_ast::{
     BinaryOp, EmbeddingOp, Expression, FsmDeclAst, FsmStateAst, FsmTransitionTarget, Literal,
@@ -397,8 +398,10 @@ impl<'a> Generator<'a> {
         for (i, dfa) in self.stage_dfas.iter().enumerate() {
             if let Some(prog) = &dfa.program {
                 let (ops, rng) = fsm_regex::pike::encode(prog);
+                let word = fsm_regex::pike::program_word_table(prog, self.alphabet);
                 writeln!(out, "  def ops_{}\n    [{}]\n  end", i, int_list(&ops)).ok();
-                writeln!(out, "  def rng_{}\n    [{}]\n  end\n", i, int_list(&rng)).ok();
+                writeln!(out, "  def rng_{}\n    [{}]\n  end", i, int_list(&rng)).ok();
+                writeln!(out, "  def word_{}\n    [{}]\n  end\n", i, int_list(&word)).ok();
             }
         }
     }
@@ -412,25 +415,46 @@ impl<'a> Generator<'a> {
         let input = &self.decl.params[0].name;
         writeln!(
             out,
-            "  def pike_add(ops, lst, seen, pc)\n\
+            "  def pike_is_word(p, word)\n\
+             \x20   return false if p < 0 || p >= @{input}.length\n\
+             \x20   v = @{input}[p].ord\n\
+             \x20   k = 0\n\
+             \x20   while k < word.length / 2\n\
+             \x20     return true if word[k * 2] <= v && v <= word[k * 2 + 1]\n\
+             \x20     k += 1\n\
+             \x20   end\n\
+             \x20   false\n\
+             \x20 end\n\n\
+             \x20 def pike_assert(kind, pos, word)\n\
+             \x20   n = @{input}.length\n\
+             \x20   return pos == 0 if kind == 0\n\
+             \x20   return pos == n if kind == 1\n\
+             \x20   return (pos == 0 || @{input}[pos - 1].ord == 10) if kind == 2\n\
+             \x20   return (pos == n || @{input}[pos].ord == 10) if kind == 3\n\
+             \x20   return pike_is_word(pos - 1, word) != pike_is_word(pos, word) if kind == 4\n\
+             \x20   pike_is_word(pos - 1, word) == pike_is_word(pos, word)\n\
+             \x20 end\n\n\
+             \x20 def pike_add(ops, word, lst, seen, pc, pos)\n\
              \x20   return if seen[pc]\n\
              \x20   seen[pc] = true\n\
              \x20   op = ops[pc * 4]\n\
              \x20   if op == 2\n\
-             \x20     pike_add(ops, lst, seen, ops[pc * 4 + 1])\n\
+             \x20     pike_add(ops, word, lst, seen, ops[pc * 4 + 1], pos)\n\
              \x20   elsif op == 1\n\
-             \x20     pike_add(ops, lst, seen, ops[pc * 4 + 1])\n\
-             \x20     pike_add(ops, lst, seen, ops[pc * 4 + 2])\n\
+             \x20     pike_add(ops, word, lst, seen, ops[pc * 4 + 1], pos)\n\
+             \x20     pike_add(ops, word, lst, seen, ops[pc * 4 + 2], pos)\n\
+             \x20   elsif op == 4\n\
+             \x20     pike_add(ops, word, lst, seen, pc + 1, pos) if pike_assert(ops[pc * 4 + 1], pos, word)\n\
              \x20   else\n\
              \x20     lst << pc\n\
              \x20   end\n\
              \x20 end\n\n\
-             \x20 def pike_match(ops, rng)\n\
+             \x20 def pike_match(ops, rng, word)\n\
              \x20   n = @{input}.length\n\
              \x20   ninst = ops.length / 4\n\
              \x20   matched = -1\n\
              \x20   clist = []\n\
-             \x20   pike_add(ops, clist, Array.new(ninst, false), 0)\n\
+             \x20   pike_add(ops, word, clist, Array.new(ninst, false), 0, @cursor)\n\
              \x20   pos = @cursor\n\
              \x20   loop do\n\
              \x20     nlist = []\n\
@@ -444,7 +468,7 @@ impl<'a> Generator<'a> {
              \x20           rc = ops[pc * 4 + 2]\n\
              \x20           (0...rc).each do |k|\n\
              \x20             if rng[(rs + k) * 2] <= v && v <= rng[(rs + k) * 2 + 1]\n\
-             \x20               pike_add(ops, nlist, nseen, pc + 1)\n\
+             \x20               pike_add(ops, word, nlist, nseen, pc + 1, pos + 1)\n\
              \x20               break\n\
              \x20             end\n\
              \x20           end\n\
@@ -941,7 +965,7 @@ impl<'a> Generator<'a> {
     /// embedding actions, else the shared `dfa_match`.
     fn stage_call(&self, stage: &StageAst, sid: usize) -> String {
         if self.stage_dfas[sid].program.is_some() {
-            format!("pike_match(ops_{sid}, rng_{sid})")
+            format!("pike_match(ops_{sid}, rng_{sid}, word_{sid})")
         } else if stage.embedding_actions.is_empty() {
             format!(
                 "dfa_match({}, {})",
@@ -1333,10 +1357,13 @@ mod tests {
     }
 
     #[test]
-    fn rb_unsupported_errors() {
-        let decl =
-            parse_fsm_block(b"@@fsm M(text: bytes) : bool = false { /a$b/ true }").expect("parses");
-        let err = generate(&decl).unwrap_err();
-        assert!(err.contains("anchor"), "got {err}");
+    fn rb_interior_anchor_runs_on_pike_vm() {
+        let src = "@@fsm M(text: bytes) : bool = false { /a$b/ true }";
+        let decl = parse_fsm_block(src.as_bytes()).expect("parses");
+        generate(&decl).expect("interior anchor compiles to a Pike program");
+        let Some((acc, _)) = run(src, "M.new(\"ab\")", "ia_mid") else {
+            return;
+        };
+        assert_eq!(acc, "false");
     }
 }

@@ -35,8 +35,9 @@
 //! multi-match (`|`) ordered-choice states, captures, bare-expression
 //! returns, action blocks, declared `actions:` methods, all transition
 //! forms, embedding actions, Mode C sub-fsm call-out, all three alphabets,
-//! boundary anchors, and `\b`/`\B` word-boundary edges. Not yet handled
-//! (clear `Unsupported` error): mid-pattern anchors, a Mode C stage as a `|`
+//! edge anchors, `\b`/`\B` word boundaries, interior anchors, and lazy
+//! quantifiers (the last three via the Pike VM with zero-width `Assert`s).
+//! Not yet handled (clear `Unsupported` error): a Mode C stage as a `|`
 //! selector, and a `|` alternative with elements before its first stage.
 
 use crate::frame_c::compiler::frame_ast::{
@@ -456,10 +457,57 @@ impl<'a> Generator<'a> {
         // 4 ints per instruction `[op, a, b, _]`: 0 Char (a = pair index, b =
         // pair count), 1 Split (a/b targets, a higher), 2 Jmp, 3 Match.
         if self.uses_pike() {
+            // pikeIsWord: is the element at absolute position `p` a word char
+            // (in the `word` pair-table)? Out-of-range is non-word.
+            let iw_sig = format!(
+                "int {}(struct {}* self, int p, const int* word, int word_len)",
+                self.fname("pikeIsWord"),
+                n
+            );
+            protos.push(iw_sig.clone());
+            writeln!(
+                defs,
+                "{iw_sig} {{\n\
+                 \x20 if (p < 0 || p >= self->_len) return 0;\n\
+                 \x20 int v = (int)(unsigned char)self->{inp}[p];\n\
+                 \x20 for (int k = 0; k < word_len / 2; k++) {{\n\
+                 \x20   if (word[k * 2] <= v && v <= word[k * 2 + 1]) return 1;\n\
+                 \x20 }}\n\
+                 \x20 return 0;\n\
+                 }}\n",
+                iw_sig = iw_sig,
+                inp = self.input_name()
+            )
+            .ok();
+            // pikeAssert: evaluate zero-width assertion `kind` at position `pos`
+            // (0 InputStart, 1 InputEnd, 2 LineStart, 3 LineEnd, 4 \b, 5 \B).
+            let as_sig = format!(
+                "int {}(struct {}* self, int kind, int pos, const int* word, int word_len)",
+                self.fname("pikeAssert"),
+                n
+            );
+            protos.push(as_sig.clone());
+            writeln!(
+                defs,
+                "{as_sig} {{\n\
+                 \x20 int n = self->_len;\n\
+                 \x20 if (kind == 0) return pos == 0;\n\
+                 \x20 if (kind == 1) return pos == n;\n\
+                 \x20 if (kind == 2) return pos == 0 || (int)(unsigned char)self->{inp}[pos - 1] == 10;\n\
+                 \x20 if (kind == 3) return pos == n || (int)(unsigned char)self->{inp}[pos] == 10;\n\
+                 \x20 if (kind == 4) return {iw}(self, pos - 1, word, word_len) != {iw}(self, pos, word, word_len);\n\
+                 \x20 return {iw}(self, pos - 1, word, word_len) == {iw}(self, pos, word, word_len);\n\
+                 }}\n",
+                as_sig = as_sig,
+                iw = self.fname("pikeIsWord"),
+                inp = self.input_name()
+            )
+            .ok();
             // pikeAdd: ε-closure expansion into a thread list (recursive).
             let add_sig = format!(
-                "void {}(const int* ops, int* lst, int* len, char* seen, int pc)",
-                self.fname("pikeAdd")
+                "void {}(struct {}* self, const int* ops, const int* word, int word_len, int* lst, int* len, char* seen, int pc, int pos)",
+                self.fname("pikeAdd"),
+                n
             );
             protos.push(add_sig.clone());
             writeln!(
@@ -469,22 +517,26 @@ impl<'a> Generator<'a> {
                  \x20 seen[pc] = 1;\n\
                  \x20 int op = ops[pc * 4];\n\
                  \x20 if (op == 2) {{\n\
-                 \x20   {add}(ops, lst, len, seen, ops[pc * 4 + 1]);\n\
+                 \x20   {add}(self, ops, word, word_len, lst, len, seen, ops[pc * 4 + 1], pos);\n\
                  \x20 }} else if (op == 1) {{\n\
-                 \x20   {add}(ops, lst, len, seen, ops[pc * 4 + 1]);\n\
-                 \x20   {add}(ops, lst, len, seen, ops[pc * 4 + 2]);\n\
+                 \x20   {add}(self, ops, word, word_len, lst, len, seen, ops[pc * 4 + 1], pos);\n\
+                 \x20   {add}(self, ops, word, word_len, lst, len, seen, ops[pc * 4 + 2], pos);\n\
+                 \x20 }} else if (op == 4) {{\n\
+                 \x20   if ({assert}(self, ops[pc * 4 + 1], pos, word, word_len))\n\
+                 \x20     {add}(self, ops, word, word_len, lst, len, seen, pc + 1, pos);\n\
                  \x20 }} else {{\n\
                  \x20   lst[(*len)++] = pc;\n\
                  \x20 }}\n\
                  }}\n",
                 add_sig = add_sig,
-                add = self.fname("pikeAdd")
+                add = self.fname("pikeAdd"),
+                assert = self.fname("pikeAssert")
             )
             .ok();
             // pikeMatch: returns the highest-priority (leftmost-first) match-end
             // from the cursor, or -1.
             let m_sig = format!(
-                "int {}(struct {}* self, const int* ops, int ops_len, const int* rng)",
+                "int {}(struct {}* self, const int* ops, int ops_len, const int* rng, const int* word, int word_len)",
                 self.fname("pikeMatch"),
                 n
             );
@@ -502,7 +554,7 @@ impl<'a> Generator<'a> {
                  \x20 char* nseen = (char*)malloc(cap);\n\
                  \x20 int clen = 0;\n\
                  \x20 memset(cseen, 0, cap);\n\
-                 \x20 {add}(ops, clist, &clen, cseen, 0);\n\
+                 \x20 {add}(self, ops, word, word_len, clist, &clen, cseen, 0, self->cursor);\n\
                  \x20 int pos = self->cursor;\n\
                  \x20 while (1) {{\n\
                  \x20   int nlen = 0;\n\
@@ -517,7 +569,7 @@ impl<'a> Generator<'a> {
                  \x20         int rc = ops[pc * 4 + 2];\n\
                  \x20         for (int k = 0; k < rc; k++) {{\n\
                  \x20           if (rng[(rs + k) * 2] <= v && v <= rng[(rs + k) * 2 + 1]) {{\n\
-                 \x20             {add}(ops, nlist, &nlen, nseen, pc + 1);\n\
+                 \x20             {add}(self, ops, word, word_len, nlist, &nlen, nseen, pc + 1, pos + 1);\n\
                  \x20             break;\n\
                  \x20           }}\n\
                  \x20         }}\n\
@@ -714,7 +766,7 @@ impl<'a> Generator<'a> {
                         self.emit_pike_arrays(out, my_sid, "  ");
                         writeln!(
                             out,
-                            "  int _r{sid} = {f}(self, t{sid}_ops, (int)(sizeof(t{sid}_ops)/sizeof(int)), t{sid}_rng);",
+                            "  int _r{sid} = {f}(self, t{sid}_ops, (int)(sizeof(t{sid}_ops)/sizeof(int)), t{sid}_rng, t{sid}_word, t{sid}_word_len);",
                             sid = my_sid,
                             f = self.fname("pikeMatch")
                         )
@@ -789,7 +841,7 @@ impl<'a> Generator<'a> {
                     self.emit_pike_arrays(out, my_sid, ind);
                     writeln!(
                         out,
-                        "{ind}int _r{sid} = {f}(self, t{sid}_ops, (int)(sizeof(t{sid}_ops)/sizeof(int)), t{sid}_rng);",
+                        "{ind}int _r{sid} = {f}(self, t{sid}_ops, (int)(sizeof(t{sid}_ops)/sizeof(int)), t{sid}_rng, t{sid}_word, t{sid}_word_len);",
                         ind = ind,
                         sid = my_sid,
                         f = self.fname("pikeMatch")
@@ -1298,6 +1350,28 @@ impl<'a> Generator<'a> {
             ind, sid, rng_lit
         )
         .ok();
+        // The word-character table for `\b`/`\B`; `{0}` filler when unused so
+        // the declaration is valid (the real length is passed separately).
+        let word = fsm_regex::pike::program_word_table(prog, self.alphabet);
+        let word_lit = if word.is_empty() {
+            "0".to_string()
+        } else {
+            int_list(&word)
+        };
+        writeln!(
+            out,
+            "{}static const int t{}_word[] = {{{}}};",
+            ind, sid, word_lit
+        )
+        .ok();
+        writeln!(
+            out,
+            "{}static const int t{}_word_len = {};",
+            ind,
+            sid,
+            word.len()
+        )
+        .ok();
     }
 
     /// Emit a per-stage DFA as three `static const` arrays:
@@ -1771,11 +1845,15 @@ mod tests {
         assert_eq!(lines, vec!["ab,", "5"]);
     }
 
+    /// An interior anchor (`a$b`) routes to the Pike VM; the `$` assert can
+    /// never hold mid-string, so it rejects.
     #[test]
-    fn c_unsupported_errors() {
-        let decl =
-            parse_fsm_block(b"@@fsm M(text: bytes) : bool = false { /a$b/ true }").expect("parses");
-        let err = generate(&decl).unwrap_err();
-        assert!(err.contains("anchor"), "got {err}");
+    fn c_interior_anchor() {
+        let code = gen("@@fsm M(text: bytes) : bool = false { /a$b/ true }");
+        let driver = "  { struct M m; M_init(&m, \"ab\"); printf(\"%s\\n\", m.accepted?\"true\":\"false\"); }";
+        let Some(lines) = c_run(&code, driver, "ia_mid") else {
+            return;
+        };
+        assert_eq!(lines, vec!["false"]);
     }
 }

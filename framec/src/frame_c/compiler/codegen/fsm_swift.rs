@@ -21,8 +21,9 @@
 //! multi-match (`|`) ordered-choice states, captures, bare-expression
 //! returns, action blocks, declared `actions:` methods, all transition
 //! forms, embedding actions, Mode C sub-fsm call-out, all three alphabets,
-//! edge anchors, and `\b`/`\B` word-boundary anchors. Not yet handled (clear
-//! `Unsupported` error): mid-pattern anchors, a Mode C stage as a `|`
+//! edge anchors, `\b`/`\B` word boundaries, interior anchors, and lazy
+//! quantifiers (the latter three via the Pike VM with zero-width `Assert`s).
+//! Not yet handled (clear `Unsupported` error): a Mode C stage as a `|`
 //! selector, and a `|` alternative with elements before its first stage.
 
 use crate::frame_c::compiler::frame_ast::{
@@ -480,26 +481,45 @@ impl<'a> Generator<'a> {
         let inp = &self.decl.params[0].name;
         writeln!(
             out,
-            "  func pikeAdd(_ ops: [Int], _ lst: inout [Int], _ seen: inout [Bool], _ pc: Int) {{\n\
+            "  func pikeIsWord(_ p: Int, _ word: [Int]) -> Bool {{\n\
+             \x20   if p < 0 || p >= {inp}.count {{ return false }}\n\
+             \x20   let v = Int({inp}[p].unicodeScalars.first!.value)\n\
+             \x20   for k in 0..<(word.count / 2) {{\n\
+             \x20     if word[k * 2] <= v && v <= word[k * 2 + 1] {{ return true }}\n\
+             \x20   }}\n\
+             \x20   return false\n\
+             \x20 }}\n\n\
+             \x20 func pikeAssert(_ kind: Int, _ pos: Int, _ word: [Int]) -> Bool {{\n\
+             \x20   let n = {inp}.count\n\
+             \x20   if kind == 0 {{ return pos == 0 }}\n\
+             \x20   if kind == 1 {{ return pos == n }}\n\
+             \x20   if kind == 2 {{ return pos == 0 || Int({inp}[pos - 1].unicodeScalars.first!.value) == 10 }}\n\
+             \x20   if kind == 3 {{ return pos == n || Int({inp}[pos].unicodeScalars.first!.value) == 10 }}\n\
+             \x20   if kind == 4 {{ return pikeIsWord(pos - 1, word) != pikeIsWord(pos, word) }}\n\
+             \x20   return pikeIsWord(pos - 1, word) == pikeIsWord(pos, word)\n\
+             \x20 }}\n\n\
+             \x20 func pikeAdd(_ ops: [Int], _ word: [Int], _ lst: inout [Int], _ seen: inout [Bool], _ pc: Int, _ pos: Int) {{\n\
              \x20   if seen[pc] {{ return }}\n\
              \x20   seen[pc] = true\n\
              \x20   let op = ops[pc * 4]\n\
              \x20   if op == 2 {{\n\
-             \x20     pikeAdd(ops, &lst, &seen, ops[pc * 4 + 1])\n\
+             \x20     pikeAdd(ops, word, &lst, &seen, ops[pc * 4 + 1], pos)\n\
              \x20   }} else if op == 1 {{\n\
-             \x20     pikeAdd(ops, &lst, &seen, ops[pc * 4 + 1])\n\
-             \x20     pikeAdd(ops, &lst, &seen, ops[pc * 4 + 2])\n\
+             \x20     pikeAdd(ops, word, &lst, &seen, ops[pc * 4 + 1], pos)\n\
+             \x20     pikeAdd(ops, word, &lst, &seen, ops[pc * 4 + 2], pos)\n\
+             \x20   }} else if op == 4 {{\n\
+             \x20     if pikeAssert(ops[pc * 4 + 1], pos, word) {{ pikeAdd(ops, word, &lst, &seen, pc + 1, pos) }}\n\
              \x20   }} else {{\n\
              \x20     lst.append(pc)\n\
              \x20   }}\n\
              \x20 }}\n\n\
-             \x20 func pikeMatch(_ ops: [Int], _ rng: [Int]) -> Int {{\n\
+             \x20 func pikeMatch(_ ops: [Int], _ rng: [Int], _ word: [Int]) -> Int {{\n\
              \x20   let n = {inp}.count\n\
              \x20   let ninst = ops.count / 4\n\
              \x20   var matched = -1\n\
              \x20   var clist = [Int]()\n\
              \x20   var cseen = [Bool](repeating: false, count: ninst)\n\
-             \x20   pikeAdd(ops, &clist, &cseen, 0)\n\
+             \x20   pikeAdd(ops, word, &clist, &cseen, 0, cursor)\n\
              \x20   var pos = cursor\n\
              \x20   while true {{\n\
              \x20     var nlist = [Int]()\n\
@@ -513,7 +533,7 @@ impl<'a> Generator<'a> {
              \x20           let rc = ops[pc * 4 + 2]\n\
              \x20           for k in 0..<rc {{\n\
              \x20             if rng[(rs + k) * 2] <= v && v <= rng[(rs + k) * 2 + 1] {{\n\
-             \x20               pikeAdd(ops, &nlist, &nseen, pc + 1)\n\
+             \x20               pikeAdd(ops, word, &nlist, &nseen, pc + 1, pos + 1)\n\
              \x20               break\n\
              \x20             }}\n\
              \x20           }}\n\
@@ -624,8 +644,9 @@ impl<'a> Generator<'a> {
                         self.emit_pike_decls(out, my_sid, "    ");
                         writeln!(
                             out,
-                            "    {} _r{} = pikeMatch(ops{}, rng{})",
+                            "    {} _r{} = pikeMatch(ops{}, rng{}, word{})",
                             self.r_kw(my_sid),
+                            my_sid,
                             my_sid,
                             my_sid,
                             my_sid
@@ -722,9 +743,10 @@ impl<'a> Generator<'a> {
                     self.emit_pike_decls(out, my_sid, ind);
                     writeln!(
                         out,
-                        "{}{} _r{} = pikeMatch(ops{}, rng{})",
+                        "{}{} _r{} = pikeMatch(ops{}, rng{}, word{})",
                         ind,
                         self.r_kw(my_sid),
+                        my_sid,
                         my_sid,
                         my_sid,
                         my_sid
@@ -1169,8 +1191,10 @@ impl<'a> Generator<'a> {
             .as_ref()
             .expect("emit_pike_decls on a non-lazy stage");
         let (ops, rng) = fsm_regex::pike::encode(prog);
+        let word = fsm_regex::pike::program_word_table(prog, self.alphabet);
         writeln!(out, "{}let ops{}: [Int] = [{}]", ind, sid, int_list(&ops)).ok();
         writeln!(out, "{}let rng{}: [Int] = [{}]", ind, sid, int_list(&rng)).ok();
+        writeln!(out, "{}let word{}: [Int] = [{}]", ind, sid, int_list(&word)).ok();
     }
 
     fn expr(&self, e: &Expression) -> String {
@@ -1524,11 +1548,15 @@ mod tests {
         assert_eq!(lines, vec!["ab,", "5"]);
     }
 
+    /// An interior anchor (`a$b`) routes to the Pike VM; the `$` assert can
+    /// never hold mid-string, so it rejects.
     #[test]
-    fn swift_unsupported_errors() {
-        let decl =
-            parse_fsm_block(b"@@fsm M(text: bytes) : bool = false { /a$b/ true }").expect("parses");
-        let err = generate(&decl).unwrap_err();
-        assert!(err.contains("anchor"), "got {err}");
+    fn swift_interior_anchor() {
+        let code = gen("@@fsm M(text: bytes) : bool = false { /a$b/ true }");
+        let driver = "print(M(\"ab\").accepted)";
+        let Some(lines) = sw_run(&code, driver, "ia_mid") else {
+            return;
+        };
+        assert_eq!(lines, vec!["false"]);
     }
 }

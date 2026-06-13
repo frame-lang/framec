@@ -396,6 +396,37 @@ fn assert_holds(kind: AssertKind, input: &[u32], pos: usize, word: &[(u32, u32)]
     }
 }
 
+/// Does the program contain any `Assert` instruction? A backend whose Pike VM
+/// does not yet evaluate assertions uses this to reject such a program with a
+/// clear error rather than silently mis-handle it.
+pub fn has_assert(prog: &Program) -> bool {
+    prog.iter().any(|i| matches!(i, Inst::Assert(_)))
+}
+
+/// Does the program assert a word boundary (`\b`/`\B`)? Gates emission of the
+/// word-character table a backend needs for the predicate.
+pub fn uses_word_boundary(prog: &Program) -> bool {
+    prog.iter().any(|i| {
+        matches!(
+            i,
+            Inst::Assert(AssertKind::WordBoundary) | Inst::Assert(AssertKind::NonWordBoundary)
+        )
+    })
+}
+
+/// The flat `lo, hi, lo, hi, …` word-character table a backend emits for a
+/// program: [`word_ranges`] when it uses `\b`/`\B`, else empty.
+pub fn program_word_table(prog: &Program, alphabet: Alphabet) -> Vec<i64> {
+    if uses_word_boundary(prog) {
+        word_ranges(alphabet)
+            .iter()
+            .flat_map(|&(lo, hi)| [lo as i64, hi as i64])
+            .collect()
+    } else {
+        Vec::new()
+    }
+}
+
 /// The word-character ranges for the `\b`/`\B` predicate: ASCII `[0-9A-Za-z_]`
 /// on `bytes`, the Unicode `\w` set on `char` (RFC-0042 §6.7). Emitted as a
 /// `word` table alongside an assertion-bearing program.

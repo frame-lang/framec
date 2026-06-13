@@ -25,9 +25,10 @@
 //! multi-match (`|`) ordered-choice states, captures, bare-expression
 //! returns, action blocks, declared `actions:` methods, all transition forms,
 //! embedding actions, Mode C sub-fsm call-out, all three alphabets, and
-//! boundary anchors. Not yet handled (clear `Unsupported` error): mid-pattern
-//! anchors and `\b`/`\B`, a Mode C stage as a `|` selector, and a `|`
-//! alternative with elements before its first stage.
+//! edge anchors, `\b`/`\B` word boundaries, interior anchors, and lazy
+//! quantifiers (the last three via the Pike VM with zero-width `Assert`s).
+//! Not yet handled (clear `Unsupported` error): a Mode C stage as a `|`
+//! selector, and a `|` alternative with elements before its first stage.
 
 use crate::frame_c::compiler::frame_ast::{
     BinaryOp, EmbeddingOp, Expression, FsmDeclAst, FsmStateAst, FsmTransitionTarget, Literal,
@@ -532,29 +533,50 @@ impl<'a> Generator<'a> {
         let input = &self.decl.params[0].name;
         writeln!(
             out,
-            "func (m *{name}) pikeAdd(ops []int, lst *[]int, seen []bool, pc int) {{\n\
+            "func (m *{name}) pikeIsWord(p int, word []int) bool {{\n\
+             \tif p < 0 || p >= len(m.{input}) {{\n\t\treturn false\n\t}}\n\
+             \tv := int(m.{input}[p])\n\
+             \tfor k := 0; k < len(word)/2; k++ {{\n\
+             \t\tif word[k*2] <= v && v <= word[k*2+1] {{\n\t\t\treturn true\n\t\t}}\n\
+             \t}}\n\treturn false\n}}\n\n\
+             func (m *{name}) pikeAssert(kind int, pos int, word []int) bool {{\n\
+             \tn := len(m.{input})\n\
+             \tswitch kind {{\n\
+             \tcase 0:\n\t\treturn pos == 0\n\
+             \tcase 1:\n\t\treturn pos == n\n\
+             \tcase 2:\n\t\treturn pos == 0 || int(m.{input}[pos-1]) == 10\n\
+             \tcase 3:\n\t\treturn pos == n || int(m.{input}[pos]) == 10\n\
+             \tcase 4:\n\t\treturn m.pikeIsWord(pos-1, word) != m.pikeIsWord(pos, word)\n\
+             \tdefault:\n\t\treturn m.pikeIsWord(pos-1, word) == m.pikeIsWord(pos, word)\n\
+             \t}}\n}}\n\n\
+             func (m *{name}) pikeAdd(ops []int, word []int, lst *[]int, seen []bool, pc int, pos int) {{\n\
              \tif seen[pc] {{\n\t\treturn\n\t}}\n\
              \tseen[pc] = true\n\
              \top := ops[pc*4]\n\
              \tif op == 2 {{\n\
-             \t\tm.pikeAdd(ops, lst, seen, ops[pc*4+1])\n\
+             \t\tm.pikeAdd(ops, word, lst, seen, ops[pc*4+1], pos)\n\
              \t}} else if op == 1 {{\n\
-             \t\tm.pikeAdd(ops, lst, seen, ops[pc*4+1])\n\
-             \t\tm.pikeAdd(ops, lst, seen, ops[pc*4+2])\n\
+             \t\tm.pikeAdd(ops, word, lst, seen, ops[pc*4+1], pos)\n\
+             \t\tm.pikeAdd(ops, word, lst, seen, ops[pc*4+2], pos)\n\
+             \t}} else if op == 4 {{\n\
+             \t\tif m.pikeAssert(ops[pc*4+1], pos, word) {{\n\
+             \t\t\tm.pikeAdd(ops, word, lst, seen, pc+1, pos)\n\
+             \t\t}}\n\
              \t}} else {{\n\
              \t\t*lst = append(*lst, pc)\n\
              \t}}\n}}\n\n",
             name = name,
+            input = input,
         )
         .ok();
         writeln!(
             out,
-            "func (m *{name}) pikeMatch(ops []int, rng []int) int {{\n\
+            "func (m *{name}) pikeMatch(ops []int, rng []int, word []int) int {{\n\
              \tn := len(m.{input})\n\
              \tninst := len(ops) / 4\n\
              \tmatched := -1\n\
              \tclist := []int{{}}\n\
-             \tm.pikeAdd(ops, &clist, make([]bool, ninst), 0)\n\
+             \tm.pikeAdd(ops, word, &clist, make([]bool, ninst), 0, m.cursor)\n\
              \tpos := m.cursor\n\
              \tfor {{\n\
              \t\tnlist := []int{{}}\n\
@@ -568,7 +590,7 @@ impl<'a> Generator<'a> {
              \t\t\t\t\trc := ops[pc*4+2]\n\
              \t\t\t\t\tfor k := 0; k < rc; k++ {{\n\
              \t\t\t\t\t\tif rng[(rs+k)*2] <= v && v <= rng[(rs+k)*2+1] {{\n\
-             \t\t\t\t\t\t\tm.pikeAdd(ops, &nlist, nseen, pc+1)\n\
+             \t\t\t\t\t\t\tm.pikeAdd(ops, word, &nlist, nseen, pc+1, pos+1)\n\
              \t\t\t\t\t\t\tbreak\n\
              \t\t\t\t\t\t}}\n\
              \t\t\t\t\t}}\n\
@@ -1152,12 +1174,14 @@ impl<'a> Generator<'a> {
     fn emit_stage_match(&self, out: &mut String, sid: usize, ind: &str) {
         if let Some(prog) = &self.stage_dfas[sid].program {
             let (ops, rng) = fsm_regex::pike::encode(prog);
+            let word = fsm_regex::pike::program_word_table(prog, self.alphabet);
             writeln!(out, "{}ops{} := []int{{{}}}", ind, sid, int_list(&ops)).ok();
             writeln!(out, "{}rng{} := []int{{{}}}", ind, sid, int_list(&rng)).ok();
+            writeln!(out, "{}word{} := []int{{{}}}", ind, sid, int_list(&word)).ok();
             writeln!(
                 out,
-                "{}r{} := m.pikeMatch(ops{}, rng{})",
-                ind, sid, sid, sid
+                "{}r{} := m.pikeMatch(ops{}, rng{}, word{})",
+                ind, sid, sid, sid, sid
             )
             .ok();
         } else {
@@ -1564,10 +1588,13 @@ mod tests {
     }
 
     #[test]
-    fn go_unsupported_errors() {
-        let decl =
-            parse_fsm_block(b"@@fsm M(text: bytes) : bool = false { /a$b/ true }").expect("parses");
-        let err = generate(&decl).unwrap_err();
-        assert!(err.contains("anchor"), "got {err}");
+    fn go_interior_anchor_runs_on_pike_vm() {
+        let src = "@@fsm M(text: bytes) : bool = false { /a$b/ true }";
+        let decl = parse_fsm_block(src.as_bytes()).expect("parses");
+        generate(&decl).expect("interior anchor compiles to a Pike program");
+        let Some((acc, _)) = run(src, "NewM(\"ab\")", "ia_mid") else {
+            return;
+        };
+        assert_eq!(acc, "false");
     }
 }

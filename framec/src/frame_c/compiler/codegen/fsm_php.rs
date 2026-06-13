@@ -21,9 +21,10 @@
 //! multi-match (`|`) ordered-choice states, captures, bare-expression
 //! returns, action blocks, declared `actions:` methods, all transition
 //! forms, embedding actions, Mode C sub-fsm call-out, all three alphabets,
-//! and boundary anchors. Not yet handled (clear `Unsupported` error):
-//! mid-pattern anchors and `\b`/`\B`, a Mode C stage as a `|` selector, and a
-//! `|` alternative with elements before its first stage.
+//! edge anchors, `\b`/`\B` word boundaries, interior anchors, and lazy
+//! quantifiers (the last three via the Pike VM with zero-width `Assert`s).
+//! Not yet handled (clear `Unsupported` error): a Mode C stage as a `|`
+//! selector, and a `|` alternative with elements before its first stage.
 
 use crate::frame_c::compiler::frame_ast::{
     BinaryOp, EmbeddingOp, Expression, FsmDeclAst, FsmStateAst, FsmTransitionTarget, Literal,
@@ -432,8 +433,10 @@ impl<'a> Generator<'a> {
         for (i, dfa) in self.stage_dfas.iter().enumerate() {
             if let Some(prog) = &dfa.program {
                 let (ops, rng) = fsm_regex::pike::encode(prog);
+                let word = fsm_regex::pike::program_word_table(prog, self.alphabet);
                 writeln!(out, "  static $_OPS_{} = [{}];", i, int_list(&ops)).ok();
                 writeln!(out, "  static $_RNG_{} = [{}];", i, int_list(&rng)).ok();
+                writeln!(out, "  static $_WORD_{} = [{}];", i, int_list(&word)).ok();
             }
         }
     }
@@ -447,23 +450,42 @@ impl<'a> Generator<'a> {
         let inp = &self.decl.params[0].name;
         writeln!(
             out,
-            "  function _pike_add(&$lst, &$seen, $ops, $pc) {{\n\
+            "  function _pike_is_word($p, $word) {{\n\
+             \x20   if ($p < 0 || $p >= strlen($this->{inp})) return false;\n\
+             \x20   $v = ord($this->{inp}[$p]);\n\
+             \x20   for ($k = 0; $k < intdiv(count($word), 2); $k++) {{\n\
+             \x20     if ($word[$k * 2] <= $v && $v <= $word[$k * 2 + 1]) return true;\n\
+             \x20   }}\n\
+             \x20   return false;\n\
+             \x20 }}\n\n\
+             \x20 function _pike_assert($kind, $pos, $word) {{\n\
+             \x20   $n = strlen($this->{inp});\n\
+             \x20   if ($kind == 0) return $pos == 0;\n\
+             \x20   if ($kind == 1) return $pos == $n;\n\
+             \x20   if ($kind == 2) return $pos == 0 || ord($this->{inp}[$pos - 1]) == 10;\n\
+             \x20   if ($kind == 3) return $pos == $n || ord($this->{inp}[$pos]) == 10;\n\
+             \x20   if ($kind == 4) return $this->_pike_is_word($pos - 1, $word) != $this->_pike_is_word($pos, $word);\n\
+             \x20   return $this->_pike_is_word($pos - 1, $word) == $this->_pike_is_word($pos, $word);\n\
+             \x20 }}\n\n\
+             \x20 function _pike_add(&$lst, &$seen, $ops, $word, $pc, $pos) {{\n\
              \x20   if ($seen[$pc]) return;\n\
              \x20   $seen[$pc] = true;\n\
              \x20   $op = $ops[$pc * 4];\n\
-             \x20   if ($op == 2) {{ $this->_pike_add($lst, $seen, $ops, $ops[$pc * 4 + 1]); }}\n\
+             \x20   if ($op == 2) {{ $this->_pike_add($lst, $seen, $ops, $word, $ops[$pc * 4 + 1], $pos); }}\n\
              \x20   else if ($op == 1) {{\n\
-             \x20     $this->_pike_add($lst, $seen, $ops, $ops[$pc * 4 + 1]);\n\
-             \x20     $this->_pike_add($lst, $seen, $ops, $ops[$pc * 4 + 2]);\n\
+             \x20     $this->_pike_add($lst, $seen, $ops, $word, $ops[$pc * 4 + 1], $pos);\n\
+             \x20     $this->_pike_add($lst, $seen, $ops, $word, $ops[$pc * 4 + 2], $pos);\n\
+             \x20   }} else if ($op == 4) {{\n\
+             \x20     if ($this->_pike_assert($ops[$pc * 4 + 1], $pos, $word)) $this->_pike_add($lst, $seen, $ops, $word, $pc + 1, $pos);\n\
              \x20   }} else {{ $lst[] = $pc; }}\n\
              \x20 }}\n\n\
-             \x20 function _pike_match($ops, $rng) {{\n\
+             \x20 function _pike_match($ops, $rng, $word) {{\n\
              \x20   $n = strlen($this->{inp});\n\
              \x20   $ninst = intdiv(count($ops), 4);\n\
              \x20   $matched = -1;\n\
              \x20   $clist = [];\n\
              \x20   $cseen = array_fill(0, $ninst, false);\n\
-             \x20   $this->_pike_add($clist, $cseen, $ops, 0);\n\
+             \x20   $this->_pike_add($clist, $cseen, $ops, $word, 0, $this->cursor);\n\
              \x20   $pos = $this->cursor;\n\
              \x20   while (true) {{\n\
              \x20     $nlist = [];\n\
@@ -476,7 +498,7 @@ impl<'a> Generator<'a> {
              \x20           $rs = $ops[$pc * 4 + 1]; $rc = $ops[$pc * 4 + 2];\n\
              \x20           for ($k = 0; $k < $rc; $k++) {{\n\
              \x20             if ($rng[($rs + $k) * 2] <= $v && $v <= $rng[($rs + $k) * 2 + 1]) {{\n\
-             \x20               $this->_pike_add($nlist, $nseen, $ops, $pc + 1);\n\
+             \x20               $this->_pike_add($nlist, $nseen, $ops, $word, $pc + 1, $pos + 1);\n\
              \x20               break;\n\
              \x20             }}\n\
              \x20           }}\n\
@@ -1038,7 +1060,7 @@ impl<'a> Generator<'a> {
     /// embedding actions, else the inline `dfaMatch` over the DFA literal.
     fn stage_call(&self, stage: &StageAst, sid: usize) -> String {
         if self.stage_dfas[sid].program.is_some() {
-            format!("$this->_pike_match(self::$_OPS_{sid}, self::$_RNG_{sid})")
+            format!("$this->_pike_match(self::$_OPS_{sid}, self::$_RNG_{sid}, self::$_WORD_{sid})")
         } else if stage.embedding_actions.is_empty() {
             format!(
                 "$this->dfaMatch({}, {})",
@@ -1429,10 +1451,13 @@ mod tests {
     }
 
     #[test]
-    fn php_unsupported_errors() {
-        let decl =
-            parse_fsm_block(b"@@fsm M(text: bytes) : bool = false { /a$b/ true }").expect("parses");
-        let err = generate(&decl).unwrap_err();
-        assert!(err.contains("anchor"), "got {err}");
+    fn php_interior_anchor_runs_on_pike_vm() {
+        let src = "@@fsm M(text: bytes) : bool = false { /a$b/ true }";
+        let decl = parse_fsm_block(src.as_bytes()).expect("parses");
+        generate(&decl).expect("interior anchor compiles to a Pike program");
+        let Some((acc, _)) = run(src, "new M(\"ab\")", "ia_mid") else {
+            return;
+        };
+        assert_eq!(acc, "false");
     }
 }

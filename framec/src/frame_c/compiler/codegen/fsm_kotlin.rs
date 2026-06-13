@@ -21,9 +21,10 @@
 //! multi-match (`|`) ordered-choice states, captures, bare-expression
 //! returns, action blocks, declared `actions:` methods, all transition
 //! forms, embedding actions, Mode C sub-fsm call-out, all three alphabets,
-//! and boundary anchors. Not yet handled (clear `Unsupported` error):
-//! mid-pattern anchors and `\b`/`\B`, a Mode C stage as a `|` selector, and a
-//! `|` alternative with elements before its first stage.
+//! edge anchors, `\b`/`\B` word boundaries, interior anchors, and lazy
+//! quantifiers (the last three via the Pike VM with zero-width `Assert`s).
+//! Not yet handled (clear `Unsupported` error): a Mode C stage as a `|`
+//! selector, and a `|` alternative with elements before its first stage.
 
 use crate::frame_c::compiler::frame_ast::{
     BinaryOp, EmbeddingOp, Expression, FsmDeclAst, FsmStateAst, FsmTransitionTarget, Literal,
@@ -434,22 +435,42 @@ impl<'a> Generator<'a> {
         let inp = &self.decl.params[0].name;
         writeln!(
             out,
-            "  private fun pikeAdd(ops: IntArray, lst: MutableList<Int>, seen: BooleanArray, pc: Int) {{\n\
+            "  private fun pikeIsWord(p: Int, word: IntArray): Boolean {{\n\
+             \x20   if (p < 0 || p >= {inp}.length) return false\n\
+             \x20   val v = {inp}[p].code\n\
+             \x20   for (k in 0 until word.size / 2) {{\n\
+             \x20     if (word[k * 2] <= v && v <= word[k * 2 + 1]) return true\n\
+             \x20   }}\n\
+             \x20   return false\n\
+             \x20 }}\n\n\
+             \x20 private fun pikeAssert(kind: Int, pos: Int, word: IntArray): Boolean {{\n\
+             \x20   val n = {inp}.length\n\
+             \x20   return when (kind) {{\n\
+             \x20     0 -> pos == 0\n\
+             \x20     1 -> pos == n\n\
+             \x20     2 -> pos == 0 || {inp}[pos - 1].code == 10\n\
+             \x20     3 -> pos == n || {inp}[pos].code == 10\n\
+             \x20     4 -> pikeIsWord(pos - 1, word) != pikeIsWord(pos, word)\n\
+             \x20     else -> pikeIsWord(pos - 1, word) == pikeIsWord(pos, word)\n\
+             \x20   }}\n\
+             \x20 }}\n\n\
+             \x20 private fun pikeAdd(ops: IntArray, word: IntArray, lst: MutableList<Int>, seen: BooleanArray, pc: Int, pos: Int) {{\n\
              \x20   if (seen[pc]) return\n\
              \x20   seen[pc] = true\n\
              \x20   val op = ops[pc * 4]\n\
              \x20   when (op) {{\n\
-             \x20     2 -> pikeAdd(ops, lst, seen, ops[pc * 4 + 1])\n\
-             \x20     1 -> {{ pikeAdd(ops, lst, seen, ops[pc * 4 + 1]); pikeAdd(ops, lst, seen, ops[pc * 4 + 2]) }}\n\
+             \x20     2 -> pikeAdd(ops, word, lst, seen, ops[pc * 4 + 1], pos)\n\
+             \x20     1 -> {{ pikeAdd(ops, word, lst, seen, ops[pc * 4 + 1], pos); pikeAdd(ops, word, lst, seen, ops[pc * 4 + 2], pos) }}\n\
+             \x20     4 -> {{ if (pikeAssert(ops[pc * 4 + 1], pos, word)) pikeAdd(ops, word, lst, seen, pc + 1, pos) }}\n\
              \x20     else -> lst.add(pc)\n\
              \x20   }}\n\
              \x20 }}\n\n\
-             \x20 private fun pikeMatch(ops: IntArray, rng: IntArray): Int {{\n\
+             \x20 private fun pikeMatch(ops: IntArray, rng: IntArray, word: IntArray): Int {{\n\
              \x20   val n = {inp}.length\n\
              \x20   val ninst = ops.size / 4\n\
              \x20   var matched = -1\n\
              \x20   var clist = mutableListOf<Int>()\n\
-             \x20   pikeAdd(ops, clist, BooleanArray(ninst), 0)\n\
+             \x20   pikeAdd(ops, word, clist, BooleanArray(ninst), 0, cursor)\n\
              \x20   var pos = cursor\n\
              \x20   while (true) {{\n\
              \x20     val nlist = mutableListOf<Int>()\n\
@@ -462,7 +483,7 @@ impl<'a> Generator<'a> {
              \x20           val rs = ops[pc * 4 + 1]\n\
              \x20           val rc = ops[pc * 4 + 2]\n\
              \x20           for (k in 0 until rc) {{\n\
-             \x20             if (rng[(rs + k) * 2] <= v && v <= rng[(rs + k) * 2 + 1]) {{ pikeAdd(ops, nlist, nseen, pc + 1); break }}\n\
+             \x20             if (rng[(rs + k) * 2] <= v && v <= rng[(rs + k) * 2 + 1]) {{ pikeAdd(ops, word, nlist, nseen, pc + 1, pos + 1); break }}\n\
              \x20           }}\n\
              \x20         }}\n\
              \x20       }} else if (op == 3) {{\n\
@@ -616,7 +637,7 @@ impl<'a> Generator<'a> {
     /// (`pikeMatch`) for a lazy stage, else the shared `dfaMatch`.
     fn stage_call(&self, sid: usize) -> String {
         if self.stage_dfas[sid].program.is_some() {
-            format!("pikeMatch(ops{sid}, rng{sid})")
+            format!("pikeMatch(ops{sid}, rng{sid}, word{sid})")
         } else {
             format!(
                 "dfaMatch(t{}, a{}, {})",
@@ -1094,6 +1115,15 @@ impl<'a> Generator<'a> {
                 int_list(&rng)
             )
             .ok();
+            let word = fsm_regex::pike::program_word_table(prog, self.alphabet);
+            writeln!(
+                out,
+                "{}val word{} = intArrayOf({})",
+                ind,
+                sid,
+                int_list(&word)
+            )
+            .ok();
             return;
         }
         let trans: Vec<String> = dfa
@@ -1485,11 +1515,17 @@ mod tests {
         assert_eq!(lines, vec!["ab,", "5"]);
     }
 
+    /// An interior anchor (`a$b`) routes to the Pike VM; the `$` assert can
+    /// never hold mid-string, and `\bcat\b` matches a free-standing word.
     #[test]
-    fn kotlin_unsupported_errors() {
-        let decl =
-            parse_fsm_block(b"@@fsm M(text: bytes) : bool = false { /a$b/ true }").expect("parses");
-        let err = generate(&decl).unwrap_err();
-        assert!(err.contains("anchor"), "got {err}");
+    fn kotlin_interior_anchor_and_word_boundary() {
+        let mid = gen("@@fsm M(text: bytes) : bool = false { /a$b/ true }");
+        let wb = gen("@@fsm N(text: char) : bool = false { /\\bcat\\b/ true }");
+        let code = format!("{}\n{}", mid, wb);
+        let body = "  println(M(\"ab\").accepted)\n  println(N(\"cat\").accepted)\n  println(N(\"cats\").accepted)";
+        let Some(lines) = kt_run(&code, body, "ia_wb") else {
+            return;
+        };
+        assert_eq!(lines, vec!["false", "true", "false"]);
     }
 }

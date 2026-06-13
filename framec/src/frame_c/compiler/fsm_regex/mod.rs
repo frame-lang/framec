@@ -199,24 +199,37 @@ pub fn compile(
     //    - Pike path: any *interior* anchor, or `\b`/`\B` on `char`, or a lazy
     //      quantifier — handled by the priority NFA VM with zero-width `Assert`
     //      instructions (interior anchors, multiline, Unicode/interior `\b`).
+    // 3. Anchors (§6.6). Two paths:
+    //    - Fast DFA path: an anchor-free core, optionally with leading `^`/`\A`,
+    //      trailing `$`/`\z`, and (on `bytes`) edge `\b`/`\B` — extracted to
+    //      position flags the matcher enforces around a pure-DFA match.
+    //    - Pike path: any *interior* anchor, `\b`/`\B` on `char`, or a lazy
+    //      quantifier — handled by the priority NFA VM with zero-width `Assert`
+    //      instructions (interior anchors, multiline, Unicode/interior `\b`).
     let span = ast.root.span;
-    let (requires_start, requires_end, start_boundary, end_boundary, ast) =
+    let original = ast.clone();
+    let (requires_start, requires_end, start_boundary, end_boundary, core) =
         extract_boundary_anchors(ast);
 
-    // Word boundaries need a word/non-word classification of the alphabet. The
-    // fast DFA path supports `bytes` (ASCII word set); `char`/interior `\b` and
-    // interior anchors route to the Pike VM (assertion path) — gated on until
-    // every backend evaluates `Assert` (Phase 2). For now those remain
-    // UnsupportedAnchors, exactly as before; the Pike `Assert` capability is
-    // exercised by the `fsm_regex::pike` unit tests.
-    if (start_boundary.is_some() || end_boundary.is_some()) && alphabet != Alphabet::Bytes {
-        return Err(CompileError::UnsupportedAnchors(span));
-    }
+    // The DFA path applies only when the extracted core is anchor-free and any
+    // edge `\b`/`\B` is on `bytes` (the matcher's word guard is ASCII/bytes).
+    let core_has_interior_anchor = ast_has_anchor(&core);
+    let boundary_dfa_ok =
+        (start_boundary.is_none() && end_boundary.is_none()) || alphabet == Alphabet::Bytes;
 
-    // 3b. Lazy quantifiers (§11.1) → Pike VM (per-quantifier match-end). Token
-    //     + lazy was already rejected; bytes/char only.
-    if pike::contains_lazy(&ast) {
-        let program = pike::compile(&ast, alphabet);
+    if pike::contains_lazy(&original) || core_has_interior_anchor || !boundary_dfa_ok {
+        // Pike path over the *original* AST (anchors intact, as `Assert`), so no
+        // edge flags apply. Token has no scalar elements (lazy/anchor → E720).
+        if alphabet == Alphabet::Token {
+            return Err(CompileError::Diagnostics(vec![EngineDiagnostic {
+                code: "E720",
+                span,
+                message: "lazy quantifiers and word/interior anchors are not supported on the \
+                          `token` alphabet"
+                    .to_string(),
+            }]));
+        }
+        let program = pike::compile(&original, alphabet);
         let placeholder_dfa = subset::Dfa {
             states: Vec::new(),
             start: 0,
@@ -227,16 +240,17 @@ pub fn compile(
             dfa: placeholder_dfa,
             metrics,
             warnings: Vec::new(),
-            requires_start,
-            requires_end,
-            start_boundary,
-            end_boundary,
+            requires_start: false,
+            requires_end: false,
+            start_boundary: None,
+            end_boundary: None,
             used_unicode_class,
             program: Some(program),
         });
     }
 
-    // 4. Thompson NFA over the anchor-free core.
+    // 4. Thompson NFA over the anchor-free core (DFA fast path).
+    let ast = core;
     let nfa = thompson::build(&ast, alphabet);
     if subset::nfa_has_anchors(&nfa) {
         return Err(CompileError::UnsupportedAnchors(span));
@@ -287,9 +301,7 @@ pub fn compile(
 /// Strip leading/trailing *edge* anchors from the regex, returning
 /// Does the regex AST contain any anchor node (`^ $ \A \z \b \B`)? Used to
 /// route interior-anchor stages to the Pike path (the fast DFA path only
-/// handles cleanly-extracted edge anchors). Wired in Phase 2 (the per-backend
-/// `Assert` evaluation); kept here as the engine capability lands first.
-#[allow(dead_code)]
+/// handles cleanly-extracted edge anchors).
 fn ast_has_anchor(regex: &ast::RegexAst) -> bool {
     use ast::{RegexNode, SpannedNode};
     fn walk(n: &SpannedNode) -> bool {
@@ -651,15 +663,15 @@ mod engine_tests {
     }
 
     #[test]
-    fn defers_mid_pattern_anchors() {
-        // A `$` in the middle is not a boundary anchor → deferred (v0.2).
-        let err = compile("a$b", Alphabet::Bytes, size_check::DEFAULT_MAX_DFA_STATES).unwrap_err();
-        assert!(matches!(err, CompileError::UnsupportedAnchors(_)));
-        // An *interior* word boundary (neither leading nor trailing) is still
-        // deferred — exactly as interior `^`/`$` are.
-        let mid =
-            compile("a\\bb", Alphabet::Bytes, size_check::DEFAULT_MAX_DFA_STATES).unwrap_err();
-        assert!(matches!(mid, CompileError::UnsupportedAnchors(_)));
+    fn interior_anchors_compile_to_pike_program() {
+        // An interior `$` and an interior `\b` are no longer rejected: they
+        // route to the Pike VM as zero-width assertions (§6.6).
+        let mid = compile("a$b", Alphabet::Bytes, size_check::DEFAULT_MAX_DFA_STATES)
+            .expect("interior `$` compiles");
+        assert!(mid.program.is_some() && pike::has_assert(mid.program.as_ref().unwrap()));
+        let wb = compile("a\\bb", Alphabet::Bytes, size_check::DEFAULT_MAX_DFA_STATES)
+            .expect("interior `\\b` compiles");
+        assert!(wb.program.is_some() && pike::has_assert(wb.program.as_ref().unwrap()));
     }
 
     #[test]
@@ -683,11 +695,12 @@ mod engine_tests {
         .expect("^\\Bfoo compiles");
         assert!(r2.requires_start);
         assert_eq!(r2.start_boundary, Some(WordBoundary::Forbidden));
-        // Word boundaries need byte word-classes: rejected on char/token.
-        assert!(matches!(
-            compile("\\bfoo", Alphabet::Char, size_check::DEFAULT_MAX_DFA_STATES).unwrap_err(),
-            CompileError::UnsupportedAnchors(_)
-        ));
+        // On `char`, the ASCII edge-flag path doesn't apply (the matcher's word
+        // guard is byte/ASCII), so a `\b` routes to the Pike VM with the Unicode
+        // word table — compiling to a program carrying a `WordBoundary` assert.
+        let rc = compile("\\bfoo", Alphabet::Char, size_check::DEFAULT_MAX_DFA_STATES)
+            .expect("\\bfoo on char compiles to a Pike program");
+        assert!(pike::uses_word_boundary(rc.program.as_ref().unwrap()));
     }
 
     /// FSM-TEST-311 — a pattern whose minimal DFA exceeds the configured

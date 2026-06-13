@@ -23,9 +23,10 @@
 //! multi-match (`|`) ordered-choice states, captures, bare-expression
 //! returns, action blocks, declared `actions:` methods, all transition
 //! forms, embedding actions, Mode C sub-fsm call-out, all three alphabets,
-//! and boundary anchors. Not yet handled (clear `Unsupported` error):
-//! mid-pattern anchors and `\b`/`\B`, a Mode C stage as a `|` selector, and a
-//! `|` alternative with elements before its first stage.
+//! edge anchors, `\b`/`\B` word boundaries, interior anchors, and lazy
+//! quantifiers (the latter three via the Pike VM with zero-width `Assert`s).
+//! Not yet handled (clear `Unsupported` error): a Mode C stage as a `|`
+//! selector, and a `|` alternative with elements before its first stage.
 
 use crate::frame_c::compiler::frame_ast::{
     BinaryOp, EmbeddingOp, Expression, FsmDeclAst, FsmStateAst, FsmTransitionTarget, Literal,
@@ -408,8 +409,10 @@ impl<'a> Generator<'a> {
         for (i, dfa) in self.stage_dfas.iter().enumerate() {
             if let Some(prog) = &dfa.program {
                 let (ops, rng) = fsm_regex::pike::encode(prog);
+                let word = fsm_regex::pike::program_word_table(prog, self.alphabet);
                 writeln!(out, "{}._OPS_{} = {{{}}}", n, i, int_list(&ops)).ok();
                 writeln!(out, "{}._RNG_{} = {{{}}}", n, i, int_list(&rng)).ok();
+                writeln!(out, "{}._WORD_{} = {{{}}}", n, i, int_list(&word)).ok();
             }
         }
         if self.uses_pike() {
@@ -435,28 +438,73 @@ impl<'a> Generator<'a> {
             Alphabet::Token => format!("self:tokId(self.{}[pos + 1])", inp),
             _ => format!("string.byte(self.{}, pos + 1)", inp),
         };
-        writeln!(out, "function {}:_pikeAdd(ops, lst, seen, pc)", n).ok();
+        writeln!(out, "function {}:_pikeIsWord(p, word)", n).ok();
+        writeln!(
+            out,
+            "  if p < 0 or p >= #self.{} then return false end",
+            inp
+        )
+        .ok();
+        writeln!(out, "  local v = string.byte(self.{}, p + 1)", inp).ok();
+        out.push_str(
+            "  for k = 0, #word / 2 - 1 do\n\
+             \x20   if word[k * 2 + 1] <= v and v <= word[k * 2 + 1 + 1] then return true end\n\
+             \x20 end\n\
+             \x20 return false\n\
+             end\n\n",
+        );
+        writeln!(out, "function {}:_pikeAssert(kind, pos, word)", n).ok();
+        writeln!(out, "  local n = #self.{}", inp).ok();
+        writeln!(out, "  if kind == 0 then return pos == 0 end").ok();
+        writeln!(out, "  if kind == 1 then return pos == n end").ok();
+        writeln!(
+            out,
+            "  if kind == 2 then return pos == 0 or string.byte(self.{}, pos) == 10 end",
+            inp
+        )
+        .ok();
+        writeln!(
+            out,
+            "  if kind == 3 then return pos == n or string.byte(self.{}, pos + 1) == 10 end",
+            inp
+        )
+        .ok();
+        out.push_str(
+            "  if kind == 4 then return self:_pikeIsWord(pos - 1, word) ~= self:_pikeIsWord(pos, word) end\n\
+             \x20 return self:_pikeIsWord(pos - 1, word) == self:_pikeIsWord(pos, word)\n\
+             end\n\n",
+        );
+        writeln!(
+            out,
+            "function {}:_pikeAdd(ops, word, lst, seen, pc, pos)",
+            n
+        )
+        .ok();
         out.push_str(
             "  if seen[pc + 1] then return end\n\
              \x20 seen[pc + 1] = true\n\
              \x20 local op = ops[pc * 4 + 1]\n\
              \x20 if op == 2 then\n\
-             \x20   self:_pikeAdd(ops, lst, seen, ops[pc * 4 + 1 + 1])\n\
+             \x20   self:_pikeAdd(ops, word, lst, seen, ops[pc * 4 + 1 + 1], pos)\n\
              \x20 elseif op == 1 then\n\
-             \x20   self:_pikeAdd(ops, lst, seen, ops[pc * 4 + 1 + 1])\n\
-             \x20   self:_pikeAdd(ops, lst, seen, ops[pc * 4 + 2 + 1])\n\
+             \x20   self:_pikeAdd(ops, word, lst, seen, ops[pc * 4 + 1 + 1], pos)\n\
+             \x20   self:_pikeAdd(ops, word, lst, seen, ops[pc * 4 + 2 + 1], pos)\n\
+             \x20 elseif op == 4 then\n\
+             \x20   if self:_pikeAssert(ops[pc * 4 + 1 + 1], pos, word) then\n\
+             \x20     self:_pikeAdd(ops, word, lst, seen, pc + 1, pos)\n\
+             \x20   end\n\
              \x20 else\n\
              \x20   table.insert(lst, pc)\n\
              \x20 end\n\
              end\n\n",
         );
-        writeln!(out, "function {}:_pikeMatch(ops, rng)", n).ok();
+        writeln!(out, "function {}:_pikeMatch(ops, rng, word)", n).ok();
         writeln!(out, "  local n = #self.{}", inp).ok();
         out.push_str(
             "  local matched = -1\n\
              \x20 local clist = {}\n\
              \x20 local seen0 = {}\n\
-             \x20 self:_pikeAdd(ops, clist, seen0, 0)\n\
+             \x20 self:_pikeAdd(ops, word, clist, seen0, 0, self.cursor)\n\
              \x20 local pos = self.cursor\n\
              \x20 while true do\n\
              \x20   local nlist = {}\n\
@@ -472,7 +520,7 @@ impl<'a> Generator<'a> {
              \x20         local rc = ops[pc * 4 + 2 + 1]\n\
              \x20         for k = 0, rc - 1 do\n\
              \x20           if rng[(rs + k) * 2 + 1] <= v and v <= rng[(rs + k) * 2 + 1 + 1] then\n\
-             \x20             self:_pikeAdd(ops, nlist, nseen, pc + 1)\n\
+             \x20             self:_pikeAdd(ops, word, nlist, nseen, pc + 1, pos + 1)\n\
              \x20             break\n\
              \x20           end\n\
              \x20         end\n\
@@ -1065,7 +1113,7 @@ impl<'a> Generator<'a> {
     fn stage_match_call(&self, sid: usize) -> String {
         if self.stage_dfas[sid].program.is_some() {
             let n = &self.decl.name;
-            format!("self:_pikeMatch({n}._OPS_{sid}, {n}._RNG_{sid})")
+            format!("self:_pikeMatch({n}._OPS_{sid}, {n}._RNG_{sid}, {n}._WORD_{sid})")
         } else {
             format!(
                 "self:dfaMatch({}, {})",
@@ -1425,10 +1473,24 @@ mod tests {
     }
 
     #[test]
-    fn lua_unsupported_errors() {
-        let decl =
-            parse_fsm_block(b"@@fsm M(text: bytes) : bool = false { /a$b/ true }").expect("parses");
-        let err = generate(&decl).unwrap_err();
-        assert!(err.contains("anchor"), "got {err}");
+    fn lua_interior_anchor_runs_on_pike_vm() {
+        let src = "@@fsm M(text: bytes) : bool = false { /a$b/ true }";
+        let decl = parse_fsm_block(src.as_bytes()).expect("parses");
+        generate(&decl).expect("interior anchor compiles to a Pike program");
+        let Some((acc, _)) = run(src, "M.new(\"ab\")", "ia_mid") else {
+            return;
+        };
+        assert_eq!(acc, "false");
+    }
+
+    /// `\bcat\b` on `char` runs on the Pike VM with the word table.
+    #[test]
+    fn lua_word_boundary_runs_on_pike_vm() {
+        let src = "@@fsm M(text: char) : bool = false { /\\bcat\\b/ true }";
+        let Some((hit, _)) = run(src, "M.new(\"cat\")", "wb_hit") else {
+            return;
+        };
+        assert_eq!(hit, "true");
+        assert_eq!(run(src, "M.new(\"cats\")", "wb_miss").unwrap().0, "false");
     }
 }

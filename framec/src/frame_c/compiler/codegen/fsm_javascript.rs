@@ -19,11 +19,12 @@
 //! `when` / stage-ref `-> $S.stage` / failure-only), embedding actions
 //! (`>{}`/`@{}`/`${}`/`%{}`/`@eof{}`), Mode C sub-fsm call-out (`/@Inner/`),
 //! all three alphabets (`bytes`/`char` as a string; `token` as an array of
-//! token-kind names mapped to small integer ids), and boundary anchors
-//! (a leading `^`/`\A`, a trailing `$`/`\z`). Not yet handled (clear
-//! `Unsupported` error, never a silent miscompile): mid-pattern anchors and
-//! `\b`/`\B`, a Mode C stage as a `|` selector, and a `|` alternative with
-//! elements before its first stage (all deferred to v0.2).
+//! token-kind names mapped to small integer ids), edge anchors (`^`/`\A`,
+//! `$`/`\z`), `\b`/`\B` word boundaries, interior anchors, and lazy
+//! quantifiers (the last three via the Pike VM with zero-width `Assert`s).
+//! Not yet handled (clear `Unsupported` error, never a silent miscompile): a
+//! Mode C stage as a `|` selector, and a `|` alternative with elements before
+//! its first stage.
 
 use crate::frame_c::compiler::frame_ast::{
     BinaryOp, EmbeddingOp, Expression, FsmDeclAst, FsmStateAst, FsmTransitionTarget, Literal,
@@ -416,25 +417,44 @@ impl<'a> Generator<'a> {
         let input = &self.decl.params[0].name;
         writeln!(
             out,
-            "  _pikeAdd(ops, lst, seen, pc) {{\n\
+            "  _pikeIsWord(p, word) {{\n\
+             \x20   if (p < 0 || p >= this.{input}.length) return false;\n\
+             \x20   const v = this.{input}.charCodeAt(p);\n\
+             \x20   for (let k = 0; k < word.length / 2; k++) {{\n\
+             \x20     if (word[k * 2] <= v && v <= word[k * 2 + 1]) return true;\n\
+             \x20   }}\n\
+             \x20   return false;\n\
+             \x20 }}\n\n\
+             \x20 _pikeAssert(kind, pos, word) {{\n\
+             \x20   const n = this.{input}.length;\n\
+             \x20   if (kind === 0) return pos === 0;\n\
+             \x20   if (kind === 1) return pos === n;\n\
+             \x20   if (kind === 2) return pos === 0 || this.{input}.charCodeAt(pos - 1) === 10;\n\
+             \x20   if (kind === 3) return pos === n || this.{input}.charCodeAt(pos) === 10;\n\
+             \x20   if (kind === 4) return this._pikeIsWord(pos - 1, word) !== this._pikeIsWord(pos, word);\n\
+             \x20   return this._pikeIsWord(pos - 1, word) === this._pikeIsWord(pos, word);\n\
+             \x20 }}\n\n\
+             \x20 _pikeAdd(ops, word, lst, seen, pc, pos) {{\n\
              \x20   if (seen[pc]) return;\n\
              \x20   seen[pc] = true;\n\
              \x20   const op = ops[pc * 4];\n\
              \x20   if (op === 2) {{\n\
-             \x20     this._pikeAdd(ops, lst, seen, ops[pc * 4 + 1]);\n\
+             \x20     this._pikeAdd(ops, word, lst, seen, ops[pc * 4 + 1], pos);\n\
              \x20   }} else if (op === 1) {{\n\
-             \x20     this._pikeAdd(ops, lst, seen, ops[pc * 4 + 1]);\n\
-             \x20     this._pikeAdd(ops, lst, seen, ops[pc * 4 + 2]);\n\
+             \x20     this._pikeAdd(ops, word, lst, seen, ops[pc * 4 + 1], pos);\n\
+             \x20     this._pikeAdd(ops, word, lst, seen, ops[pc * 4 + 2], pos);\n\
+             \x20   }} else if (op === 4) {{\n\
+             \x20     if (this._pikeAssert(ops[pc * 4 + 1], pos, word)) this._pikeAdd(ops, word, lst, seen, pc + 1, pos);\n\
              \x20   }} else {{\n\
              \x20     lst.push(pc);\n\
              \x20   }}\n\
              \x20 }}\n\n\
-             \x20 _pikeMatch(ops, rng) {{\n\
+             \x20 _pikeMatch(ops, rng, word) {{\n\
              \x20   const n = this.{input}.length;\n\
              \x20   const ninst = ops.length / 4;\n\
              \x20   let matched = -1;\n\
              \x20   let clist = [];\n\
-             \x20   this._pikeAdd(ops, clist, new Array(ninst).fill(false), 0);\n\
+             \x20   this._pikeAdd(ops, word, clist, new Array(ninst).fill(false), 0, this.cursor);\n\
              \x20   let pos = this.cursor;\n\
              \x20   while (true) {{\n\
              \x20     const nlist = [];\n\
@@ -448,7 +468,7 @@ impl<'a> Generator<'a> {
              \x20           const rc = ops[pc * 4 + 2];\n\
              \x20           for (let k = 0; k < rc; k++) {{\n\
              \x20             if (rng[(rs + k) * 2] <= v && v <= rng[(rs + k) * 2 + 1]) {{\n\
-             \x20               this._pikeAdd(ops, nlist, nseen, pc + 1);\n\
+             \x20               this._pikeAdd(ops, word, nlist, nseen, pc + 1, pos + 1);\n\
              \x20               break;\n\
              \x20             }}\n\
              \x20           }}\n\
@@ -1020,12 +1040,14 @@ impl<'a> Generator<'a> {
     fn emit_stage_match(&self, out: &mut String, stage: &StageAst, sid: usize, ind: &str) {
         if let Some(prog) = &self.stage_dfas[sid].program {
             let (ops, rng) = fsm_regex::pike::encode(prog);
+            let word = fsm_regex::pike::program_word_table(prog, self.alphabet);
             writeln!(out, "{}const OPS_{} = [{}];", ind, sid, int_list(&ops)).ok();
             writeln!(out, "{}const RNG_{} = [{}];", ind, sid, int_list(&rng)).ok();
+            writeln!(out, "{}const WORD_{} = [{}];", ind, sid, int_list(&word)).ok();
             writeln!(
                 out,
-                "{}let _r{} = this._pikeMatch(OPS_{}, RNG_{});",
-                ind, sid, sid, sid
+                "{}let _r{} = this._pikeMatch(OPS_{}, RNG_{}, WORD_{});",
+                ind, sid, sid, sid, sid
             )
             .ok();
         } else if stage.embedding_actions.is_empty() {
@@ -1476,12 +1498,28 @@ mod tests {
         assert_eq!(eval(lazyb, "aabbb", "return_value", "lazy_b").unwrap(), "5");
     }
 
-    /// A construct outside the v0.1 cut errors clearly.
+    /// An interior anchor routes to the Pike VM (no longer an `Unsupported`
+    /// error): `a$b` compiles and rejects (the `$` can't hold mid-string).
     #[test]
-    fn js_unsupported_errors() {
-        let decl =
-            parse_fsm_block(b"@@fsm M(text: bytes) : bool = false { /a$b/ true }").expect("parses");
-        let err = generate(&decl).unwrap_err();
-        assert!(err.contains("anchor"), "got {err}");
+    fn js_interior_anchor_runs_on_pike_vm() {
+        // `a$b` routes to the Pike VM; the `$` assert can never hold mid-string.
+        let src = "@@fsm M(text: bytes) : bool = false { /a$b/ true }";
+        let decl = parse_fsm_block(src.as_bytes()).expect("parses");
+        generate(&decl).expect("interior anchor compiles to a Pike program");
+        let Some((acc, _)) = run(src, "M", "ab", "ia_mid") else {
+            return;
+        };
+        assert_eq!(acc, "false");
+    }
+
+    /// `\bcat\b` on `char` runs on the Pike VM with the Unicode `\w` word table.
+    #[test]
+    fn js_word_boundary_runs_on_pike_vm() {
+        let src = "@@fsm M(text: char) : bool = false { /\\bcat\\b/ true }";
+        let Some((hit, _)) = run(src, "M", "cat", "wb_hit") else {
+            return;
+        };
+        assert_eq!(hit, "true");
+        assert_eq!(run(src, "M", "cats", "wb_miss").unwrap().0, "false");
     }
 }

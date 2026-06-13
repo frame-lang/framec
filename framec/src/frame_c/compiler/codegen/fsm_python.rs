@@ -33,9 +33,10 @@
 //! fsm at the cursor, advances by its cursor, exposes the matched slice as
 //! `$state.label` and the inner instance as `$state.label.return_value`),
 //! over all three alphabets — `bytes`, `char`, `token` (token kinds map to
-//! integer ids so they share the numeric range matcher). Not yet handled
-//! (clear `Unsupported` error, never a silent miscompile): mid-pattern
-//! anchors and `\b`/`\B`, a `|` alternative with elements before its first
+//! integer ids so they share the numeric range matcher). Interior anchors,
+//! `\b`/`\B` word boundaries, and lazy quantifiers run on the Pike VM with
+//! zero-width `Assert`s. Not yet handled (clear `Unsupported` error, never a
+//! silent miscompile): a `|` alternative with elements before its first
 //! stage, and a Mode C stage as a `|` selector.
 
 use crate::frame_c::compiler::frame_ast::{
@@ -353,8 +354,10 @@ impl<'a> Generator<'a> {
             // A lazy stage carries a Pike program (two flat int arrays).
             if let Some(prog) = &dfa.program {
                 let (ops, rng) = fsm_regex::pike::encode(prog);
+                let word = fsm_regex::pike::program_word_table(prog, self.alphabet);
                 writeln!(out, "    _OPS_{} = [{}]", i, int_list(&ops)).ok();
                 writeln!(out, "    _RNG_{} = [{}]", i, int_list(&rng)).ok();
+                writeln!(out, "    _WORD_{} = [{}]", i, int_list(&word)).ok();
                 continue;
             }
             let states: Vec<String> = dfa
@@ -523,24 +526,50 @@ impl<'a> Generator<'a> {
     fn emit_pike_matcher(&self, out: &mut String) {
         writeln!(
             out,
-            "    def _pike_add(self, ops, lst, seen, pc):\n\
+            "    def _pike_is_word(self, p, word):\n\
+             \x20       if p < 0 or p >= len(self.{inp}):\n\
+             \x20           return False\n\
+             \x20       v = ord(self.{inp}[p])\n\
+             \x20       k = 0\n\
+             \x20       while k < len(word) // 2:\n\
+             \x20           if word[k * 2] <= v <= word[k * 2 + 1]:\n\
+             \x20               return True\n\
+             \x20           k += 1\n\
+             \x20       return False\n\n\
+             \x20   def _pike_assert(self, kind, pos, word):\n\
+             \x20       n = len(self.{inp})\n\
+             \x20       if kind == 0:\n\
+             \x20           return pos == 0\n\
+             \x20       if kind == 1:\n\
+             \x20           return pos == n\n\
+             \x20       if kind == 2:\n\
+             \x20           return pos == 0 or ord(self.{inp}[pos - 1]) == 10\n\
+             \x20       if kind == 3:\n\
+             \x20           return pos == n or ord(self.{inp}[pos]) == 10\n\
+             \x20       if kind == 4:\n\
+             \x20           return self._pike_is_word(pos - 1, word) != self._pike_is_word(pos, word)\n\
+             \x20       return self._pike_is_word(pos - 1, word) == self._pike_is_word(pos, word)\n\n\
+             \x20   def _pike_add(self, ops, word, lst, seen, pc, pos):\n\
              \x20       if seen[pc]:\n\
              \x20           return\n\
              \x20       seen[pc] = True\n\
              \x20       op = ops[pc * 4]\n\
              \x20       if op == 2:\n\
-             \x20           self._pike_add(ops, lst, seen, ops[pc * 4 + 1])\n\
+             \x20           self._pike_add(ops, word, lst, seen, ops[pc * 4 + 1], pos)\n\
              \x20       elif op == 1:\n\
-             \x20           self._pike_add(ops, lst, seen, ops[pc * 4 + 1])\n\
-             \x20           self._pike_add(ops, lst, seen, ops[pc * 4 + 2])\n\
+             \x20           self._pike_add(ops, word, lst, seen, ops[pc * 4 + 1], pos)\n\
+             \x20           self._pike_add(ops, word, lst, seen, ops[pc * 4 + 2], pos)\n\
+             \x20       elif op == 4:\n\
+             \x20           if self._pike_assert(ops[pc * 4 + 1], pos, word):\n\
+             \x20               self._pike_add(ops, word, lst, seen, pc + 1, pos)\n\
              \x20       else:\n\
              \x20           lst.append(pc)\n\n\
-             \x20   def _pike_match(self, ops, rng):\n\
+             \x20   def _pike_match(self, ops, rng, word):\n\
              \x20       n = len(self.{inp})\n\
              \x20       ninst = len(ops) // 4\n\
              \x20       matched = -1\n\
              \x20       clist = []\n\
-             \x20       self._pike_add(ops, clist, [False] * ninst, 0)\n\
+             \x20       self._pike_add(ops, word, clist, [False] * ninst, 0, self.cursor)\n\
              \x20       pos = self.cursor\n\
              \x20       while True:\n\
              \x20           nlist = []\n\
@@ -554,7 +583,7 @@ impl<'a> Generator<'a> {
              \x20                       rc = ops[pc * 4 + 2]\n\
              \x20                       for k in range(rc):\n\
              \x20                           if rng[(rs + k) * 2] <= v <= rng[(rs + k) * 2 + 1]:\n\
-             \x20                               self._pike_add(ops, nlist, nseen, pc + 1)\n\
+             \x20                               self._pike_add(ops, word, nlist, nseen, pc + 1, pos + 1)\n\
              \x20                               break\n\
              \x20               elif op == 3:\n\
              \x20                   matched = pos\n\
@@ -1287,7 +1316,7 @@ fn py_bool(b: bool) -> &'static str {
 /// carries embedding actions that must fire during the scan.
 fn stage_call(gen: &Generator, stage: &StageAst, sid: usize) -> String {
     if gen.stage_dfas[sid].program.is_some() {
-        format!("self._pike_match(self._OPS_{sid}, self._RNG_{sid})")
+        format!("self._pike_match(self._OPS_{sid}, self._RNG_{sid}, self._WORD_{sid})")
     } else if stage.embedding_actions.is_empty() {
         format!("self._dfa_match(self._DFA_{})", sid)
     } else {
@@ -2041,13 +2070,31 @@ mod tests {
         assert_eq!(run(src, "123x", "tea_end_b").unwrap().accepted, "False");
     }
 
-    /// A mid-pattern anchor is outside the v0.1 cut and errors clearly.
+    /// An interior anchor (`a$b`) routes to the Pike VM, which evaluates the
+    /// zero-width `Assert`: the `$` can never hold mid-string, so it rejects.
     #[test]
-    fn unsupported_mid_anchor_errors() {
-        let decl =
-            parse_fsm_block(b"@@fsm M(text: bytes) : bool = false { /a$b/ true }").expect("parses");
-        let err = generate(&decl).unwrap_err();
-        assert!(err.contains("anchor"), "got {err}");
+    fn interior_anchor_runs_on_pike_vm() {
+        let src = "@@fsm M(text: bytes) : bool = false { /a$b/ true }";
+        // Compiles (no longer an "unsupported anchor" error).
+        let decl = parse_fsm_block(src.as_bytes()).expect("parses");
+        generate(&decl).expect("interior anchor compiles to a Pike program");
+        // And executes correctly: `a$b` is unsatisfiable → reject.
+        let Some(r) = run(src, "ab", "tia_mid") else {
+            return;
+        };
+        assert_eq!(r.accepted, "False");
+    }
+
+    /// A word boundary on the `char` alphabet routes to the Pike VM with the
+    /// Unicode `\w` word table: `\bcat\b` matches a free-standing `cat`.
+    #[test]
+    fn word_boundary_runs_on_pike_vm() {
+        let src = "@@fsm M(text: char) : bool = false { /\\bcat\\b/ true }";
+        let Some(hit) = run(src, "cat", "wb_hit") else {
+            return;
+        };
+        assert_eq!(hit.accepted, "True");
+        assert_eq!(run(src, "cats", "wb_miss").unwrap().accepted, "False");
     }
 
     /// Sentinel for the python3-absent skip path in tests that can't use
