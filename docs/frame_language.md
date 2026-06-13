@@ -360,7 +360,7 @@ $.<varName> (: <type>)? = <initializer_expr>
 | `$.` | Yes | State variable prefix |
 | `<varName>` | Yes | Identifier |
 | `: <type>` | No | Type annotation |
-| `= <initializer_expr>` | Yes | Native expression; evaluated on every state entry |
+| `= <initializer_expr>` | Yes | Native expression; evaluated on every state entry. Omitting it is an error (**E610**) — Frame does not synthesize default values |
 
 **Scope rules:**
 - `$.x` always refers to the enclosing state's variable `x`
@@ -1288,6 +1288,7 @@ Both `@@:self` and `@@:system` are syntactic prefixes. Bare forms are errors (E6
 |------|------|-------------|
 | E605 | `static-field-no-type` | Static target requires explicit type on domain field |
 | E607 | `state-args-on-pop` | State arguments on `pop$` — popped compartment carries its own |
+| E610 | `state-var-no-initializer` | State variable declared without an initializer — Frame does not synthesize default values |
 | E613 | `field-shadows-param` | Domain field name shadows a system parameter |
 | E614 | `duplicate-field` | Duplicate domain field name |
 | E615 | `const-field-assign` | Assignment to `const` domain field in handler body |

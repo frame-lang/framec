@@ -20,6 +20,12 @@ impl FrameValidator {
         _operations: &HashSet<String>,
     ) {
         // E410: Validate no duplicate state variable names
+        // E610: every state variable must have an initializer. Frame has no
+        // type system and does not invent values — without an initializer,
+        // codegen would have to synthesize a per-target default from the
+        // type NAME (the alias-table species exterminated in 4.5.0). The
+        // initializer is emitted verbatim, so the author writes exactly
+        // what the target receives (issue #84).
         {
             let mut seen_vars: HashSet<String> = HashSet::new();
             for sv in &state.state_vars {
@@ -30,6 +36,21 @@ impl FrameValidator {
                             format!(
                                 "Duplicate state variable '$.{}' in state '{}'",
                                 sv.name, state.name
+                            ),
+                        )
+                        .with_span(sv.span.clone()),
+                    );
+                }
+                if sv.initializer_text.is_none() {
+                    self.errors.push(
+                        ValidationError::new(
+                            "E610",
+                            format!(
+                                "State variable '$.{}' in state '{}' has no initializer. \
+                                 Frame does not synthesize default values — write one \
+                                 explicitly (e.g. `$.{}: <type> = <value>`); it is passed \
+                                 through to the target verbatim.",
+                                sv.name, state.name, sv.name
                             ),
                         )
                         .with_span(sv.span.clone()),

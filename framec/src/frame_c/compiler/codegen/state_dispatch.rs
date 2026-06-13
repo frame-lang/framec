@@ -21,7 +21,7 @@ use handler_methods::{
 use super::ast::{CodegenNode, Param, Visibility};
 use super::codegen_utils::{
     cpp_map_type, cpp_wrap_any_arg, csharp_map_type, expression_to_string, go_map_type,
-    java_map_type, kotlin_map_type, state_var_init_value, swift_map_type, to_snake_case,
+    java_map_type, kotlin_map_type, state_var_initializer, swift_map_type, to_snake_case,
     type_to_cpp_string, HandlerContext,
 };
 use super::frame_expansion::{
@@ -100,11 +100,7 @@ pub(crate) fn generate_unified_state_dispatch(
     if !state_vars.is_empty() && !has_enter_handler {
         code.push_str(&(syn.fmt_if)("$>"));
         for var in state_vars {
-            let init_val = if let Some(ref init) = var.initializer_text {
-                init.clone()
-            } else {
-                state_var_init_value(&var.var_type, syn.lang)
-            };
+            let init_val = state_var_initializer(var);
             code.push_str(&(syn.fmt_init_sv)(
                 &var.name,
                 &init_val,
@@ -144,11 +140,7 @@ pub(crate) fn generate_unified_state_dispatch(
         // State var init in enter handler — only the lifecycle `$>` key.
         if event == "$>" && !state_vars.is_empty() {
             for var in state_vars {
-                let init_val = if let Some(ref init) = var.initializer_text {
-                    init.clone()
-                } else {
-                    state_var_init_value(&var.var_type, syn.lang)
-                };
+                let init_val = state_var_initializer(var);
                 code.push_str(&(syn.fmt_init_sv)(
                     &var.name,
                     &init_val,

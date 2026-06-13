@@ -5589,7 +5589,7 @@ This recipe is the natural complement to #53: the scanner handles token recognit
         }
 
         $Nested {
-            $.items: list
+            $.items: list = []
 
             open() {
                 push$

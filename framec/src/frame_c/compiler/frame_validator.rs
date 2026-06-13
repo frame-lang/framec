@@ -2546,6 +2546,51 @@ mod tests {
         }
     }
 
+    // ===== Issue #84: state-vars must have an initializer (E610) —
+    //                  Frame does not synthesize default values =====
+
+    #[test]
+    fn test_e610_uninitialized_state_var() {
+        let source = r#"
+@@system R {
+    interface:
+        go()
+    machine:
+        $Active {
+            $.count: int
+
+            go() { $.count = $.count + 1 }
+        }
+}"#;
+        let codes = v4_codes(source);
+        assert!(
+            codes.iter().any(|c| c == "E610"),
+            "expected E610 for a state-var with no initializer, got {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_initialized_state_var_accepted() {
+        let source = r#"
+@@system R {
+    interface:
+        go()
+    machine:
+        $Active {
+            $.count: int = 0
+
+            go() { $.count = $.count + 1 }
+        }
+}"#;
+        let codes = v4_codes(source);
+        assert!(
+            !codes.iter().any(|c| c == "E610"),
+            "an initialized state-var must not fire E610, got {:?}",
+            codes
+        );
+    }
+
     // ===== RFC-0045: state-name relocation to `@@:system.state.name`,
     //                 bare `@@:system.state` reserved (E608) =====
 
