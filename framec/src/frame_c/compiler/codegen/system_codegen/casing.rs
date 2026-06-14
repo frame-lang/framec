@@ -724,25 +724,24 @@ fn generate_casing_interface_wrapper(ifm: &InterfaceMethod, lang: TargetLanguage
         TargetLanguage::Cpp => {
             let arg_list: Vec<String> = ifm.params.iter().map(|p| p.name.clone()).collect();
             let arg_str = arg_list.join(", ");
-            // C++ has no `finally`, so wrap the `co_await` in a
-            // try/catch(...) that clears the gate, rethrows. The
-            // happy-path also clears the gate before `co_return`.
-            // `std::runtime_error` for E703 — analogous to the
-            // unchecked-throw on neighbouring backends; thrown from
-            // the casing's coroutine body BEFORE any `co_await`, so
-            // the coroutine never suspends and the FrameTask delivers
-            // the exception to the caller's `await_resume`.
+            // RFC-0049: the busy/in_flight gate cleanup uses an RAII
+            // scope-guard (resets both on scope exit — co_return AND, when
+            // exceptions are enabled, unwind), not a try/catch(...)+rethrow.
+            // The guard captures member pointers (`bool*`/`std::string*`) so
+            // it needs no casing type name. The E703 busy violation is a
+            // proper precondition error (R2): `throw` where exceptions exist,
+            // `abort`-with-message fallback under `-fno-exceptions` (R3). The
+            // `if (this->busy)` check runs BEFORE the guard is armed, so an
+            // E703 rejection never resets a gate it didn't set.
             //
-            // Coroutine + try/catch: the body that contains `co_await`
-            // is fine inside a try block in modern C++ (g++ 11+ /
-            // clang 14+). The catch(...)+throw idiom is the canonical
-            // "finally" emulation.
+            // This makes the async casing compile under `-fno-exceptions`:
+            // the FrameTask's `std::rethrow_exception` is a function call
+            // (legal with exceptions off; dead because Frame handlers never
+            // throw), so the wrapper's `throw`/`try` were the only blockers.
             let has_return = !matches!(ifm.return_type, None | Some(FrameType::Unknown));
             let success_block = if has_return {
                 format!(
                     "auto __result = co_await this->machine.{name}({args});\n\
-                     this->in_flight.clear();\n\
-                     this->busy = false;\n\
                      co_return __result;",
                     name = ifm.name,
                     args = arg_str
@@ -750,8 +749,6 @@ fn generate_casing_interface_wrapper(ifm: &InterfaceMethod, lang: TargetLanguage
             } else {
                 format!(
                     "co_await this->machine.{name}({args});\n\
-                     this->in_flight.clear();\n\
-                     this->busy = false;\n\
                      co_return;",
                     name = ifm.name,
                     args = arg_str
@@ -759,21 +756,21 @@ fn generate_casing_interface_wrapper(ifm: &InterfaceMethod, lang: TargetLanguage
             };
             format!(
                 "if (this->busy) {{\n\
+                 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS)\n\
                  \x20   throw std::runtime_error(\n\
                  \x20       \"E703: system busy: cannot enter '{name}' while '\" + this->in_flight + \"' is in flight\"\n\
                  \x20   );\n\
+                 #else\n\
+                 \x20   std::fprintf(stderr, \"E703: system busy: cannot enter '{name}' while '%s' is in flight\\n\", this->in_flight.c_str());\n\
+                 \x20   std::abort();\n\
+                 #endif\n\
                  }}\n\
                  this->busy = true;\n\
                  this->in_flight = \"{name}\";\n\
-                 try {{\n\
-                 \x20   {success}\n\
-                 }} catch (...) {{\n\
-                 \x20   this->in_flight.clear();\n\
-                 \x20   this->busy = false;\n\
-                 \x20   throw;\n\
-                 }}",
+                 struct __E703Guard {{ bool* __b; std::string* __f; ~__E703Guard() {{ __f->clear(); *__b = false; }} }} __e703_guard{{&this->busy, &this->in_flight}};\n\
+                 {success}",
                 name = ifm.name,
-                success = success_block.replace('\n', "\n    ")
+                success = success_block
             )
         }
         TargetLanguage::GDScript => {

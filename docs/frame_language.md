@@ -1285,13 +1285,16 @@ opt-in features**, always with the `-fno-exceptions` fallback above:
   persisted systems compile under `-fno-exceptions`. (nlohmann::json self-switches
   its internal throws to `abort` there.)
 - **`@@[async]`** — a concurrent second driver raises **E703** (single-driver
-  violation), surfaced per backend as a thrown error / rejected future. On C++ the
-  coroutine machinery additionally uses `rethrow_exception`; async systems are not
-  yet `-fno-exceptions`-clean (tracked in #88).
+  violation), surfaced per backend as a thrown error / rejected future. On C++
+  this is exception-free too (issue #88): the casing's busy-gate cleanup is an
+  RAII guard, the E703 throw is behind `#if defined(__cpp_exceptions)` with an
+  `abort` fallback, and the coroutine `FrameTask`'s `std::rethrow_exception` is a
+  function call (legal with exceptions off, dead because handlers never throw) —
+  so async C++ systems compile under `-fno-exceptions`.
 
 In short: **exceptions are optional, not the rule.** A plain synchronous,
-non-persisted system generates exception-free code on every backend, and a
-persisted one compiles `-fno-exceptions` too.
+non-persisted system generates exception-free code on every backend; persisted
+and async C++ systems compile `-fno-exceptions` too.
 
 ---
 

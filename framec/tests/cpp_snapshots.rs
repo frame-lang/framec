@@ -303,3 +303,79 @@ fn issue87_persist_compiles_no_exceptions() {
         code
     );
 }
+
+/// #88 / RFC-0049 — an `@@[async]` C++ system must also compile under
+/// `-fno-exceptions`. The RFC-0043 casing wrapped the busy-gate cleanup in
+/// `try { co_await … } catch(...) { …; throw; }` and threw E703 unconditionally
+/// — `throw`/`try` keywords that `-fno-exceptions` rejects. The cleanup is now
+/// an RAII busy-guard (resets `busy`/`in_flight` on `co_return` AND unwind) and
+/// the E703 precondition throw is behind `#if defined(__cpp_exceptions)` with an
+/// `abort` fallback (R2+R3). The FrameTask's `std::rethrow_exception` is a
+/// function call — legal with exceptions off, dead because handlers never throw.
+///
+/// 1. Token assertion (always runs): the casing emits the `__E703Guard` RAII
+///    guard (proves the try/catch was replaced).
+/// 2. Compile gate (skip unless a C++20 + `-fno-exceptions` compiler is on
+///    PATH — coroutines need C++20, which the macOS system clang predates):
+///    the async fixture compiles under `-std=c++20 -fno-exceptions`.
+#[test]
+fn issue88_async_compiles_no_exceptions() {
+    use std::process::Command;
+
+    let code = compile_fixture("19_async_noexcept", "cpp");
+
+    // (1) Token assertion: the RAII busy-guard replaced the try/catch cleanup.
+    assert!(
+        code.contains("__E703Guard"),
+        "#88: async casing must use the RAII busy-guard (not try/catch) for the \
+         gate cleanup, but no __E703Guard was emitted.\n--- generated source ---\n{code}"
+    );
+
+    let cxx = match common::find_tool("g++")
+        .or_else(|| common::find_tool("clang++"))
+        .or_else(|| common::find_tool("c++"))
+    {
+        Some(p) => p,
+        None => {
+            eprintln!("#88 async -fno-exceptions gate skipped: no C++ compiler on PATH");
+            return;
+        }
+    };
+    // Coroutines require C++20; the macOS system clang predates it. Probe with a
+    // trivial coroutine and skip cleanly where C++20 isn't supported (the gate
+    // then runs on CI's newer g++).
+    let probe = tempfile::tempdir().expect("tempdir");
+    let probe_src = probe.path().join("coro.cpp");
+    std::fs::write(
+        &probe_src,
+        "#include <coroutine>\nstruct T{struct promise_type{T get_return_object(){return{};}\
+         std::suspend_never initial_suspend(){return{};}std::suspend_never final_suspend()noexcept{return{};}\
+         void return_void(){}void unhandled_exception(){}};};\nint main(){return 0;}\n",
+    )
+    .expect("write probe");
+    let probe_ok = Command::new(&cxx)
+        .args(["-std=c++20", "-fsyntax-only"])
+        .arg(&probe_src)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if !probe_ok {
+        eprintln!("#88 async -fno-exceptions gate skipped: no C++20 coroutine support");
+        return;
+    }
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("19_async_noexcept.cpp");
+    std::fs::write(&path, &code).expect("write tempfile");
+    let out = Command::new(&cxx)
+        .args(["-std=c++20", "-fno-exceptions", "-fsyntax-only"])
+        .arg(&path)
+        .output()
+        .expect("c++ process");
+    assert!(
+        out.status.success(),
+        "#88: async C++ does not compile under -fno-exceptions (residual unguarded exception in the casing).\n--- stderr ---\n{}\n--- generated source ---\n{}",
+        String::from_utf8_lossy(&out.stderr),
+        code
+    );
+}
