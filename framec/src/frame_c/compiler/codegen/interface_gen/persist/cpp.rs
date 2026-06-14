@@ -116,8 +116,19 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
 
     // save_state
     let mut save_body = String::new();
+    // E700 is a PRECONDITION violation (save() called mid-dispatch) — a proper
+    // use of an exception (RFC-0049 R2), not control flow. Keep the throw where
+    // exceptions exist (exception-enabled builds are byte-identical) and add the
+    // R3 fallback for `-fno-exceptions` (Godot web): a fail-fast abort, which is
+    // arguably the more correct handling for a programmer-error precondition.
     save_body.push_str(
-        "if (!_context_stack.empty()) throw std::runtime_error(\"E700: system not quiescent\");\n",
+        "if (!_context_stack.empty()) {\n\
+         #if defined(__cpp_exceptions) || defined(__EXCEPTIONS)\n\
+         throw std::runtime_error(\"E700: system not quiescent\");\n\
+         #else\n\
+         std::fprintf(stderr, \"E700: system not quiescent\\n\"); std::abort();\n\
+         #endif\n\
+         }\n",
     );
 
     save_body.push_str(&format!(
@@ -131,8 +142,11 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     save_body.push_str("    for (auto& [k, v] : c->state_vars) {\n");
     for (_state, var_name, var_type) in &all_state_vars {
         let cpp_type = cpp_map_type(var_type);
+        // RFC-0049 R1: type discovery is a QUERY, not an error — use the
+        // non-throwing pointer `any_cast<T>(&v)` (returns null on mismatch)
+        // instead of catching a thrown exception to probe the type.
         save_body.push_str(&format!(
-            "        if (k == \"{}\") {{ try {{ __sv[k] = std::any_cast<{}>(v); }} catch(...) {{}} }}\n",
+            "        if (k == \"{}\") {{ if (auto* __p = std::any_cast<{}>(&v)) __sv[k] = *__p; }}\n",
             var_name, cpp_type
         ));
     }
@@ -148,18 +162,18 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         for (i, t) in types.iter().enumerate() {
             if t.is_empty() {
                 save_body.push_str(&format!(
-                    "        if (c->state_args.size() > {i}) {{ try {{ __sa.push_back(std::any_cast<int>(c->state_args[{i}])); }} catch(...) {{ try {{ __sa.push_back(std::any_cast<double>(c->state_args[{i}])); }} catch(...) {{ __sa.push_back(nullptr); }} }} }}\n"
+                    "        if (c->state_args.size() > {i}) {{ if (auto* __p = std::any_cast<int>(&c->state_args[{i}])) __sa.push_back(*__p); else if (auto* __p = std::any_cast<double>(&c->state_args[{i}])) __sa.push_back(*__p); else __sa.push_back(nullptr); }}\n"
                 ));
             } else {
                 save_body.push_str(&format!(
-                    "        if (c->state_args.size() > {i}) {{ try {{ __sa.push_back(nlohmann::json(std::any_cast<{t}>(c->state_args[{i}]))); }} catch(...) {{ __sa.push_back(nullptr); }} }}\n"
+                    "        if (c->state_args.size() > {i}) {{ if (auto* __p = std::any_cast<{t}>(&c->state_args[{i}])) __sa.push_back(nlohmann::json(*__p)); else __sa.push_back(nullptr); }}\n"
                 ));
             }
         }
         save_body.push_str("    } else \n");
     }
     save_body.push_str("    {\n");
-    save_body.push_str("        for (const auto& v : c->state_args) { try { __sa.push_back(std::any_cast<int>(v)); } catch(...) { try { __sa.push_back(std::any_cast<double>(v)); } catch(...) { __sa.push_back(nullptr); } } }\n");
+    save_body.push_str("        for (const auto& v : c->state_args) { if (auto* __p = std::any_cast<int>(&v)) __sa.push_back(*__p); else if (auto* __p = std::any_cast<double>(&v)) __sa.push_back(*__p); else __sa.push_back(nullptr); }\n");
     save_body.push_str("    }\n");
     save_body.push_str("    }\n");
     save_body.push_str("    __cj[\"state_args\"] = __sa;\n");
@@ -173,18 +187,18 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         for (i, t) in types.iter().enumerate() {
             if t.is_empty() {
                 save_body.push_str(&format!(
-                    "        if (c->enter_args.size() > {i}) {{ try {{ __ea.push_back(std::any_cast<int>(c->enter_args[{i}])); }} catch(...) {{ try {{ __ea.push_back(std::any_cast<double>(c->enter_args[{i}])); }} catch(...) {{ __ea.push_back(nullptr); }} }} }}\n"
+                    "        if (c->enter_args.size() > {i}) {{ if (auto* __p = std::any_cast<int>(&c->enter_args[{i}])) __ea.push_back(*__p); else if (auto* __p = std::any_cast<double>(&c->enter_args[{i}])) __ea.push_back(*__p); else __ea.push_back(nullptr); }}\n"
                 ));
             } else {
                 save_body.push_str(&format!(
-                    "        if (c->enter_args.size() > {i}) {{ try {{ __ea.push_back(nlohmann::json(std::any_cast<{t}>(c->enter_args[{i}]))); }} catch(...) {{ __ea.push_back(nullptr); }} }}\n"
+                    "        if (c->enter_args.size() > {i}) {{ if (auto* __p = std::any_cast<{t}>(&c->enter_args[{i}])) __ea.push_back(nlohmann::json(*__p)); else __ea.push_back(nullptr); }}\n"
                 ));
             }
         }
         save_body.push_str("    } else\n");
     }
     save_body.push_str("    {\n");
-    save_body.push_str("        for (const auto& v : c->enter_args) { try { __ea.push_back(std::any_cast<int>(v)); } catch(...) { try { __ea.push_back(std::any_cast<double>(v)); } catch(...) { __ea.push_back(nullptr); } } }\n");
+    save_body.push_str("        for (const auto& v : c->enter_args) { if (auto* __p = std::any_cast<int>(&v)) __ea.push_back(*__p); else if (auto* __p = std::any_cast<double>(&v)) __ea.push_back(*__p); else __ea.push_back(nullptr); }\n");
     save_body.push_str("    }\n");
     save_body.push_str("    }\n");
     save_body.push_str("    __cj[\"enter_args\"] = __ea;\n");
@@ -267,7 +281,13 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
                 ));
             } else {
                 restore_body.push_str(&format!(
-                    "            if (__sa.size() > {i}) {{ try {{ c->state_args.push_back(std::any(__sa[{i}].get<{t}>())); }} catch(...) {{ }} }}\n"
+                    "            if (__sa.size() > {i}) {{\n\
+                     #if defined(__cpp_exceptions) || defined(__EXCEPTIONS)\n\
+                     try {{ c->state_args.push_back(std::any(__sa[{i}].get<{t}>())); }} catch(...) {{ }}\n\
+                     #else\n\
+                     if (!__sa[{i}].is_null()) c->state_args.push_back(std::any(__sa[{i}].get<{t}>()));\n\
+                     #endif\n\
+                     }}\n"
                 ));
             }
         }
@@ -295,7 +315,13 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
                 ));
             } else {
                 restore_body.push_str(&format!(
-                    "            if (__ea.size() > {i}) {{ try {{ c->enter_args.push_back(std::any(__ea[{i}].get<{t}>())); }} catch(...) {{ }} }}\n"
+                    "            if (__ea.size() > {i}) {{\n\
+                     #if defined(__cpp_exceptions) || defined(__EXCEPTIONS)\n\
+                     try {{ c->enter_args.push_back(std::any(__ea[{i}].get<{t}>())); }} catch(...) {{ }}\n\
+                     #else\n\
+                     if (!__ea[{i}].is_null()) c->enter_args.push_back(std::any(__ea[{i}].get<{t}>()));\n\
+                     #endif\n\
+                     }}\n"
                 ));
             }
         }

@@ -939,6 +939,12 @@ impl LanguageBackend for CppBackend {
             // Required for `std::runtime_error` thrown by the RFC-0043
             // casing's E703 gate.
             "#include <stdexcept>".to_string(),
+            // RFC-0049 R3: the `-fno-exceptions` fallback for proper-error
+            // throws (persist's E700 quiescence guard) uses `std::abort`
+            // (<cstdlib>) + `std::fprintf` (<cstdio>) under `#if !defined
+            // exceptions`. Harmless on exception-enabled builds.
+            "#include <cstdlib>".to_string(),
+            "#include <cstdio>".to_string(),
         ]
     }
 

@@ -1240,6 +1240,22 @@ Both `@@:self` and `@@:system` are syntactic prefixes. Bare forms are errors (E6
 
 ## Exception Policy
 
+> Rationale and the full normative rules are in
+> [RFC-0049](rfcs/rfc-0049.md). This section is the summary.
+
+Two principles govern when generated code may use exceptions:
+
+1. **Exceptional vs. expected.** Generated code MAY signal genuine *errors* and
+   broken *preconditions* with the target's idiomatic error mechanism. It MUST
+   NOT use any error mechanism — least of all exceptions — for *expected control
+   flow*, most commonly type discovery (use a non-throwing query like the
+   pointer `std::any_cast<T>(&v)`, `is_number()`, or a type tag).
+2. **One semantic, per-target mechanism, with a fallback.** Where the idiom is a
+   thrown exception and the target can compile exceptions out (notably C++
+   `-fno-exceptions`, required by Godot web), generated code provides a
+   compile-time fallback (`#if defined(__cpp_exceptions)` → `throw`, else
+   `abort`/null-guard) so output stays compilable without an exception runtime.
+
 Frame-generated code maintains its runtime invariants — most importantly the
 context-stack balance `len_after == len_before` around every dispatch — using
 **each language's idiomatic scope-cleanup construct, never a mandatory
@@ -1258,19 +1274,24 @@ generated code compiles under a target's no-exceptions mode wherever one exists*
 GDExtensions (issue #86). Frame event handlers are state transitions and do not
 throw, so there is nothing for a `catch` to handle on the normal path.
 
-Exceptions appear **only in opt-in features whose semantics are inherently
-fallible**, and each is documented as requiring host exception support:
+Remaining exception use is confined to **proper error/precondition signalling in
+opt-in features**, always with the `-fno-exceptions` fallback above:
 
+- **`@@[persist]`** — exception-free for the common path (issue #87). The C++
+  save side probes `std::any` with the non-throwing pointer `any_cast<T>(&v)` (no
+  type-discovery-by-catch). The only throws are the **E700** "system not
+  quiescent" precondition guard and tolerant typed restore, both behind
+  `#if defined(__cpp_exceptions)` with an `abort`/null-guard fallback — so
+  persisted systems compile under `-fno-exceptions`. (nlohmann::json self-switches
+  its internal throws to `abort` there.)
 - **`@@[async]`** — a concurrent second driver raises **E703** (single-driver
   violation), surfaced per backend as a thrown error / rejected future. On C++ the
-  coroutine machinery additionally uses `rethrow_exception`. Async systems are not
-  exception-free.
-- **`@@[persist]`** — the C++ save/load path probes `std::any` slot types, which
-  today uses `try { any_cast } catch`. (Convertible to no-throw pointer-form
-  `any_cast<T>(&v)`; tracked separately.)
+  coroutine machinery additionally uses `rethrow_exception`; async systems are not
+  yet `-fno-exceptions`-clean (tracked in #88).
 
 In short: **exceptions are optional, not the rule.** A plain synchronous,
-non-persisted system generates exception-free code on every backend.
+non-persisted system generates exception-free code on every backend, and a
+persisted one compiles `-fno-exceptions` too.
 
 ---
 

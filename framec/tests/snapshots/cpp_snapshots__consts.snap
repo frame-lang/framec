@@ -9,6 +9,8 @@ expression: "compile_fixture(\"11_consts\", \"cpp\")"
 #include <memory>
 #include <functional>
 #include <stdexcept>
+#include <cstdlib>
+#include <cstdio>
 
 class ConstsFrameEvent {
 public:

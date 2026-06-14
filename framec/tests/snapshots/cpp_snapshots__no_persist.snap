@@ -9,6 +9,8 @@ expression: "compile_fixture(\"12_no_persist\", \"cpp\")"
 #include <memory>
 #include <functional>
 #include <stdexcept>
+#include <cstdlib>
+#include <cstdio>
 
 class NoPersistFrameEvent {
 public:
@@ -227,7 +229,13 @@ public:
     }
 
     std::string snapshot() {
-        if (!_context_stack.empty()) throw std::runtime_error("E700: system not quiescent");
+        if (!_context_stack.empty()) {
+        #if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
+        throw std::runtime_error("E700: system not quiescent");
+        #else
+        std::fprintf(stderr, "E700: system not quiescent\n"); std::abort();
+        #endif
+        }
         std::function<nlohmann::json(const NoPersistCompartment*)> __ser = [&](const NoPersistCompartment* c) -> nlohmann::json {
             if (!c) return nullptr;
             nlohmann::json __cj;
@@ -239,14 +247,14 @@ public:
             nlohmann::json __sa = nlohmann::json::array();
             {
             {
-                for (const auto& v : c->state_args) { try { __sa.push_back(std::any_cast<int>(v)); } catch(...) { try { __sa.push_back(std::any_cast<double>(v)); } catch(...) { __sa.push_back(nullptr); } } }
+                for (const auto& v : c->state_args) { if (auto* __p = std::any_cast<int>(&v)) __sa.push_back(*__p); else if (auto* __p = std::any_cast<double>(&v)) __sa.push_back(*__p); else __sa.push_back(nullptr); }
             }
             }
             __cj["state_args"] = __sa;
             nlohmann::json __ea = nlohmann::json::array();
             {
             {
-                for (const auto& v : c->enter_args) { try { __ea.push_back(std::any_cast<int>(v)); } catch(...) { try { __ea.push_back(std::any_cast<double>(v)); } catch(...) { __ea.push_back(nullptr); } } }
+                for (const auto& v : c->enter_args) { if (auto* __p = std::any_cast<int>(&v)) __ea.push_back(*__p); else if (auto* __p = std::any_cast<double>(&v)) __ea.push_back(*__p); else __ea.push_back(nullptr); }
             }
             }
             __cj["enter_args"] = __ea;

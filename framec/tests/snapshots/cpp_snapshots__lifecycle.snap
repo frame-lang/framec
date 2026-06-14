@@ -9,6 +9,8 @@ expression: "compile_fixture(\"08_lifecycle\", \"cpp\")"
 #include <memory>
 #include <functional>
 #include <stdexcept>
+#include <cstdlib>
+#include <cstdio>
 
 class LifecycleFrameEvent {
 public:

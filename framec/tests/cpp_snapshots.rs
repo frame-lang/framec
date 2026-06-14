@@ -226,3 +226,80 @@ fn issue86_cpp_dispatch_is_exception_free() {
         compile_code
     );
 }
+
+/// #87 / RFC-0049 — a PERSISTED C++ system must also compile under
+/// `-fno-exceptions`, so persisted GDExtensions work on Godot web. Two framec
+/// exception uses lived in the persist path: the `any_cast` `try/catch` type
+/// PROBE (RFC-0049 R1: a query misusing exceptions as control flow) and the
+/// E700 quiescence `throw` (R2: a proper precondition error). The probe is now
+/// the non-throwing pointer `any_cast<T>(&v)`; the E700 throw and the tolerant
+/// typed restore keep `throw`/`try` only behind
+/// `#if defined(__cpp_exceptions)`, with an `abort`/null-guard fallback (R3).
+///
+/// 1. Token assertion (always runs): the save path uses the pointer-form
+///    `any_cast<...>(&` (proves the R1 probe was de-thrown).
+/// 2. Compile gate (skip if no C++ compiler / no nlohmann): the persist fixture
+///    — which self-includes `<nlohmann/json.hpp>` — compiles under
+///    `-std=c++17 -fno-exceptions`. nlohmann self-switches its own throws to
+///    `abort` under `-fno-exceptions`, so the only thing that can fail this is a
+///    residual UNGUARDED framec `try`/`catch`/`throw` in the persist codegen.
+#[test]
+fn issue87_persist_compiles_no_exceptions() {
+    use std::process::Command;
+
+    let code = compile_fixture("18_persist_noexcept", "cpp");
+
+    // (1) Token assertion: the save-side probe is the non-throwing pointer form.
+    assert!(
+        code.contains("any_cast<int>(&") || code.contains("any_cast<float>(&"),
+        "#87: persist save must probe std::any with the non-throwing pointer \
+         any_cast<T>(&v) (RFC-0049 R1), but no pointer-form cast was emitted.\n\
+         --- generated source ---\n{code}"
+    );
+
+    // (2) Compile gate under -fno-exceptions.
+    let cxx = match common::find_tool("g++")
+        .or_else(|| common::find_tool("clang++"))
+        .or_else(|| common::find_tool("c++"))
+    {
+        Some(p) => p,
+        None => {
+            eprintln!("#87 -fno-exceptions persist gate skipped: no C++ compiler on PATH");
+            return;
+        }
+    };
+    // nlohmann is a system dep (the matrix's `nlohmann-json3-dev`); skip cleanly
+    // where it isn't installed rather than fail on an unrelated missing header.
+    let probe = tempfile::tempdir().expect("tempdir");
+    let probe_src = probe.path().join("probe.cpp");
+    std::fs::write(
+        &probe_src,
+        "#include <nlohmann/json.hpp>\nint main(){ nlohmann::json j; j[\"x\"]=1; return 0; }\n",
+    )
+    .expect("write probe");
+    let probe_ok = Command::new(&cxx)
+        .args(["-std=c++17", "-fsyntax-only"])
+        .arg(&probe_src)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if !probe_ok {
+        eprintln!("#87 -fno-exceptions persist gate skipped: nlohmann/json.hpp not available");
+        return;
+    }
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("18_persist_noexcept.cpp");
+    std::fs::write(&path, &code).expect("write tempfile");
+    let out = Command::new(&cxx)
+        .args(["-std=c++17", "-fno-exceptions", "-fsyntax-only"])
+        .arg(&path)
+        .output()
+        .expect("c++ process");
+    assert!(
+        out.status.success(),
+        "#87: persisted C++ does not compile under -fno-exceptions (residual unguarded exception in the persist codegen).\n--- stderr ---\n{}\n--- generated source ---\n{}",
+        String::from_utf8_lossy(&out.stderr),
+        code
+    );
+}
