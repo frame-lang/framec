@@ -9,6 +9,8 @@ expression: "compile_fixture(\"01_linear_fsm\", \"cpp\")"
 #include <memory>
 #include <functional>
 #include <stdexcept>
+#include <cstdlib>
+#include <cstdio>
 
 class LinearFsmFrameEvent {
 public:

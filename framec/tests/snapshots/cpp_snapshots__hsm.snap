@@ -9,6 +9,8 @@ expression: "compile_fixture(\"02_hsm\", \"cpp\")"
 #include <memory>
 #include <functional>
 #include <stdexcept>
+#include <cstdlib>
+#include <cstdio>
 
 class MiniHsmFrameEvent {
 public:

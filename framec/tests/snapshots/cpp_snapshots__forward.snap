@@ -9,6 +9,8 @@ expression: "compile_fixture(\"07_forward\", \"cpp\")"
 #include <memory>
 #include <functional>
 #include <stdexcept>
+#include <cstdlib>
+#include <cstdio>
 
 class ForwardFrameEvent {
 public:

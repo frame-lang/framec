@@ -9,6 +9,8 @@ expression: "compile_fixture(\"06_selfcall\", \"cpp\")"
 #include <memory>
 #include <functional>
 #include <stdexcept>
+#include <cstdlib>
+#include <cstdio>
 
 class SelfCallFrameEvent {
 public:

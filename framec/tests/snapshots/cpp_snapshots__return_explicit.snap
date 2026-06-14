@@ -9,6 +9,8 @@ expression: "compile_fixture(\"09_return_explicit\", \"cpp\")"
 #include <memory>
 #include <functional>
 #include <stdexcept>
+#include <cstdlib>
+#include <cstdio>
 
 class ReturnExplicitFrameEvent {
 public:
