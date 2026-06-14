@@ -165,15 +165,10 @@ public:
         ReturnExplicitFrameEvent __e("decide", std::vector<std::any>{score});
         ReturnExplicitFrameContext __ctx(std::move(__e), std::any(std::string()));
         _context_stack.push_back(std::move(__ctx));
-        try {
-            __kernel(_context_stack.back()._event);
-            auto __result = std::any_cast<std::string>(std::move(_context_stack.back()._return));
-            _context_stack.pop_back();
-            return __result;
-        } catch (...) {
-            _context_stack.pop_back();
-            throw;
-        }
+        struct __CtxGuard { decltype(_context_stack)& s; ~__CtxGuard() { s.pop_back(); } } __ctx_guard{_context_stack};
+        __kernel(_context_stack.back()._event);
+        auto __result = std::any_cast<std::string>(std::move(_context_stack.back()._return));
+        return __result;
 
     }
 };

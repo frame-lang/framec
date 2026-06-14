@@ -190,13 +190,8 @@ public:
         NoPersistFrameEvent __e("bump");
         NoPersistFrameContext __ctx(std::move(__e));
         _context_stack.push_back(std::move(__ctx));
-        try {
-            __kernel(_context_stack.back()._event);
-            _context_stack.pop_back();
-        } catch (...) {
-            _context_stack.pop_back();
-            throw;
-        }
+        struct __CtxGuard { decltype(_context_stack)& s; ~__CtxGuard() { s.pop_back(); } } __ctx_guard{_context_stack};
+        __kernel(_context_stack.back()._event);
 
     }
 
@@ -204,13 +199,8 @@ public:
         NoPersistFrameEvent __e("set_cache", std::vector<std::any>{v});
         NoPersistFrameContext __ctx(std::move(__e));
         _context_stack.push_back(std::move(__ctx));
-        try {
-            __kernel(_context_stack.back()._event);
-            _context_stack.pop_back();
-        } catch (...) {
-            _context_stack.pop_back();
-            throw;
-        }
+        struct __CtxGuard { decltype(_context_stack)& s; ~__CtxGuard() { s.pop_back(); } } __ctx_guard{_context_stack};
+        __kernel(_context_stack.back()._event);
 
     }
 
@@ -218,15 +208,10 @@ public:
         NoPersistFrameEvent __e("get_count");
         NoPersistFrameContext __ctx(std::move(__e), std::any(int()));
         _context_stack.push_back(std::move(__ctx));
-        try {
-            __kernel(_context_stack.back()._event);
-            auto __result = std::any_cast<int>(std::move(_context_stack.back()._return));
-            _context_stack.pop_back();
-            return __result;
-        } catch (...) {
-            _context_stack.pop_back();
-            throw;
-        }
+        struct __CtxGuard { decltype(_context_stack)& s; ~__CtxGuard() { s.pop_back(); } } __ctx_guard{_context_stack};
+        __kernel(_context_stack.back()._event);
+        auto __result = std::any_cast<int>(std::move(_context_stack.back()._return));
+        return __result;
 
     }
 
@@ -234,15 +219,10 @@ public:
         NoPersistFrameEvent __e("get_cache");
         NoPersistFrameContext __ctx(std::move(__e), std::any(int()));
         _context_stack.push_back(std::move(__ctx));
-        try {
-            __kernel(_context_stack.back()._event);
-            auto __result = std::any_cast<int>(std::move(_context_stack.back()._return));
-            _context_stack.pop_back();
-            return __result;
-        } catch (...) {
-            _context_stack.pop_back();
-            throw;
-        }
+        struct __CtxGuard { decltype(_context_stack)& s; ~__CtxGuard() { s.pop_back(); } } __ctx_guard{_context_stack};
+        __kernel(_context_stack.back()._event);
+        auto __result = std::any_cast<int>(std::move(_context_stack.back()._return));
+        return __result;
 
     }
 

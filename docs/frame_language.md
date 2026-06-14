@@ -29,6 +29,7 @@ Complete reference for the Frame language. For a tutorial introduction, see [Get
 - [System Instantiation](#system-instantiation)
 - [Versioning & Stability](#versioning--stability)
 - [Token Summary](#token-summary)
+- [Exception Policy](#exception-policy)
 - [Error Codes](#error-codes)
 - [Complete Example](#complete-example)
 - [Appendix: Frame Syntax Taxonomy](#appendix-frame-syntax-taxonomy)
@@ -1234,6 +1235,42 @@ Both `@@:self` and `@@:system` are syntactic prefixes. Bare forms are errors (E6
 |-------|---------|
 | `@@:self.method()` | Self interface call (reentrant) |
 | `@@:system.state.name` | Current state name (read-only) |
+
+---
+
+## Exception Policy
+
+Frame-generated code maintains its runtime invariants — most importantly the
+context-stack balance `len_after == len_before` around every dispatch — using
+**each language's idiomatic scope-cleanup construct, never a mandatory
+catch-and-rethrow**:
+
+| Family | Backends | Cleanup |
+|--------|----------|---------|
+| RAII (destructor / `Drop`) | C++, Rust | scope-guard pops on scope exit |
+| Scope-exit defer | Go | `defer { pop }` |
+| `try`/`finally` (always present) | Java, C#, Kotlin, Dart, TypeScript, JavaScript, PHP, Python, Ruby | `finally` pops |
+| Unconditional pop | Swift, C, GDScript | single post-dispatch pop (exception-free) |
+
+Because the cleanup never depends on a thrown-and-caught exception, **core
+generated code compiles under a target's no-exceptions mode wherever one exists**
+— notably C++ `-fno-exceptions`, which Godot's web (wasm) engine requires for
+GDExtensions (issue #86). Frame event handlers are state transitions and do not
+throw, so there is nothing for a `catch` to handle on the normal path.
+
+Exceptions appear **only in opt-in features whose semantics are inherently
+fallible**, and each is documented as requiring host exception support:
+
+- **`@@[async]`** — a concurrent second driver raises **E703** (single-driver
+  violation), surfaced per backend as a thrown error / rejected future. On C++ the
+  coroutine machinery additionally uses `rethrow_exception`. Async systems are not
+  exception-free.
+- **`@@[persist]`** — the C++ save/load path probes `std::any` slot types, which
+  today uses `try { any_cast } catch`. (Convertible to no-throw pointer-form
+  `any_cast<T>(&v)`; tracked separately.)
+
+In short: **exceptions are optional, not the rule.** A plain synchronous,
+non-persisted system generates exception-free code on every backend.
 
 ---
 

@@ -201,13 +201,8 @@ public:
         PushPopFrameEvent __e("ping");
         PushPopFrameContext __ctx(std::move(__e));
         _context_stack.push_back(std::move(__ctx));
-        try {
-            __kernel(_context_stack.back()._event);
-            _context_stack.pop_back();
-        } catch (...) {
-            _context_stack.pop_back();
-            throw;
-        }
+        struct __CtxGuard { decltype(_context_stack)& s; ~__CtxGuard() { s.pop_back(); } } __ctx_guard{_context_stack};
+        __kernel(_context_stack.back()._event);
 
     }
 
@@ -215,13 +210,8 @@ public:
         PushPopFrameEvent __e("nest");
         PushPopFrameContext __ctx(std::move(__e));
         _context_stack.push_back(std::move(__ctx));
-        try {
-            __kernel(_context_stack.back()._event);
-            _context_stack.pop_back();
-        } catch (...) {
-            _context_stack.pop_back();
-            throw;
-        }
+        struct __CtxGuard { decltype(_context_stack)& s; ~__CtxGuard() { s.pop_back(); } } __ctx_guard{_context_stack};
+        __kernel(_context_stack.back()._event);
 
     }
 
@@ -229,13 +219,8 @@ public:
         PushPopFrameEvent __e("unnest");
         PushPopFrameContext __ctx(std::move(__e));
         _context_stack.push_back(std::move(__ctx));
-        try {
-            __kernel(_context_stack.back()._event);
-            _context_stack.pop_back();
-        } catch (...) {
-            _context_stack.pop_back();
-            throw;
-        }
+        struct __CtxGuard { decltype(_context_stack)& s; ~__CtxGuard() { s.pop_back(); } } __ctx_guard{_context_stack};
+        __kernel(_context_stack.back()._event);
 
     }
 
@@ -243,13 +228,8 @@ public:
         PushPopFrameEvent __e("leaf");
         PushPopFrameContext __ctx(std::move(__e));
         _context_stack.push_back(std::move(__ctx));
-        try {
-            __kernel(_context_stack.back()._event);
-            _context_stack.pop_back();
-        } catch (...) {
-            _context_stack.pop_back();
-            throw;
-        }
+        struct __CtxGuard { decltype(_context_stack)& s; ~__CtxGuard() { s.pop_back(); } } __ctx_guard{_context_stack};
+        __kernel(_context_stack.back()._event);
 
     }
 };
