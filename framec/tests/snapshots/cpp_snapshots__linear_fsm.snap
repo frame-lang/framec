@@ -199,13 +199,8 @@ public:
         LinearFsmFrameEvent __e("start");
         LinearFsmFrameContext __ctx(std::move(__e));
         _context_stack.push_back(std::move(__ctx));
-        try {
-            __kernel(_context_stack.back()._event);
-            _context_stack.pop_back();
-        } catch (...) {
-            _context_stack.pop_back();
-            throw;
-        }
+        struct __CtxGuard { decltype(_context_stack)& s; ~__CtxGuard() { s.pop_back(); } } __ctx_guard{_context_stack};
+        __kernel(_context_stack.back()._event);
 
     }
 
@@ -213,13 +208,8 @@ public:
         LinearFsmFrameEvent __e("progress", std::vector<std::any>{amount});
         LinearFsmFrameContext __ctx(std::move(__e));
         _context_stack.push_back(std::move(__ctx));
-        try {
-            __kernel(_context_stack.back()._event);
-            _context_stack.pop_back();
-        } catch (...) {
-            _context_stack.pop_back();
-            throw;
-        }
+        struct __CtxGuard { decltype(_context_stack)& s; ~__CtxGuard() { s.pop_back(); } } __ctx_guard{_context_stack};
+        __kernel(_context_stack.back()._event);
 
     }
 
@@ -227,13 +217,8 @@ public:
         LinearFsmFrameEvent __e("finish");
         LinearFsmFrameContext __ctx(std::move(__e));
         _context_stack.push_back(std::move(__ctx));
-        try {
-            __kernel(_context_stack.back()._event);
-            _context_stack.pop_back();
-        } catch (...) {
-            _context_stack.pop_back();
-            throw;
-        }
+        struct __CtxGuard { decltype(_context_stack)& s; ~__CtxGuard() { s.pop_back(); } } __ctx_guard{_context_stack};
+        __kernel(_context_stack.back()._event);
 
     }
 };

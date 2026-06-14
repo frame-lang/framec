@@ -526,32 +526,37 @@ return __result;"#,
                 }
 
                 code.push_str("_context_stack.push_back(std::move(__ctx));\n");
-                // D-PY-1: pop on both paths so a throwing handler can't leak.
-                // try/catch is valid inside a coroutine; `throw;` re-propagates
-                // through the promise. Async: await the kernel so nested
-                // co_awaits work; sync: plain call.
-                code.push_str("try {\n");
+                // Exception Policy (#86, RFC-0044): the context-stack balance
+                // invariant `len_after == len_before` is maintained by an RAII
+                // scope-guard, NOT a catch-and-rethrow. The guard's destructor
+                // pops on every scope exit — normal return AND (if exceptions
+                // are enabled) unwinding — so the previous `try/catch(...){ pop;
+                // throw; }` is unnecessary. Frame handlers are state transitions
+                // and never throw, so that catch path was dead; emitting it
+                // forced a hard link-time dependency on the C++ exception
+                // runtime, which Godot's web (wasm) engine is built WITHOUT
+                // (-fno-exceptions). The guard keeps the same safety while making
+                // framec C++ output compile and link with exceptions disabled.
+                // A method-local struct typed via `decltype(_context_stack)&`
+                // is ODR-safe and needs no shared preamble.
+                code.push_str(
+                    "struct __CtxGuard { decltype(_context_stack)& s; ~__CtxGuard() { s.pop_back(); } } __ctx_guard{_context_stack};\n",
+                );
                 if system_is_async {
-                    code.push_str("    co_await __kernel(_context_stack.back()._event);\n");
+                    code.push_str("co_await __kernel(_context_stack.back()._event);\n");
                 } else {
-                    code.push_str("    __kernel(_context_stack.back()._event);\n");
+                    code.push_str("__kernel(_context_stack.back()._event);\n");
                 }
 
+                // __result is captured while the entry is still on the stack;
+                // __ctx_guard pops AFTER the (co_)return value is constructed.
                 let ret_kw = if system_is_async { "co_return" } else { "return" };
                 if returns_value {
-                    code.push_str(&format!("    auto __result = std::any_cast<{}>(std::move(_context_stack.back()._return));\n", return_type_str));
-                    code.push_str("    _context_stack.pop_back();\n");
-                    code.push_str(&format!("    {} __result;\n", ret_kw));
+                    code.push_str(&format!("auto __result = std::any_cast<{}>(std::move(_context_stack.back()._return));\n", return_type_str));
+                    code.push_str(&format!("{} __result;", ret_kw));
                 } else if system_is_async {
-                    code.push_str("    _context_stack.pop_back();\n");
-                    code.push_str("    co_return;\n");
-                } else {
-                    code.push_str("    _context_stack.pop_back();\n");
+                    code.push_str("co_return;");
                 }
-                code.push_str("} catch (...) {\n");
-                code.push_str("    _context_stack.pop_back();\n");
-                code.push_str("    throw;\n");
-                code.push_str("}");
 
                 CodegenNode::NativeBlock { code, span: None }
             }
