@@ -153,17 +153,17 @@ public class SelfCall {
         let __e = SelfCallFrameEvent(message: "kick", parameters: [])
         let __ctx = SelfCallFrameContext(event: __e)
         _context_stack.append(__ctx)
+        defer { _context_stack.removeLast() }
         __kernel(_context_stack[_context_stack.count - 1]._event)
-        _context_stack.removeLast()
     }
 
     public func report() -> Int {
         let __e = SelfCallFrameEvent(message: "report", parameters: [])
         let __ctx = SelfCallFrameContext(event: __e, defaultReturn: 0)
         _context_stack.append(__ctx)
+        defer { _context_stack.removeLast() }
         __kernel(_context_stack[_context_stack.count - 1]._event)
         let __result = _context_stack[_context_stack.count - 1]._return as! Int
-        _context_stack.removeLast()
         return __result
     }
 
