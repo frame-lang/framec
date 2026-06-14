@@ -257,6 +257,14 @@ static inline double NoPersist_unpack_double(void* p) {
 }
 
 // ============================================================================
+#define NoPersist_ARG_IS_FLOAT(v) _Generic((v), double:1, float:1, long double:1, default:0)
+#define NoPersist_ARG_DBL(v) _Generic((v), double:(v), float:(v), long double:(double)0, default:(double)0)
+#define NoPersist_ARG_WORD(v) _Generic((v), double:(void*)0, float:(void*)0, long double:(void*)0, default:(void*)(intptr_t)(v))
+#define NoPersist_ARG_PUSH(vec, v) ( NoPersist_ARG_IS_FLOAT(v) \
+    ? NoPersist_FrameVec_push_owned((vec), NoPersist_pack_double(NoPersist_ARG_DBL(v))) \
+    : NoPersist_FrameVec_push((vec), NoPersist_ARG_WORD(v)) )
+
+// ============================================================================
 // NoPersist_persist_pack_*  /  NoPersist_persist_unpack_*  — persist dispatcher
 // ============================================================================
 

@@ -257,6 +257,14 @@ static inline double LifecycleArgs_unpack_double(void* p) {
 }
 
 // ============================================================================
+#define LifecycleArgs_ARG_IS_FLOAT(v) _Generic((v), double:1, float:1, long double:1, default:0)
+#define LifecycleArgs_ARG_DBL(v) _Generic((v), double:(v), float:(v), long double:(double)0, default:(double)0)
+#define LifecycleArgs_ARG_WORD(v) _Generic((v), double:(void*)0, float:(void*)0, long double:(void*)0, default:(void*)(intptr_t)(v))
+#define LifecycleArgs_ARG_PUSH(vec, v) ( LifecycleArgs_ARG_IS_FLOAT(v) \
+    ? LifecycleArgs_FrameVec_push_owned((vec), LifecycleArgs_pack_double(LifecycleArgs_ARG_DBL(v))) \
+    : LifecycleArgs_FrameVec_push((vec), LifecycleArgs_ARG_WORD(v)) )
+
+// ============================================================================
 // LifecycleArgs_FrameEvent - Event routing object
 // ============================================================================
 

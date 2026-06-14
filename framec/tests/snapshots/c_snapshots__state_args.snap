@@ -257,6 +257,14 @@ static inline double StateArgs_unpack_double(void* p) {
 }
 
 // ============================================================================
+#define StateArgs_ARG_IS_FLOAT(v) _Generic((v), double:1, float:1, long double:1, default:0)
+#define StateArgs_ARG_DBL(v) _Generic((v), double:(v), float:(v), long double:(double)0, default:(double)0)
+#define StateArgs_ARG_WORD(v) _Generic((v), double:(void*)0, float:(void*)0, long double:(void*)0, default:(void*)(intptr_t)(v))
+#define StateArgs_ARG_PUSH(vec, v) ( StateArgs_ARG_IS_FLOAT(v) \
+    ? StateArgs_FrameVec_push_owned((vec), StateArgs_pack_double(StateArgs_ARG_DBL(v))) \
+    : StateArgs_FrameVec_push((vec), StateArgs_ARG_WORD(v)) )
+
+// ============================================================================
 // StateArgs_FrameEvent - Event routing object
 // ============================================================================
 

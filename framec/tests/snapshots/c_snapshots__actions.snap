@@ -257,6 +257,14 @@ static inline double Actions_unpack_double(void* p) {
 }
 
 // ============================================================================
+#define Actions_ARG_IS_FLOAT(v) _Generic((v), double:1, float:1, long double:1, default:0)
+#define Actions_ARG_DBL(v) _Generic((v), double:(v), float:(v), long double:(double)0, default:(double)0)
+#define Actions_ARG_WORD(v) _Generic((v), double:(void*)0, float:(void*)0, long double:(void*)0, default:(void*)(intptr_t)(v))
+#define Actions_ARG_PUSH(vec, v) ( Actions_ARG_IS_FLOAT(v) \
+    ? Actions_FrameVec_push_owned((vec), Actions_pack_double(Actions_ARG_DBL(v))) \
+    : Actions_FrameVec_push((vec), Actions_ARG_WORD(v)) )
+
+// ============================================================================
 // Actions_FrameEvent - Event routing object
 // ============================================================================
 

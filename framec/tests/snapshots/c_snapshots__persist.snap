@@ -257,6 +257,14 @@ static inline double Counter_unpack_double(void* p) {
 }
 
 // ============================================================================
+#define Counter_ARG_IS_FLOAT(v) _Generic((v), double:1, float:1, long double:1, default:0)
+#define Counter_ARG_DBL(v) _Generic((v), double:(v), float:(v), long double:(double)0, default:(double)0)
+#define Counter_ARG_WORD(v) _Generic((v), double:(void*)0, float:(void*)0, long double:(void*)0, default:(void*)(intptr_t)(v))
+#define Counter_ARG_PUSH(vec, v) ( Counter_ARG_IS_FLOAT(v) \
+    ? Counter_FrameVec_push_owned((vec), Counter_pack_double(Counter_ARG_DBL(v))) \
+    : Counter_FrameVec_push((vec), Counter_ARG_WORD(v)) )
+
+// ============================================================================
 // Counter_persist_pack_*  /  Counter_persist_unpack_*  — persist dispatcher
 // ============================================================================
 
