@@ -103,7 +103,14 @@ pub(super) fn generate_pop_transition(
                 }
                 TargetLanguage::Rust => {}
                 TargetLanguage::C => {
-                    code.push_str(&format!("{}{}_FrameVec_push(self->__compartment->exit_args, (void*)(intptr_t)({}));\n", indent, ctx.system_name, value));
+                    // Value-dispatched push (#83, RFC-0048): floating-point
+                    // exit-args heap-box, everything else takes the int/ptr
+                    // slot — matching the `<$` read side without a declared-
+                    // type lookup. See `{sys}_ARG_PUSH` in runtime/c.rs.
+                    code.push_str(&format!(
+                        "{}{}_ARG_PUSH(self->__compartment->exit_args, {});\n",
+                        indent, ctx.system_name, value
+                    ));
                 }
                 TargetLanguage::Cpp => {
                     code.push_str(&format!(
@@ -233,14 +240,15 @@ pub(super) fn generate_pop_transition(
                 TargetLanguage::Rust => {}
                 TargetLanguage::C => {
                     // The popped target state is runtime-determined, so the
-                    // declared enter-param type is statically unknowable —
-                    // this push keeps the historical intptr_t fallback.
-                    // Float/double pop-args are therefore UNSUPPORTED on C
-                    // (the typed read would deref a non-box, #81): tracked
-                    // as a follow-up; do not silently route through
-                    // pack_double here without a type to key on.
+                    // declared enter-param type is statically unknowable.
+                    // `{sys}_ARG_PUSH` (#83, RFC-0048) dispatches on the
+                    // VALUE's static C type via `_Generic`: floating-point
+                    // values heap-box (owned, like the typed marshal),
+                    // everything else takes the intptr_t/pointer slot — so a
+                    // float pop-arg round-trips through the `$>` read instead
+                    // of being truncated by the old intptr_t fallback.
                     code.push_str(&format!(
-                        "{}{}_FrameVec_push(__saved->enter_args, (void*)(intptr_t)({}));\n",
+                        "{}{}_ARG_PUSH(__saved->enter_args, {});\n",
                         indent, ctx.system_name, value
                     ));
                 }

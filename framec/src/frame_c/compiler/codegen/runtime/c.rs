@@ -467,6 +467,45 @@ fn generate_c_runtime_types(system: &SystemAst) -> String {
     code.push_str("}\n\n");
 
     // ============================================================================
+    // Type-blind argument push (#83, RFC-0048)
+    // ============================================================================
+    // At a `pop$` site the popped target state is runtime-determined, so the
+    // declared `$>` / `<$` parameter type is statically unknowable — unlike a
+    // normal `-> $State(args)` transition, where framec looks the type up and
+    // marshals each value accordingly. A C `void*` slot is not self-describing
+    // (it carries no type tag), so a type-blind push can't pick the right
+    // representation: a `double` MUST heap-box (#81), everything else takes the
+    // `intptr_t`/pointer slot. `_Generic` resolves this by dispatching on the
+    // VALUE's static C type instead of the (unknown) declared type — the value
+    // and the declared param agree in a correct program, so the representation
+    // matches what the `$>`/`<$` read side expects. Floating-point values box
+    // (owned, so the vec frees/deep-copies them); everything else is stored
+    // directly. Every `_Generic` branch is a valid expression for ANY argument
+    // type (the float branches use the raw value; the default casts through
+    // `intptr_t`, valid for both ints and pointers), and the controlling
+    // expression is never evaluated — so the argument is evaluated exactly once,
+    // in the selected branch of the taken ternary arm.
+    code.push_str(&format!(
+        "// ============================================================================\n"
+    ));
+    code.push_str(&format!(
+        "#define {sys}_ARG_IS_FLOAT(v) _Generic((v), double:1, float:1, long double:1, default:0)\n",
+        sys = sys
+    ));
+    code.push_str(&format!(
+        "#define {sys}_ARG_DBL(v) _Generic((v), double:(v), float:(v), long double:(double)0, default:(double)0)\n",
+        sys = sys
+    ));
+    code.push_str(&format!(
+        "#define {sys}_ARG_WORD(v) _Generic((v), double:(void*)0, float:(void*)0, long double:(void*)0, default:(void*)(intptr_t)(v))\n",
+        sys = sys
+    ));
+    code.push_str(&format!(
+        "#define {sys}_ARG_PUSH(vec, v) ( {sys}_ARG_IS_FLOAT(v) \\\n    ? {sys}_FrameVec_push_owned((vec), {sys}_pack_double({sys}_ARG_DBL(v))) \\\n    : {sys}_FrameVec_push((vec), {sys}_ARG_WORD(v)) )\n\n",
+        sys = sys
+    ));
+
+    // ============================================================================
     // Persist dispatcher — type-ignorant codegen
     // ============================================================================
     // framec mangles each field's declared C type to a symbol suffix

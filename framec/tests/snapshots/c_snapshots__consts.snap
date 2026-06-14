@@ -257,6 +257,14 @@ static inline double Consts_unpack_double(void* p) {
 }
 
 // ============================================================================
+#define Consts_ARG_IS_FLOAT(v) _Generic((v), double:1, float:1, long double:1, default:0)
+#define Consts_ARG_DBL(v) _Generic((v), double:(v), float:(v), long double:(double)0, default:(double)0)
+#define Consts_ARG_WORD(v) _Generic((v), double:(void*)0, float:(void*)0, long double:(void*)0, default:(void*)(intptr_t)(v))
+#define Consts_ARG_PUSH(vec, v) ( Consts_ARG_IS_FLOAT(v) \
+    ? Consts_FrameVec_push_owned((vec), Consts_pack_double(Consts_ARG_DBL(v))) \
+    : Consts_FrameVec_push((vec), Consts_ARG_WORD(v)) )
+
+// ============================================================================
 // Consts_FrameEvent - Event routing object
 // ============================================================================
 

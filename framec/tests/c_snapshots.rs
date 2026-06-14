@@ -210,3 +210,99 @@ fn issue81_float_roundtrip_runs_wasm32() {
         String::from_utf8_lossy(&run.stderr)
     );
 }
+
+/// RUNTIME gate for the C backend (#83 / RFC-0048) — float args on a `pop$`
+/// transition, compiled AND executed. At a `pop$` the popped target state is
+/// runtime-determined, so the declared `$>`/`<$` param type is statically
+/// unknown; the old codegen pushed pop-args via `(void*)(intptr_t)(value)`,
+/// which truncates a float and leaves the typed reader dereferencing a non-box
+/// (crash). `{sys}_ARG_PUSH` now dispatches on the value's static type via
+/// `_Generic`. The fixture exercises BOTH type-blind sites (enter-args and
+/// exit-args on `pop$`) and asserts the values; only execution catches this
+/// class. Compiled `-fno-exceptions` so the fix stays Godot-web-clean (#86).
+///
+/// Skipped (not failed) when no C compiler is on PATH.
+#[test]
+fn issue83_pop_float_args_runs() {
+    use std::process::Command;
+    let cc = match common::find_tool("gcc")
+        .or_else(|| common::find_tool("clang"))
+        .or_else(|| common::find_tool("cc"))
+    {
+        Some(p) => p,
+        None => {
+            eprintln!("#83 c runtime gate skipped: no C compiler on PATH");
+            return;
+        }
+    };
+    let code = compile_fixture("18_pop_float_args", "c");
+    let dir = tempfile::tempdir().expect("tempdir");
+    let src = dir.path().join("18_pop_float_args.c");
+    let bin = dir.path().join("rt");
+    std::fs::write(&src, &code).expect("write tempfile");
+    let build = Command::new(&cc)
+        .args(["-std=c11", "-fno-exceptions", "-o"])
+        .arg(&bin)
+        .arg(&src)
+        .output()
+        .expect("cc process");
+    assert!(
+        build.status.success(),
+        "#83: pop-float-args fixture failed to compile.\n--- stderr ---\n{}\n--- generated source ---\n{}",
+        String::from_utf8_lossy(&build.stderr),
+        code
+    );
+    let run = Command::new(&bin).output().expect("run process");
+    assert!(
+        run.status.success(),
+        "#83: pop-float-args fixture FAILED AT RUNTIME (float pop-arg truncated / non-box deref).\n--- stdout ---\n{}\n--- stderr ---\n{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+}
+
+/// wasm32 RUNTIME gate for #83 — same `pop$` float-args fixture under
+/// Emscripten (32-bit pointers) + node, the configuration the old `void*`
+/// bit-pun corrupted. Skipped when emcc or node is absent (RFC-0034).
+#[test]
+fn issue83_pop_float_args_runs_wasm32() {
+    use std::process::Command;
+    let emcc = match common::find_tool("emcc") {
+        Some(p) => p,
+        None => {
+            eprintln!("#83 wasm32 runtime gate skipped: emcc not on PATH");
+            return;
+        }
+    };
+    let node = match common::find_tool("node") {
+        Some(p) => p,
+        None => {
+            eprintln!("#83 wasm32 runtime gate skipped: node not on PATH");
+            return;
+        }
+    };
+    let code = compile_fixture("18_pop_float_args", "c");
+    let dir = tempfile::tempdir().expect("tempdir");
+    let src = dir.path().join("18_pop_float_args.c");
+    let js = dir.path().join("rt.js");
+    std::fs::write(&src, &code).expect("write tempfile");
+    let build = Command::new(&emcc)
+        .args(["-std=c11", "-o"])
+        .arg(&js)
+        .arg(&src)
+        .output()
+        .expect("emcc process");
+    assert!(
+        build.status.success(),
+        "#83: pop-float-args fixture failed to compile for wasm32.\n--- stderr ---\n{}\n--- generated source ---\n{}",
+        String::from_utf8_lossy(&build.stderr),
+        code
+    );
+    let run = Command::new(&node).arg(&js).output().expect("node process");
+    assert!(
+        run.status.success(),
+        "#83: pop-float-args fixture FAILED AT RUNTIME ON wasm32.\n--- stdout ---\n{}\n--- stderr ---\n{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+}

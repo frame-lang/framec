@@ -257,6 +257,14 @@ static inline double LinearFsm_unpack_double(void* p) {
 }
 
 // ============================================================================
+#define LinearFsm_ARG_IS_FLOAT(v) _Generic((v), double:1, float:1, long double:1, default:0)
+#define LinearFsm_ARG_DBL(v) _Generic((v), double:(v), float:(v), long double:(double)0, default:(double)0)
+#define LinearFsm_ARG_WORD(v) _Generic((v), double:(void*)0, float:(void*)0, long double:(void*)0, default:(void*)(intptr_t)(v))
+#define LinearFsm_ARG_PUSH(vec, v) ( LinearFsm_ARG_IS_FLOAT(v) \
+    ? LinearFsm_FrameVec_push_owned((vec), LinearFsm_pack_double(LinearFsm_ARG_DBL(v))) \
+    : LinearFsm_FrameVec_push((vec), LinearFsm_ARG_WORD(v)) )
+
+// ============================================================================
 // LinearFsm_FrameEvent - Event routing object
 // ============================================================================
 
