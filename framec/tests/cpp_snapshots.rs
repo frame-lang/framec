@@ -379,3 +379,29 @@ fn issue88_async_compiles_no_exceptions() {
         code
     );
 }
+
+/// #94 — the C++ persist codegen uses `nlohmann::json` throughout save/restore,
+/// so the generated file MUST `#include <nlohmann/json.hpp>` or persisted
+/// systems don't compile standalone. The include is emitted only for persisted
+/// systems (it's a hard dependency non-persisted systems shouldn't take).
+/// Token-only (no compiler needed) — the standalone `-fno-exceptions` compile is
+/// covered by `issue87_persist_compiles_no_exceptions` (fixture 18 deliberately
+/// no longer self-includes nlohmann).
+#[test]
+fn issue94_persist_emits_nlohmann_include() {
+    // Persisted system → include present.
+    let persist = compile_fixture("18_persist_noexcept", "cpp");
+    assert!(
+        persist.contains("#include <nlohmann/json.hpp>"),
+        "#94: a persisted C++ system must emit `#include <nlohmann/json.hpp>` \
+         (it uses nlohmann::json), but none was emitted.\n--- generated source ---\n{persist}"
+    );
+
+    // Non-persisted system → no nlohmann dependency forced.
+    let plain = compile_fixture("01_linear_fsm", "cpp");
+    assert!(
+        !plain.contains("nlohmann"),
+        "#94: a NON-persisted C++ system must not be forced to depend on nlohmann, \
+         but the output references it.\n--- generated source ---\n{plain}"
+    );
+}
