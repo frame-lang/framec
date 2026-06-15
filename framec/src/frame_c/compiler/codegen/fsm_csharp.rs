@@ -32,7 +32,7 @@ use crate::frame_c::compiler::frame_ast::{
 };
 use crate::frame_c::compiler::fsm_regex::{
     self, pike::Program, size_check::DEFAULT_MAX_DFA_STATES, subset::DfaLabel, Alphabet,
-    CompileError,
+    CompileError, WordBoundary,
 };
 use std::fmt::Write;
 
@@ -48,6 +48,11 @@ struct StageDfa {
     start: usize,
     requires_start: bool,
     requires_end: bool,
+    /// Leading/trailing `\b`/`\B` (bytes edge): a word boundary must be present
+    /// (`Required`) or absent (`Forbidden`) at the match start/end. Enforced by
+    /// `emit_anchor_guards` via `iswordat` around the DFA match.
+    start_boundary: Option<WordBoundary>,
+    end_boundary: Option<WordBoundary>,
     /// `Some` when the stage's regex contains a lazy quantifier (§11.1): a
     /// Pike program matched by the VM (`pikeMatch`) instead of the DFA, for
     /// leftmost-first match-end semantics.
@@ -116,6 +121,8 @@ impl<'a> Generator<'a> {
                                 start: 0,
                                 requires_start: false,
                                 requires_end: false,
+                                start_boundary: None,
+                                end_boundary: None,
                                 program: None,
                                 mode_c: Some(inner.to_string()),
                             });
@@ -179,6 +186,8 @@ impl<'a> Generator<'a> {
                     start: compiled.dfa.start,
                     requires_start: compiled.requires_start,
                     requires_end: compiled.requires_end,
+                    start_boundary: compiled.start_boundary,
+                    end_boundary: compiled.end_boundary,
                     program: compiled.program,
                     mode_c: None,
                 })
@@ -255,6 +264,7 @@ impl<'a> Generator<'a> {
         self.emit_field_decls(&mut out);
         self.emit_ctor(&mut out);
         self.emit_tok_id(&mut out);
+        self.emit_iswordat(&mut out);
         self.emit_dfa_matcher(&mut out);
         if self.uses_pike() {
             self.emit_pike_matcher(&mut out);
@@ -839,6 +849,53 @@ impl<'a> Generator<'a> {
             )
             .ok();
         }
+        if let Some(wb) = dfa.start_boundary {
+            let op = match wb {
+                WordBoundary::Required => "==",
+                WordBoundary::Forbidden => "!=",
+            };
+            writeln!(
+                out,
+                "{}if (iswordat(cursor - 1) {} iswordat(cursor)) _r{} = -1;",
+                ind, op, sid
+            )
+            .ok();
+        }
+        if let Some(wb) = dfa.end_boundary {
+            let op = match wb {
+                WordBoundary::Required => "==",
+                WordBoundary::Forbidden => "!=",
+            };
+            writeln!(
+                out,
+                "{}if (_r{} >= 0 && iswordat(_r{} - 1) {} iswordat(_r{})) _r{} = -1;",
+                ind, sid, sid, op, sid, sid
+            )
+            .ok();
+        }
+    }
+
+    /// Any stage carry a `\b`/`\B` edge boundary? Gates the `iswordat` helper.
+    fn uses_word_boundary(&self) -> bool {
+        self.stage_dfas
+            .iter()
+            .any(|d| d.start_boundary.is_some() || d.end_boundary.is_some())
+    }
+
+    /// `iswordat(p)` — is the byte at position `p` a word byte `[0-9A-Za-z_]`?
+    /// Out-of-range is non-word. Emitted only when a `\b`/`\B` edge is present.
+    fn emit_iswordat(&self, out: &mut String) {
+        if !self.uses_word_boundary() {
+            return;
+        }
+        let inp = &self.decl.params[0].name;
+        writeln!(out, "  bool iswordat(int p) {{").ok();
+        writeln!(out, "    if (p < 0 || p >= {}.Length) return false;", inp).ok();
+        writeln!(out, "    char c = {}[p];", inp).ok();
+        out.push_str(
+            "    return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_';\n",
+        );
+        out.push_str("  }\n\n");
     }
 
     fn emit_success(&self, out: &mut String, m: &MatchAst, ind: &str) {
@@ -1400,13 +1457,19 @@ mod tests {
     fn csharp_interior_anchor_and_word_boundary() {
         let mid = gen("@@fsm M(text: bytes) : bool = false { /a$b/ true }");
         let wb = gen("@@fsm N(text: char) : bool = false { /\\bcat\\b/ true }");
-        let code = format!("{}\n{}", mid, wb);
+        // Bytes edge `\b` takes the DFA fast path + `iswordat` guard (a
+        // different code path than the char Pike VM above): "cats" must reject
+        // because the trailing `\b` fails between `t` and `s`.
+        let wbb = gen("@@fsm P(text: bytes) : bool = false { /\\bcat\\b/ true }");
+        let code = format!("{}\n{}\n{}", mid, wb, wbb);
         let driver = "System.Console.WriteLine(new M(\"ab\").accepted);\n\
                       System.Console.WriteLine(new N(\"cat\").accepted);\n\
-                      System.Console.WriteLine(new N(\"cats\").accepted);";
+                      System.Console.WriteLine(new N(\"cats\").accepted);\n\
+                      System.Console.WriteLine(new P(\"cat\").accepted);\n\
+                      System.Console.WriteLine(new P(\"cats\").accepted);";
         let Some(lines) = cs_run(&code, driver, "ia_wb") else {
             return;
         };
-        assert_eq!(lines, vec!["False", "True", "False"]);
+        assert_eq!(lines, vec!["False", "True", "False", "True", "False"]);
     }
 }
