@@ -11,6 +11,7 @@ expression: "compile_fixture(\"03_persist\", \"cpp\")"
 #include <stdexcept>
 #include <cstdlib>
 #include <cstdio>
+#include <nlohmann/json.hpp>
 
 class CounterFrameEvent {
 public:

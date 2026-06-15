@@ -10,8 +10,10 @@
 // Everything here is valid C++ apart from its Frame constructs, so the only
 // thing that can make `-fno-exceptions` reject the emitted .cpp is a residual
 // unguarded `try`/`catch`/`throw` in the persist codegen.
-
-#include <nlohmann/json.hpp>
+//
+// No `#include <nlohmann/json.hpp>` here on purpose: framec emits it for
+// persisted C++ systems (#94), so this fixture also proves the output compiles
+// STANDALONE.
 
 @@[persist(std::string)]
 @@[save(save_state)]

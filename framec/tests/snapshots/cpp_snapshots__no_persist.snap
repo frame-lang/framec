@@ -11,6 +11,7 @@ expression: "compile_fixture(\"12_no_persist\", \"cpp\")"
 #include <stdexcept>
 #include <cstdlib>
 #include <cstdio>
+#include <nlohmann/json.hpp>
 
 class NoPersistFrameEvent {
 public:

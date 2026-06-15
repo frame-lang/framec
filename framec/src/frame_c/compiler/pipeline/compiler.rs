@@ -1347,7 +1347,18 @@ pub(crate) fn do_assemble(c: &mut PipelineCtx) -> CompileResult {
     let strict_import_errors = std::mem::take(&mut c.strict_import_errors);
     let module_warnings = std::mem::take(&mut c.module_warnings);
     let backend = get_backend(config.target);
-    let runtime_imports = backend.runtime_imports();
+    let mut runtime_imports = backend.runtime_imports();
+    // #94: the C++ persist codegen emits `nlohmann::json` throughout
+    // save/restore, but `runtime_imports()` is a fixed per-backend list with no
+    // system context, so it can't know whether persistence is enabled. Emit the
+    // include here — where the system ASTs are in scope — but ONLY for C++ with
+    // at least one persisted system, so non-persisted systems don't take a hard
+    // dependency on the (header-only) JSON library. Verbatim `#include` line,
+    // matching the other C++ runtime imports.
+    if config.target == TargetLanguage::Cpp && system_asts.iter().any(|s| s.persist_attr.is_some())
+    {
+        runtime_imports.push("#include <nlohmann/json.hpp>".to_string());
+    }
 
     // Stage 7: Assemble final output (native pass-through + system substitution + system instantiations)
     // Runtime imports are emitted first (before any native prolog) to fix import ordering.
