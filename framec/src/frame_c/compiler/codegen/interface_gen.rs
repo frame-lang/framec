@@ -735,16 +735,21 @@ return __result;"#,
                     code.push_str(&format!("let __ctx = {}(event: __e)\n", context_class));
                 }
 
+                // Exception Policy (RFC-0049 R4): pop via `defer` so the
+                // context-stack balance invariant holds on every exit path —
+                // including a throwing handler — Swift's idiomatic scope-exit
+                // cleanup (the family member alongside C++ RAII, Go `defer`,
+                // managed `try/finally`). The prior unconditional post-kernel
+                // pop was exception-free but exception-UNSAFE (a throw skipped
+                // it, leaking a stale context entry).
                 code.push_str("_context_stack.append(__ctx)\n");
+                code.push_str("defer { _context_stack.removeLast() }\n");
                 code.push_str("__kernel(_context_stack[_context_stack.count - 1]._event)\n");
 
                 if has_return && return_type_str != "void" && return_type_str != "Any" && return_type_str != "Any?" {
                     let swift_type = swift_map_type(&return_type_str);
                     code.push_str(&format!("let __result = _context_stack[_context_stack.count - 1]._return as! {}\n", swift_type));
-                    code.push_str("_context_stack.removeLast()\n");
                     code.push_str("return __result");
-                } else {
-                    code.push_str("_context_stack.removeLast()");
                 }
 
                 CodegenNode::NativeBlock { code, span: None }

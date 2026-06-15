@@ -161,24 +161,24 @@ public class MiniHsm {
         let __e = MiniHsmFrameEvent(message: "wake", parameters: [])
         let __ctx = MiniHsmFrameContext(event: __e)
         _context_stack.append(__ctx)
+        defer { _context_stack.removeLast() }
         __kernel(_context_stack[_context_stack.count - 1]._event)
-        _context_stack.removeLast()
     }
 
     public func sleep() {
         let __e = MiniHsmFrameEvent(message: "sleep", parameters: [])
         let __ctx = MiniHsmFrameContext(event: __e)
         _context_stack.append(__ctx)
+        defer { _context_stack.removeLast() }
         __kernel(_context_stack[_context_stack.count - 1]._event)
-        _context_stack.removeLast()
     }
 
     public func signal() {
         let __e = MiniHsmFrameEvent(message: "signal", parameters: [])
         let __ctx = MiniHsmFrameContext(event: __e)
         _context_stack.append(__ctx)
+        defer { _context_stack.removeLast() }
         __kernel(_context_stack[_context_stack.count - 1]._event)
-        _context_stack.removeLast()
     }
 
     private func _state_Live(_ __e: MiniHsmFrameEvent, _ compartment: MiniHsmCompartment) {

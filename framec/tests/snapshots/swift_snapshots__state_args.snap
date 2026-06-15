@@ -155,25 +155,25 @@ public class StateArgs {
         let __e = StateArgsFrameEvent(message: "load", parameters: [initial])
         let __ctx = StateArgsFrameContext(event: __e)
         _context_stack.append(__ctx)
+        defer { _context_stack.removeLast() }
         __kernel(_context_stack[_context_stack.count - 1]._event)
-        _context_stack.removeLast()
     }
 
     public func adjust(_ delta: Int) {
         let __e = StateArgsFrameEvent(message: "adjust", parameters: [delta])
         let __ctx = StateArgsFrameContext(event: __e)
         _context_stack.append(__ctx)
+        defer { _context_stack.removeLast() }
         __kernel(_context_stack[_context_stack.count - 1]._event)
-        _context_stack.removeLast()
     }
 
     public func peek() -> Int {
         let __e = StateArgsFrameEvent(message: "peek", parameters: [])
         let __ctx = StateArgsFrameContext(event: __e, defaultReturn: 0)
         _context_stack.append(__ctx)
+        defer { _context_stack.removeLast() }
         __kernel(_context_stack[_context_stack.count - 1]._event)
         let __result = _context_stack[_context_stack.count - 1]._return as! Int
-        _context_stack.removeLast()
         return __result
     }
 

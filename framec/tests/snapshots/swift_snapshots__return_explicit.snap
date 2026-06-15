@@ -152,9 +152,9 @@ public class ReturnExplicit {
         let __e = ReturnExplicitFrameEvent(message: "decide", parameters: [score])
         let __ctx = ReturnExplicitFrameContext(event: __e, defaultReturn: "")
         _context_stack.append(__ctx)
+        defer { _context_stack.removeLast() }
         __kernel(_context_stack[_context_stack.count - 1]._event)
         let __result = _context_stack[_context_stack.count - 1]._return as! String
-        _context_stack.removeLast()
         return __result
     }
 

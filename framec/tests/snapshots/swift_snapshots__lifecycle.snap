@@ -158,16 +158,16 @@ public class Lifecycle {
         let __e = LifecycleFrameEvent(message: "start", parameters: [label])
         let __ctx = LifecycleFrameContext(event: __e)
         _context_stack.append(__ctx)
+        defer { _context_stack.removeLast() }
         __kernel(_context_stack[_context_stack.count - 1]._event)
-        _context_stack.removeLast()
     }
 
     public func stop() {
         let __e = LifecycleFrameEvent(message: "stop", parameters: [])
         let __ctx = LifecycleFrameContext(event: __e)
         _context_stack.append(__ctx)
+        defer { _context_stack.removeLast() }
         __kernel(_context_stack[_context_stack.count - 1]._event)
-        _context_stack.removeLast()
     }
 
     private func _state_Idle(_ __e: LifecycleFrameEvent, _ compartment: LifecycleCompartment) {

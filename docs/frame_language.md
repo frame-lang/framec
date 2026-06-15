@@ -1264,9 +1264,9 @@ catch-and-rethrow**:
 | Family | Backends | Cleanup |
 |--------|----------|---------|
 | RAII (destructor / `Drop`) | C++, Rust | scope-guard pops on scope exit |
-| Scope-exit defer | Go | `defer { pop }` |
+| Scope-exit defer | Swift, Go | `defer { pop }` |
 | `try`/`finally` (always present) | Java, C#, Kotlin, Dart, TypeScript, JavaScript, PHP, Python, Ruby | `finally` pops |
-| Unconditional pop | Swift, C, GDScript | single post-dispatch pop (exception-free) |
+| Unconditional pop | C, GDScript | single post-dispatch pop (no exceptions exist) |
 
 Because the cleanup never depends on a thrown-and-caught exception, **core
 generated code compiles under a target's no-exceptions mode wherever one exists**
