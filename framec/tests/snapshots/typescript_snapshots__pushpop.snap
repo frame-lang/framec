@@ -164,32 +164,44 @@ export class PushPop {
         const __e = new PushPopFrameEvent("ping", []);
         const __ctx = new PushPopFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        this._context_stack.pop();
+        try {
+            this.__kernel(__e);
+        } finally {
+            this._context_stack.pop();
+        }
     }
 
     public nest() {
         const __e = new PushPopFrameEvent("nest", []);
         const __ctx = new PushPopFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        this._context_stack.pop();
+        try {
+            this.__kernel(__e);
+        } finally {
+            this._context_stack.pop();
+        }
     }
 
     public unnest() {
         const __e = new PushPopFrameEvent("unnest", []);
         const __ctx = new PushPopFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        this._context_stack.pop();
+        try {
+            this.__kernel(__e);
+        } finally {
+            this._context_stack.pop();
+        }
     }
 
     public leaf() {
         const __e = new PushPopFrameEvent("leaf", []);
         const __ctx = new PushPopFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        this._context_stack.pop();
+        try {
+            this.__kernel(__e);
+        } finally {
+            this._context_stack.pop();
+        }
     }
 
     private _state_Idle(__e: PushPopFrameEvent, compartment: PushPopCompartment) {
@@ -222,11 +234,11 @@ export class PushPop {
     }
 
     private _s_Idle_hdl_user_ping(__e: PushPopFrameEvent, compartment: PushPopCompartment) {
-        self.pings = self.pings + 1
+        this.pings = this.pings + 1
     }
 
     private _s_Nested_hdl_user_leaf(__e: PushPopFrameEvent, compartment: PushPopCompartment) {
-        self.leaves = self.leaves + 1
+        this.leaves = this.leaves + 1
     }
 
     private _s_Nested_hdl_user_unnest(__e: PushPopFrameEvent, compartment: PushPopCompartment) {

@@ -158,32 +158,52 @@ class NoPersist {
         $__e = new NoPersistFrameEvent("bump", []);
         $__ctx = new NoPersistFrameContext($__e, null);
         $this->_context_stack[] = $__ctx;
-        $this->__kernel($__e);
-        return array_pop($this->_context_stack)->_return;
+        try {
+            $this->__kernel($__e);
+            return array_pop($this->_context_stack)->_return;
+        } catch (\Throwable $__frame_err) {
+            array_pop($this->_context_stack);
+            throw $__frame_err;
+        }
     }
 
     public function set_cache($v) {
         $__e = new NoPersistFrameEvent("set_cache", [$v]);
         $__ctx = new NoPersistFrameContext($__e, null);
         $this->_context_stack[] = $__ctx;
-        $this->__kernel($__e);
-        return array_pop($this->_context_stack)->_return;
+        try {
+            $this->__kernel($__e);
+            return array_pop($this->_context_stack)->_return;
+        } catch (\Throwable $__frame_err) {
+            array_pop($this->_context_stack);
+            throw $__frame_err;
+        }
     }
 
     public function get_count() {
         $__e = new NoPersistFrameEvent("get_count", []);
         $__ctx = new NoPersistFrameContext($__e, null);
         $this->_context_stack[] = $__ctx;
-        $this->__kernel($__e);
-        return array_pop($this->_context_stack)->_return;
+        try {
+            $this->__kernel($__e);
+            return array_pop($this->_context_stack)->_return;
+        } catch (\Throwable $__frame_err) {
+            array_pop($this->_context_stack);
+            throw $__frame_err;
+        }
     }
 
     public function get_cache() {
         $__e = new NoPersistFrameEvent("get_cache", []);
         $__ctx = new NoPersistFrameContext($__e, null);
         $this->_context_stack[] = $__ctx;
-        $this->__kernel($__e);
-        return array_pop($this->_context_stack)->_return;
+        try {
+            $this->__kernel($__e);
+            return array_pop($this->_context_stack)->_return;
+        } catch (\Throwable $__frame_err) {
+            array_pop($this->_context_stack);
+            throw $__frame_err;
+        }
     }
 
     private function _state_Active($__e, $compartment) {
@@ -206,20 +226,20 @@ class NoPersist {
     }
 
     private function _s_Active_hdl_user_bump($__e, $compartment) {
-        self.count = self.count + 1
+        $this->count = $this->count + 1
     }
 
     private function _s_Active_hdl_user_get_cache($__e, $compartment) {
-        $this->_context_stack[count($this->_context_stack) - 1]->_return = self.cache;
+        $this->_context_stack[count($this->_context_stack) - 1]->_return = $this->cache;
     }
 
     private function _s_Active_hdl_user_get_count($__e, $compartment) {
-        $this->_context_stack[count($this->_context_stack) - 1]->_return = self.count;
+        $this->_context_stack[count($this->_context_stack) - 1]->_return = $this->count;
     }
 
     private function _s_Active_hdl_user_set_cache($__e, $compartment) {
         $v = $__e->_parameters[0];
-        self.cache = v
+        $this->cache = v
     }
 
     private function __serComp($comp) {

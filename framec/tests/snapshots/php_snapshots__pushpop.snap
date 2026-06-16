@@ -159,32 +159,52 @@ class PushPop {
         $__e = new PushPopFrameEvent("ping", []);
         $__ctx = new PushPopFrameContext($__e, null);
         $this->_context_stack[] = $__ctx;
-        $this->__kernel($__e);
-        return array_pop($this->_context_stack)->_return;
+        try {
+            $this->__kernel($__e);
+            return array_pop($this->_context_stack)->_return;
+        } catch (\Throwable $__frame_err) {
+            array_pop($this->_context_stack);
+            throw $__frame_err;
+        }
     }
 
     public function nest() {
         $__e = new PushPopFrameEvent("nest", []);
         $__ctx = new PushPopFrameContext($__e, null);
         $this->_context_stack[] = $__ctx;
-        $this->__kernel($__e);
-        return array_pop($this->_context_stack)->_return;
+        try {
+            $this->__kernel($__e);
+            return array_pop($this->_context_stack)->_return;
+        } catch (\Throwable $__frame_err) {
+            array_pop($this->_context_stack);
+            throw $__frame_err;
+        }
     }
 
     public function unnest() {
         $__e = new PushPopFrameEvent("unnest", []);
         $__ctx = new PushPopFrameContext($__e, null);
         $this->_context_stack[] = $__ctx;
-        $this->__kernel($__e);
-        return array_pop($this->_context_stack)->_return;
+        try {
+            $this->__kernel($__e);
+            return array_pop($this->_context_stack)->_return;
+        } catch (\Throwable $__frame_err) {
+            array_pop($this->_context_stack);
+            throw $__frame_err;
+        }
     }
 
     public function leaf() {
         $__e = new PushPopFrameEvent("leaf", []);
         $__ctx = new PushPopFrameContext($__e, null);
         $this->_context_stack[] = $__ctx;
-        $this->__kernel($__e);
-        return array_pop($this->_context_stack)->_return;
+        try {
+            $this->__kernel($__e);
+            return array_pop($this->_context_stack)->_return;
+        } catch (\Throwable $__frame_err) {
+            array_pop($this->_context_stack);
+            throw $__frame_err;
+        }
     }
 
     private function _state_Idle($__e, $compartment) {
@@ -217,11 +237,11 @@ class PushPop {
     }
 
     private function _s_Idle_hdl_user_ping($__e, $compartment) {
-        self.pings = self.pings + 1
+        $this->pings = $this->pings + 1
     }
 
     private function _s_Nested_hdl_user_leaf($__e, $compartment) {
-        self.leaves = self.leaves + 1
+        $this->leaves = $this->leaves + 1
     }
 
     private function _s_Nested_hdl_user_unnest($__e, $compartment) {

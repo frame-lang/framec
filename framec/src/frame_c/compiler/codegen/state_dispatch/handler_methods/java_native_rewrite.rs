@@ -32,22 +32,19 @@
 
 include!("java_await_rewrite.gen.rs");
 
-use crate::frame_c::compiler::codegen::codegen_utils::replace_outside_strings_and_comments;
-use crate::frame_c::visitors::TargetLanguage;
-
-/// Apply the Frame → Java handler-body lowerings:
-/// - `self.` → `this.`
+/// Apply the Frame → Java handler-body lowering:
 /// - `await EXPR;` → `EXPR.join();` (EXPR is a balanced primary)
+///
+/// RFC-0046: the former `self.` → `this.` pass was removed. Frame's
+/// self-reference is `@@:self`, which the expansion lowers to `this.`
+/// directly; a bare native `self.` is now ordinary native code, passed
+/// through verbatim (it is the author's error on Java, which has no
+/// `self`). framec no longer rewrites native code here.
 ///
 /// Idempotent: applying twice produces the same output as once.
 pub(super) fn rewrite_java_handler_body(body: &str) -> String {
-    // Pass 1: `self.` → `this.`. Boundary-safe via the shared
-    // helper (per-target skipper handles `"..."` and `// /* */`).
-    let after_self =
-        replace_outside_strings_and_comments(body, TargetLanguage::Java, &[("self.", "this.")]);
-
-    // Pass 2: `await EXPR;` → `EXPR.join();` via the dogfooded FSM.
-    rewrite_await(&after_self)
+    // `await EXPR;` → `EXPR.join();` via the dogfooded FSM.
+    rewrite_await(body)
 }
 
 /// Run the `await`-rewriter FSM over `body`. Returns the rewritten
@@ -68,20 +65,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn self_dot_becomes_this_dot() {
+    fn native_self_is_not_rewritten() {
+        // RFC-0046: native `self.` is passthrough now (no `self.`→`this.`).
         let got = rewrite_java_handler_body("self.tmp_a = 1;");
-        assert_eq!(got, "this.tmp_a = 1;");
+        assert_eq!(got, "self.tmp_a = 1;");
     }
 
     #[test]
     fn await_op_becomes_op_join() {
-        let got = rewrite_java_handler_body("self.tmp_a = await op(\"init\");");
+        let got = rewrite_java_handler_body("this.tmp_a = await op(\"init\");");
         assert_eq!(got, "this.tmp_a = op(\"init\").join();");
     }
 
     #[test]
-    fn await_with_self_method() {
-        let got = rewrite_java_handler_body("x = await self.fetch(key);");
+    fn await_with_this_method() {
+        let got = rewrite_java_handler_body("x = await this.fetch(key);");
         assert_eq!(got, "x = this.fetch(key).join();");
     }
 
@@ -99,7 +97,7 @@ mod tests {
 
     #[test]
     fn idempotent() {
-        let once = rewrite_java_handler_body("self.x = await op(key);");
+        let once = rewrite_java_handler_body("this.x = await op(key);");
         let twice = rewrite_java_handler_body(&once);
         assert_eq!(once, twice);
     }

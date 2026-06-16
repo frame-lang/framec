@@ -148,7 +148,7 @@ class MiniHsm
     def __router(__e)
         handler_name = "_state_#{@__compartment.state}"
         if respond_to?(handler_name, true)
-            send(handler_name, __e, @__compartment)
+            __send__(handler_name, __e, @__compartment)
         end
     end
 
@@ -160,24 +160,36 @@ class MiniHsm
         __e = MiniHsmFrameEvent.new("wake", [])
         __ctx = MiniHsmFrameContext.new(__e, nil)
         @_context_stack.push(__ctx)
-        __kernel(__e)
-        return @_context_stack.pop._return
+        begin
+            __kernel(__e)
+            return @_context_stack.last._return
+        ensure
+            @_context_stack.pop
+        end
     end
 
     def sleep
         __e = MiniHsmFrameEvent.new("sleep", [])
         __ctx = MiniHsmFrameContext.new(__e, nil)
         @_context_stack.push(__ctx)
-        __kernel(__e)
-        return @_context_stack.pop._return
+        begin
+            __kernel(__e)
+            return @_context_stack.last._return
+        ensure
+            @_context_stack.pop
+        end
     end
 
     def signal
         __e = MiniHsmFrameEvent.new("signal", [])
         __ctx = MiniHsmFrameContext.new(__e, nil)
         @_context_stack.push(__ctx)
-        __kernel(__e)
-        return @_context_stack.pop._return
+        begin
+            __kernel(__e)
+            return @_context_stack.last._return
+        ensure
+            @_context_stack.pop
+        end
     end
 
     def _state_Live(__e, compartment)

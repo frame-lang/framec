@@ -1197,6 +1197,7 @@ if __name__ == '__main__':
 
 ```frame
 @@[target("python_3")]
+@@[async]
 
 import aiohttp
 import asyncio
@@ -1224,7 +1225,7 @@ import asyncio
             fetch(path: str): str {
                 async with aiohttp.ClientSession() as session:
                     async with session.get(self.base_url + path) as resp:
-                        return await resp.text()
+                        @@:(await resp.text())
             }
             disconnect() { -> $Idle }
         }
@@ -1244,9 +1245,9 @@ async def main():
 asyncio.run(main())
 ```
 
-**How it works:** `async` on interface methods makes the entire dispatch chain async. The constructor is synchronous — `await client.init()` fires the enter event separately (two-phase init). Native `await` in handler bodies works because the generated methods are async.
+**How it works:** The `@@[async]` header marks this as an async system (required — without it framec raises E720). `async` on interface methods makes the entire dispatch chain async. framec emits a public casing (`HttpClient`) that enforces single-driver entry over a private machine; the constructor is synchronous — `await client.init()` fires the enter event separately (two-phase init). Native `await` in handler bodies works because the generated methods are async.
 
-**Features used:** `async` interface methods, two-phase init, native async code in handlers
+**Features used:** `@@[async]` system attribute, `async` interface methods, two-phase init, native async code in handlers
 
 -----
 
@@ -1420,11 +1421,11 @@ if __name__ == '__main__':
                 @@:(self.trace)
             }
 
-            status(): str { @@:(@@:system.state) }
+            status(): str { @@:(@@:system.state.name) }
         }
 
         $Shutdown {
-            status(): str { @@:(@@:system.state) }
+            status(): str { @@:(@@:system.state.name) }
         }
 
     domain:
@@ -1442,12 +1443,12 @@ if __name__ == '__main__':
     s2 = @@Sensor()
     s2.attempt_post_shutdown()
     print(s2.trace)          # "before" — "after" was suppressed
-    print(s2.status())       # "Shutdown" (via @@:system.state)
+    print(s2.status())       # "Shutdown" (via @@:system.state.name)
 ```
 
 **How it works:** `@@:self.reading()` dispatches through the full kernel pipeline. The return value is available as a native expression.
 
-**Automatic transition guard:** In `attempt_post_shutdown()`, calling `@@:self.trigger_shutdown()` transitions to `$Shutdown`. The framepiler emits an early-return guard immediately after every `@@:self.method(...)` call site:
+**Automatic transition guard:** In `attempt_post_shutdown()`, calling `@@:self.trigger_shutdown()` transitions to `$Shutdown`. framec emits an early-return guard immediately after every `@@:self.method(...)` call site:
 
 ```python
 def _s_Active_hdl_user_attempt_post_shutdown(self, __e, compartment):
@@ -1459,9 +1460,9 @@ def _s_Active_hdl_user_attempt_post_shutdown(self, __e, compartment):
 
 The kernel sets `_transitioned = True` on every stacked context after processing a transition. The guard returns early when the flag is set, so `self.trace = "after"` never runs and the trace ends at `"before"`.
 
-This is a runtime safety property, not a manual pattern — every `@@:self.method(...)` call across all 17 backends gets the guard automatically. Authors don't need to write defensive `@@:system.state == "..."` checks; framec inserts the guard wherever it belongs.
+This is a runtime safety property, not a manual pattern — every `@@:self.method(...)` call across all 17 backends gets the guard automatically. Authors don't need to write defensive `@@:system.state.name == "..."` checks; framec inserts the guard wherever it belongs.
 
-**Features used:** `@@:self.method()`, reentrant dispatch, return value from self-call, automatic transition guard (runtime feature), `@@:system.state` (read of current state name)
+**Features used:** `@@:self.method()`, reentrant dispatch, return value from self-call, automatic transition guard (runtime feature), `@@:system.state.name` (read of current state name)
 
 -----
 
@@ -2285,7 +2286,7 @@ if __name__ == '__main__':
 
 ![32 state diagram](images/cookbook/32.svg)
 
-**Problem:** A system with operations for test inspection. `@@:system.state` is a read-only accessor — allowed in operations because it doesn't mutate the state machine.
+**Problem:** A system with operations for test inspection. `@@:system.state.name` is a read-only accessor — allowed in operations because it doesn't mutate the state machine.
 
 ```frame
 @@[target("python_3")]
@@ -2293,10 +2294,10 @@ if __name__ == '__main__':
 @@system TrafficLight {
     operations:
         current_state(): str {
-            return @@:system.state
+            return @@:system.state.name
         }
         is_in_state(name: str): bool {
-            return @@:system.state == name
+            return @@:system.state.name == name
         }
         get_config(): dict {
             return {"green": self.green_dur, "yellow": self.yellow_dur, "red": self.red_dur}
@@ -2365,7 +2366,7 @@ if __name__ == '__main__':
     print("All tests passed!")
 ```
 
-**Features stressed:** `@@:system.state` in operations, white-box testing pattern, events ignored in wrong state, state variable reset (`$.ticks`)
+**Features stressed:** `@@:system.state.name` in operations, white-box testing pattern, events ignored in wrong state, state variable reset (`$.ticks`)
 
 -----
 
@@ -3624,9 +3625,9 @@ Recipes 46-49 model real-world protocols and safety-critical systems at full fid
         get_leaves_qty(): float { return self.leaves_qty }
         get_avg_px(): float { return self.avg_px }
         get_cl_ord_id(): str { return self.cl_ord_id }
-        get_status(): str { return @@:system.state }
+        get_status(): str { return @@:system.state.name }
         is_terminal(): bool {
-            return @@:system.state in ["Filled", "Canceled", "Rejected"]
+            return @@:system.state.name in ["Filled", "Canceled", "Rejected"]
         }
 
     interface:
@@ -3984,7 +3985,7 @@ if __name__ == '__main__':
 
 **Operations for inspection.** `get_cum_qty()`, `get_leaves_qty()`, `get_avg_px()`, `is_terminal()` bypass the state machine for clean test access.
 
-**Features stressed:** 13-state machine, HSM, system params (3 domain overrides), operations with `@@:system.state`, domain arithmetic (VWAP), conditional transitions based on quantity, fills during pending states, terminal states ignoring all events, actions modifying domain vars
+**Features stressed:** 13-state machine, HSM, system params (3 domain overrides), operations with `@@:system.state.name`, domain arithmetic (VWAP), conditional transitions based on quantity, fills during pending states, terminal states ignoring all events, actions modifying domain vars
 
 ---
 
@@ -4654,7 +4655,7 @@ if __name__ == '__main__':
             return self.current_velocity
         }
         get_state(): str {
-            return @@:system.state
+            return @@:system.state.name
         }
 
     interface:
@@ -4981,7 +4982,7 @@ $SafetyCheck
 
 **Auto program execution.** `$AutoExecuting` reads the program step list, dispatches each command, and uses `@@:self.program_step_done()` to re-enter itself for the next step. This is the enter-handler chain pattern applied to program execution.
 
-**Features stressed:** 14 states, 3-level HSM (deepest in the cookbook), operations with `@@:system.state`, mode-based event rejection, `@@:self.method()` for program stepping, transient states, enter/exit handlers for velocity management, domain variables for 3D position
+**Features stressed:** 14 states, 3-level HSM (deepest in the cookbook), operations with `@@:system.state.name`, mode-based event rejection, `@@:self.method()` for program stepping, transient states, enter/exit handlers for velocity management, domain variables for 3D position
 
 ---
 
@@ -5588,7 +5589,7 @@ This recipe is the natural complement to #53: the scanner handles token recognit
         }
 
         $Nested {
-            $.items: list
+            $.items: list = []
 
             open() {
                 push$
@@ -11589,7 +11590,7 @@ Most security protocols are already state machines in prose form. RFC 8446 (TLS 
 
 Implemented as imperative code with booleans and guards, these protocols produce scattered `if`-checks, invisible safety properties, and transitions that reviewers must trace by hand. Implemented as Frame systems, the security property *is* the shape of the graph: missing a gate is a visible missing node, adding a bypass is a visible new edge, and impossible states are impossible because they have no handler — not because a check rejects them.
 
-The authoritative statement of each protocol above is the Frame source, diffed in version control, diagrammed with `framec system.fpy -l graphviz | dot -Tsvg`, and compiled to the same class the production system runs.
+The authoritative statement of each protocol above is the Frame source, diffed in version control, diagrammed with `framec system.fpy -l graphviz | dot -Tsvg`, and transpiled to the same class the production system runs.
 
 -----
 
@@ -13973,7 +13974,7 @@ if __name__ == '__main__':
 @@system DroneFlightMode {
     operations:
         altitude(): float { return self.current_altitude }
-        flight_mode(): str { return @@:system.state }
+        flight_mode(): str { return @@:system.state.name }
 
     interface:
         arm()
@@ -14163,9 +14164,9 @@ if __name__ == '__main__':
 
 **Compare with Recipe 48.** The launch sequence has altitude-dependent abort modes (<30km pad escape, 30–100km downrange, >100km abort-to-orbit) — same *event* (`abort()`), different handler logic based on state. This drone recipe uses the inverse: different *events* (battery vs GPS vs RC), different target states, handler logic stays simple. Both are valid HSM patterns; the choice depends on whether the triggering conditions are distinguishable at the event layer or need to be discriminated inside a handler.
 
-**`flight_mode()` operation.** Returns the current state name directly. A ground station subscribing to drone status needs exactly this — no handler logic, no transitions, just "what state are you in right now." Same pattern as Recipe 22 (`@@:system.state`).
+**`flight_mode()` operation.** Returns the current state name directly. A ground station subscribing to drone status needs exactly this — no handler logic, no transitions, just "what state are you in right now." Same pattern as Recipe 22 (`@@:system.state.name`).
 
-**Features stressed:** HSM failsafe overlay with multiple distinct failsafes, state-scoped failsafe handling (ground states opt out), `@@:system.state` via operation, parallel to launch-sequence abort pattern
+**Features stressed:** HSM failsafe overlay with multiple distinct failsafes, state-scoped failsafe handling (ground states opt out), `@@:system.state.name` via operation, parallel to launch-sequence abort pattern
 
 -----
 
@@ -14182,7 +14183,7 @@ if __name__ == '__main__':
 
 @@system FleetRobot(robot_id: str) {
     operations:
-        robot_state(): str { return @@:system.state }
+        robot_state(): str { return @@:system.state.name }
         get_id(): str { return self.rid }
 
     interface:
@@ -14588,7 +14589,7 @@ if __name__ == '__main__':
 |`@@:(expr)` return           |yes         |yes all         |yes all              |yes all              |yes all              |yes all                 |
 |`@@:return(expr)` exit sugar |yes #22     |yes #28         |no                   |no                   |no                   |no                      |
 |`@@:self.method()`           |yes #22     |yes #33         |no                   |yes #49              |no                   |no                      |
-|`@@:system.state`            |yes #22     |yes #32         |no                   |yes #46, #49         |no                   |no                      |
+|`@@:system.state.name`            |yes #22     |yes #32         |no                   |yes #46, #49         |no                   |no                      |
 |Operations                   |no          |yes #23, #25, #32|yes #41, #45        |yes #46 (7), #49 (3) |yes #50, #51         |yes #69                 |
 |`static` operations          |no          |yes #25         |no                   |yes #46              |no                   |no                      |
 |System params (domain)       |yes #21     |yes #23         |no                   |yes #46 (3)          |no                   |no                      |

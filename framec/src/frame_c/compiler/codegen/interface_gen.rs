@@ -12,7 +12,7 @@ mod nested_registry;
 mod persist;
 mod utility;
 
-pub(crate) use extract::{extract_body_content, extract_tagged_system_name};
+pub(crate) use extract::{extract_body_content, extract_tagged_system_name, strip_body_braces};
 
 use dart_types::{dart_conv_expr, parse_dart_type, render_dart_type, DartTypeNode};
 use utility::{frame_return_default, is_dynamic_target};
@@ -166,24 +166,36 @@ pub(crate) fn generate_interface_wrappers(
                     || method.return_init.is_some();
                 if has_return {
                     CodegenNode::NativeBlock {
+                        // D-PY-1: the pop MUST run even if __kernel raises,
+                        // or a failed dispatch leaks a stale context-stack
+                        // entry. try/finally guarantees it (async injects
+                        // `await` before self.__kernel — line-based, so the
+                        // try/finally lines are untouched).
                         code: format!(
                             r#"__e = {}("{}", {})
 __ctx = {}(__e, None){}
 self._context_stack.append(__ctx)
-self.__kernel(__e)
-return self._context_stack.pop()._return"#,
+try:
+    self.__kernel(__e)
+finally:
+    __frame_ctx = self._context_stack.pop()
+return __frame_ctx._return"#,
                             event_class, method.name, params_code, context_class, default_init
                         ),
                         span: None,
                     }
                 } else {
                     CodegenNode::NativeBlock {
+                        // D-PY-1: pop in finally so a raising handler can't
+                        // leak a context-stack entry.
                         code: format!(
                             r#"__e = {}("{}", {})
 __ctx = {}(__e, None){}
 self._context_stack.append(__ctx)
-self.__kernel(__e)
-self._context_stack.pop()"#,
+try:
+    self.__kernel(__e)
+finally:
+    self._context_stack.pop()"#,
                             event_class, method.name, params_code, context_class, default_init
                         ),
                         span: None,
@@ -223,8 +235,10 @@ self._context_stack.pop()"#,
                     || method.return_init.is_some()
                 {
                     CodegenNode::NativeBlock {
+                        // D-PY-1: pop on both success and exception paths so a
+                        // throwing handler can't leak a context-stack entry.
                         code: format!(
-                            "const __e = new {}(\"{}\", {});\nconst __ctx = new {}(__e, null);{}\nthis._context_stack.push(__ctx);\nthis.__kernel(__e);\nreturn this._context_stack.pop(){}._return;",
+                            "const __e = new {}(\"{}\", {});\nconst __ctx = new {}(__e, null);{}\nthis._context_stack.push(__ctx);\ntry {{\n    this.__kernel(__e);\n    return this._context_stack.pop(){}._return;\n}} catch (__frame_err) {{\n    this._context_stack.pop();\n    throw __frame_err;\n}}",
                             event_class, method.name, params_code, context_class, default_init, pop_suffix
                         ),
                         span: None,
@@ -232,7 +246,7 @@ self._context_stack.pop()"#,
                 } else {
                     CodegenNode::NativeBlock {
                         code: format!(
-                            "const __e = new {}(\"{}\", {});\nconst __ctx = new {}(__e, null);{}\nthis._context_stack.push(__ctx);\nthis.__kernel(__e);\nthis._context_stack.pop();",
+                            "const __e = new {}(\"{}\", {});\nconst __ctx = new {}(__e, null);{}\nthis._context_stack.push(__ctx);\ntry {{\n    this.__kernel(__e);\n}} finally {{\n    this._context_stack.pop();\n}}",
                             event_class, method.name, params_code, context_class, default_init
                         ),
                         span: None,
@@ -263,8 +277,10 @@ self._context_stack.pop()"#,
                     || method.return_init.is_some()
                 {
                     CodegenNode::NativeBlock {
+                        // D-PY-1: pop on both paths so a throwing handler
+                        // can't leak a context-stack entry.
                         code: format!(
-                            "$__e = new {}(\"{}\", {});\n$__ctx = new {}($__e, null);{}\n$this->_context_stack[] = $__ctx;\n$this->__kernel($__e);\nreturn array_pop($this->_context_stack)->_return;",
+                            "$__e = new {}(\"{}\", {});\n$__ctx = new {}($__e, null);{}\n$this->_context_stack[] = $__ctx;\ntry {{\n    $this->__kernel($__e);\n    return array_pop($this->_context_stack)->_return;\n}} catch (\\Throwable $__frame_err) {{\n    array_pop($this->_context_stack);\n    throw $__frame_err;\n}}",
                             event_class, method.name, params_code, context_class, default_init
                         ),
                         span: None,
@@ -272,7 +288,7 @@ self._context_stack.pop()"#,
                 } else {
                     CodegenNode::NativeBlock {
                         code: format!(
-                            "$__e = new {}(\"{}\", {});\n$__ctx = new {}($__e, null);{}\n$this->_context_stack[] = $__ctx;\n$this->__kernel($__e);\narray_pop($this->_context_stack);",
+                            "$__e = new {}(\"{}\", {});\n$__ctx = new {}($__e, null);{}\n$this->_context_stack[] = $__ctx;\ntry {{\n    $this->__kernel($__e);\n}} finally {{\n    array_pop($this->_context_stack);\n}}",
                             event_class, method.name, params_code, context_class, default_init
                         ),
                         span: None,
@@ -303,8 +319,9 @@ self._context_stack.pop()"#,
                     || method.return_init.is_some()
                 {
                     CodegenNode::NativeBlock {
+                        // D-PY-1: ensure the pop runs even if a handler raises.
                         code: format!(
-                            "__e = {}.new(\"{}\", {})\n__ctx = {}.new(__e, nil){}\n@_context_stack.push(__ctx)\n__kernel(__e)\nreturn @_context_stack.pop._return",
+                            "__e = {}.new(\"{}\", {})\n__ctx = {}.new(__e, nil){}\n@_context_stack.push(__ctx)\nbegin\n    __kernel(__e)\n    return @_context_stack.last._return\nensure\n    @_context_stack.pop\nend",
                             event_class, method.name, params_code, context_class, default_init
                         ),
                         span: None,
@@ -312,7 +329,7 @@ self._context_stack.pop()"#,
                 } else {
                     CodegenNode::NativeBlock {
                         code: format!(
-                            "__e = {}.new(\"{}\", {})\n__ctx = {}.new(__e, nil){}\n@_context_stack.push(__ctx)\n__kernel(__e)\n@_context_stack.pop",
+                            "__e = {}.new(\"{}\", {})\n__ctx = {}.new(__e, nil){}\n@_context_stack.push(__ctx)\nbegin\n    __kernel(__e)\nensure\n    @_context_stack.pop\nend",
                             event_class, method.name, params_code, context_class, default_init
                         ),
                         span: None,
@@ -324,18 +341,34 @@ self._context_stack.pop()"#,
                 let sys = &system.name;
 
                 // Build parameters dict creation (with semicolon).
-                // Float/double params route through `Sys_pack_double`
-                // (memcpy bit-pun) — `(void*)(intptr_t)(0.5)` truncates
-                // to integer and breaks any float-typed interface arg.
+                // Marshalling per `c_marshal_of` (#72, #81): float/double
+                // and struct-by-value params travel as the address of a
+                // STACK box (the kernel dispatch is synchronous, so the
+                // wrapper's locals outlive every reader; see c_marshal.rs
+                // § ownership). Doubles never heap-allocate on the param
+                // path and never bit-pun into the pointer (wasm32-unsafe).
                 let params_code = if method.params.is_empty() {
                     format!("{}_FrameEvent* __e = {}_FrameEvent_new(\"{}\", NULL, 0);", sys, sys, method.name)
                 } else {
                     let mut code = format!("{}_FrameVec* __params = {}_FrameVec_new();\n", sys, sys);
                     for p in &method.params {
                         let p_type = type_to_string(&p.param_type);
-                        let push_arg = match p_type.trim() {
-                            "float" | "double" | "f32" | "f64" => {
-                                format!("{}_pack_double({})", sys, p.name)
+                        let push_arg = match super::c_marshal::c_marshal_of(&p_type) {
+                            super::c_marshal::CMarshal::Dbl => {
+                                code.push_str(&format!(
+                                    "double __box_{} = {};\n",
+                                    p.name, p.name
+                                ));
+                                format!("(void*)&__box_{}", p.name)
+                            }
+                            super::c_marshal::CMarshal::Boxed => {
+                                code.push_str(&format!(
+                                    "{} __box_{} = {};\n",
+                                    p_type.trim(),
+                                    p.name,
+                                    p.name
+                                ));
+                                format!("(void*)&__box_{}", p.name)
                             }
                             _ => format!("(void*)(intptr_t){}", p.name),
                         };
@@ -364,36 +397,49 @@ self._context_stack.pop()"#,
                     .map(|s| s != "void" && s != "None")
                     .unwrap_or(false);
 
-                // Set default return value after context creation. For
-                // float/double returns, pack via the memcpy helper since
-                // `(void*)(intptr_t)(3.14)` truncates to an integer.
-                let is_double_return = return_type_str
-                    .as_ref()
-                    .map(|s| s == "double")
-                    .unwrap_or(false);
+                // Set default return value after context creation —
+                // marshalled per `c_return_write` (#72, #81): doubles and
+                // structs heap-box (`(void*)(intptr_t)(3.14)` truncates;
+                // bit-punning corrupts on 32-bit pointers).
                 let default_init = if let Some(ref init_expr) = method.return_init {
-                    if is_double_return {
-                        format!("\n__ctx->_return = {}_pack_double({});", sys, init_expr)
-                    } else {
-                        format!("\n__ctx->_return = (void*)(intptr_t)({});", init_expr)
-                    }
+                    let ty = return_type_str.as_deref().unwrap_or("int");
+                    format!(
+                        "\n{}",
+                        super::c_marshal::c_return_write(sys, "__ctx->_return", init_expr, ty)
+                    )
                 } else {
                     String::new()
                 };
 
                 if let (true, Some(return_type_str)) = (has_return_value, return_type_str) {
-                    // Unpack based on declared return type:
-                    //   bool/int  → `(intptr_t)__ctx->_return`  (truncates to int size)
-                    //   double    → `Sys_unpack_double(...)`     (memcpy round-trip)
-                    //   str/ptr   → `(T)__ctx->_return`          (pointer already fits)
-                    let extract = if return_type_str == "double" {
-                        format!("{}_unpack_double(__result_ctx->_return)", sys)
+                    // Unpack via `c_return_read` (#72) — the categorization
+                    // is shared with the write side (c_return_assign /
+                    // c_marshal) so pack and unpack cannot drift apart:
+                    //   bool/int  → `(T)(intptr_t)…`
+                    //   float/dbl → `Sys_unpack_double(…)` (NULL-safe heap-
+                    //               box deref, #81), then free the box
+                    //   str/ptr   → `(T)…` (pointer already fits)
+                    //   struct    → `*(T*)…` deref-copy, then free the box
+                    let extract = super::c_marshal::c_return_read(
+                        sys,
+                        "__result_ctx->_return",
+                        &return_type_str,
+                    );
+                    // Boxed AND Dbl returns are heap boxes (#72, #81): free
+                    // after the final read (the single owner-free; see
+                    // c_marshal.rs). Guard against a never-written NULL slot
+                    // — memset-zero gives 0/+0.0 for the unwritten case.
+                    let owns_return = matches!(
+                        super::c_marshal::c_marshal_of(&return_type_str),
+                        super::c_marshal::CMarshal::Boxed | super::c_marshal::CMarshal::Dbl
+                    );
+                    let result_decl = if owns_return {
+                        format!(
+                            "{t} __result; memset(&__result, 0, sizeof(__result));\nif (__result_ctx->_return) {{ __result = {extract}; free(__result_ctx->_return); }}",
+                            t = return_type_str, extract = extract
+                        )
                     } else {
-                        let cast = match return_type_str.as_str() {
-                            "bool" | "int" => "(intptr_t)",
-                            _ => "",
-                        };
-                        format!("({}){}__result_ctx->_return", return_type_str, cast)
+                        format!("{} __result = {};", return_type_str, extract)
                     };
                     CodegenNode::NativeBlock {
                         code: format!(
@@ -402,12 +448,12 @@ self._context_stack.pop()"#,
 {}_FrameVec_push(self->_context_stack, __ctx);
 {}_kernel(self, __e);
 {}_FrameContext* __result_ctx = ({}_FrameContext*){}_FrameVec_pop(self->_context_stack);
-{} __result = {};
+{}
 {}_FrameContext_destroy(__result_ctx);
 {}_FrameEvent_destroy(__e);
 return __result;"#,
                             params_code, sys, sys, default_init, sys, sys, sys, sys, sys,
-                            return_type_str, extract, sys, sys
+                            result_decl, sys, sys
                         ),
                         span: None,
                     }
@@ -480,24 +526,36 @@ return __result;"#,
                 }
 
                 code.push_str("_context_stack.push_back(std::move(__ctx));\n");
-                // Async: await the kernel so nested co_awaits work; sync:
-                // plain call.
+                // Exception Policy (#86, RFC-0044): the context-stack balance
+                // invariant `len_after == len_before` is maintained by an RAII
+                // scope-guard, NOT a catch-and-rethrow. The guard's destructor
+                // pops on every scope exit — normal return AND (if exceptions
+                // are enabled) unwinding — so the previous `try/catch(...){ pop;
+                // throw; }` is unnecessary. Frame handlers are state transitions
+                // and never throw, so that catch path was dead; emitting it
+                // forced a hard link-time dependency on the C++ exception
+                // runtime, which Godot's web (wasm) engine is built WITHOUT
+                // (-fno-exceptions). The guard keeps the same safety while making
+                // framec C++ output compile and link with exceptions disabled.
+                // A method-local struct typed via `decltype(_context_stack)&`
+                // is ODR-safe and needs no shared preamble.
+                code.push_str(
+                    "struct __CtxGuard { decltype(_context_stack)& s; ~__CtxGuard() { s.pop_back(); } } __ctx_guard{_context_stack};\n",
+                );
                 if system_is_async {
                     code.push_str("co_await __kernel(_context_stack.back()._event);\n");
                 } else {
                     code.push_str("__kernel(_context_stack.back()._event);\n");
                 }
 
+                // __result is captured while the entry is still on the stack;
+                // __ctx_guard pops AFTER the (co_)return value is constructed.
                 let ret_kw = if system_is_async { "co_return" } else { "return" };
                 if returns_value {
                     code.push_str(&format!("auto __result = std::any_cast<{}>(std::move(_context_stack.back()._return));\n", return_type_str));
-                    code.push_str("_context_stack.pop_back();\n");
                     code.push_str(&format!("{} __result;", ret_kw));
                 } else if system_is_async {
-                    code.push_str("_context_stack.pop_back();\n");
                     code.push_str("co_return;");
-                } else {
-                    code.push_str("_context_stack.pop_back();");
                 }
 
                 CodegenNode::NativeBlock { code, span: None }
@@ -548,24 +606,32 @@ return __result;"#,
                     code.push_str(&format!("{} __ctx = new {}(__e, null);\n", context_class, context_class));
                 }
 
+                // D-PY-1: pop on both paths so a throwing handler can't leak
+                // a context-stack entry (catch+rethrow; Java dispatch is not
+                // declared `throws`, so only unchecked exceptions propagate).
                 code.push_str("_context_stack.add(__ctx);\n");
-                code.push_str("__kernel(_context_stack.get(_context_stack.size() - 1)._event);\n");
+                code.push_str("try {\n");
+                code.push_str("    __kernel(_context_stack.get(_context_stack.size() - 1)._event);\n");
 
                 if has_return && return_type_str != "void" && return_type_str != "Any" && return_type_str != "Object" {
                     let java_type = java_map_type(&return_type_str);
-                    code.push_str(&format!("{} __result = ({}) _context_stack.get(_context_stack.size() - 1)._return;\n", java_type, java_type));
-                    code.push_str("_context_stack.remove(_context_stack.size() - 1);\n");
+                    code.push_str(&format!("    {} __result = ({}) _context_stack.get(_context_stack.size() - 1)._return;\n", java_type, java_type));
+                    code.push_str("    _context_stack.remove(_context_stack.size() - 1);\n");
                     if method_is_async {
-                        code.push_str("return java.util.concurrent.CompletableFuture.completedFuture(__result);");
+                        code.push_str("    return java.util.concurrent.CompletableFuture.completedFuture(__result);\n");
                     } else {
-                        code.push_str("return __result;");
+                        code.push_str("    return __result;\n");
                     }
                 } else {
-                    code.push_str("_context_stack.remove(_context_stack.size() - 1);");
+                    code.push_str("    _context_stack.remove(_context_stack.size() - 1);\n");
                     if method_is_async {
-                        code.push_str("\nreturn java.util.concurrent.CompletableFuture.completedFuture(null);");
+                        code.push_str("    return java.util.concurrent.CompletableFuture.completedFuture(null);\n");
                     }
                 }
+                code.push_str("} catch (RuntimeException __frame_err) {\n");
+                code.push_str("    _context_stack.remove(_context_stack.size() - 1);\n");
+                code.push_str("    throw __frame_err;\n");
+                code.push_str("}");
 
                 CodegenNode::NativeBlock { code, span: None }
             }
@@ -608,17 +674,23 @@ return __result;"#,
                     code.push_str(&format!("val __ctx = {}(__e, null)\n", context_class));
                 }
 
+                // D-PY-1: pop on both paths so a throwing handler can't leak.
                 code.push_str("_context_stack.add(__ctx)\n");
-                code.push_str("__kernel(_context_stack[_context_stack.size - 1]._event)\n");
+                code.push_str("try {\n");
+                code.push_str("    __kernel(_context_stack[_context_stack.size - 1]._event)\n");
 
                 if has_return && return_type_str != "void" && return_type_str != "Any" && return_type_str != "Any?" {
                     let kotlin_type = kotlin_map_type(&return_type_str);
-                    code.push_str(&format!("val __result = _context_stack[_context_stack.size - 1]._return as {}\n", kotlin_type));
-                    code.push_str("_context_stack.removeAt(_context_stack.size - 1)\n");
-                    code.push_str("return __result");
+                    code.push_str(&format!("    val __result = _context_stack[_context_stack.size - 1]._return as {}\n", kotlin_type));
+                    code.push_str("    _context_stack.removeAt(_context_stack.size - 1)\n");
+                    code.push_str("    return __result\n");
                 } else {
-                    code.push_str("_context_stack.removeAt(_context_stack.size - 1)");
+                    code.push_str("    _context_stack.removeAt(_context_stack.size - 1)\n");
                 }
+                code.push_str("} catch (__frame_err: Throwable) {\n");
+                code.push_str("    _context_stack.removeAt(_context_stack.size - 1)\n");
+                code.push_str("    throw __frame_err\n");
+                code.push_str("}");
 
                 CodegenNode::NativeBlock { code, span: None }
             }
@@ -663,16 +735,21 @@ return __result;"#,
                     code.push_str(&format!("let __ctx = {}(event: __e)\n", context_class));
                 }
 
+                // Exception Policy (RFC-0049 R4): pop via `defer` so the
+                // context-stack balance invariant holds on every exit path —
+                // including a throwing handler — Swift's idiomatic scope-exit
+                // cleanup (the family member alongside C++ RAII, Go `defer`,
+                // managed `try/finally`). The prior unconditional post-kernel
+                // pop was exception-free but exception-UNSAFE (a throw skipped
+                // it, leaking a stale context entry).
                 code.push_str("_context_stack.append(__ctx)\n");
+                code.push_str("defer { _context_stack.removeLast() }\n");
                 code.push_str("__kernel(_context_stack[_context_stack.count - 1]._event)\n");
 
                 if has_return && return_type_str != "void" && return_type_str != "Any" && return_type_str != "Any?" {
                     let swift_type = swift_map_type(&return_type_str);
                     code.push_str(&format!("let __result = _context_stack[_context_stack.count - 1]._return as! {}\n", swift_type));
-                    code.push_str("_context_stack.removeLast()\n");
                     code.push_str("return __result");
-                } else {
-                    code.push_str("_context_stack.removeLast()");
                 }
 
                 CodegenNode::NativeBlock { code, span: None }
@@ -706,17 +783,23 @@ return __result;"#,
                     code.push_str(&format!("{} __ctx = new {}(__e, null);\n", context_class, context_class));
                 }
 
+                // D-PY-1: pop on both paths so a throwing handler can't leak.
                 code.push_str("_context_stack.Add(__ctx);\n");
-                code.push_str("__kernel(_context_stack[_context_stack.Count - 1]._event);\n");
+                code.push_str("try {\n");
+                code.push_str("    __kernel(_context_stack[_context_stack.Count - 1]._event);\n");
 
                 if has_return && return_type_str != "void" && return_type_str != "Any" && return_type_str != "object" {
                     let cs_type = csharp_map_type(&return_type_str);
-                    code.push_str(&format!("var __result = ({}) _context_stack[_context_stack.Count - 1]._return;\n", cs_type));
-                    code.push_str("_context_stack.RemoveAt(_context_stack.Count - 1);\n");
-                    code.push_str("return __result;");
+                    code.push_str(&format!("    var __result = ({}) _context_stack[_context_stack.Count - 1]._return;\n", cs_type));
+                    code.push_str("    _context_stack.RemoveAt(_context_stack.Count - 1);\n");
+                    code.push_str("    return __result;\n");
                 } else {
-                    code.push_str("_context_stack.RemoveAt(_context_stack.Count - 1);");
+                    code.push_str("    _context_stack.RemoveAt(_context_stack.Count - 1);\n");
                 }
+                code.push_str("} catch {\n");
+                code.push_str("    _context_stack.RemoveAt(_context_stack.Count - 1);\n");
+                code.push_str("    throw;\n");
+                code.push_str("}");
 
                 CodegenNode::NativeBlock { code, span: None }
             }
@@ -749,20 +832,23 @@ return __result;"#,
                 }
 
                 code.push_str("s._context_stack = append(s._context_stack, __ctx)\n");
+                // D-PY-1: defer the pop so a panicking handler can't leak a
+                // context-stack entry (defer runs on panic unwinding too).
+                code.push_str("defer func() { s._context_stack = s._context_stack[:len(s._context_stack)-1] }()\n");
                 code.push_str("s.__kernel(&s._context_stack[len(s._context_stack)-1]._event)\n");
 
                 if has_return && return_type_str != "void" && return_type_str != "Any" {
                     let go_type = go_map_type(&return_type_str);
-                    if go_type.is_empty() {
-                        code.push_str("s._context_stack = s._context_stack[:len(s._context_stack)-1]");
-                    } else {
+                    if !go_type.is_empty() {
+                        // Read the return value while __ctx is still on the
+                        // stack; the deferred pop runs after the return value
+                        // is evaluated.
                         code.push_str(&format!("var __result {}\nif __rv := s._context_stack[len(s._context_stack)-1]._return; __rv != nil {{ __result = __rv.({}) }}\n", go_type, go_type));
-                        code.push_str("s._context_stack = s._context_stack[:len(s._context_stack)-1]\n");
                         code.push_str("return __result");
                     }
-                } else {
-                    code.push_str("s._context_stack = s._context_stack[:len(s._context_stack)-1]");
+                    // go_type empty (unit-like return) → defer handles the pop.
                 }
+                // void → defer handles the pop.
 
                 CodegenNode::NativeBlock { code, span: None }
             }
@@ -796,9 +882,13 @@ return __result;"#,
                     // as a single expression so the return statement has
                     // the value embedded inline — no trailing token to
                     // strip.
+                    // D-PY-1: pcall the kernel so a handler `error()` can't
+                    // leak a context-stack entry — pop, then re-raise. The
+                    // final `return` stays an inline expression (block
+                    // transformer strips a token after a bare `return`).
                     CodegenNode::NativeBlock {
                         code: format!(
-                            "local __e = {}.new(\"{}\", {})\nlocal __ctx = {}.new(__e, nil){}\nself._context_stack[#self._context_stack + 1] = __ctx\nself:__kernel(__e)\nreturn table.remove(self._context_stack)._return",
+                            "local __e = {}.new(\"{}\", {})\nlocal __ctx = {}.new(__e, nil){}\nself._context_stack[#self._context_stack + 1] = __ctx\nlocal __ok, __err = pcall(self.__kernel, self, __e)\nif not __ok then\n    self._context_stack[#self._context_stack] = nil\n    error(__err)\nend\nreturn table.remove(self._context_stack)._return",
                             event_class, method.name, params_code, context_class, default_init
                         ),
                         span: None,
@@ -806,7 +896,7 @@ return __result;"#,
                 } else {
                     CodegenNode::NativeBlock {
                         code: format!(
-                            "local __e = {}.new(\"{}\", {})\nlocal __ctx = {}.new(__e, nil){}\nself._context_stack[#self._context_stack + 1] = __ctx\nself:__kernel(__e)\nself._context_stack[#self._context_stack] = nil",
+                            "local __e = {}.new(\"{}\", {})\nlocal __ctx = {}.new(__e, nil){}\nself._context_stack[#self._context_stack + 1] = __ctx\nlocal __ok, __err = pcall(self.__kernel, self, __e)\nself._context_stack[#self._context_stack] = nil\nif not __ok then error(__err) end",
                             event_class, method.name, params_code, context_class, default_init
                         ),
                         span: None,
@@ -841,8 +931,9 @@ return __result;"#,
                         _ => "null",
                     };
                     CodegenNode::NativeBlock {
+                        // D-PY-1: pop on both paths so a throwing handler can't leak.
                         code: format!(
-                            "final __e = {}(\"{}\", {});\nfinal __ctx = {}(__e, {});{}\n_context_stack.add(__ctx);\n__kernel(__e);\nreturn _context_stack.removeLast()._return;",
+                            "final __e = {}(\"{}\", {});\nfinal __ctx = {}(__e, {});{}\n_context_stack.add(__ctx);\ntry {{\n    __kernel(__e);\n    return _context_stack.removeLast()._return;\n}} catch (__frame_err) {{\n    _context_stack.removeLast();\n    rethrow;\n}}",
                             event_class, method.name, params_code, context_class, dart_default, default_init
                         ),
                         span: None,
@@ -850,7 +941,7 @@ return __result;"#,
                 } else {
                     CodegenNode::NativeBlock {
                         code: format!(
-                            "final __e = {}(\"{}\", {});\nfinal __ctx = {}(__e, null);{}\n_context_stack.add(__ctx);\n__kernel(__e);\n_context_stack.removeLast();",
+                            "final __e = {}(\"{}\", {});\nfinal __ctx = {}(__e, null);{}\n_context_stack.add(__ctx);\ntry {{\n    __kernel(__e);\n}} finally {{\n    _context_stack.removeLast();\n}}",
                             event_class, method.name, params_code, context_class, default_init
                         ),
                         span: None,
@@ -940,6 +1031,38 @@ self._context_stack.pop_back()"#,
     }).collect()
 }
 
+/// Build the minimal `HandlerContext` needed to lower `@@:self.*` in an
+/// action/operation body (RFC-0046): the system name, the set of defined
+/// systems, and the domain field → type map (for embed `->` vs scalar `.`
+/// on C++). All handler-only fields (state vars, params, transitions) stay
+/// empty — they don't occur in action/operation bodies.
+fn self_expansion_ctx(
+    system_name: &str,
+    arcanum: &crate::frame_c::compiler::arcanum::Arcanum,
+) -> super::codegen_utils::HandlerContext {
+    let defined_systems: std::collections::HashSet<String> =
+        arcanum.systems.keys().cloned().collect();
+    let domain_field_types: std::collections::HashMap<String, String> = arcanum
+        .systems
+        .get(system_name)
+        .map(|entry| {
+            entry
+                .domain_symbols
+                .iter()
+                .filter_map(|(name, sym)| {
+                    Some((name.clone(), sym.symbol_type.as_deref()?.to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    super::codegen_utils::HandlerContext {
+        system_name: system_name.to_string(),
+        defined_systems,
+        domain_field_types,
+        ..Default::default()
+    }
+}
+
 /// Generate action method (and any leading-comment trivia).
 ///
 /// Returns a `Vec<CodegenNode>`: zero-or-more `NativeBlock` comment
@@ -950,6 +1073,8 @@ pub(crate) fn generate_action(
     action: &ActionAst,
     syntax: &super::backend::ClassSyntax,
     source: &[u8],
+    system_name: &str,
+    arcanum: &crate::frame_c::compiler::arcanum::Arcanum,
 ) -> Vec<CodegenNode> {
     let params: Vec<Param> = action
         .params
@@ -960,8 +1085,16 @@ pub(crate) fn generate_action(
         })
         .collect();
 
-    // Extract native code from source using span (oceans model)
-    let mut code = extract_body_content(source, &action.body.span);
+    // RFC-0046: lower `@@:self.*` in the action body (native passthrough
+    // otherwise leaks the sigil). Boundary-safe scanner pass; `@@:(expr)` /
+    // `@@:system.state` are left for the textual pass below.
+    let ctx = self_expansion_ctx(system_name, arcanum);
+    let mut code = super::frame_expansion::expand_self_in_body(
+        &action.body.span,
+        source,
+        syntax.language,
+        &ctx,
+    );
 
     // Lower `@@:(expr)` and `@@:system.state` in the action body. Per
     // `_scratch/bug_at_at_colon_paren_in_actions_passthrough.md`, the
@@ -1009,6 +1142,8 @@ pub(crate) fn generate_operation(
     operation: &OperationAst,
     syntax: &super::backend::ClassSyntax,
     source: &[u8],
+    system_name: &str,
+    arcanum: &crate::frame_c::compiler::arcanum::Arcanum,
 ) -> Vec<CodegenNode> {
     let params: Vec<Param> = operation
         .params
@@ -1019,8 +1154,16 @@ pub(crate) fn generate_operation(
         })
         .collect();
 
-    // Extract native code from source using span (oceans model)
-    let mut code = extract_body_content(source, &operation.body.span);
+    // RFC-0046: lower `@@:self.*` in the operation body (non-static operations
+    // can touch domain fields). Boundary-safe scanner pass; `@@:(expr)` /
+    // `@@:system.state` are left for the textual pass below.
+    let ctx = self_expansion_ctx(system_name, arcanum);
+    let mut code = super::frame_expansion::expand_self_in_body(
+        &operation.body.span,
+        source,
+        syntax.language,
+        &ctx,
+    );
 
     // Expand @@:system.state and @@:(expr) in operation bodies.
     // @@:system.state requires `self` (non-static only), but @@:(expr) works in both.

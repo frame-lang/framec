@@ -12,42 +12,173 @@
 //!   emitted separately by `emit_handler_body_via_statements` so
 //!   it lands at a statement boundary.
 
-use super::super::codegen_utils::HandlerContext;
+use super::super::codegen_utils::{to_snake_case, HandlerContext};
 use super::expand_expression;
 use super::utility::strip_outer_parens;
 use crate::frame_c::compiler::native_region_scanner::{RegionSpan, SegmentMetadata};
 use crate::frame_c::visitors::TargetLanguage;
 
 pub(super) fn expand_context_self(
-    body_bytes: &[u8],
-    span: &RegionSpan,
-    indent: usize,
+    _body_bytes: &[u8],
+    _span: &RegionSpan,
+    _indent: usize,
     lang: TargetLanguage,
-    ctx: &HandlerContext,
+    _ctx: &HandlerContext,
     metadata: &SegmentMetadata,
 ) -> String {
-    let segment_text = String::from_utf8_lossy(&body_bytes[span.start..span.end]);
-    let indent_str = " ".repeat(indent);
-
-    // @@:self — bare system instance reference
-    match lang {
+    // Per-target self/instance receiver. Bare `@@:self` is rejected by the
+    // validator (E603); this value is the prefix for `@@:self.<field>`
+    // (RFC-0046) and the existing self-call path.
+    let receiver = match lang {
         TargetLanguage::Python3
         | TargetLanguage::GDScript
         | TargetLanguage::Ruby
         | TargetLanguage::Lua
-        | TargetLanguage::Swift => "self".to_string(),
+        | TargetLanguage::Swift => "self",
         TargetLanguage::TypeScript
         | TargetLanguage::JavaScript
         | TargetLanguage::Java
         | TargetLanguage::Kotlin
         | TargetLanguage::CSharp
-        | TargetLanguage::Dart => "this".to_string(),
-        TargetLanguage::Cpp => "this".to_string(),
-        TargetLanguage::C => "self".to_string(),
-        TargetLanguage::Go => "s".to_string(),
-        TargetLanguage::Php => "$this".to_string(),
-        TargetLanguage::Rust => super::super::rust_system::rust_self_ref().to_string(),
-        TargetLanguage::Erlang => "self".to_string(),
+        | TargetLanguage::Dart => "this",
+        TargetLanguage::Cpp => "this",
+        TargetLanguage::C => "self",
+        TargetLanguage::Go => "s",
+        TargetLanguage::Php => "$this",
+        TargetLanguage::Rust => super::super::rust_system::rust_self_ref(),
+        TargetLanguage::Erlang => "self",
+        TargetLanguage::Graphviz => unreachable!(),
+    };
+
+    // `@@:self.<field>` (RFC-0046): portable domain-field reference. Lower to
+    // the target's native member access. Pointer-receiver targets use `->`
+    // (C++ `this->`, PHP `$this->`, C `self->`); the rest use `.`. Erlang
+    // emits `self.field`, which its domain post-pass threads into the `#data`
+    // record (read → `Data#data.field`, write → record update) — the same path
+    // a native `self.field` already takes. Ruby uses `attr_accessor`, so
+    // `self.field` works as both lvalue and rvalue.
+    if let SegmentMetadata::SelfField { field } = metadata {
+        let sep = match lang {
+            TargetLanguage::Cpp | TargetLanguage::Php | TargetLanguage::C => "->",
+            _ => ".",
+        };
+        format!("{receiver}{sep}{field}")
+    } else {
+        // Bare `@@:self` — rejected by the validator before codegen; emit the
+        // receiver so nothing leaks if a caller skips validation.
+        receiver.to_string()
+    }
+}
+
+/// `@@:self.field.method(args)` (RFC-0046) — a call through a self field.
+/// If `field` is an embedded system (its declared type is a defined system),
+/// this is a cross-system interface call; framec emits the per-target access +
+/// call punctuation matching the field's storage. Otherwise it is a native
+/// method call on a scalar field's value. No caller-side transition guard is
+/// emitted (the call enters a *different* system's dispatch, if any).
+pub(super) fn expand_context_self_field_call(
+    _body_bytes: &[u8],
+    _span: &RegionSpan,
+    _indent: usize,
+    lang: TargetLanguage,
+    ctx: &HandlerContext,
+    metadata: &SegmentMetadata,
+) -> String {
+    let (field, method, raw_args) = if let SegmentMetadata::SelfFieldCall {
+        field,
+        method,
+        args,
+    } = metadata
+    {
+        (field.as_str(), method.as_str(), args.as_str())
+    } else {
+        return String::new();
+    };
+
+    // Expand any Frame syntax nested in the args (e.g.
+    // `@@:self.ship.fire(@@:self.power)`).
+    let args = if raw_args.len() >= 2 && raw_args.starts_with('(') && raw_args.ends_with(')') {
+        let inner = strip_outer_parens(raw_args);
+        if inner.is_empty() {
+            raw_args.to_string()
+        } else {
+            format!("({})", expand_expression(inner, lang, ctx))
+        }
+    } else {
+        raw_args.to_string()
+    };
+
+    // Embed = the field's declared type is itself a defined system. The
+    // declared spelling may be pointer-qualified — the C guide's idiomatic
+    // cross-system field is `inner: Inner*` (#73) — so strip trailing `*`s
+    // to get the base system name for the check (and for C's free-function
+    // family / Erlang's module name below).
+    let field_type = ctx.domain_field_types.get(field);
+    let embed_base: Option<&str> = field_type.map(|t| t.trim().trim_end_matches('*').trim_end());
+    let is_embed = embed_base.is_some_and(|base| ctx.defined_systems.contains(base));
+
+    match lang {
+        // C: a struct has no methods, so an embed call is a cross-system
+        // free-function call `Sys_method(self->field, args)` — emitted directly
+        // from the segment (RFC-0046 d-cross; replaces the textual
+        // `rewrite_c_cross_system_calls` post-pass). A scalar-field method stays
+        // native (`self->field.method(args)`).
+        TargetLanguage::C => {
+            if is_embed {
+                let sys = embed_base.unwrap_or("");
+                let inner = strip_outer_parens(&args);
+                if inner.trim().is_empty() {
+                    format!("{sys}_{method}(self->{field})")
+                } else {
+                    format!("{sys}_{method}(self->{field}, {inner})")
+                }
+            } else {
+                format!("self->{field}.{method}{args}")
+            }
+        }
+        // Erlang: an embed field holds a Pid, so a cross-system call is a
+        // module-qualified dispatch `module:method(self.field, args)` — emitted
+        // directly from the segment (RFC-0046 d-cross; replaces the textual
+        // cross-system rewriter). The trailing `self.field` is turned into
+        // `Data#data.field` (the Pid read) by the existing domain post-pass.
+        // (Erlang has no method-call-on-value syntax, so `@@:self.field.method()`
+        // is always a cross-system call; the module name is the field's system
+        // type, snake-cased — matching the field's `@@System()` initializer.)
+        TargetLanguage::Erlang => {
+            if let Some(base) = embed_base {
+                let module = to_snake_case(base);
+                let inner = strip_outer_parens(&args);
+                if inner.trim().is_empty() {
+                    format!("{module}:{method}(self.{field})")
+                } else {
+                    format!("{module}:{method}(self.{field}, {inner})")
+                }
+            } else {
+                format!("self.{field}.{method}{args}")
+            }
+        }
+        // C++: embed fields are `shared_ptr` (deref with `->`); scalar fields are
+        // values (`.`). This is the one target where the field type changes the
+        // method-access operator.
+        TargetLanguage::Cpp => {
+            let mop = if is_embed { "->" } else { "." };
+            format!("this->{field}{mop}{method}{args}")
+        }
+        // PHP: every object method call uses `->`.
+        TargetLanguage::Php => format!("$this->{field}->{method}{args}"),
+        TargetLanguage::Go => format!("s.{field}.{method}{args}"),
+        TargetLanguage::Python3
+        | TargetLanguage::GDScript
+        | TargetLanguage::Ruby
+        | TargetLanguage::Lua
+        | TargetLanguage::Swift
+        | TargetLanguage::Rust => format!("self.{field}.{method}{args}"),
+        TargetLanguage::TypeScript
+        | TargetLanguage::JavaScript
+        | TargetLanguage::Dart
+        | TargetLanguage::Java
+        | TargetLanguage::Kotlin
+        | TargetLanguage::CSharp => format!("this.{field}.{method}{args}"),
         TargetLanguage::Graphviz => unreachable!(),
     }
 }

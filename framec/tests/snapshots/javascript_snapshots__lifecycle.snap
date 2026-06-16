@@ -165,16 +165,26 @@ export class Lifecycle {
         const __e = new LifecycleFrameEvent("start", [label]);
         const __ctx = new LifecycleFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        return this._context_stack.pop()._return;
+        try {
+            this.__kernel(__e);
+            return this._context_stack.pop()._return;
+        } catch (__frame_err) {
+            this._context_stack.pop();
+            throw __frame_err;
+        }
     }
 
     stop() {
         const __e = new LifecycleFrameEvent("stop", []);
         const __ctx = new LifecycleFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        return this._context_stack.pop()._return;
+        try {
+            this.__kernel(__e);
+            return this._context_stack.pop()._return;
+        } catch (__frame_err) {
+            this._context_stack.pop();
+            throw __frame_err;
+        }
     }
 
     _state_Idle(__e, compartment) {
@@ -208,13 +218,13 @@ export class Lifecycle {
     }
 
     _s_Running_hdl_frame_exit(__e, compartment) {
-        self.exited = self.exited + 1
+        this.exited = this.exited + 1
     }
 
     _s_Running_hdl_frame_enter(__e, compartment) {
         const label = compartment.enter_args[0];
-        self.entered = self.entered + 1;
-        self.tag = label;
+        this.entered = this.entered + 1;
+        this.tag = label;
     }
 
     _s_Running_hdl_user_stop(__e, compartment) {

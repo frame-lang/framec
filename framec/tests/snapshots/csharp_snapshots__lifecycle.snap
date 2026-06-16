@@ -174,16 +174,26 @@ public class Lifecycle {
         LifecycleFrameEvent __e = new LifecycleFrameEvent("start", new List<object> { label });
         LifecycleFrameContext __ctx = new LifecycleFrameContext(__e, null);
         _context_stack.Add(__ctx);
-        __kernel(_context_stack[_context_stack.Count - 1]._event);
-        _context_stack.RemoveAt(_context_stack.Count - 1);
+        try {
+            __kernel(_context_stack[_context_stack.Count - 1]._event);
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+        } catch {
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+            throw;
+        }
     }
 
     public void stop() {
         LifecycleFrameEvent __e = new LifecycleFrameEvent("stop", new List<object>());
         LifecycleFrameContext __ctx = new LifecycleFrameContext(__e, null);
         _context_stack.Add(__ctx);
-        __kernel(_context_stack[_context_stack.Count - 1]._event);
-        _context_stack.RemoveAt(_context_stack.Count - 1);
+        try {
+            __kernel(_context_stack[_context_stack.Count - 1]._event);
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+        } catch {
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+            throw;
+        }
     }
 
     private void _state_Idle(LifecycleFrameEvent __e, LifecycleCompartment compartment) {
@@ -217,13 +227,13 @@ public class Lifecycle {
     }
 
     private void _s_Running_hdl_frame_exit(LifecycleFrameEvent __e, LifecycleCompartment compartment) {
-        self.exited = self.exited + 1
+        this.exited = this.exited + 1
     }
 
     private void _s_Running_hdl_frame_enter(LifecycleFrameEvent __e, LifecycleCompartment compartment) {
         string label = (string) compartment.enter_args[0];
-        self.entered = self.entered + 1;
-        self.tag = label;
+        this.entered = this.entered + 1;
+        this.tag = label;
     }
 
     private void _s_Running_hdl_user_stop(LifecycleFrameEvent __e, LifecycleCompartment compartment) {

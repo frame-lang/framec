@@ -172,24 +172,33 @@ class LinearFsm {
         final __e = LinearFsmFrameEvent("start", []);
         final __ctx = LinearFsmFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(__e);
-        _context_stack.removeLast();
+        try {
+            __kernel(__e);
+        } finally {
+            _context_stack.removeLast();
+        }
     }
 
     void progress(int amount) {
         final __e = LinearFsmFrameEvent("progress", [amount]);
         final __ctx = LinearFsmFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(__e);
-        _context_stack.removeLast();
+        try {
+            __kernel(__e);
+        } finally {
+            _context_stack.removeLast();
+        }
     }
 
     void finish() {
         final __e = LinearFsmFrameEvent("finish", []);
         final __ctx = LinearFsmFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(__e);
-        _context_stack.removeLast();
+        try {
+            __kernel(__e);
+        } finally {
+            _context_stack.removeLast();
+        }
     }
 
     void _state_Idle(LinearFsmFrameEvent __e, LinearFsmCompartment compartment) {
@@ -228,6 +237,6 @@ class LinearFsm {
 
     void _s_Active_hdl_user_progress(LinearFsmFrameEvent __e, LinearFsmCompartment compartment) {
         final amount = __e._parameters[0] as int;
-        self.total = self.total + amount
+        this.total = this.total + amount
     }
 }

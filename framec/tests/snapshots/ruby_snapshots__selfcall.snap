@@ -142,7 +142,7 @@ class SelfCall
     def __router(__e)
         handler_name = "_state_#{@__compartment.state}"
         if respond_to?(handler_name, true)
-            send(handler_name, __e, @__compartment)
+            __send__(handler_name, __e, @__compartment)
         end
     end
 
@@ -154,16 +154,24 @@ class SelfCall
         __e = SelfCallFrameEvent.new("kick", [])
         __ctx = SelfCallFrameContext.new(__e, nil)
         @_context_stack.push(__ctx)
-        __kernel(__e)
-        return @_context_stack.pop._return
+        begin
+            __kernel(__e)
+            return @_context_stack.last._return
+        ensure
+            @_context_stack.pop
+        end
     end
 
     def report
         __e = SelfCallFrameEvent.new("report", [])
         __ctx = SelfCallFrameContext.new(__e, nil)
         @_context_stack.push(__ctx)
-        __kernel(__e)
-        return @_context_stack.pop._return
+        begin
+            __kernel(__e)
+            return @_context_stack.last._return
+        ensure
+            @_context_stack.pop
+        end
     end
 
     def _state_Active(__e, compartment)

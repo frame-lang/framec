@@ -235,6 +235,17 @@ impl LanguageBackend for CppBackend {
                     extends
                 ));
 
+                // Expose this class's name to the Constructor arm so its
+                // factory + bare-ctor emission uses the *current* class
+                // name. Critical for RFC-0043 layered output: the machine
+                // class is renamed to `_<Name>Machine`, and without this
+                // assignment the Constructor arm would use the original
+                // `system_name` ("AsyncWorker") for both classes, producing
+                // a bare ctor `AsyncWorker()` nested inside
+                // `_AsyncWorkerMachine`.
+                let prev_system = ctx.system_name.clone();
+                ctx.system_name = Some(name.clone());
+
                 // Group fields and methods by visibility using sections
                 // Private section first (fields + methods)
                 let private_fields: Vec<_> = fields
@@ -315,6 +326,7 @@ impl LanguageBackend for CppBackend {
                 }
 
                 result.push_str(&format!("{}}};\n", ctx.get_indent()));
+                ctx.system_name = prev_system;
                 result
             }
 
@@ -924,6 +936,15 @@ impl LanguageBackend for CppBackend {
             "#include <any>".to_string(),
             "#include <memory>".to_string(),
             "#include <functional>".to_string(),
+            // Required for `std::runtime_error` thrown by the RFC-0043
+            // casing's E703 gate.
+            "#include <stdexcept>".to_string(),
+            // RFC-0049 R3: the `-fno-exceptions` fallback for proper-error
+            // throws (persist's E700 quiescence guard) uses `std::abort`
+            // (<cstdlib>) + `std::fprintf` (<cstdio>) under `#if !defined
+            // exceptions`. Harmless on exception-enabled builds.
+            "#include <cstdlib>".to_string(),
+            "#include <cstdio>".to_string(),
         ]
     }
 

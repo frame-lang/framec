@@ -154,25 +154,25 @@ public class NoPersist {
         let __e = NoPersistFrameEvent(message: "bump", parameters: [])
         let __ctx = NoPersistFrameContext(event: __e)
         _context_stack.append(__ctx)
+        defer { _context_stack.removeLast() }
         __kernel(_context_stack[_context_stack.count - 1]._event)
-        _context_stack.removeLast()
     }
 
     public func set_cache(_ v: Int) {
         let __e = NoPersistFrameEvent(message: "set_cache", parameters: [v])
         let __ctx = NoPersistFrameContext(event: __e)
         _context_stack.append(__ctx)
+        defer { _context_stack.removeLast() }
         __kernel(_context_stack[_context_stack.count - 1]._event)
-        _context_stack.removeLast()
     }
 
     public func get_count() -> Int {
         let __e = NoPersistFrameEvent(message: "get_count", parameters: [])
         let __ctx = NoPersistFrameContext(event: __e, defaultReturn: 0)
         _context_stack.append(__ctx)
+        defer { _context_stack.removeLast() }
         __kernel(_context_stack[_context_stack.count - 1]._event)
         let __result = _context_stack[_context_stack.count - 1]._return as! Int
-        _context_stack.removeLast()
         return __result
     }
 
@@ -180,9 +180,9 @@ public class NoPersist {
         let __e = NoPersistFrameEvent(message: "get_cache", parameters: [])
         let __ctx = NoPersistFrameContext(event: __e, defaultReturn: 0)
         _context_stack.append(__ctx)
+        defer { _context_stack.removeLast() }
         __kernel(_context_stack[_context_stack.count - 1]._event)
         let __result = _context_stack[_context_stack.count - 1]._return as! Int
-        _context_stack.removeLast()
         return __result
     }
 

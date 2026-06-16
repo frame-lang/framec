@@ -126,6 +126,12 @@ pub struct SystemAst {
     /// special-cased into `persist_attr` for backwards compatibility
     /// — future attributes use this generic vec.
     pub attributes: Vec<Attribute>,
+    /// RFC-0043: this system carries `@@[async]` on its header and
+    /// must be emitted as the casing/machine layered architecture.
+    /// Set by the pipeline at the same point the `@@[async]` attribute
+    /// is drained into `attributes`. Downstream codegen reads this
+    /// flag rather than re-scanning attributes or members.
+    pub is_async_layered: bool,
 }
 
 /// Which group a system header parameter belongs to.
@@ -218,7 +224,12 @@ pub struct MachineAst {
 pub struct StateVarAst {
     pub name: String,
     pub var_type: Type,
-    pub init: Option<Expression>,
+    /// Initializer as raw target-language text. Frame has no type system
+    /// and does not interpret values — codegen emits this verbatim, exactly
+    /// like `DomainVar::initializer_text`. (Previously parsed into an
+    /// `Expression` and re-serialized, which corrupted literals such as
+    /// `0.0` -> `0`; FRAMEC #59.)
+    pub initializer_text: Option<String>,
     pub span: Span,
 }
 
@@ -403,6 +414,11 @@ pub enum Statement {
     },
     /// Bare self reference: @@:self
     ContextSelf { span: Span },
+    /// Call through a self field: @@:self.field.method(args) (RFC-0046).
+    /// Carries only the span — expansion reads the field/method/args from the
+    /// FrameSegment region's metadata; the variant exists so the body walk
+    /// treats it as a Frame statement (not native), keeping `frame_idx` aligned.
+    ContextSelfFieldCall { span: Span },
     /// System state: @@:system.state — current state name
     ContextSystemState { span: Span },
     /// System instantiation:
@@ -751,6 +767,7 @@ impl SystemAst {
             section_order: vec![],
             visibility: None,
             attributes: vec![],
+            is_async_layered: false,
         }
     }
 
@@ -759,6 +776,14 @@ impl SystemAst {
     /// privilege one class per file (GDScript, Java, etc.).
     pub fn is_main(&self) -> bool {
         self.attributes.iter().any(|a| a.name == "main")
+    }
+
+    /// RFC-0043: True iff this system carries `@@[async]` on its header
+    /// and is emitted as the casing/machine layered architecture. The
+    /// flag is the canonical post-validation answer; downstream
+    /// codegen reads it instead of re-scanning attributes or members.
+    pub fn is_async_layered(&self) -> bool {
+        self.is_async_layered
     }
 
     /// RFC-0015: the user-supplied factory name from `@@[create(name)]`,
@@ -1384,6 +1409,25 @@ mod tests {
             system.persist_attr.as_ref().unwrap().save_name,
             Some("custom_save".to_string())
         );
+    }
+
+    // ----------------------------------------------------------------
+    // RFC-0043: is_async_layered flag on SystemAst.
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn test_is_async_layered_default_false() {
+        let system = SystemAst::new("Default".to_string(), Span::new(0, 0));
+        assert!(!system.is_async_layered);
+        assert!(!system.is_async_layered());
+    }
+
+    #[test]
+    fn test_is_async_layered_set_true() {
+        let mut system = SystemAst::new("AsyncOne".to_string(), Span::new(0, 0));
+        system.is_async_layered = true;
+        assert!(system.is_async_layered);
+        assert!(system.is_async_layered());
     }
 
     // ----------------------------------------------------------------

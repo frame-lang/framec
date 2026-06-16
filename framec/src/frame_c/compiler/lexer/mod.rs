@@ -835,18 +835,25 @@ impl Lexer {
                 self.cursor += 1;
                 continue;
             }
-            // Always handle // line comments in structural sections
-            // (Frame structural syntax uses // regardless of target language)
-            if b == b'/' && self.cursor + 1 < self.end && self.source[self.cursor + 1] == b'/' {
+            // Line comments in structural sections. Frame recognizes the
+            // construct grammar and passes everything else through as native
+            // text (Oceans Model) — so a comment here is captured and emitted
+            // verbatim, never rejected. We accept both `//` and `#` leaders
+            // universally (the two a user reaches for structurally) so an
+            // unrecognized leader never throws `E002`; whether the leader is
+            // valid for the target is the target compiler's concern, not
+            // framec's (same contract as type names and init values).
+            if (b == b'/' && self.cursor + 1 < self.end && self.source[self.cursor + 1] == b'/')
+                || b == b'#'
+            {
                 let start = self.cursor;
-                self.cursor += 2;
                 while self.cursor < self.end && self.source[self.cursor] != b'\n' {
                     self.cursor += 1;
                 }
                 self.capture_section_comment(start, self.cursor);
                 continue;
             }
-            // Try to skip comments via SyntaxSkipper (handles #, /* */, etc.)
+            // Try to skip comments via SyntaxSkipper (handles /* */, etc.)
             if let Some(new_pos) = self
                 .skipper
                 .skip_comment(&self.source, self.cursor, self.end)
@@ -865,15 +872,14 @@ impl Lexer {
     /// newline the per-language skipper consumed. Trailing newlines
     /// are trimmed so codegen can emit one per line cleanly.
     ///
-    /// Frame source for a given target uses that target's comment
-    /// leader (Oceans Model). The `//` line-comment branch in
-    /// `skip_whitespace_and_comments` accepts `//` regardless of
-    /// target — that's a convenience for users who write Frame
-    /// structurally and reach for `//` even in Python/Ruby/Lua/
-    /// GDScript Frame source. To preserve the Oceans-Model invariant
-    /// at codegen, captured `//` comments are translated here to the
-    /// target's native leader so emission produces valid target
-    /// source.
+    /// The comment is captured and emitted **verbatim** — framec does
+    /// not rewrite the leader. Like type names, init values, and all
+    /// native code, comments pass through unchanged (Oceans Model):
+    /// write your target's own comment syntax (`//`, `#`, `--`, `%`).
+    /// (Earlier versions translated a `//` leader to each target's
+    /// native leader; that was the last place framec rewrote source and
+    /// it was removed to keep the model uniform — native comments
+    /// everywhere, structural and native alike.)
     fn capture_section_comment(&mut self, start: usize, end: usize) {
         let bytes = &self.source[start..end];
         let raw = String::from_utf8_lossy(bytes)
@@ -883,8 +889,7 @@ impl Lexer {
         if raw.is_empty() {
             return;
         }
-        let text = translate_section_comment(&raw, self.lang);
-        self.pending_comments.push(text);
+        self.pending_comments.push(raw);
     }
 
     /// Drain comments captured since the last call. The parser invokes
@@ -904,6 +909,26 @@ impl Lexer {
         while self.cursor < end {
             let b = self.source[self.cursor];
             if b == b' ' || b == b'\t' {
+                self.cursor += 1;
+            } else {
+                break;
+            }
+        }
+    }
+
+    /// Like `skip_inline_whitespace` but also consumes newlines (LF/CR).
+    /// Used inside transition lexing so a transition written across lines
+    /// (`->` <newline> `$State`) tokenizes the same as the one-line form —
+    /// whitespace-invariant parsing (FRAMEC_BUGS #43).
+    pub(super) fn skip_ws_and_newlines(&mut self) {
+        let end = if self.mode == LexerMode::NativeAware {
+            self.native_end
+        } else {
+            self.end
+        };
+        while self.cursor < end {
+            let b = self.source[self.cursor];
+            if b == b' ' || b == b'\t' || b == b'\n' || b == b'\r' {
                 self.cursor += 1;
             } else {
                 break;
@@ -960,56 +985,6 @@ impl Lexer {
 // ============================================================================
 // Convenience Functions
 // ============================================================================
-
-/// Translate a captured section comment so its leader matches the
-/// target's native comment leader. The lexer's
-/// `skip_whitespace_and_comments` accepts `//` regardless of target
-/// (a convenience for users writing Frame structurally), but
-/// codegen emits captured leading comments verbatim as NativeBlock
-/// nodes — for non-`//` targets that produces invalid source. Maps
-/// a leading `//` to the target's native leader; comments that
-/// already use the target's leader pass through unchanged.
-fn translate_section_comment(raw: &str, lang: TargetLanguage) -> String {
-    let target_leader = native_comment_leader(lang);
-    if target_leader == "//" {
-        return raw.to_string();
-    }
-    // Preserve any leading whitespace before the `//` so codegen's
-    // line-level emit lands at the right indent.
-    let trimmed_left_len = raw.len() - raw.trim_start().len();
-    let indent = &raw[..trimmed_left_len];
-    let body = &raw[trimmed_left_len..];
-    if let Some(rest) = body.strip_prefix("//") {
-        format!("{}{}{}", indent, target_leader, rest)
-    } else {
-        raw.to_string()
-    }
-}
-
-/// Native single-line comment leader per target language. Used by
-/// `translate_section_comment` to rewrite `//` Frame structural
-/// comments into the target's native syntax for codegen emission.
-fn native_comment_leader(lang: TargetLanguage) -> &'static str {
-    match lang {
-        TargetLanguage::Python3 | TargetLanguage::Ruby | TargetLanguage::GDScript => "#",
-        TargetLanguage::Lua => "--",
-        TargetLanguage::Erlang => "%",
-        // C-family + scripting languages that natively use `//`.
-        TargetLanguage::JavaScript
-        | TargetLanguage::TypeScript
-        | TargetLanguage::Java
-        | TargetLanguage::Kotlin
-        | TargetLanguage::CSharp
-        | TargetLanguage::C
-        | TargetLanguage::Cpp
-        | TargetLanguage::Rust
-        | TargetLanguage::Swift
-        | TargetLanguage::Go
-        | TargetLanguage::Dart
-        | TargetLanguage::Php => "//",
-        TargetLanguage::Graphviz => "//",
-    }
-}
 
 /// Convenience function to lex an entire system body in structural mode.
 /// Useful for testing. For the full pipeline, use the `Lexer` struct directly.

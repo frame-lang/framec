@@ -47,9 +47,22 @@ fn generate_c_runtime_types(system: &SystemAst) -> String {
         "// ============================================================================\n\n"
     ));
 
+    // strdup is POSIX, not ISO C — rejected under strict -std=c11 (e.g.
+    // emcc's default; #81). Emit a tiny static shim instead.
+    code.push_str(&format!("static char* {}_strdup_(const char* s) {{\n", sys));
+    code.push_str("    size_t n = strlen(s) + 1;\n");
+    code.push_str("    char* p = (char*)malloc(n);\n");
+    code.push_str("    memcpy(p, s, n);\n");
+    code.push_str("    return p;\n");
+    code.push_str("}\n\n");
+
     code.push_str(&format!("typedef struct {}_FrameDictEntry {{\n", sys));
     code.push_str("    char* key;\n");
     code.push_str("    void* value;\n");
+    code.push_str("    // 1 when `value` is a heap box this dict owns (a malloc'd\n");
+    code.push_str("    // double from pack_double — #81): freed on overwrite and in\n");
+    code.push_str("    // destroy, deep-copied by FrameDict_copy.\n");
+    code.push_str("    int owned;\n");
     code.push_str(&format!("    struct {}_FrameDictEntry* next;\n", sys));
     code.push_str(&format!("}} {}_FrameDictEntry;\n\n", sys));
 
@@ -90,9 +103,24 @@ fn generate_c_runtime_types(system: &SystemAst) -> String {
     code.push_str("    return d;\n");
     code.push_str("}\n\n");
 
-    // FrameDict_set
+    // FrameDict_set / FrameDict_set_owned. The `_owned` variant marks the
+    // value as a dict-owned heap box (#81: malloc'd doubles); owned values
+    // are freed when overwritten and in destroy, and deep-copied by
+    // FrameDict_copy. Plain set stores caller-owned/non-pointer values.
     code.push_str(&format!(
-        "static void {}_FrameDict_set({}_FrameDict* d, const char* key, void* value) {{\n",
+        "static void {}_FrameDict_set_({}_FrameDict* d, const char* key, void* value, int owned);\n",
+        sys, sys
+    ));
+    code.push_str(&format!(
+        "static void {}_FrameDict_set({}_FrameDict* d, const char* key, void* value) {{\n    {}_FrameDict_set_(d, key, value, 0);\n}}\n\n",
+        sys, sys, sys
+    ));
+    code.push_str(&format!(
+        "static void {}_FrameDict_set_owned({}_FrameDict* d, const char* key, void* value) {{\n    {}_FrameDict_set_(d, key, value, 1);\n}}\n\n",
+        sys, sys, sys
+    ));
+    code.push_str(&format!(
+        "static void {}_FrameDict_set_({}_FrameDict* d, const char* key, void* value, int owned) {{\n",
         sys, sys
     ));
     code.push_str(&format!(
@@ -105,7 +133,9 @@ fn generate_c_runtime_types(system: &SystemAst) -> String {
     ));
     code.push_str("    while (entry) {\n");
     code.push_str("        if (strcmp(entry->key, key) == 0) {\n");
+    code.push_str("            if (entry->owned && entry->value) free(entry->value);\n");
     code.push_str("            entry->value = value;\n");
+    code.push_str("            entry->owned = owned;\n");
     code.push_str("            return;\n");
     code.push_str("        }\n");
     code.push_str("        entry = entry->next;\n");
@@ -114,8 +144,9 @@ fn generate_c_runtime_types(system: &SystemAst) -> String {
         "    {}_FrameDictEntry* new_entry = malloc(sizeof({}_FrameDictEntry));\n",
         sys, sys
     ));
-    code.push_str("    new_entry->key = strdup(key);\n");
+    code.push_str(&format!("    new_entry->key = {}_strdup_(key);\n", sys));
     code.push_str("    new_entry->value = value;\n");
+    code.push_str("    new_entry->owned = owned;\n");
     code.push_str("    new_entry->next = d->buckets[idx];\n");
     code.push_str("    d->buckets[idx] = new_entry;\n");
     code.push_str("    d->size++;\n");
@@ -180,10 +211,22 @@ fn generate_c_runtime_types(system: &SystemAst) -> String {
         sys
     ));
     code.push_str("        while (entry) {\n");
+    code.push_str("            if (entry->owned && entry->value) {\n");
+    code.push_str("                // Owned values are heap-boxed doubles (#81): deep-copy\n");
+    code.push_str("                // so src and dst never alias (a shallow copy would\n");
+    code.push_str("                // dangle when either side frees on overwrite/destroy).\n");
+    code.push_str("                void* nb = malloc(sizeof(double));\n");
+    code.push_str("                memcpy(nb, entry->value, sizeof(double));\n");
     code.push_str(&format!(
-        "            {}_FrameDict_set(dst, entry->key, entry->value);\n",
+        "                {}_FrameDict_set_(dst, entry->key, nb, 1);\n",
         sys
     ));
+    code.push_str("            } else {\n");
+    code.push_str(&format!(
+        "                {}_FrameDict_set_(dst, entry->key, entry->value, 0);\n",
+        sys
+    ));
+    code.push_str("            }\n");
     code.push_str("            entry = entry->next;\n");
     code.push_str("        }\n");
     code.push_str("    }\n");
@@ -205,6 +248,7 @@ fn generate_c_runtime_types(system: &SystemAst) -> String {
         "            {}_FrameDictEntry* next = entry->next;\n",
         sys
     ));
+    code.push_str("            if (entry->owned && entry->value) free(entry->value);\n");
     code.push_str("            free(entry->key);\n");
     code.push_str("            free(entry);\n");
     code.push_str("            entry = next;\n");
@@ -227,6 +271,10 @@ fn generate_c_runtime_types(system: &SystemAst) -> String {
 
     code.push_str(&format!("typedef struct {{\n"));
     code.push_str("    void** items;\n");
+    code.push_str("    // owned[i] == 1 when items[i] is a heap box this vec owns (a\n");
+    code.push_str("    // malloc'd double from pack_double — #81): freed in destroy,\n");
+    code.push_str("    // deep-copied by FrameVec_copy.\n");
+    code.push_str("    unsigned char* owned;\n");
     code.push_str("    int size;\n");
     code.push_str("    int capacity;\n");
     code.push_str(&format!("}} {}_FrameVec;\n\n", sys));
@@ -243,19 +291,71 @@ fn generate_c_runtime_types(system: &SystemAst) -> String {
     code.push_str("    v->capacity = 8;\n");
     code.push_str("    v->size = 0;\n");
     code.push_str("    v->items = malloc(sizeof(void*) * v->capacity);\n");
+    code.push_str("    v->owned = calloc(v->capacity, 1);\n");
     code.push_str("    return v;\n");
     code.push_str("}\n\n");
 
-    // FrameVec_push
+    // FrameVec_push / FrameVec_push_owned. The `_owned` variant marks the
+    // item as a vec-owned heap box (#81: malloc'd doubles).
     code.push_str(&format!(
-        "static void {}_FrameVec_push({}_FrameVec* v, void* item) {{\n",
+        "static void {}_FrameVec_push_({}_FrameVec* v, void* item, unsigned char owned) {{\n",
         sys, sys
     ));
     code.push_str("    if (v->size >= v->capacity) {\n");
     code.push_str("        v->capacity *= 2;\n");
     code.push_str("        v->items = realloc(v->items, sizeof(void*) * v->capacity);\n");
+    code.push_str("        v->owned = realloc(v->owned, v->capacity);\n");
+    code.push_str("        memset(v->owned + v->size, 0, v->capacity - v->size);\n");
     code.push_str("    }\n");
+    code.push_str("    v->owned[v->size] = owned;\n");
     code.push_str("    v->items[v->size++] = item;\n");
+    code.push_str("}\n\n");
+    code.push_str(&format!(
+        "static void {}_FrameVec_push({}_FrameVec* v, void* item) {{\n    {}_FrameVec_push_(v, item, 0);\n}}\n\n",
+        sys, sys, sys
+    ));
+    code.push_str(&format!(
+        "static void {}_FrameVec_push_owned({}_FrameVec* v, void* item) {{\n    {}_FrameVec_push_(v, item, 1);\n}}\n\n",
+        sys, sys, sys
+    ));
+
+    // FrameVec_clear — empty the vec, freeing vec-owned heap boxes (#81).
+    // Storage is retained for reuse.
+    code.push_str(&format!(
+        "static void {}_FrameVec_clear({}_FrameVec* v) {{\n",
+        sys, sys
+    ));
+    code.push_str("    if (!v) return;\n");
+    code.push_str("    for (int i = 0; i < v->size; i++) {\n");
+    code.push_str("        if (v->owned[i] && v->items[i]) free(v->items[i]);\n");
+    code.push_str("    }\n");
+    code.push_str("    v->size = 0;\n");
+    code.push_str("}\n\n");
+
+    // FrameVec_extend — append all of src into dst, deep-copying vec-owned
+    // heap boxes (#81: malloc'd doubles) so dst and src can be destroyed
+    // independently. The single copy loop shared by FrameVec_copy and the
+    // __prepareEnter/__prepareExit arg fan-out.
+    code.push_str(&format!(
+        "static void {}_FrameVec_extend({}_FrameVec* dst, {}_FrameVec* src) {{\n",
+        sys, sys, sys
+    ));
+    code.push_str("    if (!src) return;\n");
+    code.push_str("    for (int i = 0; i < src->size; i++) {\n");
+    code.push_str("        if (src->owned[i] && src->items[i]) {\n");
+    code.push_str("            void* nb = malloc(sizeof(double));\n");
+    code.push_str("            memcpy(nb, src->items[i], sizeof(double));\n");
+    code.push_str(&format!(
+        "            {}_FrameVec_push_(dst, nb, 1);\n",
+        sys
+    ));
+    code.push_str("        } else {\n");
+    code.push_str(&format!(
+        "            {}_FrameVec_push_(dst, src->items[i], 0);\n",
+        sys
+    ));
+    code.push_str("        }\n");
+    code.push_str("    }\n");
     code.push_str("}\n\n");
 
     // FrameVec_pop
@@ -293,18 +393,25 @@ fn generate_c_runtime_types(system: &SystemAst) -> String {
     code.push_str("    return v->size;\n");
     code.push_str("}\n\n");
 
-    // FrameVec_destroy
+    // FrameVec_destroy — frees vec-owned heap boxes (#81) alongside the
+    // storage; caller-owned pointees are untouched.
     code.push_str(&format!(
         "static void {}_FrameVec_destroy({}_FrameVec* v) {{\n",
         sys, sys
     ));
     code.push_str("    if (!v) return;\n");
+    code.push_str("    for (int i = 0; i < v->size; i++) {\n");
+    code.push_str("        if (v->owned[i] && v->items[i]) free(v->items[i]);\n");
+    code.push_str("    }\n");
+    code.push_str("    free(v->owned);\n");
     code.push_str("    free(v->items);\n");
     code.push_str("    free(v);\n");
     code.push_str("}\n\n");
 
-    // FrameVec_copy — shallow copy (items are void*; caller owns pointees).
-    // Used by Compartment_copy when snapshotting args for push$.
+    // FrameVec_copy — shallow for caller-owned pointees; DEEP for
+    // vec-owned heap boxes (#81: malloc'd doubles — a shallow copy would
+    // dangle when either side frees in destroy). Used by Compartment_copy
+    // when snapshotting args for push$.
     code.push_str(&format!(
         "static {}_FrameVec* {}_FrameVec_copy({}_FrameVec* src) {{\n",
         sys, sys, sys
@@ -314,29 +421,31 @@ fn generate_c_runtime_types(system: &SystemAst) -> String {
         "    {}_FrameVec* v = {}_FrameVec_new();\n",
         sys, sys
     ));
-    code.push_str("    for (int i = 0; i < src->size; i++) {\n");
-    code.push_str(&format!(
-        "        {}_FrameVec_push(v, src->items[i]);\n",
-        sys
-    ));
-    code.push_str("    }\n");
+    code.push_str(&format!("    {}_FrameVec_extend(v, src);\n", sys));
     code.push_str("    return v;\n");
     code.push_str("}\n\n");
 
     // ============================================================================
-    // Double-return marshalling helpers
+    // Double marshalling helpers
     // ============================================================================
-    // `_return` is a `void*` slot. Casting a `double` through `(intptr_t)`
-    // truncates the fractional part, and casting a `void*` back to `double`
-    // is illegal C. Bit-pun through `memcpy` — legal and round-trips
-    // cleanly on every 64-bit target (both `double` and `void*` are 8
-    // bytes). The C backend emits calls to these wherever a handler's
-    // return type is `float` / `double`.
+    // `_return` / container slots are `void*`. Casting a `double` through
+    // `(intptr_t)` truncates the fractional part, and casting a `void*`
+    // back to `double` is illegal C. The former bit-pun-through-memcpy
+    // assumed `sizeof(void*) >= sizeof(double)` — true only on 64-bit
+    // hosts; on wasm32 / any 32-bit target it overflowed the 4-byte slot
+    // and silently collapsed every float to 0 (#81). Doubles are now
+    // HEAP-BOXED: `pack_double` returns a malloc'd `double*`,
+    // `unpack_double` dereferences (NULL-safe) — pointer-width
+    // independent, strict ISO C. Ownership: the `_return` slot frees the
+    // previous box on overwrite and the interface wrapper frees after its
+    // final read; container-resident boxes go through the `_owned`
+    // setter/push variants and are freed on overwrite/destroy
+    // (deep-copied by the container copy helpers).
     code.push_str(&format!(
         "// ============================================================================\n"
     ));
     code.push_str(&format!(
-        "// {}_pack_double / {}_unpack_double — bit-pun doubles through void*\n",
+        "// {}_pack_double / {}_unpack_double — heap-boxed doubles (#81:\n// pointer-width independent; the old void* bit-pun overflowed on 32-bit)\n",
         sys, sys
     ));
     code.push_str(&format!(
@@ -346,18 +455,55 @@ fn generate_c_runtime_types(system: &SystemAst) -> String {
         "static inline void* {}_pack_double(double v) {{\n",
         sys
     ));
-    code.push_str("    void* p = 0;\n");
-    code.push_str("    memcpy(&p, &v, sizeof(double));\n");
-    code.push_str("    return p;\n");
+    code.push_str("    double* p = (double*)malloc(sizeof(double));\n");
+    code.push_str("    *p = v;\n");
+    code.push_str("    return (void*)p;\n");
     code.push_str("}\n\n");
     code.push_str(&format!(
         "static inline double {}_unpack_double(void* p) {{\n",
         sys
     ));
-    code.push_str("    double d;\n");
-    code.push_str("    memcpy(&d, &p, sizeof(double));\n");
-    code.push_str("    return d;\n");
+    code.push_str("    return p ? *(double*)p : 0.0;\n");
     code.push_str("}\n\n");
+
+    // ============================================================================
+    // Type-blind argument push (#83, RFC-0048)
+    // ============================================================================
+    // At a `pop$` site the popped target state is runtime-determined, so the
+    // declared `$>` / `<$` parameter type is statically unknowable — unlike a
+    // normal `-> $State(args)` transition, where framec looks the type up and
+    // marshals each value accordingly. A C `void*` slot is not self-describing
+    // (it carries no type tag), so a type-blind push can't pick the right
+    // representation: a `double` MUST heap-box (#81), everything else takes the
+    // `intptr_t`/pointer slot. `_Generic` resolves this by dispatching on the
+    // VALUE's static C type instead of the (unknown) declared type — the value
+    // and the declared param agree in a correct program, so the representation
+    // matches what the `$>`/`<$` read side expects. Floating-point values box
+    // (owned, so the vec frees/deep-copies them); everything else is stored
+    // directly. Every `_Generic` branch is a valid expression for ANY argument
+    // type (the float branches use the raw value; the default casts through
+    // `intptr_t`, valid for both ints and pointers), and the controlling
+    // expression is never evaluated — so the argument is evaluated exactly once,
+    // in the selected branch of the taken ternary arm.
+    code.push_str(&format!(
+        "// ============================================================================\n"
+    ));
+    code.push_str(&format!(
+        "#define {sys}_ARG_IS_FLOAT(v) _Generic((v), double:1, float:1, long double:1, default:0)\n",
+        sys = sys
+    ));
+    code.push_str(&format!(
+        "#define {sys}_ARG_DBL(v) _Generic((v), double:(v), float:(v), long double:(double)0, default:(double)0)\n",
+        sys = sys
+    ));
+    code.push_str(&format!(
+        "#define {sys}_ARG_WORD(v) _Generic((v), double:(void*)0, float:(void*)0, long double:(void*)0, default:(void*)(intptr_t)(v))\n",
+        sys = sys
+    ));
+    code.push_str(&format!(
+        "#define {sys}_ARG_PUSH(vec, v) ( {sys}_ARG_IS_FLOAT(v) \\\n    ? {sys}_FrameVec_push_owned((vec), {sys}_pack_double({sys}_ARG_DBL(v))) \\\n    : {sys}_FrameVec_push((vec), {sys}_ARG_WORD(v)) )\n\n",
+        sys = sys
+    ));
 
     // ============================================================================
     // Persist dispatcher — type-ignorant codegen
@@ -438,7 +584,7 @@ fn generate_c_runtime_types(system: &SystemAst) -> String {
         "static cJSON* {sys}_persist_pack_str(void* v) {{ return cJSON_CreateString(v ? (const char*)v : \"\"); }}\n"
     ));
         code.push_str(&format!(
-        "static void* {sys}_persist_unpack_str(cJSON* j) {{ const char* s = (j && j->valuestring) ? j->valuestring : \"\"; return (void*)strdup(s); }}\n\n"
+        "static void* {sys}_persist_unpack_str(cJSON* j) {{ const char* s = (j && j->valuestring) ? j->valuestring : \"\"; return (void*){sys}_strdup_(s); }}\n\n"
     ));
 
         // bool — JSON true/false.
@@ -543,7 +689,7 @@ fn generate_c_runtime_types(system: &SystemAst) -> String {
             "static cJSON* {sys}_persist_pack_field_str(void* p) {{ const char* s = *(const char**)p; return cJSON_CreateString(s ? s : \"\"); }}\n"
         ));
         code.push_str(&format!(
-            "static void {sys}_persist_unpack_field_str(cJSON* j, void* p) {{ const char* s = (j && j->valuestring) ? j->valuestring : \"\"; *(char**)p = strdup(s); }}\n"
+            "static void {sys}_persist_unpack_field_str(cJSON* j, void* p) {{ const char* s = (j && j->valuestring) ? j->valuestring : \"\"; *(char**)p = {sys}_strdup_(s); }}\n"
         ));
         code.push_str(&format!(
             "static cJSON* {sys}_persist_pack_field_list(void* p) {{ return {sys}_persist_pack_list(*({sys}_FrameVec**)p); }}\n"

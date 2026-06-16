@@ -164,16 +164,24 @@ class Actions {
         final __e = ActionsFrameEvent("increment", [n]);
         final __ctx = ActionsFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(__e);
-        _context_stack.removeLast();
+        try {
+            __kernel(__e);
+        } finally {
+            _context_stack.removeLast();
+        }
     }
 
     int get_total() {
         final __e = ActionsFrameEvent("get_total", []);
         final __ctx = ActionsFrameContext(__e, 0);
         _context_stack.add(__ctx);
-        __kernel(__e);
-        return _context_stack.removeLast()._return;
+        try {
+            __kernel(__e);
+            return _context_stack.removeLast()._return;
+        } catch (__frame_err) {
+            _context_stack.removeLast();
+            rethrow;
+        }
     }
 
     void _state_Counting(ActionsFrameEvent __e, ActionsCompartment compartment) {
@@ -188,15 +196,15 @@ class Actions {
     }
 
     void _s_Counting_hdl_user_get_total(ActionsFrameEvent __e, ActionsCompartment compartment) {
-        this._context_stack[this._context_stack.length - 1]._return = self.total;
+        this._context_stack[this._context_stack.length - 1]._return = this.total;
     }
 
     void _s_Counting_hdl_user_increment(ActionsFrameEvent __e, ActionsCompartment compartment) {
         final n = __e._parameters[0] as int;
-        self._scale(n)
+        this._scale(n);
     }
 
     void _scale(int n) {
-                    self.total = self.total + n * 2
+                    this.total = this.total + n * 2
     }
 }

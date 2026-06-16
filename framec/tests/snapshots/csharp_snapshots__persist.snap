@@ -169,18 +169,28 @@ public class Counter {
         CounterFrameEvent __e = new CounterFrameEvent("increment", new List<object> { by });
         CounterFrameContext __ctx = new CounterFrameContext(__e, null);
         _context_stack.Add(__ctx);
-        __kernel(_context_stack[_context_stack.Count - 1]._event);
-        _context_stack.RemoveAt(_context_stack.Count - 1);
+        try {
+            __kernel(_context_stack[_context_stack.Count - 1]._event);
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+        } catch {
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+            throw;
+        }
     }
 
     public int value() {
         CounterFrameEvent __e = new CounterFrameEvent("value", new List<object>());
         CounterFrameContext __ctx = new CounterFrameContext(__e, 0);
         _context_stack.Add(__ctx);
-        __kernel(_context_stack[_context_stack.Count - 1]._event);
-        var __result = (int) _context_stack[_context_stack.Count - 1]._return;
-        _context_stack.RemoveAt(_context_stack.Count - 1);
-        return __result;
+        try {
+            __kernel(_context_stack[_context_stack.Count - 1]._event);
+            var __result = (int) _context_stack[_context_stack.Count - 1]._return;
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+            return __result;
+        } catch {
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+            throw;
+        }
     }
 
     private void _state_Counting(CounterFrameEvent __e, CounterCompartment compartment) {
@@ -196,11 +206,11 @@ public class Counter {
 
     private void _s_Counting_hdl_user_increment(CounterFrameEvent __e, CounterCompartment compartment) {
         int by = System.Convert.ToInt32(__e._parameters[0]);
-        self.count = self.count + by
+        this.count = this.count + by
     }
 
     private void _s_Counting_hdl_user_value(CounterFrameEvent __e, CounterCompartment compartment) {
-        _context_stack[_context_stack.Count - 1]._return = self.count;
+        _context_stack[_context_stack.Count - 1]._return = this.count;
     }
 
     private object __SerComp(CounterCompartment comp) {

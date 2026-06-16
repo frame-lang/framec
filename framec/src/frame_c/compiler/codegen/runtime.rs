@@ -7,7 +7,7 @@
 mod c;
 
 use super::ast::{CodegenNode, Field, Param, Visibility};
-use super::codegen_utils::{expression_to_string, state_var_init_value, type_to_string};
+use super::codegen_utils::{expression_to_string, type_to_string};
 use crate::frame_c::compiler::frame_ast::{Expression, SystemAst, Type};
 use crate::frame_c::visitors::TargetLanguage;
 pub use c::generate_c_compartment_types;
@@ -1065,16 +1065,13 @@ fn generate_rust_runtime_types(
                         .params
                         .iter()
                         .map(|p| {
+                            // Frame type names pass through verbatim (no
+                            // int->i64 alias — docs/frame_language.md); the
+                            // typed StateContext field is the user's own type.
                             let ty = p
                                 .symbol_type
                                 .as_deref()
-                                .map(|s| match s {
-                                    "int" => "i64".to_string(),
-                                    "float" => "f64".to_string(),
-                                    "str" | "string" => "String".to_string(),
-                                    "bool" => "bool".to_string(),
-                                    other => other.to_string(),
-                                })
+                                .map(|s| s.to_string())
                                 .unwrap_or_else(|| "String".to_string());
                             (p.name.clone(), ty)
                         })
@@ -1163,15 +1160,11 @@ fn generate_rust_runtime_types(
                     continue;
                 }
                 if let Some(ref rt) = handler_entry.return_type {
+                    // Frame type names pass through verbatim (no int->i64
+                    // alias — docs/frame_language.md).
                     return_types
                         .entry(handler_entry.event.clone())
-                        .or_insert_with(|| match rt.as_str() {
-                            "int" => "i64".to_string(),
-                            "float" => "f64".to_string(),
-                            "str" | "string" => "String".to_string(),
-                            "bool" => "bool".to_string(),
-                            other => other.to_string(),
-                        });
+                        .or_insert_with(|| rt.clone());
                 }
             }
         }
@@ -1338,8 +1331,8 @@ fn generate_rust_runtime_types(
                 code.push_str(&format!("            {}: {},\n", name, init_val));
             }
             for var in &state.state_vars {
-                let init_val = if let Some(ref init) = var.init {
-                    super::codegen_utils::typed_init_expr(init, &var.var_type, TargetLanguage::Rust)
+                let init_val = if let Some(ref init) = var.initializer_text {
+                    init.clone()
                 } else {
                     frame_type_to_rust_default(&var.var_type)
                 };

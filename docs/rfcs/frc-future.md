@@ -14,7 +14,7 @@ Frame's grammar is anchored by one token: **`@@`**, the **system context token**
 | Scope | What `@@` reaches | Examples |
 |-------|-------------------|----------|
 | **Module scope** | Frame directives, system declarations, system instantiation | `@@[target("python_3")]`, `@@[persist]`, `@@system Name { ... }`, `@@SystemName(args)` |
-| **Inside a handler, action, or operation** | The **dispatch context** of the current interface call | `@@:return`, `@@:params.x`, `@@:event`, `@@:data.k`, `@@:self.method()`, `@@:system.state` |
+| **Inside a handler, action, or operation** | The **dispatch context** of the current interface call | `@@:return`, `@@:params.x`, `@@:event`, `@@:data.k`, `@@:self.method()`, `@@:system.state.name` |
 
 At module scope, `@@` is followed by a Frame keyword (`target`, `codegen`, `persist`, `system`) or a system name being instantiated. Inside a handler, the most-used target is the dispatch context — so common that Frame gives it dedicated syntax: a colon after `@@`.
 
@@ -27,7 +27,7 @@ The accessor grammar is uniform:
 - **`:`** descends through Frame's namespace hierarchy
 - **`.`** accesses a field on the resolved object
 
-So `@@:params.x` reads as "into the context, navigate to `params`, then access field `x`." `@@:system.state` reads as "into the context, navigate to `system`, then access field `state`." And `@@:return` reads as "into the context, the return slot" — because `return` resolves to a value, not a container, no `.` follows.
+So `@@:params.x` reads as "into the context, navigate to `params`, then access field `x`." `@@:system.state.name` reads as "into the context, navigate to `system`, then `state`, then access field `name`." And `@@:return` reads as "into the context, the return slot" — because `return` resolves to a value, not a container, no `.` follows.
 
 ### `@@:` Defaults to `@@:return`
 
@@ -52,8 +52,8 @@ That single rule explains all three return-value forms:
 Both must be followed by a member access:
 
 - `@@:self.method(args)` — call your own interface (validated against `interface:`; E601 if the method doesn't exist, E602 on arity mismatch)
-- `@@:system.state` — read the current state name
+- `@@:system.state.name` — read the current state name
 
-Bare `@@:self` is **E603**; bare `@@:system` is **E604**. This is deliberate. Letting these escape into native code as free-floating values would force Frame to commit to a target-specific type for "the system's self-reference," which would break source-portability across the 17 backends — a single Rust target alone has at least four plausible self-types (`&Self`, `&mut Self`, `Rc<RefCell<Self>>`, `Arc<Mutex<Self>>`).
+Bare `@@:self` is **E603**; bare `@@:system` is **E604**; bare `@@:system.state` (without `.name`) is **E608**, reserved per [RFC-0045](rfc-0045.md) for a future direct reference to the current *compartment* (`@@:system.state.name` is the current name accessor). This is deliberate. Letting these escape into native code as free-floating values would force Frame to commit to a target-specific type for "the system's self-reference," which would break source-portability across the 17 backends — a single Rust target alone has at least four plausible self-types (`&Self`, `&mut Self`, `Rc<RefCell<Self>>`, `Arc<Mutex<Self>>`).
 
 For patterns that need a system to hold a reference to another system, pass the reference in at construction time from native call-site code (e.g., `child = ChildSystem(self)` written natively, *not* through `@@`). For patterns that need to hand a self-reference to native code from inside a handler, write a small action that returns `self` in your target language — this localizes the target-specific code to one place rather than scattering it through handler bodies.

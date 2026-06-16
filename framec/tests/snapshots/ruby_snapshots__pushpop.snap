@@ -145,7 +145,7 @@ class PushPop
     def __router(__e)
         handler_name = "_state_#{@__compartment.state}"
         if respond_to?(handler_name, true)
-            send(handler_name, __e, @__compartment)
+            __send__(handler_name, __e, @__compartment)
         end
     end
 
@@ -157,32 +157,48 @@ class PushPop
         __e = PushPopFrameEvent.new("ping", [])
         __ctx = PushPopFrameContext.new(__e, nil)
         @_context_stack.push(__ctx)
-        __kernel(__e)
-        return @_context_stack.pop._return
+        begin
+            __kernel(__e)
+            return @_context_stack.last._return
+        ensure
+            @_context_stack.pop
+        end
     end
 
     def nest
         __e = PushPopFrameEvent.new("nest", [])
         __ctx = PushPopFrameContext.new(__e, nil)
         @_context_stack.push(__ctx)
-        __kernel(__e)
-        return @_context_stack.pop._return
+        begin
+            __kernel(__e)
+            return @_context_stack.last._return
+        ensure
+            @_context_stack.pop
+        end
     end
 
     def unnest
         __e = PushPopFrameEvent.new("unnest", [])
         __ctx = PushPopFrameContext.new(__e, nil)
         @_context_stack.push(__ctx)
-        __kernel(__e)
-        return @_context_stack.pop._return
+        begin
+            __kernel(__e)
+            return @_context_stack.last._return
+        ensure
+            @_context_stack.pop
+        end
     end
 
     def leaf
         __e = PushPopFrameEvent.new("leaf", [])
         __ctx = PushPopFrameContext.new(__e, nil)
         @_context_stack.push(__ctx)
-        __kernel(__e)
-        return @_context_stack.pop._return
+        begin
+            __kernel(__e)
+            return @_context_stack.last._return
+        ensure
+            @_context_stack.pop
+        end
     end
 
     def _state_Idle(__e, compartment)

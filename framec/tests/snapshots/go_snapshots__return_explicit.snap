@@ -151,10 +151,10 @@ func (s *ReturnExplicit) Decide(score int) string {
     __e := ReturnExplicitFrameEvent{_message: "decide", _parameters: []any{score}}
     __ctx := ReturnExplicitFrameContext{_event: __e, _data: make(map[string]any)}
     s._context_stack = append(s._context_stack, __ctx)
+    defer func() { s._context_stack = s._context_stack[:len(s._context_stack)-1] }()
     s.__kernel(&s._context_stack[len(s._context_stack)-1]._event)
     var __result string
     if __rv := s._context_stack[len(s._context_stack)-1]._return; __rv != nil { __result = __rv.(string) }
-    s._context_stack = s._context_stack[:len(s._context_stack)-1]
     return __result
 }
 

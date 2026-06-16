@@ -61,185 +61,112 @@ pub(crate) struct HandlerContext {
     /// typed-language per-handler emit so the prefetch cast/declaration
     /// matches the declared type instead of defaulting to `int`.
     pub state_param_types: std::collections::HashMap<(String, String), String>,
+    /// (state_name, param_name) → declared type of the state's `$>` enter
+    /// handler params. Used by the C transition codegen (#81) to pack each
+    /// enter arg per its declared marshal category (float/double heap-box
+    /// via pack_double, pushed owned). Empty on backends that don't need
+    /// write-side categorization (erased containers carry the type).
+    pub state_enter_param_types: std::collections::HashMap<(String, String), String>,
+    /// (state_name, param_name) → declared type of the state's `<$` exit
+    /// handler params. C transition codegen write-side mirror of
+    /// `state_enter_param_types` (#81); keyed by the transition's SOURCE
+    /// state (the one being exited).
+    pub state_exit_param_types: std::collections::HashMap<(String, String), String>,
     /// Declared return type of the handler currently being expanded.
     /// Used by the C backend to branch on `float`/`double` when emitting
     /// `@@:(expr)` so doubles survive the `void*` return slot.
     pub current_return_type: Option<String>,
+    /// Domain field name → declared type (clean, e.g. `Ship`). Used by
+    /// `@@:self.field.method()` (RFC-0046) to decide whether `field` is an
+    /// embedded system (type ∈ `defined_systems` → cross-system call /
+    /// pointer deref) or a scalar (native value method). Empty where the
+    /// info is unavailable (no embed calls expected there).
+    pub domain_field_types: std::collections::HashMap<String, String>,
+    /// The system's action names (RFC-0046). `@@:self.<action>(args)` is a
+    /// *direct* call, not a kernel-dispatched interface call, so it must NOT
+    /// receive the caller-side transition guard. The body walk consults this
+    /// to suppress the guard for action calls.
+    pub actions: std::collections::HashSet<String>,
 }
 
-/// Get default initialization value for a type
-pub(crate) fn state_var_init_value(var_type: &Type, lang: TargetLanguage) -> String {
-    match var_type {
-        Type::Custom(name) => {
-            match name.to_lowercase().as_str() {
-                "int" | "i32" | "i64" | "u32" | "u64" | "number" => "0".to_string(),
-                "float" | "f32" | "f64" => "0.0".to_string(),
-                "bool" | "boolean" => match lang {
-                    TargetLanguage::Python3 => "False".to_string(),
-                    TargetLanguage::GDScript
-                    | TargetLanguage::TypeScript
-                    | TargetLanguage::JavaScript
-                    | TargetLanguage::Rust
-                    | TargetLanguage::C
-                    | TargetLanguage::Cpp
-                    | TargetLanguage::Java
-                    | TargetLanguage::Kotlin
-                    | TargetLanguage::Swift
-                    | TargetLanguage::CSharp
-                    | TargetLanguage::Go
-                    | TargetLanguage::Php
-                    | TargetLanguage::Ruby
-                    | TargetLanguage::Erlang
-                    | TargetLanguage::Lua
-                    | TargetLanguage::Dart => "false".to_string(),
-                    TargetLanguage::Graphviz => unreachable!(),
-                },
-                "str" | "string" => match lang {
-                    // Rust: `""` is `&str`, not `String`. The Default impl
-                    // for typed XContext structs needs a `String` value.
-                    TargetLanguage::Rust => "String::new()".to_string(),
-                    // C++: `""` is `const char*`, not `std::string`. Values
-                    // stored in `std::any("")` fail `std::any_cast<std::string>`.
-                    TargetLanguage::Cpp => "std::string()".to_string(),
-                    _ => "\"\"".to_string(),
-                },
-                "list" | "array" => match lang {
-                    TargetLanguage::Python3 | TargetLanguage::GDScript => "[]".to_string(),
-                    TargetLanguage::Rust => "Vec::new()".to_string(),
-                    TargetLanguage::TypeScript
-                    | TargetLanguage::JavaScript
-                    | TargetLanguage::Dart => "[]".to_string(),
-                    TargetLanguage::Java => "new java.util.ArrayList<>()".to_string(),
-                    TargetLanguage::Kotlin => "mutableListOf()".to_string(),
-                    TargetLanguage::Swift => "[]".to_string(),
-                    TargetLanguage::CSharp => "new List<object>()".to_string(),
-                    TargetLanguage::Cpp => "std::vector<std::any>()".to_string(),
-                    TargetLanguage::Go => "[]interface{}{}".to_string(),
-                    TargetLanguage::Php => "[]".to_string(),
-                    TargetLanguage::Ruby | TargetLanguage::Lua => "{}".to_string(),
-                    TargetLanguage::C => "NULL".to_string(),
-                    TargetLanguage::Erlang => "[]".to_string(),
-                    TargetLanguage::Graphviz => unreachable!(),
-                },
-                "dict" | "dictionary" | "map" => match lang {
-                    TargetLanguage::Python3 => "{}".to_string(),
-                    TargetLanguage::GDScript => "{}".to_string(),
-                    TargetLanguage::Rust => "HashMap::new()".to_string(),
-                    TargetLanguage::TypeScript | TargetLanguage::JavaScript => "{}".to_string(),
-                    TargetLanguage::Java => "new java.util.HashMap<>()".to_string(),
-                    TargetLanguage::Kotlin => "mutableMapOf()".to_string(),
-                    TargetLanguage::Swift => "[:]".to_string(),
-                    TargetLanguage::CSharp => "new Dictionary<string, object>()".to_string(),
-                    TargetLanguage::Cpp => {
-                        "std::unordered_map<std::string, std::any>()".to_string()
-                    }
-                    TargetLanguage::Go => "map[string]interface{}{}".to_string(),
-                    TargetLanguage::Php => "[]".to_string(),
-                    TargetLanguage::Ruby => "{}".to_string(),
-                    TargetLanguage::Lua => "{}".to_string(),
-                    TargetLanguage::Dart => "{}".to_string(),
-                    TargetLanguage::C => "NULL".to_string(),
-                    TargetLanguage::Erlang => "#{}".to_string(),
-                    TargetLanguage::Graphviz => unreachable!(),
-                },
-                "set" => match lang {
-                    TargetLanguage::Python3 => "set()".to_string(),
-                    TargetLanguage::GDScript => "{}".to_string(),
-                    TargetLanguage::Rust => "HashSet::new()".to_string(),
-                    TargetLanguage::TypeScript | TargetLanguage::JavaScript => {
-                        "new Set()".to_string()
-                    }
-                    TargetLanguage::Java => "new HashSet<>()".to_string(),
-                    TargetLanguage::Kotlin => "mutableSetOf()".to_string(),
-                    TargetLanguage::Swift => "Set<AnyHashable>()".to_string(),
-                    TargetLanguage::CSharp => "new HashSet<object>()".to_string(),
-                    TargetLanguage::Dart => "<dynamic>{}".to_string(),
-                    _ => "null".to_string(),
-                },
-                _ => match lang {
-                    TargetLanguage::Python3 | TargetLanguage::Rust => "None".to_string(),
-                    TargetLanguage::Cpp => "nullptr".to_string(),
-                    TargetLanguage::Go
-                    | TargetLanguage::Swift
-                    | TargetLanguage::Ruby
-                    | TargetLanguage::Lua => "nil".to_string(),
-                    TargetLanguage::C => "NULL".to_string(),
-                    TargetLanguage::Erlang => "undefined".to_string(),
-                    TargetLanguage::GDScript
-                    | TargetLanguage::Dart
-                    | TargetLanguage::TypeScript
-                    | TargetLanguage::JavaScript
-                    | TargetLanguage::Java
-                    | TargetLanguage::Kotlin
-                    | TargetLanguage::CSharp
-                    | TargetLanguage::Php => "null".to_string(),
-                    TargetLanguage::Graphviz => unreachable!(),
-                },
-            }
-        }
-        Type::Unknown => match lang {
-            TargetLanguage::Python3 | TargetLanguage::Rust => "None".to_string(),
-            TargetLanguage::Cpp => "nullptr".to_string(),
-            TargetLanguage::Go
-            | TargetLanguage::Swift
-            | TargetLanguage::Ruby
-            | TargetLanguage::Lua => "nil".to_string(),
-            TargetLanguage::C => "NULL".to_string(),
-            TargetLanguage::Erlang => "undefined".to_string(),
-            TargetLanguage::GDScript
-            | TargetLanguage::Dart
-            | TargetLanguage::TypeScript
-            | TargetLanguage::JavaScript
-            | TargetLanguage::Java
-            | TargetLanguage::Kotlin
-            | TargetLanguage::CSharp
-            | TargetLanguage::Php => "null".to_string(),
-            TargetLanguage::Graphviz => unreachable!(),
-        },
-    }
-}
-
-/// Convert a state var init expression to a type-correct value for the
-/// target language. Frame source uses portable expressions (`""` for
-/// empty string, `0` for integer, `false` for bool). The target language
-/// may need wrapping — e.g. Rust's struct fields are `String` not `&str`,
-/// so a string literal `""` becomes `String::from("")`.
+/// Coerce a value expression to its DECLARED float-family type at the point
+/// it enters a target's type-erasure layer (#77).
 ///
-/// This is the canonical way to emit state var init values. It delegates
-/// to `expression_to_string` for the base serialization, then wraps
-/// based on declared type + target language.
-pub(crate) fn typed_init_expr(expr: &Expression, var_type: &Type, lang: TargetLanguage) -> String {
-    let raw = expression_to_string(expr, lang);
-    let is_string_type = match var_type {
-        Type::Custom(s) => matches!(s.to_lowercase().as_str(), "str" | "string"),
-        Type::Unknown => false,
-    };
-    let is_string_literal = matches!(expr, Expression::Literal(Literal::String(_)));
-    let is_int_literal = matches!(expr, Expression::Literal(Literal::Int(_)));
-
+/// The type-erased backends store state-vars / the return slot in an erased
+/// container (`std::any`, `object`, `Object`, `Any`, `interface{}`) and read
+/// back with an EXACT-match cast of the declared type. A bare literal,
+/// however, deduces/boxes to the target's default float width (`0.0` →
+/// C++ `double`, Java `Double`, Go `float64`, …), so a `float`-declared slot
+/// stores a double and every read crashes at runtime (`std::bad_any_cast` /
+/// `InvalidCastException` / `ClassCastException` / `as!` trap / interface
+/// panic) — while compiling cleanly. Third sighting of the typed-erasure
+/// round-trip class (#59 Rust literals, #72 C `void*`, #77 this).
+///
+/// The discipline: every WRITE into an erased slot coerces to the declared
+/// type; reads stay exact. Coercion is a no-op when the expression already
+/// has the declared type, so it is safe to apply unconditionally at the
+/// write chokepoints. Only the float family needs it (the only case where a
+/// valid literal's deduced type differs from a declared native type);
+/// everything else returns the expression unchanged. C is handled separately
+/// via `c_marshal` (bit-pun pack/unpack — there is no typed box to match).
+pub(crate) fn erased_write_coercion(lang: TargetLanguage, declared: &str, expr: &str) -> String {
+    let t = declared.trim();
     match lang {
-        // Rust: struct field is `String`, literal `""` is `&str` → wrap
-        TargetLanguage::Rust if is_string_type && is_string_literal => {
-            format!("String::from({})", raw)
-        }
-        // Rust: parser fallback — String field got Integer(0) because it
-        // couldn't parse a Rust-specific constructor. Substitute default.
-        TargetLanguage::Rust if is_string_type && is_int_literal => "String::new()".to_string(),
-        // C++: std::any storage needs std::string, not const char*
-        TargetLanguage::Cpp if is_string_type && is_string_literal => {
-            format!("std::string({})", raw)
-        }
-        // All other languages: portable expression works as-is
-        _ => raw,
+        TargetLanguage::Cpp if t == "float" || t == "double" => format!("({t})({expr})"),
+        TargetLanguage::CSharp if t == "float" || t == "double" => format!("({t})({expr})"),
+        TargetLanguage::Java if t == "float" || t == "double" => format!("({t})({expr})"),
+        TargetLanguage::Kotlin if t == "Float" => format!("({expr}).toFloat()"),
+        TargetLanguage::Kotlin if t == "Double" => format!("({expr}).toDouble()"),
+        TargetLanguage::Swift if t == "Float" || t == "Double" => format!("{t}({expr})"),
+        TargetLanguage::Go if t == "float32" || t == "float64" => format!("{t}({expr})"),
+        _ => expr.to_string(),
     }
 }
+
+/// The state-var initializer, verbatim.
+///
+/// E610 rejects state-vars without an initializer before codegen runs, so
+/// the text is always present here. Frame does not synthesize default
+/// values — the per-target default table that used to live here picked a
+/// value by lowercase-matching the TYPE NAME, the alias-table species the
+/// 4.5.0 verbatim-passthrough release exterminated (issue #84).
+pub(crate) fn state_var_initializer(
+    var: &crate::frame_c::compiler::frame_ast::StateVarAst,
+) -> String {
+    var.initializer_text.clone().unwrap_or_else(|| {
+        unreachable!(
+            "state-var '$.{}' has no initializer — E610 must reject this before codegen",
+            var.name
+        )
+    })
+}
+
+// `typed_init_expr` (removed): previously wrapped portable state-var init
+// expressions per target (`""` -> `String::from("")` for Rust, etc.). That
+// contradicted the verbatim-passthrough contract (docs/frame_language.md) and
+// was the parse-and-re-serialize path that corrupted literals like `0.0` ->
+// `0` (FRAMEC #59). State-var initializers now carry raw text
+// (`StateVarAst::initializer_text`) and are emitted verbatim, exactly like
+// domain-field initializers — the user writes their target's native init value.
 
 /// Convert an Expression to a string representation for inline code
 pub(crate) fn expression_to_string(expr: &Expression, lang: TargetLanguage) -> String {
     match expr {
         Expression::Literal(lit) => match lit {
             Literal::Int(n) => n.to_string(),
-            Literal::Float(f) => f.to_string(),
+            Literal::Float(f) => {
+                // `f64::to_string()` drops the decimal for whole numbers
+                // (`0.0` -> `"0"`), which emits an integer literal into a
+                // float slot — uncompilable on typed targets (FRAMEC #59).
+                // Re-add it only for the pure-integer rendering; leave
+                // `1.5` / `1e10` / `inf` / `NaN` untouched.
+                let s = f.to_string();
+                if s.bytes().all(|b| b.is_ascii_digit() || b == b'-') {
+                    format!("{s}.0")
+                } else {
+                    s
+                }
+            }
             Literal::String(s) => format!("\"{}\"", s),
             Literal::Bool(b) => match lang {
                 TargetLanguage::Python3 => {
@@ -599,151 +526,35 @@ mod tests {
     use crate::frame_c::visitors::TargetLanguage;
 
     // =========================================================
-    // state_var_init_value — type-correct defaults per language
+    // =========================================================
+    // state_var_initializer — verbatim passthrough, no synthesis
     // =========================================================
 
     #[test]
-    fn test_state_var_init_string_rust() {
-        assert_eq!(
-            state_var_init_value(&Type::Custom("str".into()), TargetLanguage::Rust),
-            "String::new()"
-        );
-        assert_eq!(
-            state_var_init_value(&Type::Custom("string".into()), TargetLanguage::Rust),
-            "String::new()"
-        );
+    fn test_state_var_initializer_is_verbatim() {
+        // The user's initializer text is emitted untouched — Frame does
+        // not interpret values (issue #84; E610 guarantees presence).
+        let var = crate::frame_c::compiler::frame_ast::StateVarAst {
+            name: "cool".to_string(),
+            var_type: Type::Custom("float".to_string()),
+            initializer_text: Some("0.25f /* native */".to_string()),
+            span: crate::frame_c::compiler::frame_ast::Span::new(0, 0),
+        };
+        assert_eq!(state_var_initializer(&var), "0.25f /* native */");
     }
 
     #[test]
-    fn test_state_var_init_string_cpp() {
-        assert_eq!(
-            state_var_init_value(&Type::Custom("str".into()), TargetLanguage::Cpp),
-            "std::string()"
-        );
-        assert_eq!(
-            state_var_init_value(&Type::Custom("string".into()), TargetLanguage::Cpp),
-            "std::string()"
-        );
-    }
-
-    #[test]
-    fn test_state_var_init_string_python() {
-        assert_eq!(
-            state_var_init_value(&Type::Custom("str".into()), TargetLanguage::Python3),
-            "\"\""
-        );
-    }
-
-    #[test]
-    fn test_state_var_init_int() {
-        assert_eq!(
-            state_var_init_value(&Type::Custom("int".into()), TargetLanguage::Rust),
-            "0"
-        );
-        assert_eq!(
-            state_var_init_value(&Type::Custom("i64".into()), TargetLanguage::Cpp),
-            "0"
-        );
-        assert_eq!(
-            state_var_init_value(&Type::Custom("number".into()), TargetLanguage::Python3),
-            "0"
-        );
-    }
-
-    #[test]
-    fn test_state_var_init_bool_python() {
-        assert_eq!(
-            state_var_init_value(&Type::Custom("bool".into()), TargetLanguage::Python3),
-            "False"
-        );
-    }
-
-    #[test]
-    fn test_state_var_init_bool_rust() {
-        assert_eq!(
-            state_var_init_value(&Type::Custom("bool".into()), TargetLanguage::Rust),
-            "false"
-        );
-    }
-
-    #[test]
-    fn test_state_var_init_unknown_rust() {
-        assert_eq!(
-            state_var_init_value(&Type::Unknown, TargetLanguage::Rust),
-            "None"
-        );
-    }
-
-    #[test]
-    fn test_state_var_init_unknown_python() {
-        assert_eq!(
-            state_var_init_value(&Type::Unknown, TargetLanguage::Python3),
-            "None"
-        );
-    }
-
-    // =========================================================
-    // typed_init_expr — type-aware wrapping for init expressions
-    // =========================================================
-
-    #[test]
-    fn test_typed_init_expr_rust_string_literal() {
-        let expr = Expression::Literal(Literal::String("hello".into()));
-        let result = typed_init_expr(&expr, &Type::Custom("str".into()), TargetLanguage::Rust);
-        assert_eq!(result, "String::from(\"hello\")");
-    }
-
-    #[test]
-    fn test_typed_init_expr_cpp_string_literal() {
-        let expr = Expression::Literal(Literal::String("hello".into()));
-        let result = typed_init_expr(&expr, &Type::Custom("str".into()), TargetLanguage::Cpp);
-        assert_eq!(result, "std::string(\"hello\")");
-    }
-
-    #[test]
-    fn test_typed_init_expr_rust_int_fallback_for_string() {
-        // Parser produced Integer(0) for unparseable String::new()
-        let expr = Expression::Literal(Literal::Int(0));
-        let result = typed_init_expr(&expr, &Type::Custom("str".into()), TargetLanguage::Rust);
-        assert_eq!(result, "String::new()");
-    }
-
-    #[test]
-    fn test_typed_init_expr_python_string_no_wrap() {
-        let expr = Expression::Literal(Literal::String("hello".into()));
-        let result = typed_init_expr(&expr, &Type::Custom("str".into()), TargetLanguage::Python3);
-        assert_eq!(
-            result, "\"hello\"",
-            "Python should not wrap string literals"
-        );
-    }
-
-    #[test]
-    fn test_typed_init_expr_rust_int_for_int_no_wrap() {
-        let expr = Expression::Literal(Literal::Int(42));
-        let result = typed_init_expr(&expr, &Type::Custom("int".into()), TargetLanguage::Rust);
-        assert_eq!(result, "42", "Int-typed int literal should not be wrapped");
-    }
-
-    #[test]
-    fn test_typed_init_expr_rust_bool_no_wrap() {
-        let expr = Expression::Literal(Literal::Bool(true));
-        let result = typed_init_expr(&expr, &Type::Custom("bool".into()), TargetLanguage::Rust);
-        assert_eq!(result, "true");
-    }
-
-    #[test]
-    fn test_typed_init_expr_rust_empty_string() {
-        let expr = Expression::Literal(Literal::String("".into()));
-        let result = typed_init_expr(&expr, &Type::Custom("str".into()), TargetLanguage::Rust);
-        assert_eq!(result, "String::from(\"\")");
-    }
-
-    #[test]
-    fn test_typed_init_expr_cpp_empty_string() {
-        let expr = Expression::Literal(Literal::String("".into()));
-        let result = typed_init_expr(&expr, &Type::Custom("str".into()), TargetLanguage::Cpp);
-        assert_eq!(result, "std::string(\"\")");
+    #[should_panic(expected = "E610")]
+    fn test_state_var_initializer_missing_is_unreachable() {
+        // E610 rejects this before codegen; reaching the helper without
+        // an initializer is an internal invariant violation.
+        let var = crate::frame_c::compiler::frame_ast::StateVarAst {
+            name: "cool".to_string(),
+            var_type: Type::Custom("int".to_string()),
+            initializer_text: None,
+            span: crate::frame_c::compiler::frame_ast::Span::new(0, 0),
+        };
+        let _ = state_var_initializer(&var);
     }
 
     // =========================================================

@@ -162,16 +162,26 @@ export class Actions {
         const __e = new ActionsFrameEvent("increment", [n]);
         const __ctx = new ActionsFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        return this._context_stack.pop()._return;
+        try {
+            this.__kernel(__e);
+            return this._context_stack.pop()._return;
+        } catch (__frame_err) {
+            this._context_stack.pop();
+            throw __frame_err;
+        }
     }
 
     get_total() {
         const __e = new ActionsFrameEvent("get_total", []);
         const __ctx = new ActionsFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        return this._context_stack.pop()._return;
+        try {
+            this.__kernel(__e);
+            return this._context_stack.pop()._return;
+        } catch (__frame_err) {
+            this._context_stack.pop();
+            throw __frame_err;
+        }
     }
 
     _state_Counting(__e, compartment) {
@@ -186,15 +196,15 @@ export class Actions {
     }
 
     _s_Counting_hdl_user_get_total(__e, compartment) {
-        this._context_stack[this._context_stack.length - 1]._return = self.total;
+        this._context_stack[this._context_stack.length - 1]._return = this.total;
     }
 
     _s_Counting_hdl_user_increment(__e, compartment) {
         const n = __e._parameters[0];
-        self._scale(n)
+        this._scale(n);
     }
 
     _scale(n) {
-                    self.total = self.total + n * 2
+                    this.total = this.total + n * 2
     }
 }

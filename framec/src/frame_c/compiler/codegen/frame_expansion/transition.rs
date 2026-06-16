@@ -690,7 +690,39 @@ pub(super) fn expand_transition(
                 let mut code = String::new();
                 let sys = &ctx.system_name;
 
-                // exit_args via __prepareExit if any provided.
+                // Positional push of a handler arg, packed per its declared
+                // marshal category (#81): float/double heap-box via
+                // pack_double and push OWNED (the vec frees/deep-copies the
+                // box — `(void*)(intptr_t)` truncates, and the handler-side
+                // read derefs); everything else keeps the historical
+                // intptr_t fallback (struct args unsupported on C, #72).
+                // `types` is the (state, param_name) → declared-type map for
+                // the slot family; `names` gives the positional param names.
+                let push_typed = |idx: usize,
+                                  value_expr: &str,
+                                  state: &str,
+                                  names: &[String],
+                                  types: &std::collections::HashMap<(String, String), String>|
+                 -> (String, &'static str) {
+                    use super::super::c_marshal::{c_marshal_of, CMarshal};
+                    let frame_type = names
+                        .get(idx)
+                        .and_then(|name| types.get(&(state.to_string(), name.clone())).cloned())
+                        .unwrap_or_default();
+                    match c_marshal_of(&frame_type) {
+                        CMarshal::Dbl => (
+                            format!("{}_pack_double({})", sys, value_expr),
+                            "FrameVec_push_owned",
+                        ),
+                        _ => (
+                            format!("(void*)(intptr_t)({})", value_expr),
+                            "FrameVec_push",
+                        ),
+                    }
+                };
+
+                // exit_args via __prepareExit if any provided. Declared
+                // types come from the SOURCE state's `<$` params.
                 if let Some(ref exit) = exit_str {
                     let vals: Vec<&str> = exit
                         .split(',')
@@ -698,14 +730,26 @@ pub(super) fn expand_transition(
                         .filter(|x| !x.is_empty())
                         .collect();
                     if !vals.is_empty() {
+                        let exit_names: Vec<String> = ctx
+                            .state_exit_param_names
+                            .get(&ctx.state_name)
+                            .cloned()
+                            .unwrap_or_default();
                         code.push_str(&format!(
                             "{}{{ {}_FrameVec* __ea = {}_FrameVec_new();\n",
                             indent_str, sys, sys
                         ));
-                        for v in &vals {
+                        for (i, v) in vals.iter().enumerate() {
+                            let (arg, push_fn) = push_typed(
+                                i,
+                                v,
+                                &ctx.state_name,
+                                &exit_names,
+                                &ctx.state_exit_param_types,
+                            );
                             code.push_str(&format!(
-                                "{}{}_FrameVec_push(__ea, (void*)(intptr_t)({}));\n",
-                                indent_str, sys, v
+                                "{}{}_{}(__ea, {});\n",
+                                indent_str, sys, push_fn, arg
                             ));
                         }
                         code.push_str(&format!("{}{}_prepareExit(self, __ea);\n", indent_str, sys));
@@ -749,29 +793,20 @@ pub(super) fn expand_transition(
                 // separate `if` branches).
                 // Look up target's state-arg names so each value
                 // can be packed using its declared type. Float /
-                // double survive only via the memcpy bit-pun
-                // helper `Sys_pack_double`; (intptr_t) truncates.
+                // double heap-box via `Sys_pack_double` (#81 —
+                // (intptr_t) truncates; bit-punning corrupts on
+                // 32-bit pointers) and push OWNED so the vec
+                // frees/deep-copies the box.
                 let target_param_names: Vec<String> = ctx
                     .state_param_names
                     .get(&target)
                     .cloned()
                     .unwrap_or_default();
-                let push_arg_for_target = |idx: usize, value_expr: &str| -> String {
-                    let frame_type = target_param_names
-                        .get(idx)
-                        .and_then(|name| {
-                            ctx.state_param_types
-                                .get(&(target.clone(), name.clone()))
-                                .cloned()
-                        })
-                        .unwrap_or_default();
-                    match frame_type.trim() {
-                        "float" | "double" | "f32" | "f64" => {
-                            format!("{}_pack_double({})", sys, value_expr)
-                        }
-                        _ => format!("(void*)(intptr_t)({})", value_expr),
-                    }
-                };
+                let target_enter_param_names: Vec<String> = ctx
+                    .state_enter_param_names
+                    .get(&target)
+                    .cloned()
+                    .unwrap_or_default();
                 code.push_str(&format!("{}{{\n", indent_str));
                 if state_vals.is_empty() {
                     code.push_str(&format!(
@@ -784,10 +819,11 @@ pub(super) fn expand_transition(
                         indent_str, sys, sys
                     ));
                     for (i, v) in state_vals.iter().enumerate() {
-                        let push_arg = push_arg_for_target(i, v);
+                        let (push_arg, push_fn) =
+                            push_typed(i, v, &target, &target_param_names, &ctx.state_param_types);
                         code.push_str(&format!(
-                            "{}    {}_FrameVec_push(__sa, {});\n",
-                            indent_str, sys, push_arg
+                            "{}    {}_{}(__sa, {});\n",
+                            indent_str, sys, push_fn, push_arg
                         ));
                     }
                 }
@@ -801,10 +837,19 @@ pub(super) fn expand_transition(
                         "{}    {}_FrameVec* __ea = {}_FrameVec_new();\n",
                         indent_str, sys, sys
                     ));
-                    for v in &enter_vals {
+                    // Enter args: declared types come from the TARGET
+                    // state's `$>` params.
+                    for (i, v) in enter_vals.iter().enumerate() {
+                        let (push_arg, push_fn) = push_typed(
+                            i,
+                            v,
+                            &target,
+                            &target_enter_param_names,
+                            &ctx.state_enter_param_types,
+                        );
                         code.push_str(&format!(
-                            "{}    {}_FrameVec_push(__ea, (void*)(intptr_t)({}));\n",
-                            indent_str, sys, v
+                            "{}    {}_{}(__ea, {});\n",
+                            indent_str, sys, push_fn, push_arg
                         ));
                     }
                 }

@@ -157,32 +157,32 @@ public class PushPop {
         let __e = PushPopFrameEvent(message: "ping", parameters: [])
         let __ctx = PushPopFrameContext(event: __e)
         _context_stack.append(__ctx)
+        defer { _context_stack.removeLast() }
         __kernel(_context_stack[_context_stack.count - 1]._event)
-        _context_stack.removeLast()
     }
 
     public func nest() {
         let __e = PushPopFrameEvent(message: "nest", parameters: [])
         let __ctx = PushPopFrameContext(event: __e)
         _context_stack.append(__ctx)
+        defer { _context_stack.removeLast() }
         __kernel(_context_stack[_context_stack.count - 1]._event)
-        _context_stack.removeLast()
     }
 
     public func unnest() {
         let __e = PushPopFrameEvent(message: "unnest", parameters: [])
         let __ctx = PushPopFrameContext(event: __e)
         _context_stack.append(__ctx)
+        defer { _context_stack.removeLast() }
         __kernel(_context_stack[_context_stack.count - 1]._event)
-        _context_stack.removeLast()
     }
 
     public func leaf() {
         let __e = PushPopFrameEvent(message: "leaf", parameters: [])
         let __ctx = PushPopFrameContext(event: __e)
         _context_stack.append(__ctx)
+        defer { _context_stack.removeLast() }
         __kernel(_context_stack[_context_stack.count - 1]._event)
-        _context_stack.removeLast()
     }
 
     private func _state_Idle(_ __e: PushPopFrameEvent, _ compartment: PushPopCompartment) {

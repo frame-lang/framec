@@ -557,9 +557,34 @@ impl Parser {
             Type::Unknown
         };
 
-        let init = if self.check(&Token::Equals)? {
+        // Capture the initializer as raw target-language text (verbatim
+        // passthrough — Frame does not interpret values). Mirrors the
+        // domain-field / return-init scan: bytes from the cursor to end of
+        // line, stopping at a `#` native comment. (Parsing into an
+        // `Expression` and re-serializing corrupted literals — FRAMEC #59.)
+        let initializer_text = if self.check(&Token::Equals)? {
             self.advance()?; // consume `=`
-            Some(self.parse_simple_expression()?)
+            let src = self.lexer.source();
+            let init_start = self.lexer.cursor();
+            let mut pos = init_start;
+            while pos < src.len() && src[pos] != b'\n' && src[pos] != b'#' {
+                pos += 1;
+            }
+            let init_text = std::str::from_utf8(&src[init_start..pos])
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            if pos < src.len() && src[pos] == b'#' {
+                while pos < src.len() && src[pos] != b'\n' {
+                    pos += 1;
+                }
+            }
+            self.lexer.set_cursor(pos);
+            if init_text.is_empty() {
+                None
+            } else {
+                Some(init_text)
+            }
         } else {
             None
         };
@@ -567,7 +592,7 @@ impl Parser {
         Ok(StateVarAst {
             name,
             var_type,
-            init,
+            initializer_text,
             span: Span::new(start, self.lexer.cursor()),
         })
     }
@@ -847,8 +872,21 @@ impl Parser {
                             }));
                         }
                         Token::StringLit(label_text) => {
-                            // -> "label" $State — transition with label
-                            let target_tok = self.lexer.next_token().map_err(ParseError::from)?;
+                            // -> "label" $State — transition with label.
+                            // The lexer reorders `$State(state_args)` to
+                            // NativeCode(state_args) BEFORE the StateRef, so
+                            // `-> "label" $State(args)` arrives as StringLit →
+                            // NativeCode → StateRef. Absorb the optional
+                            // state-args token (#81 W414 false positive:
+                            // without this the Transition statement was
+                            // dropped and the target flagged unreachable).
+                            let mut target_tok =
+                                self.lexer.next_token().map_err(ParseError::from)?;
+                            let mut state_args = None;
+                            if let Token::NativeCode(state_args_text) = target_tok.token {
+                                state_args = Some(state_args_text);
+                                target_tok = self.lexer.next_token().map_err(ParseError::from)?;
+                            }
                             if let Token::StateRef(target) = target_tok.token {
                                 statements.push(Statement::Transition(TransitionAst {
                                     target,
@@ -858,7 +896,7 @@ impl Parser {
                                     indent: 0,
                                     exit_args: None,
                                     enter_args: None,
-                                    state_args: None,
+                                    state_args,
                                     is_pop: false,
                                     is_forward: false,
                                 }));
@@ -932,9 +970,18 @@ impl Parser {
                                     }));
                                 }
                                 Token::StringLit(label_text) => {
-                                    // -> (args) "label" $State — enter args + label
-                                    let target_tok =
+                                    // -> (args) "label" $State — enter args + label.
+                                    // Absorb an optional reordered state-args
+                                    // token before the StateRef (see the
+                                    // StringLit arm above; #81 W414).
+                                    let mut target_tok =
                                         self.lexer.next_token().map_err(ParseError::from)?;
+                                    let mut state_args = None;
+                                    if let Token::NativeCode(state_args_text) = target_tok.token {
+                                        state_args = Some(state_args_text);
+                                        target_tok =
+                                            self.lexer.next_token().map_err(ParseError::from)?;
+                                    }
                                     if let Token::StateRef(target) = target_tok.token {
                                         statements.push(Statement::Transition(TransitionAst {
                                             target,
@@ -944,7 +991,33 @@ impl Parser {
                                             indent: 0,
                                             exit_args: None,
                                             enter_args: None,
-                                            state_args: None,
+                                            state_args,
+                                            is_pop: false,
+                                            is_forward: false,
+                                        }));
+                                    }
+                                }
+                                Token::NativeCode(state_args_text) => {
+                                    // -> (enter_args) $State(state_args) — the
+                                    // lexer emits state args as a second
+                                    // NativeCode BEFORE the StateRef (Arrow →
+                                    // NC(enter) → NC(state) → StateRef).
+                                    // Without this arm the combined decoration
+                                    // dropped the Transition statement and
+                                    // W414 flagged the target unreachable
+                                    // (#81 fixture surfaced it).
+                                    let target_tok =
+                                        self.lexer.next_token().map_err(ParseError::from)?;
+                                    if let Token::StateRef(target) = target_tok.token {
+                                        statements.push(Statement::Transition(TransitionAst {
+                                            target,
+                                            args: vec![Expression::NativeExpr(args)],
+                                            label: None,
+                                            span: Span::new(tok.span.start, target_tok.span.end),
+                                            indent: 0,
+                                            exit_args: None,
+                                            enter_args: None,
+                                            state_args: Some(state_args_text),
                                             is_pop: false,
                                             is_forward: false,
                                         }));
@@ -1880,6 +1953,51 @@ mod tests {
             has_transition,
             "Handler body should contain transition to $Running"
         );
+    }
+
+    #[test]
+    fn test_transition_enter_and_state_args_combined() {
+        // `-> (enter) $State(state)` — the lexer reorders state args to a
+        // second NativeCode BEFORE the StateRef. The parser used to drop
+        // the whole Transition statement on that shape, so W414 flagged
+        // the target unreachable (#81). Lock the combined decoration.
+        let sys = parse_py(
+            "machine:\n    $S {\n        go() {\n            -> (0.75) $T(2.5)\n        }\n    }\n    $T(sa: float) {\n    }",
+        );
+        let machine = sys.machine.unwrap();
+        let body = &machine.states[0].handlers[0].body;
+        let trans = body
+            .statements
+            .iter()
+            .find_map(|s| match s {
+                Statement::Transition(t) => Some(t),
+                _ => None,
+            })
+            .expect("combined enter+state args must still parse as a Transition");
+        assert_eq!(trans.target, "T");
+        assert_eq!(trans.state_args.as_deref(), Some("(2.5)"));
+    }
+
+    #[test]
+    fn test_transition_label_and_state_args_combined() {
+        // `-> "label" $State(state)` — same lexer reordering through the
+        // label arm (#81).
+        let sys = parse_py(
+            "machine:\n    $S {\n        go() {\n            -> \"hop\" $T(2.5)\n        }\n    }\n    $T(sa: float) {\n    }",
+        );
+        let machine = sys.machine.unwrap();
+        let body = &machine.states[0].handlers[0].body;
+        let trans = body
+            .statements
+            .iter()
+            .find_map(|s| match s {
+                Statement::Transition(t) => Some(t),
+                _ => None,
+            })
+            .expect("label + state args must still parse as a Transition");
+        assert_eq!(trans.target, "T");
+        assert_eq!(trans.label.as_deref(), Some("hop"));
+        assert_eq!(trans.state_args.as_deref(), Some("(2.5)"));
     }
 
     #[test]

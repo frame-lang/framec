@@ -282,27 +282,41 @@ impl LanguageBackend for RustBackend {
                     cascade_stmts.push(stmt);
                 }
 
-                // Emit `pub fn new() -> Self` — bare framework
-                let mut result = format!("{}pub fn new() -> Self {{\n", ctx.get_indent());
-                ctx.push_indent();
-                result.push_str(&format!("{}Self {{\n", ctx.get_indent()));
-                ctx.push_indent();
-                for (field, value) in &framework_fields {
-                    result.push_str(&format!("{}{}: {},\n", ctx.get_indent(), field, value));
-                }
-                for (field, _value, default) in &param_bound_fields {
-                    result.push_str(&format!("{}{}: {},\n", ctx.get_indent(), field, default));
-                }
-                ctx.pop_indent();
-                result.push_str(&format!("{}}}\n", ctx.get_indent()));
-                ctx.pop_indent();
-                result.push_str(&format!("{}}}\n", ctx.get_indent()));
+                // RFC-0020 construction: `new()` is the bare framework
+                // constructor (`@@!Foo()`); `__create(<params>)` is the
+                // factory (`@@Foo(args)`) that also runs the start `$>`.
+                //
+                // A domain field whose initializer references a ctor param
+                // can't be built in the parameterless `new()` — there is no
+                // param in scope, and no generic value (Frame has no type
+                // system, so framec can't know whether the field type is
+                // `Default`). Emitting `Default::default()` there produced
+                // uncompilable Rust for non-`Default` types like a
+                // parameterized embed `@@Inner(p)` or a `Gd<Node>` handle
+                // (FRAMEC #67). So when any field is param-bound we do NOT
+                // emit `new()` — `__create` builds the struct literal
+                // directly with the params in scope. (`new()` is only ever
+                // called by `__create`; `restore` takes `&mut self`.)
+                let has_param_bound = !param_bound_fields.is_empty();
+                let mut result = String::new();
 
-                // Emit `pub fn __create(<params>) -> Self` — factory +
-                // start-$>. Per RFC-0020 the body that used to live in
-                // `__frame_init` is absorbed inline here, with `self.`
-                // → `c.` rewrite to retarget the local instance.
-                result.push('\n');
+                if !has_param_bound {
+                    result.push_str(&format!("{}pub fn new() -> Self {{\n", ctx.get_indent()));
+                    ctx.push_indent();
+                    result.push_str(&format!("{}Self {{\n", ctx.get_indent()));
+                    ctx.push_indent();
+                    for (field, value) in &framework_fields {
+                        result.push_str(&format!("{}{}: {},\n", ctx.get_indent(), field, value));
+                    }
+                    ctx.pop_indent();
+                    result.push_str(&format!("{}}}\n", ctx.get_indent()));
+                    ctx.pop_indent();
+                    result.push_str(&format!("{}}}\n\n", ctx.get_indent()));
+                }
+
+                // Emit `pub fn __create(<params>) -> Self`. The `__frame_init`
+                // body is absorbed inline, with `self.` → `c.` rewrite to
+                // retarget the local instance.
                 let create_params = self.emit_params(params, false);
                 result.push_str(&format!(
                     "{}pub fn __create({}) -> Self {{\n",
@@ -310,9 +324,22 @@ impl LanguageBackend for RustBackend {
                     create_params
                 ));
                 ctx.push_indent();
-                result.push_str(&format!("{}let mut c = Self::new();\n", ctx.get_indent()));
-                for (field, value, _default) in &param_bound_fields {
-                    result.push_str(&format!("{}c.{} = {};\n", ctx.get_indent(), field, value));
+                if has_param_bound {
+                    // Build directly — params are in scope, so the param-bound
+                    // fields use their real initializer (no parameterless
+                    // `new()` to fall back on).
+                    result.push_str(&format!("{}let mut c = Self {{\n", ctx.get_indent()));
+                    ctx.push_indent();
+                    for (field, value) in &framework_fields {
+                        result.push_str(&format!("{}{}: {},\n", ctx.get_indent(), field, value));
+                    }
+                    for (field, value, _default) in &param_bound_fields {
+                        result.push_str(&format!("{}{}: {},\n", ctx.get_indent(), field, value));
+                    }
+                    ctx.pop_indent();
+                    result.push_str(&format!("{}}};\n", ctx.get_indent()));
+                } else {
+                    result.push_str(&format!("{}let mut c = Self::new();\n", ctx.get_indent()));
                 }
                 for stmt in &cascade_stmts {
                     let stmt_str = self.emit(stmt, ctx);
@@ -721,21 +748,20 @@ impl LanguageBackend for RustBackend {
 }
 
 impl RustBackend {
-    /// Convert type annotation from generic/Python types to Rust types
+    /// Normalize a type annotation for emission. Frame has NO type system:
+    /// user-written type names pass through VERBATIM (docs/frame_language.md).
+    /// Write Rust's own names (`i64`, `String`, `Vec<i32>`, `MyType`). The
+    /// arms below are framec-synthesized machinery types only (untyped event
+    /// params, the generic state/context stacks); there is deliberately no
+    /// `int`->`i64` / `str`->`String` alias table — that contradicted the
+    /// passthrough contract and was removed.
     fn convert_type(&self, type_str: &str) -> String {
         match type_str {
             "Any" => "Box<dyn core::any::Any>".to_string(),
-            "int" => "i64".to_string(),
-            "float" => "f64".to_string(),
-            "str" | "string" | "String" => "String".to_string(),
-            "bool" => "bool".to_string(),
             "None" => "()".to_string(),
             "List" => "Vec<Box<dyn core::any::Any>>".to_string(),
             "Dict" => "alloc::collections::BTreeMap<String, Box<dyn core::any::Any>>".to_string(),
-            // Keep Rust types as-is
-            t if t.starts_with("Vec<") || t.starts_with("HashMap<") || t.starts_with("&") => {
-                t.to_string()
-            }
+            // User Rust types pass through unchanged.
             other => other.to_string(),
         }
     }

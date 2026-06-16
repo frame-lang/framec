@@ -72,7 +72,7 @@ public class WithInterface {
 }
 ```
 
-Frame's `self.field` lowers to `this.field` in the generated Java.
+Frame's `@@:self.field` lowers to `this.field` in the generated Java.
 Domain fields are private by default; interface methods are
 public.
 
@@ -130,12 +130,13 @@ The Frame `: type` annotation IS the Java type — write `: String`,
 `: List<Integer>`, `: Map<String, Object>`, etc. Frame doesn't
 auto-prefix `java.util.` — declare imports in the prolog.
 
-**Frame type names map cleanly to Java types:**
+**Write Java's own type names directly** — framec passes the annotation
+through verbatim (the name you write *is* the emitted type):
 
-| Frame             | Java                | Notes |
+| You write         | Java meaning        | Notes |
 |-------------------|---------------------|-------|
 | `int`             | `int`               | primitive 32-bit |
-| `String`          | `String`            | preferred over `: str` for type-fidelity |
+| `String`          | `String`            | write `String`, not a generic `str` |
 | `boolean`         | `boolean`           | primitive |
 | `double`          | `double`            | primitive 64-bit |
 | `List<T>`         | `java.util.List<T>` | needs `import java.util.List` |
@@ -230,6 +231,19 @@ completed" on return. If your async handler needs to actually
 yield, restructure to dispatch the work to an executor inside
 the handler body and chain via `.thenApply(...)` —
 framec doesn't auto-emit this pattern.
+
+### Single-driver gate (`@@[async]`)
+
+An `@@[async]` system is emitted as a public **casing** (`public
+class <Name>`) wrapping a private **`_<Name>Machine`** — the casing
+is the only async layer; the machine stays synchronous as described
+above. Each casing method gates external entry: if the system is
+already `busy` when a second call arrives, it returns
+`CompletableFuture.failedFuture(new RuntimeException("E703: …"))` (the
+single-driver contract, **E703**). A real exception thrown by the
+machine is likewise funneled into a `failedFuture`, and the `busy`
+flag is cleared in a `finally`. See
+[language reference § Async](../frame_language.md#async).
 
 ---
 
@@ -409,7 +423,7 @@ driver. Don't write `WithInterface s = WithInterface()` — that's
 not legal Java.
 
 **`this.field`, not `self.field`.** Inside handler bodies, Frame's
-`self.x` lowers to `this.x` since Java's instance reference is
+`@@:self.x` lowers to `this.x` since Java's instance reference is
 `this`. If you write native Java inside a handler, use `this.`.
 
 **Imports go in the prolog, before `@@system`.** Java's `import`

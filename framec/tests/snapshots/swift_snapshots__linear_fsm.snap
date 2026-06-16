@@ -159,24 +159,24 @@ public class LinearFsm {
         let __e = LinearFsmFrameEvent(message: "start", parameters: [])
         let __ctx = LinearFsmFrameContext(event: __e)
         _context_stack.append(__ctx)
+        defer { _context_stack.removeLast() }
         __kernel(_context_stack[_context_stack.count - 1]._event)
-        _context_stack.removeLast()
     }
 
     public func progress(_ amount: Int) {
         let __e = LinearFsmFrameEvent(message: "progress", parameters: [amount])
         let __ctx = LinearFsmFrameContext(event: __e)
         _context_stack.append(__ctx)
+        defer { _context_stack.removeLast() }
         __kernel(_context_stack[_context_stack.count - 1]._event)
-        _context_stack.removeLast()
     }
 
     public func finish() {
         let __e = LinearFsmFrameEvent(message: "finish", parameters: [])
         let __ctx = LinearFsmFrameContext(event: __e)
         _context_stack.append(__ctx)
+        defer { _context_stack.removeLast() }
         __kernel(_context_stack[_context_stack.count - 1]._event)
-        _context_stack.removeLast()
     }
 
     private func _state_Idle(_ __e: LinearFsmFrameEvent, _ compartment: LinearFsmCompartment) {

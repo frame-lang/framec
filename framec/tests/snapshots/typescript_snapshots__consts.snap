@@ -166,16 +166,24 @@ export class Consts {
         const __e = new ConstsFrameEvent("tick", []);
         const __ctx = new ConstsFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        this._context_stack.pop();
+        try {
+            this.__kernel(__e);
+        } finally {
+            this._context_stack.pop();
+        }
     }
 
     public get_count(): number {
         const __e = new ConstsFrameEvent("get_count", []);
         const __ctx = new ConstsFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        return this._context_stack.pop()!._return;
+        try {
+            this.__kernel(__e);
+            return this._context_stack.pop()!._return;
+        } catch (__frame_err) {
+            this._context_stack.pop();
+            throw __frame_err;
+        }
     }
 
     private _state_Running(__e: ConstsFrameEvent, compartment: ConstsCompartment) {
@@ -190,13 +198,13 @@ export class Consts {
     }
 
     private _s_Running_hdl_user_get_count(__e: ConstsFrameEvent, compartment: ConstsCompartment) {
-        this._context_stack[this._context_stack.length - 1]._return = self.count;
+        this._context_stack[this._context_stack.length - 1]._return = this.count;
     }
 
     private _s_Running_hdl_user_tick(__e: ConstsFrameEvent, compartment: ConstsCompartment) {
-        self.count = self.count + self.step;
-        if self.count >= self.limit {
-            self.count = 0;
+        this.count = this.count + this.step;
+        if this.count >= this.limit {
+            this.count = 0;
         }
     }
 }

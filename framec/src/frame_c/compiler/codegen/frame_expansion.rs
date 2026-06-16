@@ -31,7 +31,9 @@ use utility::{
     split_transition_return, strip_outer_parens,
 };
 
-pub(crate) use handler_body::{emit_handler_body_via_statements, resolve_state_arg_key};
+pub(crate) use handler_body::{
+    emit_handler_body_via_statements, expand_self_in_body, resolve_state_arg_key,
+};
 pub(crate) use no_init::generate_no_initialization;
 pub(crate) use scanner_dispatch::{
     expand_system_state, expand_system_state_in_code, get_native_scanner,
@@ -44,8 +46,8 @@ pub(crate) use utility::{
 
 use super::codegen_utils::{
     cpp_map_type, cpp_wrap_any_arg, csharp_map_type, expression_to_string, go_map_type,
-    java_map_type, kotlin_map_type, replace_outside_strings_and_comments, state_var_init_value,
-    swift_map_type, to_snake_case, type_to_cpp_string, HandlerContext,
+    java_map_type, kotlin_map_type, replace_outside_strings_and_comments, swift_map_type,
+    to_snake_case, type_to_cpp_string, HandlerContext,
 };
 use crate::frame_c::compiler::frame_ast::Type;
 use crate::frame_c::compiler::native_region_scanner::{
@@ -125,12 +127,21 @@ pub(crate) fn generate_frame_expansion(
             context_data::expand_context_system_bare(body_bytes, span, indent, lang, ctx, metadata)
         }
         FrameSegmentKind::ContextSystemState => expand_system_state(lang),
+        // Reserved (RFC-0045) — validation rejects bare `@@:system.state` with
+        // E608 before codegen; this fallback only fires if validation is
+        // bypassed, in which case it passes the text through like a bare member.
+        FrameSegmentKind::ContextSystemStateReserved => {
+            context_data::expand_context_system_bare(body_bytes, span, indent, lang, ctx, metadata)
+        }
         FrameSegmentKind::ContextSelf => {
             context_self::expand_context_self(body_bytes, span, indent, lang, ctx, metadata)
         }
         FrameSegmentKind::ContextSelfCall => {
             context_self::expand_context_self_call(body_bytes, span, indent, lang, ctx, metadata)
         }
+        FrameSegmentKind::ContextSelfFieldCall => context_self::expand_context_self_field_call(
+            body_bytes, span, indent, lang, ctx, metadata,
+        ),
         FrameSegmentKind::ReturnStatement => {
             return_stmt::expand_return_statement(body_bytes, span, indent, lang, ctx, metadata)
         }
@@ -163,6 +174,10 @@ mod tests {
             state_hsm_parents: std::collections::HashMap::new(),
             current_return_type: None,
             state_param_types: std::collections::HashMap::new(),
+            state_enter_param_types: std::collections::HashMap::new(),
+            state_exit_param_types: std::collections::HashMap::new(),
+            domain_field_types: std::collections::HashMap::new(),
+            actions: std::collections::HashSet::new(),
         }
     }
 

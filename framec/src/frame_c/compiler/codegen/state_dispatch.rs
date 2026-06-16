@@ -21,7 +21,7 @@ use handler_methods::{
 use super::ast::{CodegenNode, Param, Visibility};
 use super::codegen_utils::{
     cpp_map_type, cpp_wrap_any_arg, csharp_map_type, expression_to_string, go_map_type,
-    java_map_type, kotlin_map_type, state_var_init_value, swift_map_type, to_snake_case,
+    java_map_type, kotlin_map_type, state_var_initializer, swift_map_type, to_snake_case,
     type_to_cpp_string, HandlerContext,
 };
 use super::frame_expansion::{
@@ -100,11 +100,7 @@ pub(crate) fn generate_unified_state_dispatch(
     if !state_vars.is_empty() && !has_enter_handler {
         code.push_str(&(syn.fmt_if)("$>"));
         for var in state_vars {
-            let init_val = if let Some(ref init) = var.init {
-                expression_to_string(init, syn.lang)
-            } else {
-                state_var_init_value(&var.var_type, syn.lang)
-            };
+            let init_val = state_var_initializer(var);
             code.push_str(&(syn.fmt_init_sv)(
                 &var.name,
                 &init_val,
@@ -144,11 +140,7 @@ pub(crate) fn generate_unified_state_dispatch(
         // State var init in enter handler — only the lifecycle `$>` key.
         if event == "$>" && !state_vars.is_empty() {
             for var in state_vars {
-                let init_val = if let Some(ref init) = var.init {
-                    expression_to_string(init, syn.lang)
-                } else {
-                    state_var_init_value(&var.var_type, syn.lang)
-                };
+                let init_val = state_var_initializer(var);
                 code.push_str(&(syn.fmt_init_sv)(
                     &var.name,
                     &init_val,
@@ -401,6 +393,15 @@ pub(super) fn emit_handler_return_init(
     let Some(ref init_expr) = handler.return_init else {
         return String::new();
     };
+    // #77: coerce to the DECLARED return type before the init value enters
+    // the erased `_return` slot (bare literals deduce/box to the default
+    // float width; the declared-type exact-match read then crashes at
+    // runtime). No-op elsewhere; C marshals via c_return_write below.
+    let init_expr = &super::codegen_utils::erased_write_coercion(
+        lang,
+        handler.return_type.as_deref().unwrap_or(""),
+        init_expr,
+    );
     let assign = match lang {
         TargetLanguage::Python3 => format!(
             "{}self._context_stack[-1]._return = {}\n",
@@ -411,28 +412,17 @@ pub(super) fn emit_handler_return_init(
             indent, init_expr
         ),
         TargetLanguage::C => {
-            // Doubles don't survive `(void*)(intptr_t)(val)` — the
-            // intptr_t cast truncates. Bit-pun through memcpy via the
-            // generated `Sys_pack_double` helper.
-            let is_dbl = handler
-                .return_type
-                .as_deref()
-                .map(|t| {
-                    let t = t.trim();
-                    t == "float" || t == "double"
-                })
-                .unwrap_or(false);
-            if is_dbl {
-                format!(
-                    "{}{}_CTX(self)->_return = {}_pack_double({});\n",
-                    indent, system_name, system_name, init_expr
-                )
-            } else {
-                format!(
-                    "{}{}_CTX(self)->_return = (void*)(intptr_t)({});\n",
-                    indent, system_name, init_expr
-                )
-            }
+            // Marshalled per `c_marshal::c_return_write` (#72, #81):
+            // doubles and structs heap-box (`(intptr_t)(42.0)` truncates);
+            // the categorization is shared with every read site so pack
+            // and unpack cannot drift.
+            let ty = handler.return_type.as_deref().unwrap_or("int");
+            let slot = format!("{}_CTX(self)->_return", system_name);
+            format!(
+                "{}{}\n",
+                indent,
+                super::c_marshal::c_return_write(system_name, &slot, init_expr, ty)
+            )
         }
         TargetLanguage::Rust => {
             // RFC-0025 Track B.2: handler default-return inits the
@@ -842,6 +832,61 @@ pub(crate) fn generate_per_handler_methods(
 ) -> Vec<CodegenNode> {
     let mut methods = Vec::new();
 
+    // Domain field name → declared type (the user's verbatim type text,
+    // e.g. `Ship`). Used by the C++ `@@:self.field.method()` lowering
+    // (RFC-0046) to tell an embedded system (deref with `->`) from a scalar
+    // field (`.`). arcanum's domain symbols carry the clean type directly.
+    let domain_field_types: std::collections::HashMap<String, String> = arcanum
+        .systems
+        .get(system_name)
+        .map(|entry| {
+            entry
+                .domain_symbols
+                .iter()
+                .filter_map(|(name, sym)| {
+                    Some((name.clone(), sym.symbol_type.as_deref()?.to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // Companion type maps for enter / exit handler params, mirroring
+    // `state_param_types`: (state_name, param_name) → declared type string.
+    // Used by the C transition codegen to pack each enter/exit arg per its
+    // declared category (#81 — float/double args must heap-box via
+    // pack_double and push owned; the historical `(void*)(intptr_t)` push
+    // truncates, and the handler-side read derefs a box).
+    fn param_type_str(p: &crate::frame_c::compiler::frame_ast::EventParam) -> String {
+        match &p.param_type {
+            crate::frame_c::compiler::frame_ast::Type::Custom(t) => t.clone(),
+            crate::frame_c::compiler::frame_ast::Type::Unknown => "int".to_string(),
+        }
+    }
+    let mut state_enter_param_types: std::collections::HashMap<(String, String), String> =
+        std::collections::HashMap::new();
+    let mut state_exit_param_types: std::collections::HashMap<(String, String), String> =
+        std::collections::HashMap::new();
+    for s in &machine.states {
+        if let Some(ref e) = s.enter {
+            for p in &e.params {
+                state_enter_param_types.insert((s.name.clone(), p.name.clone()), param_type_str(p));
+            }
+        }
+        if let Some(ref e) = s.exit {
+            for p in &e.params {
+                state_exit_param_types.insert((s.name.clone(), p.name.clone()), param_type_str(p));
+            }
+        }
+    }
+
+    // The system's action names (RFC-0046): `@@:self.<action>(args)` is a
+    // direct call and must NOT receive the self-call transition guard.
+    let actions: std::collections::HashSet<String> = arcanum
+        .systems
+        .get(system_name)
+        .map(|entry| entry.actions.clone())
+        .unwrap_or_default();
+
     // State → declared HSM parent map for use by transition codegen inside
     // handler bodies (so `-> $Child` where Child => Parent constructs the
     // full chain rather than patching parent_compartment = self.__compartment).
@@ -917,6 +962,7 @@ pub(crate) fn generate_per_handler_methods(
                 source,
                 has_state_vars,
                 defined_systems,
+                &actions,
                 &empty,
                 is_start_state,
                 state_param_names,
@@ -926,6 +972,9 @@ pub(crate) fn generate_per_handler_methods(
                 &handler_state_var_types,
                 &state_hsm_parents,
                 state_param_types,
+                &state_enter_param_types,
+                &state_exit_param_types,
+                &domain_field_types,
             );
             methods.push(method);
         }
@@ -950,6 +999,7 @@ pub(crate) fn generate_per_handler_methods(
                 source,
                 has_state_vars,
                 defined_systems,
+                &actions,
                 &empty,
                 is_start_state,
                 state_param_names,
@@ -959,6 +1009,9 @@ pub(crate) fn generate_per_handler_methods(
                 &handler_state_var_types,
                 &state_hsm_parents,
                 state_param_types,
+                &state_enter_param_types,
+                &state_exit_param_types,
+                &domain_field_types,
             );
             // Per-handler leading comments (from `HandlerAst.leading_comments`
             // / `EnterHandler.leading_comments` / `ExitHandler.leading_comments`,
@@ -996,6 +1049,7 @@ fn generate_per_handler_method_for_lang(
     source: &[u8],
     has_state_vars: bool,
     defined_systems: &std::collections::HashSet<String>,
+    actions: &std::collections::HashSet<String>,
     sys_param_locals: &[String],
     is_start_state: bool,
     state_param_names: &std::collections::HashMap<String, Vec<String>>,
@@ -1005,6 +1059,9 @@ fn generate_per_handler_method_for_lang(
     handler_state_var_types: &std::collections::HashMap<String, String>,
     state_hsm_parents: &std::collections::HashMap<String, String>,
     state_param_types: &std::collections::HashMap<(String, String), String>,
+    state_enter_param_types: &std::collections::HashMap<(String, String), String>,
+    state_exit_param_types: &std::collections::HashMap<(String, String), String>,
+    domain_field_types: &std::collections::HashMap<String, String>,
 ) -> CodegenNode {
     match lang {
         TargetLanguage::Python3 => generate_python_handler_method(
@@ -1016,6 +1073,7 @@ fn generate_per_handler_method_for_lang(
             source,
             has_state_vars,
             defined_systems,
+            actions,
             sys_param_locals,
             is_start_state,
             state_param_names,
@@ -1036,6 +1094,7 @@ fn generate_per_handler_method_for_lang(
                 source,
                 has_state_vars,
                 defined_systems,
+                &actions,
                 sys_param_locals,
                 is_start_state,
                 state_param_names,
@@ -1055,6 +1114,7 @@ fn generate_per_handler_method_for_lang(
             source,
             has_state_vars,
             defined_systems,
+            actions,
             sys_param_locals,
             is_start_state,
             state_param_names,
@@ -1073,6 +1133,7 @@ fn generate_per_handler_method_for_lang(
             source,
             has_state_vars,
             defined_systems,
+            actions,
             sys_param_locals,
             is_start_state,
             state_param_names,
@@ -1092,6 +1153,7 @@ fn generate_per_handler_method_for_lang(
             source,
             has_state_vars,
             defined_systems,
+            actions,
             sys_param_locals,
             is_start_state,
             state_param_names,
@@ -1110,6 +1172,7 @@ fn generate_per_handler_method_for_lang(
             source,
             has_state_vars,
             defined_systems,
+            actions,
             sys_param_locals,
             is_start_state,
             state_param_names,
@@ -1129,6 +1192,7 @@ fn generate_per_handler_method_for_lang(
             source,
             has_state_vars,
             defined_systems,
+            actions,
             sys_param_locals,
             is_start_state,
             state_param_names,
@@ -1147,6 +1211,7 @@ fn generate_per_handler_method_for_lang(
             source,
             has_state_vars,
             defined_systems,
+            actions,
             sys_param_locals,
             is_start_state,
             state_param_names,
@@ -1166,6 +1231,7 @@ fn generate_per_handler_method_for_lang(
             source,
             has_state_vars,
             defined_systems,
+            actions,
             sys_param_locals,
             is_start_state,
             state_param_names,
@@ -1185,6 +1251,7 @@ fn generate_per_handler_method_for_lang(
             source,
             has_state_vars,
             defined_systems,
+            actions,
             sys_param_locals,
             is_start_state,
             state_param_names,
@@ -1204,6 +1271,7 @@ fn generate_per_handler_method_for_lang(
             source,
             has_state_vars,
             defined_systems,
+            actions,
             sys_param_locals,
             is_start_state,
             state_param_names,
@@ -1223,6 +1291,7 @@ fn generate_per_handler_method_for_lang(
             source,
             has_state_vars,
             defined_systems,
+            actions,
             sys_param_locals,
             is_start_state,
             state_param_names,
@@ -1232,6 +1301,7 @@ fn generate_per_handler_method_for_lang(
             handler_state_var_types,
             state_hsm_parents,
             state_param_types,
+            domain_field_types,
         ),
         TargetLanguage::CSharp => generate_csharp_handler_method(
             system_name,
@@ -1242,6 +1312,7 @@ fn generate_per_handler_method_for_lang(
             source,
             has_state_vars,
             defined_systems,
+            actions,
             sys_param_locals,
             is_start_state,
             state_param_names,
@@ -1261,6 +1332,7 @@ fn generate_per_handler_method_for_lang(
             source,
             has_state_vars,
             defined_systems,
+            actions,
             sys_param_locals,
             is_start_state,
             state_param_names,
@@ -1270,6 +1342,9 @@ fn generate_per_handler_method_for_lang(
             handler_state_var_types,
             state_hsm_parents,
             state_param_types,
+            state_enter_param_types,
+            state_exit_param_types,
+            domain_field_types,
         ),
         _ => unreachable!(
             "generate_per_handler_method_for_lang called with non-per-handler target {:?}",
@@ -1342,6 +1417,10 @@ pub(crate) fn generate_state_method(
         state_hsm_parents: std::collections::HashMap::new(),
         current_return_type: None,
         state_param_types: std::collections::HashMap::new(),
+        state_enter_param_types: std::collections::HashMap::new(),
+        state_exit_param_types: std::collections::HashMap::new(),
+        domain_field_types: std::collections::HashMap::new(),
+        actions: std::collections::HashSet::new(),
     };
 
     // Generate the dispatch body based on __e._message / __e.message
@@ -1513,6 +1592,7 @@ pub(crate) fn generate_handler_from_arcanum(
     lang: TargetLanguage,
     _has_state_vars: bool,
     defined_systems: &std::collections::HashSet<String>,
+    actions: &std::collections::HashSet<String>,
     sys_param_locals: &[String],
     is_start_state: bool,
     non_start_state_param_names: &[String],
@@ -1589,6 +1669,10 @@ pub(crate) fn generate_handler_from_arcanum(
         state_hsm_parents: state_hsm_parents.clone(),
         current_return_type: handler.return_type.clone(),
         state_param_types: std::collections::HashMap::new(),
+        state_enter_param_types: std::collections::HashMap::new(),
+        state_exit_param_types: std::collections::HashMap::new(),
+        domain_field_types: std::collections::HashMap::new(),
+        actions: actions.clone(),
     };
 
     // Emit handler default return value if present

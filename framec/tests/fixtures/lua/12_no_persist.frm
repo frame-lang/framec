@@ -10,10 +10,10 @@
 
     machine:
         $Active {
-            bump() { self.count = self.count + 1 }
-            set_cache(v: number) { self.cache = v }
-            get_count(): number { @@:(self.count) }
-            get_cache(): number { @@:(self.cache) }
+            bump() { @@:self.count = @@:self.count + 1 }
+            set_cache(v: number) { @@:self.cache = v }
+            get_count(): number { @@:(@@:self.count) }
+            get_cache(): number { @@:(@@:self.cache) }
         }
 
     domain:

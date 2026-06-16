@@ -164,24 +164,33 @@ export class LinearFsm {
         const __e = new LinearFsmFrameEvent("start", []);
         const __ctx = new LinearFsmFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        this._context_stack.pop();
+        try {
+            this.__kernel(__e);
+        } finally {
+            this._context_stack.pop();
+        }
     }
 
     public progress(amount: number) {
         const __e = new LinearFsmFrameEvent("progress", [amount]);
         const __ctx = new LinearFsmFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        this._context_stack.pop();
+        try {
+            this.__kernel(__e);
+        } finally {
+            this._context_stack.pop();
+        }
     }
 
     public finish() {
         const __e = new LinearFsmFrameEvent("finish", []);
         const __ctx = new LinearFsmFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        this._context_stack.pop();
+        try {
+            this.__kernel(__e);
+        } finally {
+            this._context_stack.pop();
+        }
     }
 
     private _state_Idle(__e: LinearFsmFrameEvent, compartment: LinearFsmCompartment) {
@@ -220,6 +229,6 @@ export class LinearFsm {
 
     private _s_Active_hdl_user_progress(__e: LinearFsmFrameEvent, compartment: LinearFsmCompartment) {
         const amount = __e._parameters[0];
-        self.total = self.total + amount
+        this.total = this.total + amount
     }
 }

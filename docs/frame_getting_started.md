@@ -110,13 +110,13 @@ Frame's unit of definition for a single machine is a *system*. Here's one:
 
 This defines a traffic light with three states. Calling `next()` transitions between them: Green to Yellow to Red to Green. The `->` operator means "transition to." That's the core of Frame — states, events, and transitions, expressed directly.
 
-The framepiler generates a full implementation of this system in your target language — Python, TypeScript, Rust, C, and many others. The generated code is a plain class with no runtime dependencies: readable, debuggable, and ready to use.
+framec generates a full implementation of this system in your target language — Python, TypeScript, Rust, C, and many others. The generated code is a plain class with no runtime dependencies: readable, debuggable, and ready to use.
 
 ### Frame Lives Inside Your Code
 
 Frame is not a standalone language. It's designed to live *inside* your native source files, side by side with regular code.
 
-Frame makes heavy use of a special token — `@@` — to mark Frame pragmas and constructs that should be preprocessed by the *framepiler* (Frame's compilation tool). Everything without `@@` passes through unchanged.
+Frame makes heavy use of a special token — `@@` — to mark Frame pragmas and constructs that should be preprocessed by the *framepiler* (Frame's transpiler, `framec`). Everything without `@@` passes through unchanged.
 
 ```frame
 @@[target("python_3")]
@@ -147,9 +147,9 @@ if __name__ == '__main__':
     light.next()  # Red -> Green
 ```
 
-The `@@[target("python_3")]` pragma tells the framepiler which language to generate. The `@@system` block is expanded into a Python class. The `@@TrafficLight()` construct instantiates the system — the framepiler expands it to the appropriate native constructor.
+The `@@[target("python_3")]` pragma tells framec which language to generate. The `@@system` block is expanded into a Python class. The `@@TrafficLight()` construct instantiates the system — framec expands it to the appropriate native constructor.
 
-The `import`, the `logger`, the `if __name__` block — all native Python — pass through exactly as written. This is Frame's core design: **native code is the ocean, Frame systems are islands.** The framepiler only touches the islands.
+The `import`, the `logger`, the `if __name__` block — all native Python — pass through exactly as written. This is Frame's core design: **native code is the ocean, Frame systems are islands.** framec only touches the islands.
 
 ### Why Machines?
 
@@ -179,9 +179,9 @@ The generated code is readable, debuggable, and uses no runtime library. It's ju
 
 ### Target Language
 
-The `@@[target(...)]` attribute inside the file is the authoritative declaration of which native language the file targets. The framepiler uses it to determine how to parse native code regions (string/comment syntax), which code generator to use, and what output to produce. (The bare `@@target` form is hard-cut to E804 per RFC-0013.)
+The `@@[target(...)]` attribute inside the file is the authoritative declaration of which native language the file targets. framec uses it to determine how to parse native code regions (string/comment syntax), which backend to use, and what output to produce. (The bare `@@target` form is hard-cut to E804 per RFC-0013.)
 
-The `@@[target(...)]` can be overridden by a CLI flag (`-l <language>`) or other configuration, but if neither is provided, the in-file declaration is what controls compilation.
+The `@@[target(...)]` can be overridden by a CLI flag (`-l <language>`) or other configuration, but if neither is provided, the in-file declaration is what controls transpilation.
 
 ### File Extensions
 
@@ -196,7 +196,7 @@ Frame source files conventionally use a target-specific extension:
 | Go | `.fgo` | `traffic_light.fgo` |
 | Java | `.fjava` | `traffic_light.fjava` |
 
-The file extension is a hint — nothing more. It helps editors and build tools recognize Frame files, but the framepiler does not use it to determine the target language. The `@@[target(...)]` attribute (or a CLI override) is what matters.
+The file extension is a hint — nothing more. It helps editors and build tools recognize Frame files, but framec does not use it to determine the target language. The `@@[target(...)]` attribute (or a CLI override) is what matters.
 
 ---
 
@@ -236,7 +236,7 @@ Create a file called `hello.fpy`:
 
 Let's break this down:
 
-- **`@@[target("python_3")]`** — tells the framepiler to generate Python
+- **`@@[target("python_3")]`** — tells framec to generate Python
 - **`@@system Hello`** — declares a state machine called `Hello`
 - **`interface:`** — the public API. `greet()` is a method callers can invoke
 - **`machine:`** — the states. There's one state, `$Start`
@@ -299,7 +299,7 @@ Output:
 Hello from Frame!
 ```
 
-The `if __name__` block is native Python — the framepiler passes it through unchanged.
+The `if __name__` block is native Python — framec passes it through unchanged.
 
 ### The Anatomy of a System
 
@@ -575,7 +575,7 @@ There are three forms for setting the return value on the context stack:
 
 If the current state doesn't handle the event, the caller gets the default value (`0` in this case). Note: bare `return` exits the dispatch method but does NOT set the return value — always use `@@:(expr)`, `@@:return = expr`, or `@@:return(expr)` to set return values.
 
-**String returns across languages**: When returning string literals with `@@:("value")`, the framepiler automatically wraps the literal for typed backends (Rust: `String::from("value")`, C++: `std::string("value")`). For computed strings, use the target language's string construction (e.g., `@@:(format!("hello {}", name))` for Rust, `@@:(std::string("hello ") + name)` for C++). All other languages accept bare string literals without wrapping.
+**String returns across languages**: When returning string literals with `@@:("value")`, framec automatically wraps the literal for typed backends (Rust: `String::from("value")`, C++: `std::string("value")`). For computed strings, use the target language's string construction (e.g., `@@:(format!("hello {}", name))` for Rust, `@@:(std::string("hello ") + name)` for C++). All other languages accept bare string literals without wrapping.
 
 ### Multiple Parameters and Returns
 
@@ -1552,27 +1552,66 @@ Some state machines need to do asynchronous work — network calls, file I/O, ti
 
 ### Declaring Async Methods
 
-Add `async` before interface methods, actions, or operations:
+Add `async` before interface methods, actions, or operations — and mark the
+system itself with `@@[async]` on the line just above `@@system`:
 
 ```frame
-interface:
-    async connect(url: str)
-    async receive(): Message
-    get_state(): str          # This one stays sync
+@@[async]
+@@system Connection {
+    interface:
+        async connect(url: str)
+        async receive(): Message
+        get_state(): str          # This one stays sync
+
+    machine:
+        $Idle { ... }
+}
 ```
+
+The `@@[async]` attribute is **required** whenever a system has any async member.
+Forget it and framec stops you with a clear error:
+
+```
+E720: @@system 'Connection' declares async member(s) but lacks the
+       `@@[async]` system-header attribute (RFC-0043).
+```
+
+If you're migrating older Frame sources, `framec project add-async-attr <path>`
+inserts the attribute for you across a whole tree.
 
 ### How Async Propagates
 
 If *any* interface method is declared `async`, the **entire system** becomes async. All generated methods — including ones you declared as sync — will be async in the output.
 
-This means callers must `await` every method on an async system, even `get_state()` above. This is a consequence of how state machines dispatch events internally: the system can't know at compile time which handler will run, so it must assume any call might be async.
+This means callers must `await` every method on an async system, even `get_state()` above. This is a consequence of how state machines dispatch events internally: the system can't know at transpile time which handler will run, so it must assume any call might be async.
 
 Sync methods on an async system still work correctly — awaiting a synchronous function is a no-op in most languages.
+
+### One Driver at a Time
+
+An `@@[async]` system is generated as two classes: the **casing** (the public
+class with the name you declared) and a private **machine class** (`_ConnectionMachine`)
+that holds the actual state-machine dispatch. You only ever touch the casing.
+
+The casing enforces a **single-driver** rule: only one interface call may be in
+flight at a time. If a second call arrives while the first is still running —
+for example, awaiting a slow `connect()` and then calling `receive()` before it
+finishes — the casing raises `E703`:
+
+```
+E703: system busy: cannot enter 'receive' while 'connect' is in flight
+```
+
+This catches a common async bug — accidentally driving one state machine from
+two concurrent tasks. Each backend raises `E703` as a normal, catchable error
+(a `RuntimeError` in Python, an `Error` in TypeScript, `Err(FrameE703Error)` in
+Rust, and so on), so you can recover from it if a retry makes sense.
 
 ### Example
 
 ```frame
 @@[target("python_3")]
+@@[async]
 
 @@system HttpClient {
     interface:
@@ -1684,9 +1723,9 @@ When an interface method is called, Frame creates a *context* that handlers can 
 | `@@:event` | The name of the interface method that was called |
 | `@@:data.key` | Call-scoped data that persists across transitions |
 | `@@:self.method()` | Reentrant call to own interface method |
-| `@@:system.state` | Current state name (read-only string) |
+| `@@:system.state.name` | Current state name (read-only string) |
 
-`@@:self` and `@@:system` are **syntactic prefixes**, not values — bare use is an error (E603 / E604). Always chain a member: `@@:self.method()`, `@@:system.state`.
+`@@:self` and `@@:system` are **syntactic prefixes**, not values — bare use is an error (E603 / E604). Always chain a member: `@@:self.method()`, `@@:system.state.name`.
 
 #### Accessing Parameters
 
@@ -1890,5 +1929,5 @@ You now know the full Frame language. Here are some directions to explore:
 
 - Browse the [Cookbook](frame_cookbook.md) for 110 complete, runnable examples
 - Browse the [supported languages](https://github.com/frame-lang/framec#supported-languages) and try a different target
-- Read the [CONTRIBUTING guide](https://github.com/frame-lang/framec/blob/main/CONTRIBUTING.md) if you want to help improve the framepiler
+- Read the [CONTRIBUTING guide](https://github.com/frame-lang/framec/blob/main/CONTRIBUTING.md) if you want to help improve framec
 - Check the [GitHub issues](https://github.com/frame-lang/framec/issues) for feature requests and discussions

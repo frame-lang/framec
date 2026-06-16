@@ -12,9 +12,20 @@ expression: "compile_fixture(\"10_actions\", \"c\")"
 // Actions_FrameDict - String-keyed dictionary
 // ============================================================================
 
+static char* Actions_strdup_(const char* s) {
+    size_t n = strlen(s) + 1;
+    char* p = (char*)malloc(n);
+    memcpy(p, s, n);
+    return p;
+}
+
 typedef struct Actions_FrameDictEntry {
     char* key;
     void* value;
+    // 1 when `value` is a heap box this dict owns (a malloc'd
+    // double from pack_double — #81): freed on overwrite and in
+    // destroy, deep-copied by FrameDict_copy.
+    int owned;
     struct Actions_FrameDictEntry* next;
 } Actions_FrameDictEntry;
 
@@ -41,19 +52,31 @@ static Actions_FrameDict* Actions_FrameDict_new(void) {
     return d;
 }
 
+static void Actions_FrameDict_set_(Actions_FrameDict* d, const char* key, void* value, int owned);
 static void Actions_FrameDict_set(Actions_FrameDict* d, const char* key, void* value) {
+    Actions_FrameDict_set_(d, key, value, 0);
+}
+
+static void Actions_FrameDict_set_owned(Actions_FrameDict* d, const char* key, void* value) {
+    Actions_FrameDict_set_(d, key, value, 1);
+}
+
+static void Actions_FrameDict_set_(Actions_FrameDict* d, const char* key, void* value, int owned) {
     unsigned int idx = Actions_hash_string(key) % d->bucket_count;
     Actions_FrameDictEntry* entry = d->buckets[idx];
     while (entry) {
         if (strcmp(entry->key, key) == 0) {
+            if (entry->owned && entry->value) free(entry->value);
             entry->value = value;
+            entry->owned = owned;
             return;
         }
         entry = entry->next;
     }
     Actions_FrameDictEntry* new_entry = malloc(sizeof(Actions_FrameDictEntry));
-    new_entry->key = strdup(key);
+    new_entry->key = Actions_strdup_(key);
     new_entry->value = value;
+    new_entry->owned = owned;
     new_entry->next = d->buckets[idx];
     d->buckets[idx] = new_entry;
     d->size++;
@@ -88,7 +111,16 @@ static Actions_FrameDict* Actions_FrameDict_copy(Actions_FrameDict* src) {
     for (int i = 0; i < src->bucket_count; i++) {
         Actions_FrameDictEntry* entry = src->buckets[i];
         while (entry) {
-            Actions_FrameDict_set(dst, entry->key, entry->value);
+            if (entry->owned && entry->value) {
+                // Owned values are heap-boxed doubles (#81): deep-copy
+                // so src and dst never alias (a shallow copy would
+                // dangle when either side frees on overwrite/destroy).
+                void* nb = malloc(sizeof(double));
+                memcpy(nb, entry->value, sizeof(double));
+                Actions_FrameDict_set_(dst, entry->key, nb, 1);
+            } else {
+                Actions_FrameDict_set_(dst, entry->key, entry->value, 0);
+            }
             entry = entry->next;
         }
     }
@@ -100,6 +132,7 @@ static void Actions_FrameDict_destroy(Actions_FrameDict* d) {
         Actions_FrameDictEntry* entry = d->buckets[i];
         while (entry) {
             Actions_FrameDictEntry* next = entry->next;
+            if (entry->owned && entry->value) free(entry->value);
             free(entry->key);
             free(entry);
             entry = next;
@@ -115,6 +148,10 @@ static void Actions_FrameDict_destroy(Actions_FrameDict* d) {
 
 typedef struct {
     void** items;
+    // owned[i] == 1 when items[i] is a heap box this vec owns (a
+    // malloc'd double from pack_double — #81): freed in destroy,
+    // deep-copied by FrameVec_copy.
+    unsigned char* owned;
     int size;
     int capacity;
 } Actions_FrameVec;
@@ -124,15 +161,48 @@ static Actions_FrameVec* Actions_FrameVec_new(void) {
     v->capacity = 8;
     v->size = 0;
     v->items = malloc(sizeof(void*) * v->capacity);
+    v->owned = calloc(v->capacity, 1);
     return v;
 }
 
-static void Actions_FrameVec_push(Actions_FrameVec* v, void* item) {
+static void Actions_FrameVec_push_(Actions_FrameVec* v, void* item, unsigned char owned) {
     if (v->size >= v->capacity) {
         v->capacity *= 2;
         v->items = realloc(v->items, sizeof(void*) * v->capacity);
+        v->owned = realloc(v->owned, v->capacity);
+        memset(v->owned + v->size, 0, v->capacity - v->size);
     }
+    v->owned[v->size] = owned;
     v->items[v->size++] = item;
+}
+
+static void Actions_FrameVec_push(Actions_FrameVec* v, void* item) {
+    Actions_FrameVec_push_(v, item, 0);
+}
+
+static void Actions_FrameVec_push_owned(Actions_FrameVec* v, void* item) {
+    Actions_FrameVec_push_(v, item, 1);
+}
+
+static void Actions_FrameVec_clear(Actions_FrameVec* v) {
+    if (!v) return;
+    for (int i = 0; i < v->size; i++) {
+        if (v->owned[i] && v->items[i]) free(v->items[i]);
+    }
+    v->size = 0;
+}
+
+static void Actions_FrameVec_extend(Actions_FrameVec* dst, Actions_FrameVec* src) {
+    if (!src) return;
+    for (int i = 0; i < src->size; i++) {
+        if (src->owned[i] && src->items[i]) {
+            void* nb = malloc(sizeof(double));
+            memcpy(nb, src->items[i], sizeof(double));
+            Actions_FrameVec_push_(dst, nb, 1);
+        } else {
+            Actions_FrameVec_push_(dst, src->items[i], 0);
+        }
+    }
 }
 
 static void* Actions_FrameVec_pop(Actions_FrameVec* v) {
@@ -156,6 +226,10 @@ static int Actions_FrameVec_size(Actions_FrameVec* v) {
 
 static void Actions_FrameVec_destroy(Actions_FrameVec* v) {
     if (!v) return;
+    for (int i = 0; i < v->size; i++) {
+        if (v->owned[i] && v->items[i]) free(v->items[i]);
+    }
+    free(v->owned);
     free(v->items);
     free(v);
 }
@@ -163,27 +237,32 @@ static void Actions_FrameVec_destroy(Actions_FrameVec* v) {
 static Actions_FrameVec* Actions_FrameVec_copy(Actions_FrameVec* src) {
     if (!src) return NULL;
     Actions_FrameVec* v = Actions_FrameVec_new();
-    for (int i = 0; i < src->size; i++) {
-        Actions_FrameVec_push(v, src->items[i]);
-    }
+    Actions_FrameVec_extend(v, src);
     return v;
 }
 
 // ============================================================================
-// Actions_pack_double / Actions_unpack_double — bit-pun doubles through void*
+// Actions_pack_double / Actions_unpack_double — heap-boxed doubles (#81:
+// pointer-width independent; the old void* bit-pun overflowed on 32-bit)
 // ============================================================================
 
 static inline void* Actions_pack_double(double v) {
-    void* p = 0;
-    memcpy(&p, &v, sizeof(double));
-    return p;
+    double* p = (double*)malloc(sizeof(double));
+    *p = v;
+    return (void*)p;
 }
 
 static inline double Actions_unpack_double(void* p) {
-    double d;
-    memcpy(&d, &p, sizeof(double));
-    return d;
+    return p ? *(double*)p : 0.0;
 }
+
+// ============================================================================
+#define Actions_ARG_IS_FLOAT(v) _Generic((v), double:1, float:1, long double:1, default:0)
+#define Actions_ARG_DBL(v) _Generic((v), double:(v), float:(v), long double:(double)0, default:(double)0)
+#define Actions_ARG_WORD(v) _Generic((v), double:(void*)0, float:(void*)0, long double:(void*)0, default:(void*)(intptr_t)(v))
+#define Actions_ARG_PUSH(vec, v) ( Actions_ARG_IS_FLOAT(v) \
+    ? Actions_FrameVec_push_owned((vec), Actions_pack_double(Actions_ARG_DBL(v))) \
+    : Actions_FrameVec_push((vec), Actions_ARG_WORD(v)) )
 
 // ============================================================================
 // Actions_FrameEvent - Event routing object
@@ -384,12 +463,10 @@ static Actions_Compartment* Actions_prepareEnter(Actions* self, const char* leaf
     Actions_Compartment* comp = NULL;
     for (int i = 0; i < n; i++) {
         Actions_Compartment* nc = Actions_Compartment_new(chain[i]);
-        if (state_args) {
-            for (int j = 0; j < state_args->size; j++) Actions_FrameVec_push(nc->state_args, state_args->items[j]);
-        }
-        if (enter_args) {
-            for (int j = 0; j < enter_args->size; j++) Actions_FrameVec_push(nc->enter_args, enter_args->items[j]);
-        }
+        // FrameVec_extend deep-copies vec-owned heap boxes (#81: doubles)
+        // so the caller can destroy its arg vecs after this returns.
+        Actions_FrameVec_extend(nc->state_args, state_args);
+        Actions_FrameVec_extend(nc->enter_args, enter_args);
         nc->parent_compartment = comp;  // adopts ref
         comp = nc;
     }
@@ -399,11 +476,10 @@ static Actions_Compartment* Actions_prepareEnter(Actions* self, const char* leaf
 static void Actions_prepareExit(Actions* self, Actions_FrameVec* exit_args) {
     Actions_Compartment* comp = self->__compartment;
     while (comp != NULL) {
-        // Clear any prior exit_args before copying the new ones in.
-        while (comp->exit_args->size > 0) comp->exit_args->size--;
-        if (exit_args) {
-            for (int j = 0; j < exit_args->size; j++) Actions_FrameVec_push(comp->exit_args, exit_args->items[j]);
-        }
+        // Clear any prior exit_args (freeing vec-owned boxes, #81) before
+        // copying the new ones in; extend deep-copies owned entries.
+        Actions_FrameVec_clear(comp->exit_args);
+        Actions_FrameVec_extend(comp->exit_args, exit_args);
         comp = comp->parent_compartment;
     }
 }
@@ -513,15 +589,15 @@ static void Actions_state_Counting(Actions* self, Actions_FrameEvent* __e, Actio
 }
 
 static void Actions_s_Counting_hdl_user_get_total(Actions* self, Actions_FrameEvent* __e, Actions_Compartment* compartment) {
-    Actions_CTX(self)->_return = (void*)(intptr_t)(self.total);
+    Actions_CTX(self)->_return = (void*)(intptr_t)(self->total);
 }
 
 static void Actions_s_Counting_hdl_user_increment(Actions* self, Actions_FrameEvent* __e, Actions_Compartment* compartment) {
     int n = (int)(intptr_t)Actions_FrameVec_get(__e->_parameters, 0);
     (void)n;
-    self._scale(n)
+    Actions__scale(self, n);
 }
 
 static void Actions__scale(Actions* self, int n) {
-                self.total = self.total + n * 2
+                self->total = self->total + n * 2
 }

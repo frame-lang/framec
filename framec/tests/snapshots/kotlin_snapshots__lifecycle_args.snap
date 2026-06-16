@@ -131,28 +131,43 @@ class LifecycleArgs {
         val __e = LifecycleArgsFrameEvent("load", mutableListOf(n, label))
         val __ctx = LifecycleArgsFrameContext(__e, null)
         _context_stack.add(__ctx)
-        __kernel(_context_stack[_context_stack.size - 1]._event)
-        _context_stack.removeAt(_context_stack.size - 1)
+        try {
+            __kernel(_context_stack[_context_stack.size - 1]._event)
+            _context_stack.removeAt(_context_stack.size - 1)
+        } catch (__frame_err: Throwable) {
+            _context_stack.removeAt(_context_stack.size - 1)
+            throw __frame_err
+        }
     }
 
     fun total(): Int {
         val __e = LifecycleArgsFrameEvent("total", mutableListOf())
         val __ctx = LifecycleArgsFrameContext(__e, 0)
         _context_stack.add(__ctx)
-        __kernel(_context_stack[_context_stack.size - 1]._event)
-        val __result = _context_stack[_context_stack.size - 1]._return as Int
-        _context_stack.removeAt(_context_stack.size - 1)
-        return __result
+        try {
+            __kernel(_context_stack[_context_stack.size - 1]._event)
+            val __result = _context_stack[_context_stack.size - 1]._return as Int
+            _context_stack.removeAt(_context_stack.size - 1)
+            return __result
+        } catch (__frame_err: Throwable) {
+            _context_stack.removeAt(_context_stack.size - 1)
+            throw __frame_err
+        }
     }
 
     fun tag(): String {
         val __e = LifecycleArgsFrameEvent("tag", mutableListOf())
         val __ctx = LifecycleArgsFrameContext(__e, "")
         _context_stack.add(__ctx)
-        __kernel(_context_stack[_context_stack.size - 1]._event)
-        val __result = _context_stack[_context_stack.size - 1]._return as String
-        _context_stack.removeAt(_context_stack.size - 1)
-        return __result
+        try {
+            __kernel(_context_stack[_context_stack.size - 1]._event)
+            val __result = _context_stack[_context_stack.size - 1]._return as String
+            _context_stack.removeAt(_context_stack.size - 1)
+            return __result
+        } catch (__frame_err: Throwable) {
+            _context_stack.removeAt(_context_stack.size - 1)
+            throw __frame_err
+        }
     }
 
     private fun _state_Idle(__e: LifecycleArgsFrameEvent, compartment: LifecycleArgsCompartment) {
@@ -188,17 +203,17 @@ class LifecycleArgs {
     private fun _s_Active_hdl_frame_enter(__e: LifecycleArgsFrameEvent, compartment: LifecycleArgsCompartment) {
         val count = compartment.enter_args[0] as Int
         val name = compartment.enter_args[1] as String
-        self.sum = count + 1
-        self.label = name
+        this.sum = count + 1
+        this.label = name
     }
 
     private fun _s_Active_hdl_user_tag(__e: LifecycleArgsFrameEvent, compartment: LifecycleArgsCompartment) {
-        _context_stack[_context_stack.size - 1]._return = self.label
+        _context_stack[_context_stack.size - 1]._return = this.label
                         return
     }
 
     private fun _s_Active_hdl_user_total(__e: LifecycleArgsFrameEvent, compartment: LifecycleArgsCompartment) {
-        _context_stack[_context_stack.size - 1]._return = self.sum
+        _context_stack[_context_stack.size - 1]._return = this.sum
                         return
     }
 

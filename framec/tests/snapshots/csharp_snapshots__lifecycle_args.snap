@@ -173,28 +173,43 @@ public class LifecycleArgs {
         LifecycleArgsFrameEvent __e = new LifecycleArgsFrameEvent("load", new List<object> { n, label });
         LifecycleArgsFrameContext __ctx = new LifecycleArgsFrameContext(__e, null);
         _context_stack.Add(__ctx);
-        __kernel(_context_stack[_context_stack.Count - 1]._event);
-        _context_stack.RemoveAt(_context_stack.Count - 1);
+        try {
+            __kernel(_context_stack[_context_stack.Count - 1]._event);
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+        } catch {
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+            throw;
+        }
     }
 
     public int total() {
         LifecycleArgsFrameEvent __e = new LifecycleArgsFrameEvent("total", new List<object>());
         LifecycleArgsFrameContext __ctx = new LifecycleArgsFrameContext(__e, null);
         _context_stack.Add(__ctx);
-        __kernel(_context_stack[_context_stack.Count - 1]._event);
-        var __result = (int) _context_stack[_context_stack.Count - 1]._return;
-        _context_stack.RemoveAt(_context_stack.Count - 1);
-        return __result;
+        try {
+            __kernel(_context_stack[_context_stack.Count - 1]._event);
+            var __result = (int) _context_stack[_context_stack.Count - 1]._return;
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+            return __result;
+        } catch {
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+            throw;
+        }
     }
 
     public string tag() {
         LifecycleArgsFrameEvent __e = new LifecycleArgsFrameEvent("tag", new List<object>());
         LifecycleArgsFrameContext __ctx = new LifecycleArgsFrameContext(__e, null);
         _context_stack.Add(__ctx);
-        __kernel(_context_stack[_context_stack.Count - 1]._event);
-        var __result = (string) _context_stack[_context_stack.Count - 1]._return;
-        _context_stack.RemoveAt(_context_stack.Count - 1);
-        return __result;
+        try {
+            __kernel(_context_stack[_context_stack.Count - 1]._event);
+            var __result = (string) _context_stack[_context_stack.Count - 1]._return;
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+            return __result;
+        } catch {
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+            throw;
+        }
     }
 
     private void _state_Idle(LifecycleArgsFrameEvent __e, LifecycleArgsCompartment compartment) {
@@ -230,17 +245,17 @@ public class LifecycleArgs {
     private void _s_Active_hdl_frame_enter(LifecycleArgsFrameEvent __e, LifecycleArgsCompartment compartment) {
         int count = System.Convert.ToInt32(compartment.enter_args[0]);
         string name = (string) compartment.enter_args[1];
-        self.sum = count + 1;
-        self.label = name;
+        this.sum = count + 1;
+        this.label = name;
     }
 
     private void _s_Active_hdl_user_tag(LifecycleArgsFrameEvent __e, LifecycleArgsCompartment compartment) {
-        _context_stack[_context_stack.Count - 1]._return = self.label;
+        _context_stack[_context_stack.Count - 1]._return = this.label;
                         return
     }
 
     private void _s_Active_hdl_user_total(LifecycleArgsFrameEvent __e, LifecycleArgsCompartment compartment) {
-        _context_stack[_context_stack.Count - 1]._return = self.sum;
+        _context_stack[_context_stack.Count - 1]._return = this.sum;
                         return
     }
 }

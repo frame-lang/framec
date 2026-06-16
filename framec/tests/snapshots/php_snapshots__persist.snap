@@ -157,8 +157,13 @@ class Counter {
         $__e = new CounterFrameEvent("increment", [$by]);
         $__ctx = new CounterFrameContext($__e, null);
         $this->_context_stack[] = $__ctx;
-        $this->__kernel($__e);
-        return array_pop($this->_context_stack)->_return;
+        try {
+            $this->__kernel($__e);
+            return array_pop($this->_context_stack)->_return;
+        } catch (\Throwable $__frame_err) {
+            array_pop($this->_context_stack);
+            throw $__frame_err;
+        }
     }
 
     public function value() {
@@ -166,8 +171,13 @@ class Counter {
         $__ctx = new CounterFrameContext($__e, null);
         $__ctx->_return = 0;
         $this->_context_stack[] = $__ctx;
-        $this->__kernel($__e);
-        return array_pop($this->_context_stack)->_return;
+        try {
+            $this->__kernel($__e);
+            return array_pop($this->_context_stack)->_return;
+        } catch (\Throwable $__frame_err) {
+            array_pop($this->_context_stack);
+            throw $__frame_err;
+        }
     }
 
     private function _state_Counting($__e, $compartment) {
@@ -183,11 +193,11 @@ class Counter {
 
     private function _s_Counting_hdl_user_increment($__e, $compartment) {
         $by = $__e->_parameters[0];
-        self.count = self.count + by
+        $this->count = $this->count + by
     }
 
     private function _s_Counting_hdl_user_value($__e, $compartment) {
-        $this->_context_stack[count($this->_context_stack) - 1]->_return = self.count;
+        $this->_context_stack[count($this->_context_stack) - 1]->_return = $this->count;
     }
 
     private function __serComp($comp) {

@@ -45,6 +45,18 @@ impl FrameValidator {
     ) {
         let interface_methods = self.build_interface_map(system);
 
+        // RFC-0046: `@@:self.<field>` must resolve to a declared domain field
+        // (or an interface method). Collect the domain field names so the
+        // segment walker can reject unknown members with E609.
+        let domain_fields: std::collections::HashSet<String> =
+            system.domain.iter().map(|d| d.name.clone()).collect();
+
+        // RFC-0046: `@@:self.<action>(args)` is a valid direct action call.
+        // Collect action names so the kind-10 walk accepts them instead of
+        // rejecting with E601.
+        let actions: std::collections::HashSet<String> =
+            system.actions.iter().map(|a| a.name.clone()).collect();
+
         // Validate handler bodies using the scanner (handles comments, strings correctly)
         if let Some(machine) = &system.machine {
             for state in &machine.states {
@@ -57,6 +69,8 @@ impl FrameValidator {
                     self.validate_frame_segments_in_body(
                         body,
                         &interface_methods,
+                        &domain_fields,
+                        &actions,
                         &state.name,
                         &handler.event,
                         target,
@@ -75,6 +89,8 @@ impl FrameValidator {
             self.validate_frame_segments_in_body(
                 body,
                 &interface_methods,
+                &domain_fields,
+                &actions,
                 "(action)",
                 &action.name,
                 target,
@@ -218,6 +234,82 @@ impl FrameValidator {
         }
     }
 
+    /// Re-scan the inner text of return-expression segments to catch a
+    /// reserved `@@:system` (E604) / `@@:system.state` (E608) form nested
+    /// inside `@@:(…)`, `@@:return(…)`, or `@@:return = …`.
+    ///
+    /// The top-level segment walk only sees the return segment, not the
+    /// reserved form *inside* it, so without this pass those forms slip
+    /// past the validator and codegen falls back to emitting a
+    /// `/* ERROR: bare @@:system */` placeholder into the output
+    /// (RFC-0045 expression-context gap). Reuses the scanner rather than
+    /// re-deriving the `@@:system` classification, and recurses so
+    /// arbitrarily-nested return expressions (`@@:(@@:(…))`) are covered.
+    fn check_reserved_system_in_expr(
+        &mut self,
+        regions: &[Region],
+        scope_outer: &str,
+        scope_inner: &str,
+        target: crate::frame_c::visitors::TargetLanguage,
+    ) {
+        for region in regions {
+            if let Region::FrameSegment { kind, metadata, .. } = region {
+                let inner = match (kind, metadata) {
+                    (FrameSegmentKind::ContextReturnExpr, SegmentMetadata::ReturnExpr { expr }) => {
+                        Some(expr.as_str())
+                    }
+                    (FrameSegmentKind::ReturnCall, SegmentMetadata::ReturnCall { expr }) => {
+                        Some(expr.as_str())
+                    }
+                    (
+                        FrameSegmentKind::ContextReturn,
+                        SegmentMetadata::ContextReturn {
+                            assign_expr: Some(expr),
+                        },
+                    ) => Some(expr.as_str()),
+                    _ => None,
+                };
+                let Some(inner) = inner else { continue };
+
+                // Wrap in a synthetic body so the scanner classifies the
+                // inner text exactly as it would in statement position.
+                let synthetic = format!("{{{}}}", inner);
+                let mut scanner = get_native_scanner(target);
+                let scan = match scanner.scan(synthetic.as_bytes(), 0) {
+                    Ok(s) => s,
+                    Err(_) => continue,
+                };
+                for r in &scan.regions {
+                    if let Region::FrameSegment { kind: k, .. } = r {
+                        match k {
+                            FrameSegmentKind::ContextSystemBare => {
+                                self.errors.push(ValidationError::new(
+                                    "E604",
+                                    format!(
+                                        "bare `@@:system` in {}/{} — `@@:system` requires a member access (e.g. `@@:system.state.name`)",
+                                        scope_outer, scope_inner
+                                    ),
+                                ));
+                            }
+                            FrameSegmentKind::ContextSystemStateReserved => {
+                                self.errors.push(ValidationError::new(
+                                    "E608",
+                                    format!(
+                                        "`@@:system.state` in {}/{} is reserved for future use; use `@@:system.state.name` to read the current state name",
+                                        scope_outer, scope_inner
+                                    ),
+                                ));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                // Recurse for nested return expressions.
+                self.check_reserved_system_in_expr(&scan.regions, scope_outer, scope_inner, target);
+            }
+        }
+    }
+
     /// Validate Frame segments in a handler/action body using the scanner.
     /// Runs the language-specific scanner on the body text, then walks the
     /// identified segments. No byte-level scanning — the scanner handles
@@ -226,6 +318,8 @@ impl FrameValidator {
         &mut self,
         body: &[u8],
         interface_methods: &HashMap<String, &InterfaceMethod>,
+        domain_fields: &std::collections::HashSet<String>,
+        actions: &std::collections::HashSet<String>,
         scope_outer: &str,
         scope_inner: &str,
         target: crate::frame_c::visitors::TargetLanguage,
@@ -263,11 +357,13 @@ impl FrameValidator {
                                         )
                                     ));
                                 }
-                            } else {
+                            } else if !actions.contains(method.as_str()) {
+                                // Not an interface method and not an action (RFC-0046:
+                                // `@@:self.<action>(args)` is a valid direct call).
                                 self.errors.push(ValidationError::new(
                                     "E601",
                                     format!(
-                                        "@@:self.{}() in {}/{} — method '{}' not found in interface",
+                                        "@@:self.{}() in {}/{} — '{}' is not an interface method or action",
                                         method, scope_outer, scope_inner, method
                                     )
                                 ));
@@ -275,23 +371,71 @@ impl FrameValidator {
                         }
                     }
 
-                    // E603: bare @@:self without .method()
+                    // ContextSelf covers both bare `@@:self` (→ E603) and the
+                    // RFC-0046 field form `@@:self.<field>` (→ resolve the member).
                     FrameSegmentKind::ContextSelf => {
+                        if let SegmentMetadata::SelfField { field } = metadata {
+                            // E609: `@@:self.<field>` must name a domain field or
+                            // an interface method (the latter is the no-paren
+                            // reference form). Unknown → reject; the symbol table
+                            // has the answer at compile time (RFC-0046 D3).
+                            if !domain_fields.contains(field)
+                                && !interface_methods.contains_key(field.as_str())
+                            {
+                                self.errors.push(ValidationError::new(
+                                    "E609",
+                                    format!(
+                                        "`@@:self.{}` in {}/{} references no known domain field or interface method",
+                                        field, scope_outer, scope_inner
+                                    ),
+                                ));
+                            }
+                        } else {
+                            // Bare `@@:self` — requires a member access.
+                            self.errors.push(ValidationError::new(
+                                "E603",
+                                format!(
+                                    "bare `@@:self` in {}/{} — `@@:self` requires a member access (e.g. `@@:self.method(args)`)",
+                                    scope_outer, scope_inner
+                                ),
+                            ));
+                        }
+                    }
+
+                    // E609: `@@:self.field.method()` (RFC-0046) — `field` must be
+                    // a domain field. (Embed-vs-scalar is decided at codegen from
+                    // the field's type; here we only confirm the field exists.)
+                    FrameSegmentKind::ContextSelfFieldCall => {
+                        if let SegmentMetadata::SelfFieldCall { field, .. } = metadata {
+                            if !domain_fields.contains(field) {
+                                self.errors.push(ValidationError::new(
+                                    "E609",
+                                    format!(
+                                        "`@@:self.{}.…()` in {}/{} references no known domain field",
+                                        field, scope_outer, scope_inner
+                                    ),
+                                ));
+                            }
+                        }
+                    }
+
+                    // E604: bare @@:system without a recognized member
+                    FrameSegmentKind::ContextSystemBare => {
                         self.errors.push(ValidationError::new(
-                            "E603",
+                            "E604",
                             format!(
-                                "bare `@@:self` in {}/{} — `@@:self` requires a member access (e.g. `@@:self.method(args)`)",
+                                "bare `@@:system` in {}/{} — `@@:system` requires a member access (e.g. `@@:system.state.name`)",
                                 scope_outer, scope_inner
                             ),
                         ));
                     }
 
-                    // E604: bare @@:system without .state
-                    FrameSegmentKind::ContextSystemBare => {
+                    // E608: @@:system.state without .name — reserved (RFC-0045)
+                    FrameSegmentKind::ContextSystemStateReserved => {
                         self.errors.push(ValidationError::new(
-                            "E604",
+                            "E608",
                             format!(
-                                "bare `@@:system` in {}/{} — `@@:system` requires a member access (e.g. `@@:system.state`)",
+                                "`@@:system.state` in {}/{} is reserved for future use; use `@@:system.state.name` to read the current state name",
                                 scope_outer, scope_inner
                             ),
                         ));
@@ -301,6 +445,13 @@ impl FrameValidator {
                 }
             }
         }
+
+        // Close the E604/E608 expression-context gap (RFC-0045): a reserved
+        // `@@:system` / `@@:system.state` nested inside a return expression
+        // (`@@:(…)`, `@@:return(…)`, `@@:return = …`) is not a top-level
+        // segment, so the walk above can't see it. Re-scan each return
+        // expression's inner text and raise there too.
+        self.check_reserved_system_in_expr(&scan_result.regions, scope_outer, scope_inner, target);
 
         // W705: transition in a non-void handler without a preceding
         // `@@:(value)` may leak the return type's default (None /

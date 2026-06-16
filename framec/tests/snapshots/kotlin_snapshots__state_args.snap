@@ -129,26 +129,41 @@ class StateArgs {
         val __e = StateArgsFrameEvent("load", mutableListOf(initial))
         val __ctx = StateArgsFrameContext(__e, null)
         _context_stack.add(__ctx)
-        __kernel(_context_stack[_context_stack.size - 1]._event)
-        _context_stack.removeAt(_context_stack.size - 1)
+        try {
+            __kernel(_context_stack[_context_stack.size - 1]._event)
+            _context_stack.removeAt(_context_stack.size - 1)
+        } catch (__frame_err: Throwable) {
+            _context_stack.removeAt(_context_stack.size - 1)
+            throw __frame_err
+        }
     }
 
     fun adjust(delta: Int) {
         val __e = StateArgsFrameEvent("adjust", mutableListOf(delta))
         val __ctx = StateArgsFrameContext(__e, null)
         _context_stack.add(__ctx)
-        __kernel(_context_stack[_context_stack.size - 1]._event)
-        _context_stack.removeAt(_context_stack.size - 1)
+        try {
+            __kernel(_context_stack[_context_stack.size - 1]._event)
+            _context_stack.removeAt(_context_stack.size - 1)
+        } catch (__frame_err: Throwable) {
+            _context_stack.removeAt(_context_stack.size - 1)
+            throw __frame_err
+        }
     }
 
     fun peek(): Int {
         val __e = StateArgsFrameEvent("peek", mutableListOf())
         val __ctx = StateArgsFrameContext(__e, 0)
         _context_stack.add(__ctx)
-        __kernel(_context_stack[_context_stack.size - 1]._event)
-        val __result = _context_stack[_context_stack.size - 1]._return as Int
-        _context_stack.removeAt(_context_stack.size - 1)
-        return __result
+        try {
+            __kernel(_context_stack[_context_stack.size - 1]._event)
+            val __result = _context_stack[_context_stack.size - 1]._return as Int
+            _context_stack.removeAt(_context_stack.size - 1)
+            return __result
+        } catch (__frame_err: Throwable) {
+            _context_stack.removeAt(_context_stack.size - 1)
+            throw __frame_err
+        }
     }
 
     private fun _state_Idle(__e: StateArgsFrameEvent, compartment: StateArgsCompartment) {

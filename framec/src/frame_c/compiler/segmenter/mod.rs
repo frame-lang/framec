@@ -65,6 +65,12 @@ pub enum PragmaKind {
     /// `@@[persist(<Format>)]` (takes Format). Body framework-
     /// generated.
     Load,
+    /// @@[async] — RFC-0043. System-level attribute that opts a system
+    /// into the layered casing/machine codegen architecture. **Required**
+    /// on any system that declares one or more `async` interface,
+    /// action, or operation members (E720 from the implementing
+    /// release; no warning grace period).
+    Async,
     /// @@import "<path>" — RFC-0022. Module-scope directive declaring a
     /// cross-file dependency. The path is the importer-relative path to
     /// another Frame source file. The codegen emits the target's native
@@ -764,6 +770,8 @@ fn identify_pragma(bytes: &[u8], start: usize) -> (PragmaKind, Option<String>) {
             b"create" => PragmaKind::Create,
             b"save" => PragmaKind::Save,
             b"load" => PragmaKind::Load,
+            // RFC-0043 system-level attribute.
+            b"async" => PragmaKind::Async,
             _ => PragmaKind::Other,
         };
 
@@ -1089,7 +1097,7 @@ mod tests {
         assert_eq!(fsm.0, "M");
         // The outer span starts at `@@fsm` and covers the whole block
         // (through the closing `}`).
-        let text = std::str::from_utf8(&source.as_bytes()[fsm.1.start..fsm.1.end]).unwrap();
+        let text = &source[fsm.1.start..fsm.1.end];
         assert!(text.starts_with("@@fsm M"));
         assert!(text.contains("/a/ true }"));
         // No System segment should be produced for an @@fsm block.

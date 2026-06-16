@@ -165,16 +165,26 @@ export class Forward {
         const __e = new ForwardFrameEvent("run", []);
         const __ctx = new ForwardFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        return this._context_stack.pop()._return;
+        try {
+            this.__kernel(__e);
+            return this._context_stack.pop()._return;
+        } catch (__frame_err) {
+            this._context_stack.pop();
+            throw __frame_err;
+        }
     }
 
     finish() {
         const __e = new ForwardFrameEvent("finish", []);
         const __ctx = new ForwardFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        return this._context_stack.pop()._return;
+        try {
+            this.__kernel(__e);
+            return this._context_stack.pop()._return;
+        } catch (__frame_err) {
+            this._context_stack.pop();
+            throw __frame_err;
+        }
     }
 
     _state_Start(__e, compartment) {
@@ -203,7 +213,7 @@ export class Forward {
     }
 
     _s_Start_hdl_user_run(__e, compartment) {
-        self.starts = self.starts + 1;
+        this.starts = this.starts + 1;
         const __compartment = this.__prepareEnter("Middle", [], []);
         __compartment.forward_event = __e;
         this.__transition(__compartment);
@@ -217,7 +227,7 @@ export class Forward {
     }
 
     _s_Middle_hdl_user_run(__e, compartment) {
-        self.middles = self.middles + 1
+        this.middles = this.middles + 1
     }
 
     _s_End_hdl_user_finish(__e, compartment) {

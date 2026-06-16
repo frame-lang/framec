@@ -144,7 +144,7 @@ class NoPersist
     def __router(__e)
         handler_name = "_state_#{@__compartment.state}"
         if respond_to?(handler_name, true)
-            send(handler_name, __e, @__compartment)
+            __send__(handler_name, __e, @__compartment)
         end
     end
 
@@ -156,32 +156,48 @@ class NoPersist
         __e = NoPersistFrameEvent.new("bump", [])
         __ctx = NoPersistFrameContext.new(__e, nil)
         @_context_stack.push(__ctx)
-        __kernel(__e)
-        return @_context_stack.pop._return
+        begin
+            __kernel(__e)
+            return @_context_stack.last._return
+        ensure
+            @_context_stack.pop
+        end
     end
 
     def set_cache(v)
         __e = NoPersistFrameEvent.new("set_cache", [v])
         __ctx = NoPersistFrameContext.new(__e, nil)
         @_context_stack.push(__ctx)
-        __kernel(__e)
-        return @_context_stack.pop._return
+        begin
+            __kernel(__e)
+            return @_context_stack.last._return
+        ensure
+            @_context_stack.pop
+        end
     end
 
     def get_count
         __e = NoPersistFrameEvent.new("get_count", [])
         __ctx = NoPersistFrameContext.new(__e, nil)
         @_context_stack.push(__ctx)
-        __kernel(__e)
-        return @_context_stack.pop._return
+        begin
+            __kernel(__e)
+            return @_context_stack.last._return
+        ensure
+            @_context_stack.pop
+        end
     end
 
     def get_cache
         __e = NoPersistFrameEvent.new("get_cache", [])
         __ctx = NoPersistFrameContext.new(__e, nil)
         @_context_stack.push(__ctx)
-        __kernel(__e)
-        return @_context_stack.pop._return
+        begin
+            __kernel(__e)
+            return @_context_stack.last._return
+        ensure
+            @_context_stack.pop
+        end
     end
 
     def _state_Active(__e, compartment)

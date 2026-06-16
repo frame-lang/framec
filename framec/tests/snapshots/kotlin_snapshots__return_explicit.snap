@@ -126,10 +126,15 @@ class ReturnExplicit {
         val __e = ReturnExplicitFrameEvent("decide", mutableListOf(score))
         val __ctx = ReturnExplicitFrameContext(__e, "")
         _context_stack.add(__ctx)
-        __kernel(_context_stack[_context_stack.size - 1]._event)
-        val __result = _context_stack[_context_stack.size - 1]._return as String
-        _context_stack.removeAt(_context_stack.size - 1)
-        return __result
+        try {
+            __kernel(_context_stack[_context_stack.size - 1]._event)
+            val __result = _context_stack[_context_stack.size - 1]._return as String
+            _context_stack.removeAt(_context_stack.size - 1)
+            return __result
+        } catch (__frame_err: Throwable) {
+            _context_stack.removeAt(_context_stack.size - 1)
+            throw __frame_err
+        }
     }
 
     private fun _state_Judging(__e: ReturnExplicitFrameEvent, compartment: ReturnExplicitCompartment) {

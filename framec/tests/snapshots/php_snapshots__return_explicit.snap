@@ -156,8 +156,13 @@ class ReturnExplicit {
         $__e = new ReturnExplicitFrameEvent("decide", [$score]);
         $__ctx = new ReturnExplicitFrameContext($__e, null);
         $this->_context_stack[] = $__ctx;
-        $this->__kernel($__e);
-        return array_pop($this->_context_stack)->_return;
+        try {
+            $this->__kernel($__e);
+            return array_pop($this->_context_stack)->_return;
+        } catch (\Throwable $__frame_err) {
+            array_pop($this->_context_stack);
+            throw $__frame_err;
+        }
     }
 
     private function _state_Judging($__e, $compartment) {

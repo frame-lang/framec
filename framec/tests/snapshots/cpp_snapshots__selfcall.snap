@@ -8,6 +8,9 @@ expression: "compile_fixture(\"06_selfcall\", \"cpp\")"
 #include <any>
 #include <memory>
 #include <functional>
+#include <stdexcept>
+#include <cstdlib>
+#include <cstdio>
 
 class SelfCallFrameEvent {
 public:
@@ -133,14 +136,14 @@ private:
     }
 
     void _s_Active_hdl_user_kick(SelfCallFrameEvent& __e, std::shared_ptr<SelfCallCompartment> compartment) {
-        self.count = self.count + 1;
+        this->count = this->count + 1;
         this->report();
         if (!_context_stack.empty() && _context_stack.back()._transitioned) return;
 
     }
 
     void _s_Active_hdl_user_report(SelfCallFrameEvent& __e, std::shared_ptr<SelfCallCompartment> compartment) {
-        _context_stack.back()._return = std::any(self.count);
+        _context_stack.back()._return = std::any(this->count);
 
     }
 
@@ -171,8 +174,8 @@ public:
         SelfCallFrameEvent __e("kick");
         SelfCallFrameContext __ctx(std::move(__e));
         _context_stack.push_back(std::move(__ctx));
+        struct __CtxGuard { decltype(_context_stack)& s; ~__CtxGuard() { s.pop_back(); } } __ctx_guard{_context_stack};
         __kernel(_context_stack.back()._event);
-        _context_stack.pop_back();
 
     }
 
@@ -180,9 +183,9 @@ public:
         SelfCallFrameEvent __e("report");
         SelfCallFrameContext __ctx(std::move(__e), std::any(int()));
         _context_stack.push_back(std::move(__ctx));
+        struct __CtxGuard { decltype(_context_stack)& s; ~__CtxGuard() { s.pop_back(); } } __ctx_guard{_context_stack};
         __kernel(_context_stack.back()._event);
         auto __result = std::any_cast<int>(std::move(_context_stack.back()._return));
-        _context_stack.pop_back();
         return __result;
 
     }

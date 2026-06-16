@@ -160,16 +160,16 @@ public class Forward {
         let __e = ForwardFrameEvent(message: "run", parameters: [])
         let __ctx = ForwardFrameContext(event: __e)
         _context_stack.append(__ctx)
+        defer { _context_stack.removeLast() }
         __kernel(_context_stack[_context_stack.count - 1]._event)
-        _context_stack.removeLast()
     }
 
     public func finish() {
         let __e = ForwardFrameEvent(message: "finish", parameters: [])
         let __ctx = ForwardFrameContext(event: __e)
         _context_stack.append(__ctx)
+        defer { _context_stack.removeLast() }
         __kernel(_context_stack[_context_stack.count - 1]._event)
-        _context_stack.removeLast()
     }
 
     private func _state_Start(_ __e: ForwardFrameEvent, _ compartment: ForwardCompartment) {

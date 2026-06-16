@@ -6,14 +6,14 @@
     machine:
         $Counting {
             increment(n: integer) {
-                self._scale(n)
+                @@:self._scale(n)
             }
-            get_total(): integer { @@:(self.total) }
+            get_total(): integer { @@:(@@:self.total) }
         }
 
     actions:
         _scale(n: integer) {
-            self.total = self.total + n * 2
+            @@:self.total = @@:self.total + n * 2
         }
 
     domain:

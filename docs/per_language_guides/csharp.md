@@ -47,7 +47,7 @@ public class WithInterface {
 }
 ```
 
-Frame's `self.field` lowers to `this.field` in the generated C#.
+Frame's `@@:self.field` lowers to `this.field` in the generated C#.
 Multiple `@@system` blocks per file are supported (no
 one-class-per-file rule).
 
@@ -74,9 +74,10 @@ private List<int> items = new List<int>();
 The Frame `: type` annotation IS the C# type — write `: string`,
 `: List<int>`, `: Dictionary<string, int>`, etc.
 
-**Frame type names map cleanly to C# types:**
+**Write C#'s own type names directly** — framec passes the annotation
+through verbatim, so the name you write *is* the emitted type:
 
-| Frame              | C#                  | Notes |
+| You write          | C# meaning          | Notes |
 |--------------------|---------------------|-------|
 | `int`              | `int`               | 32-bit signed |
 | `string`           | `string`            | C# alias for `System.String` |
@@ -156,6 +157,16 @@ There is no separate "completed-future" wrapper pattern needed
 on C# (unlike Java's `CompletableFuture.completedFuture(...)`)
 because C#'s compiler-generated state machine handles the
 synchronous-completion case efficiently.
+
+### Single-driver gate (`@@[async]`)
+
+An `@@[async]` system is emitted as a public **casing** (`public
+class <Name>`) wrapping a private **`_<Name>Machine`**. Each
+interface method gates external entry: if the system is already
+`busy` when a second call arrives, it throws
+`new InvalidOperationException("E703: …")` (the single-driver
+contract, **E703**). The gate is set on entry and cleared in a
+`finally`. See [language reference § Async](../frame_language.md#async).
 
 ---
 
@@ -334,7 +345,7 @@ blocks attached to the corresponding generated declaration.
 lowers to `new WithInterface()` — same as Java.
 
 **`this.field`, not `self.field`.** Inside handler bodies,
-Frame's `self.x` lowers to `this.x`. The `this.` prefix is
+Frame's `@@:self.x` lowers to `this.x`. The `this.` prefix is
 optional in C# but Frame's codegen emits it for clarity.
 
 **`using` directives go in the prolog.** C#'s `using` (the

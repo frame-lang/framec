@@ -175,7 +175,7 @@ pub fn scan_native_regions<S: SyntaxSkipper>(
         // Frame statements (-> $, => $, push$, pop$, return) are detected at any position.
         // Closures are already skipped by skip_nested_scope() above.
         if matches!(b, b'-' | b'=' | b'(' | b'p' | b'r') {
-            if let Some((_new_i, kind)) = match_frame_statement(skipper, bytes, i, end) {
+            if let Some((match_pos, kind)) = match_frame_statement(skipper, bytes, i, end) {
                 // Calculate indent: count leading whitespace from start of
                 // current line.
                 //
@@ -240,8 +240,64 @@ pub fn scan_native_regions<S: SyntaxSkipper>(
                     }
                 }
 
-                // Find end of Frame statement.
-                let raw_stmt_end = skipper.find_line_end(bytes, i, end);
+                // E400 (FRAMEC_BUGS #13): a transition must be the last
+                // statement on its line. Inline native control flow with
+                // transition arms — `if c then -> $A else -> $B end` — can't
+                // scope the transition's implicit `return` through an opaque
+                // native block (Oceans Model), so it silently miscompiles
+                // (wrong arm taken, dropped `else`, or a broken `end`). Reject
+                // it; the multi-line if/then/else form works correctly.
+                //
+                // Allowed to follow the transition on its line: whitespace, a
+                // comment, a block/terminator delimiter (`}` / `;`), or a
+                // Frame continuation (`@`). Anything else (`else`, `end`, a
+                // second `->`, …) means the transition isn't the last token.
+                if kind == FrameSegmentKind::Transition {
+                    let construct_end = if match_pos < end && bytes[match_pos] == b'$' {
+                        let mut k = match_pos + 1;
+                        if k < end && bytes[k] == b'^' {
+                            k += 1; // $^
+                        } else {
+                            while k < end && (bytes[k].is_ascii_alphanumeric() || bytes[k] == b'_')
+                            {
+                                k += 1;
+                            }
+                        }
+                        if k < end && bytes[k] == b'(' {
+                            if let Some(k2) = skipper.balanced_paren_end(bytes, k, end) {
+                                k = k2;
+                            }
+                        }
+                        k
+                    } else {
+                        match_pos // `-> pop$` etc — already past the construct
+                    };
+                    let after = skip_ws(bytes, construct_end, end);
+                    let trailing_code = after < end
+                        && !matches!(bytes[after], b'\n' | b'\r' | b'}' | b';' | b'@')
+                        && skipper.skip_comment(bytes, after, end).is_none();
+                    if trailing_code {
+                        return Err(ScanError {
+                            kind: ScanErrorKind::UnterminatedProtected,
+                            message: "E400: a transition must be the last statement on its line. \
+                                      Inline native control flow with transition arms (e.g. \
+                                      `if c then -> $A else -> $B end`) is not supported — the \
+                                      transition's implicit return cannot be scoped through an \
+                                      opaque native block. Put each transition on its own line \
+                                      using the multi-line form."
+                                .to_string(),
+                        });
+                    }
+                }
+
+                // Find end of Frame statement. Seed the line-end search from
+                // the matched construct position rather than `i`: when a
+                // transition spans a newline (`->` <newline> `$State`,
+                // FRAMEC_BUGS #43) the target lives on a later line, so the
+                // statement end is that line's end — not the `->` line's.
+                // For all same-line constructs `match_pos` is on the same line
+                // as `i`, so this is identical to `find_line_end(.., i, ..)`.
+                let raw_stmt_end = skipper.find_line_end(bytes, match_pos.max(i), end);
                 // Trim trailing inline whitespace from the Frame segment
                 // span so it stays in the *following* NativeText region.
                 // Without this, a same-line trailing comment after a Frame
@@ -565,8 +621,10 @@ pub fn scan_native_regions<S: SyntaxSkipper>(
                         9 => FrameSegmentKind::ReturnCall,
                         10 => FrameSegmentKind::ContextSelfCall,
                         11 => FrameSegmentKind::ContextSelf,
+                        15 => FrameSegmentKind::ContextSelfFieldCall,
                         12 => FrameSegmentKind::ContextSystemState,
                         13 => FrameSegmentKind::ContextSystemBare,
+                        14 => FrameSegmentKind::ContextSystemStateReserved,
                         _ => FrameSegmentKind::ContextReturn, // shouldn't happen
                     };
                     let mut seg_end = parser.result_end;
@@ -774,11 +832,14 @@ fn match_frame_statement<S: SyntaxSkipper>(
 
     // Transition variants: -> $State, -> (args) $State, -> pop$, -> => $State
     if b == b'-' && pos + 1 < end && bytes[pos + 1] == b'>' {
-        let mut k = skip_ws(bytes, pos + 2, end);
+        // Newline-aware: a transition may be written `->` <newline> `$State`
+        // (FRAMEC_BUGS #43). The trailing-`$` requirement below still keeps
+        // native `->` forms (Rust `-> T`, Erlang `-> Expr`) from matching.
+        let mut k = skip_ws_nl(bytes, pos + 2, end);
 
         // Check for -> => $State (transition forward)
         if k + 1 < end && bytes[k] == b'=' && bytes[k + 1] == b'>' {
-            k = skip_ws(bytes, k + 2, end);
+            k = skip_ws_nl(bytes, k + 2, end);
             if k < end && bytes[k] == b'$' {
                 return Some((k, FrameSegmentKind::Transition));
             }
@@ -797,7 +858,7 @@ fn match_frame_statement<S: SyntaxSkipper>(
         // Check for optional enter args: -> (args) $State
         if k < end && bytes[k] == b'(' {
             if let Some(k2) = skipper.balanced_paren_end(bytes, k, end) {
-                k = skip_ws(bytes, k2, end);
+                k = skip_ws_nl(bytes, k2, end);
             }
         }
 
@@ -815,7 +876,7 @@ fn match_frame_statement<S: SyntaxSkipper>(
             if k < end {
                 k += 1;
             } // Skip closing quote
-            k = skip_ws(bytes, k, end);
+            k = skip_ws_nl(bytes, k, end);
         }
 
         // Regular transition: -> $State
@@ -954,6 +1015,23 @@ fn match_frame_statement<S: SyntaxSkipper>(
 #[inline]
 pub fn skip_ws(bytes: &[u8], mut pos: usize, end: usize) -> usize {
     while pos < end && (bytes[pos] == b' ' || bytes[pos] == b'\t') {
+        pos += 1;
+    }
+    pos
+}
+
+/// Skip whitespace *including* newlines (space, tab, CR, LF). Returns new
+/// position. Used where a Frame construct may legitimately span lines —
+/// e.g. a transition written `->` <newline> `$State` — so parsing stays
+/// whitespace-invariant. It still only consumes contiguous whitespace, so
+/// a `->` with no `$` target on the following line is left un-matched
+/// (and falls through to native text) exactly as a same-line `-> foo`
+/// would. FRAMEC_BUGS #43.
+#[inline]
+pub fn skip_ws_nl(bytes: &[u8], mut pos: usize, end: usize) -> usize {
+    while pos < end
+        && (bytes[pos] == b' ' || bytes[pos] == b'\t' || bytes[pos] == b'\n' || bytes[pos] == b'\r')
+    {
         pos += 1;
     }
     pos
@@ -1704,14 +1782,29 @@ mod tests {
     }
 
     #[test]
-    fn test_system_state_recognized() {
-        let kinds = scan_for_kinds("{ let s = @@:system.state; }");
+    fn test_system_state_name_recognized() {
+        // RFC-0045: the current-state name accessor is `@@:system.state.name`.
+        let kinds = scan_for_kinds("{ let s = @@:system.state.name; }");
         assert_eq!(kinds, vec![FrameSegmentKind::ContextSystemState]);
     }
 
     #[test]
+    fn test_bare_system_state_reserved() {
+        // RFC-0045: bare `@@:system.state` (no `.name`) is reserved → E608.
+        let kinds = scan_for_kinds("{ let s = @@:system.state; }");
+        assert_eq!(kinds, vec![FrameSegmentKind::ContextSystemStateReserved]);
+    }
+
+    #[test]
+    fn test_system_state_dot_other_reserved() {
+        // `.state.<other>` is not the `.name` accessor → reserved → E608.
+        let kinds = scan_for_kinds("{ let s = @@:system.state.foo; }");
+        assert_eq!(kinds, vec![FrameSegmentKind::ContextSystemStateReserved]);
+    }
+
+    #[test]
     fn test_system_state_in_return_expr() {
-        let kinds = scan_for_kinds("{ @@:(@@:system.state) }");
+        let kinds = scan_for_kinds("{ @@:(@@:system.state.name) }");
         assert_eq!(kinds, vec![FrameSegmentKind::ContextReturnExpr]);
     }
 

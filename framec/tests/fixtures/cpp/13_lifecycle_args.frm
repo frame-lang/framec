@@ -13,15 +13,15 @@
 
         $Active {
             $>(count: int, name: std::string) {
-                self.sum = count + 1;
-                self.label = name;
+                @@:self.sum = count + 1;
+                @@:self.label = name;
             }
             total(): int {
-                @@:(self.sum)
+                @@:(@@:self.sum)
                 return
             }
             tag(): std::string {
-                @@:(self.label)
+                @@:(@@:self.label)
                 return
             }
         }

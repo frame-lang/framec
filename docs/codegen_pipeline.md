@@ -59,12 +59,57 @@ backends/<lang>.rs LanguageBackend::emit  →  source text
 Output file
 ```
 
-**Erlang** follows a parallel path through `erlang_system.rs` because
-the gen_statem callback model does not match the class-based primitive
-set.
+### Why two backends have dedicated pipelines
 
-**Rust** uses Rust-specific helpers in `rust_system.rs` for kernel
-signature and borrow-checker workarounds (see RFC-0020 §Exceptions).
+Of the seventeen targets framec supports, fifteen go through
+`generate_system_shared()` in `system_codegen.rs`. Two — Rust and
+Erlang — branch into dedicated pipelines (`rust_system.rs` and
+`erlang_system.rs`) at the first line of `generate_system()`. The split
+exists because both targets diverge from the class-based-with-runtime-
+type-erasure assumption that the shared pipeline encodes. The reasons
+are structural, not stylistic:
+
+**Erlang — actor model, not a class.** OTP's `gen_statem` behaviour
+isn't a class with methods and fields; it's a state callback module
+plus a process record. Externally, callers send messages via
+`gen_statem:call/2` (the process mailbox serializes them by
+construction); internally, the `frame_dispatch__/3` helper does
+direct function calls without messaging. The "class" abstraction the
+shared pipeline emits has no analogue in Erlang, so `erlang_system.rs`
+emits raw Erlang source text rather than `CodegenNode` trees.
+
+**Rust — three independent reasons.** Rust's pipeline diverges because
+the language's compile-time guarantees don't allow the shared
+pipeline's GC-friendly assumptions:
+
+1. **Compartment ownership.** Without GC, shared mutable state requires
+   explicit `Rc<RefCell<T>>` (single-threaded) or `Arc<Mutex<T>>`
+   (multi-threaded). The shared pipeline emits the compartment as a
+   plain instance field; Rust must wrap it in a refcounted cell. This
+   threads through every field, every constructor, every method that
+   reads or mutates state.
+2. **Typed per-state `Context`.** The shared pipeline uses a single
+   type-erased compartment shape — dicts in Python, `Map<String,
+   Object>` in Java, `BTreeMap<String, Self>` in Lua. Rust insists on
+   type safety, so framec emits *one `Context` struct per state*, each
+   typed against that state's actual params + lifecycle params. See
+   [RFC-0025.1](rfcs/rfc-0025-1.md) for the full design. There isn't
+   "a compartment" in Rust; there are N of them per system.
+3. **`Rc<FrameEvent>` for `FrameContext.event`.** Storing
+   `FrameEvent` by value would make passing a `&FrameEvent` borrowed
+   from inside `self` to a `&mut self` method fail the borrow checker.
+   The Rust pipeline emits the event as `Rc<FrameEvent>` and threads
+   `Rc::clone` through the dispatch chain. See
+   [RFC-0020 § Exceptions: Rust](rfcs/rfc-0020.md#rust---rcframeevent-for-framecontextevent).
+
+The practical consequence for anyone implementing a cross-cutting
+codegen change (e.g. RFC-0043's layered async architecture, future
+trace-hook RFCs, the eventual `@@[serialize_events]` opt-in) is that
+the change has to be applied *twice*: once in the shared pipeline
+(covers 14 of the 15 async-capable backends including Java's
+sync-internals-async-boundary pattern) and once in `rust_system.rs`
+for Rust. Erlang typically receives a no-op for these changes because
+its actor model already provides the guarantee in a different form.
 
 ## Module map
 

@@ -144,9 +144,49 @@ pub(super) fn extract_segment_metadata(kind: FrameSegmentKind, text: &str) -> Se
             }
         }
 
-        FrameSegmentKind::ContextSelf
-        | FrameSegmentKind::ContextSystemState
+        FrameSegmentKind::ContextSelfFieldCall => {
+            // `@@:self.field.method(args)` (RFC-0046) → field, method, args.
+            if let Some(rest) = text.strip_prefix("@@:self.") {
+                if let Some(dot) = rest.find('.') {
+                    let field = rest[..dot].to_string();
+                    let after = &rest[dot + 1..];
+                    if let Some(paren) = after.find('(') {
+                        let method = after[..paren].to_string();
+                        let args = after[paren..].to_string(); // includes parens
+                        return SegmentMetadata::SelfFieldCall {
+                            field,
+                            method,
+                            args,
+                        };
+                    }
+                }
+            }
+            SegmentMetadata::None
+        }
+
+        FrameSegmentKind::ContextSelf => {
+            // `@@:self.field` (RFC-0046) → SelfField; bare `@@:self` → None.
+            // The parser segments both as ContextSelf; the trailing member
+            // (if any, and not a call — calls are ContextSelfCall) tells the
+            // two apart. Mirrors the `@@:params.key` extraction above.
+            if let Some(rest) = text.strip_prefix("@@:self.") {
+                let field: String = rest
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                    .collect();
+                if field.is_empty() {
+                    SegmentMetadata::None
+                } else {
+                    SegmentMetadata::SelfField { field }
+                }
+            } else {
+                SegmentMetadata::None
+            }
+        }
+
+        FrameSegmentKind::ContextSystemState
         | FrameSegmentKind::ContextSystemBare
+        | FrameSegmentKind::ContextSystemStateReserved
         | FrameSegmentKind::ContextEvent => {
             // These carry no variable content — the kind is sufficient
             SegmentMetadata::None

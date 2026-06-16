@@ -4,6 +4,25 @@
 //! It bypasses the standard class-based CodegenNode pipeline entirely, producing
 //! raw Erlang source text with proper gen_statem callbacks, -record(data, {}),
 //! and Frame infrastructure (frame_transition__, frame_dispatch__, etc.).
+//!
+//! # Why Erlang has its own pipeline
+//!
+//! The class-based primitive set the shared pipeline encodes has no
+//! analogue in Erlang. OTP's `gen_statem` is an actor with a state
+//! callback module and a process record, not an object with methods
+//! and fields. Externally, callers send messages via `gen_statem:call/2`
+//! which the process mailbox serializes by construction. Internally,
+//! the `frame_dispatch__/3` helper calls dispatch directly without
+//! messaging — this is the natural "internal vs external" split that
+//! the class-based pipeline has to reconstruct explicitly via the
+//! system/machine layering of RFC-0043.
+//!
+//! Cross-cutting codegen changes that target the class-based pipeline
+//! (RFC-0043 layered async, future trace hooks, future
+//! `@@[serialize_events]`) typically receive a no-op here because OTP
+//! already provides the equivalent guarantee in actor form. The
+//! validator may still emit warnings target-agnostically; this module
+//! ignores codegen attributes that have no Erlang manifestation.
 
 mod actions_ops;
 mod blocks;
@@ -78,7 +97,14 @@ fn erlang_rewrite_expr(line: &str, action_names: &[String]) -> String {
             return replaced.replace("(Data, )", "(Data)");
         }
     }
-    replace_outside_strings_and_comments(l, TargetLanguage::Erlang, &[("self.", "Data#data.")])
+    // RFC-0046: `@@:self.field` behaves like native `self.field` on Erlang —
+    // both lower to the `#data` record access. Map the `@@:self.` form first
+    // (longer match) so the bare `self.` rule doesn't leave the `@@:` prefix.
+    replace_outside_strings_and_comments(
+        l,
+        TargetLanguage::Erlang,
+        &[("@@:self.", "Data#data."), ("self.", "Data#data.")],
+    )
 }
 
 // ============================================================================
@@ -91,6 +117,31 @@ pub(crate) fn generate_erlang_system(
     let sys = &system.name;
     let module_name = to_snake_case(sys);
     let mut code = String::new();
+
+    // RFC-0046 d-cross: domain field name → system type, so a
+    // `@@:self.field.method()` cross-system call (kind-15) lowers directly to
+    // `module:method(self.field, …)` instead of going through the textual
+    // cross-system rewriter. The type is the declared type when present, else
+    // it is read from the `@@System()` initializer (untyped form
+    // `field = @@System()`) — mirroring the former rewriter's field discovery.
+    let domain_field_types: std::collections::HashMap<String, String> = system
+        .domain
+        .iter()
+        .filter_map(|dv| {
+            if let crate::frame_c::compiler::frame_ast::Type::Custom(t) = &dv.var_type {
+                return Some((dv.name.clone(), t.clone()));
+            }
+            let init = dv.initializer_text.as_deref()?.trim();
+            let s = init.strip_prefix("@@")?;
+            let end = s.find('(')?;
+            let name = &s[..end];
+            if name.chars().next()?.is_ascii_uppercase() {
+                Some((dv.name.clone(), name.to_string()))
+            } else {
+                None
+            }
+        })
+        .collect();
 
     // Collect action + operation names for native code rewriting
     // (both are module-level functions that get self.X() → X(Data) rewriting)
@@ -234,8 +285,8 @@ pub(crate) fn generate_erlang_system(
             let state_prefix = to_snake_case(&state.name);
             for sv in &state.state_vars {
                 let field_name = format!("sv_{}_{}", state_prefix, sv.name);
-                let init_val = if let Some(ref init) = sv.init {
-                    expression_to_string(init, TargetLanguage::Erlang)
+                let init_val = if let Some(ref init) = sv.initializer_text {
+                    init.clone()
                 } else {
                     "undefined".to_string()
                 };
@@ -598,6 +649,10 @@ pub(crate) fn generate_erlang_system(
                     state_hsm_parents: std::collections::HashMap::new(),
                     current_return_type: None,
                     state_param_types: std::collections::HashMap::new(),
+                    state_enter_param_types: std::collections::HashMap::new(),
+                    state_exit_param_types: std::collections::HashMap::new(),
+                    domain_field_types: domain_field_types.clone(),
+                    actions: std::collections::HashSet::new(),
                 };
                 let enter_span = crate::frame_c::compiler::ast::Span {
                     start: enter.body.span.start,
@@ -721,8 +776,8 @@ pub(crate) fn generate_erlang_system(
                 let mut gen = data_gen;
                 for sv in &state.state_vars {
                     let field_name = format!("sv_{}_{}", state_prefix, sv.name);
-                    let init_val = if let Some(ref init) = sv.init {
-                        expression_to_string(init, TargetLanguage::Erlang)
+                    let init_val = if let Some(ref init) = sv.initializer_text {
+                        init.clone()
                     } else {
                         "undefined".to_string()
                     };
@@ -889,6 +944,10 @@ pub(crate) fn generate_erlang_system(
                     state_hsm_parents: std::collections::HashMap::new(),
                     current_return_type: None,
                     state_param_types: std::collections::HashMap::new(),
+                    state_enter_param_types: std::collections::HashMap::new(),
+                    state_exit_param_types: std::collections::HashMap::new(),
+                    domain_field_types: domain_field_types.clone(),
+                    actions: std::collections::HashSet::new(),
                 };
                 // Convert frame_ast::Span to ast::Span
                 let body_span = crate::frame_c::compiler::ast::Span {
@@ -1470,6 +1529,10 @@ pub(crate) fn generate_erlang_system(
                     state_hsm_parents: std::collections::HashMap::new(),
                     current_return_type: None,
                     state_param_types: std::collections::HashMap::new(),
+                    state_enter_param_types: std::collections::HashMap::new(),
+                    state_exit_param_types: std::collections::HashMap::new(),
+                    domain_field_types: domain_field_types.clone(),
+                    actions: std::collections::HashSet::new(),
                 };
                 let enter_span = crate::frame_c::compiler::ast::Span {
                     start: enter.body.span.start,
@@ -1548,6 +1611,10 @@ pub(crate) fn generate_erlang_system(
                     state_hsm_parents: std::collections::HashMap::new(),
                     current_return_type: None,
                     state_param_types: std::collections::HashMap::new(),
+                    state_enter_param_types: std::collections::HashMap::new(),
+                    state_exit_param_types: std::collections::HashMap::new(),
+                    domain_field_types: domain_field_types.clone(),
+                    actions: std::collections::HashSet::new(),
                 };
                 let enter_span = crate::frame_c::compiler::ast::Span {
                     start: enter.body.span.start,
@@ -1590,8 +1657,8 @@ pub(crate) fn generate_erlang_system(
                 let mut gen = 0;
                 for sv in &state.state_vars {
                     let field_name = format!("sv_{}_{}", state_prefix, sv.name);
-                    let init_val = if let Some(ref init) = sv.init {
-                        expression_to_string(init, TargetLanguage::Erlang)
+                    let init_val = if let Some(ref init) = sv.initializer_text {
+                        init.clone()
                     } else {
                         "undefined".to_string()
                     };
@@ -1644,6 +1711,10 @@ pub(crate) fn generate_erlang_system(
                     state_hsm_parents: std::collections::HashMap::new(),
                     current_return_type: None,
                     state_param_types: std::collections::HashMap::new(),
+                    state_enter_param_types: std::collections::HashMap::new(),
+                    state_exit_param_types: std::collections::HashMap::new(),
+                    domain_field_types: domain_field_types.clone(),
+                    actions: std::collections::HashSet::new(),
                 };
                 let exit_span = crate::frame_c::compiler::ast::Span {
                     start: exit.body.span.start,
@@ -1730,128 +1801,9 @@ pub(crate) fn generate_erlang_system(
 
     persist::emit_persistence_methods(&mut code, system);
 
-    // Cross-system call translation. Frame source like
-    // `self.inner.bump()` (cross-target idiomatic dot-call) gets
-    // rewritten to `Data#data.inner` by the body-level `self.X` →
-    // `Data#data.X` substitution, leaving the call as
-    // `Data#data.inner.bump(...)` — invalid Erlang (no
-    // method-call-on-value syntax). For a domain field whose
-    // initializer is `@@OtherSys()` the field holds a Pid, so the
-    // correct Erlang shape is `othersys:bump(Data#data.inner, ...)`
-    // (module-qualified call passing the Pid as the first arg).
-    //
-    // Walk `system.domain` for cross-system fields (those whose
-    // `initializer_text` starts with `@@<Name>(`) and rewrite each
-    // dot-call site at the file-text level. Same `defined_systems`
-    // pattern other backends use for type/typed-field lowering, but
-    // applied to call sites instead of field types.
-    let mut cross_sys_fields: Vec<(String, String)> = Vec::new();
-    for dv in &system.domain {
-        let init = match &dv.initializer_text {
-            Some(t) => t.trim(),
-            None => continue,
-        };
-        if let Some(rest) = init.strip_prefix("@@") {
-            if let Some(paren) = rest.find('(') {
-                let sys_name = &rest[..paren];
-                if !sys_name.is_empty() {
-                    cross_sys_fields.push((dv.name.clone(), to_snake_case(sys_name)));
-                }
-            }
-        }
-    }
-    for (field_name, sys_module) in &cross_sys_fields {
-        // Match `Data#data.field.` and `Data<digits>#data.field.` —
-        // the latter form arises when a handler chains multiple
-        // statements (per-statement chaining renames the record
-        // variable Data1, Data2, …). The rewrite preserves the
-        // original variable name in the output receiver.
-        let suffix = format!("#data.{}.", field_name);
-        let mut out = String::with_capacity(code.len());
-        let mut cursor = 0;
-        let bytes = code.as_bytes();
-        while cursor < bytes.len() {
-            // Find the next `Data` token followed by optional digits
-            // followed by the suffix.
-            let next = code[cursor..].find("Data");
-            let rel = match next {
-                Some(r) => r,
-                None => break,
-            };
-            let abs = cursor + rel;
-            // Token-boundary check: previous char must not be an
-            // identifier char (so we don't match inside `MyData`).
-            if abs > 0 {
-                let prev = bytes[abs - 1];
-                if prev.is_ascii_alphanumeric() || prev == b'_' {
-                    out.push_str(&code[cursor..abs + 4]);
-                    cursor = abs + 4;
-                    continue;
-                }
-            }
-            // Walk past optional digits after `Data`.
-            let mut var_end = abs + 4;
-            while var_end < bytes.len() && bytes[var_end].is_ascii_digit() {
-                var_end += 1;
-            }
-            // Check for the field suffix.
-            if !code[var_end..].starts_with(&suffix) {
-                out.push_str(&code[cursor..var_end]);
-                cursor = var_end;
-                continue;
-            }
-            let var_name = &code[abs..var_end]; // "Data" or "Data1" etc.
-            out.push_str(&code[cursor..abs]);
-            // Find the method name (identifier) immediately after the suffix.
-            let method_start = var_end + suffix.len();
-            let mut method_end = method_start;
-            while method_end < bytes.len()
-                && (bytes[method_end].is_ascii_alphanumeric() || bytes[method_end] == b'_')
-            {
-                method_end += 1;
-            }
-            if method_end == method_start || method_end >= bytes.len() || bytes[method_end] != b'('
-            {
-                // Not a method call (e.g. just a field read). Pass through.
-                out.push_str(&code[abs..method_end]);
-                cursor = method_end;
-                continue;
-            }
-            let method = &code[method_start..method_end];
-            // Find matching `)` for this call's args.
-            let args_open = method_end;
-            let mut depth: i32 = 1;
-            let mut p = args_open + 1;
-            while p < bytes.len() && depth > 0 {
-                match bytes[p] {
-                    b'(' => depth += 1,
-                    b')' => depth -= 1,
-                    _ => {}
-                }
-                p += 1;
-            }
-            if depth != 0 {
-                // Unbalanced — leave as-is.
-                out.push_str(&code[abs..p.min(bytes.len())]);
-                cursor = p;
-                continue;
-            }
-            let args_inner = &code[args_open + 1..p - 1];
-            let args_inner_trim = args_inner.trim();
-            let receiver = format!("{}#data.{}", var_name, field_name);
-            if args_inner_trim.is_empty() {
-                out.push_str(&format!("{}:{}({})", sys_module, method, receiver));
-            } else {
-                out.push_str(&format!(
-                    "{}:{}({}, {})",
-                    sys_module, method, receiver, args_inner
-                ));
-            }
-            cursor = p;
-        }
-        out.push_str(&code[cursor..]);
-        code = out;
-    }
+    // RFC-0046 d-cross: cross-system calls (`@@:self.field.method()`) are
+    // emitted directly as `module:method(self.field, …)` by the kind-15
+    // segment expansion; the former textual cross-system rewriter is gone.
 
     // Underscore-prefixed action / operation names must be quoted in
     // Erlang because `_<name>` is reserved for ignored bindings, not

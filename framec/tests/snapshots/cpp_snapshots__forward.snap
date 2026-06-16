@@ -8,6 +8,9 @@ expression: "compile_fixture(\"07_forward\", \"cpp\")"
 #include <any>
 #include <memory>
 #include <functional>
+#include <stdexcept>
+#include <cstdlib>
+#include <cstdio>
 
 class ForwardFrameEvent {
 public:
@@ -153,7 +156,7 @@ private:
     }
 
     void _s_Start_hdl_user_run(ForwardFrameEvent& __e, std::shared_ptr<ForwardCompartment> compartment) {
-        self.starts = self.starts + 1;
+        this->starts = this->starts + 1;
         auto __compartment = __prepareEnter("Middle", std::vector<std::any>{}, std::vector<std::any>{});
         __compartment->forward_event = std::make_unique<ForwardFrameEvent>(__e);
         __transition(std::move(__compartment));
@@ -169,7 +172,7 @@ private:
     }
 
     void _s_Middle_hdl_user_run(ForwardFrameEvent& __e, std::shared_ptr<ForwardCompartment> compartment) {
-        self.middles = self.middles + 1
+        this->middles = this->middles + 1
 
     }
 
@@ -208,8 +211,8 @@ public:
         ForwardFrameEvent __e("run");
         ForwardFrameContext __ctx(std::move(__e));
         _context_stack.push_back(std::move(__ctx));
+        struct __CtxGuard { decltype(_context_stack)& s; ~__CtxGuard() { s.pop_back(); } } __ctx_guard{_context_stack};
         __kernel(_context_stack.back()._event);
-        _context_stack.pop_back();
 
     }
 
@@ -217,8 +220,8 @@ public:
         ForwardFrameEvent __e("finish");
         ForwardFrameContext __ctx(std::move(__e));
         _context_stack.push_back(std::move(__ctx));
+        struct __CtxGuard { decltype(_context_stack)& s; ~__CtxGuard() { s.pop_back(); } } __ctx_guard{_context_stack};
         __kernel(_context_stack.back()._event);
-        _context_stack.pop_back();
 
     }
 };

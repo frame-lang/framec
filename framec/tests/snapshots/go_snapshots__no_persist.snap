@@ -155,26 +155,26 @@ func (s *NoPersist) Bump() {
     __e := NoPersistFrameEvent{_message: "bump", _parameters: []any{}}
     __ctx := NoPersistFrameContext{_event: __e, _data: make(map[string]any)}
     s._context_stack = append(s._context_stack, __ctx)
+    defer func() { s._context_stack = s._context_stack[:len(s._context_stack)-1] }()
     s.__kernel(&s._context_stack[len(s._context_stack)-1]._event)
-    s._context_stack = s._context_stack[:len(s._context_stack)-1]
 }
 
 func (s *NoPersist) Set_cache(v int) {
     __e := NoPersistFrameEvent{_message: "set_cache", _parameters: []any{v}}
     __ctx := NoPersistFrameContext{_event: __e, _data: make(map[string]any)}
     s._context_stack = append(s._context_stack, __ctx)
+    defer func() { s._context_stack = s._context_stack[:len(s._context_stack)-1] }()
     s.__kernel(&s._context_stack[len(s._context_stack)-1]._event)
-    s._context_stack = s._context_stack[:len(s._context_stack)-1]
 }
 
 func (s *NoPersist) Get_count() int {
     __e := NoPersistFrameEvent{_message: "get_count", _parameters: []any{}}
     __ctx := NoPersistFrameContext{_event: __e, _data: make(map[string]any)}
     s._context_stack = append(s._context_stack, __ctx)
+    defer func() { s._context_stack = s._context_stack[:len(s._context_stack)-1] }()
     s.__kernel(&s._context_stack[len(s._context_stack)-1]._event)
     var __result int
     if __rv := s._context_stack[len(s._context_stack)-1]._return; __rv != nil { __result = __rv.(int) }
-    s._context_stack = s._context_stack[:len(s._context_stack)-1]
     return __result
 }
 
@@ -182,10 +182,10 @@ func (s *NoPersist) Get_cache() int {
     __e := NoPersistFrameEvent{_message: "get_cache", _parameters: []any{}}
     __ctx := NoPersistFrameContext{_event: __e, _data: make(map[string]any)}
     s._context_stack = append(s._context_stack, __ctx)
+    defer func() { s._context_stack = s._context_stack[:len(s._context_stack)-1] }()
     s.__kernel(&s._context_stack[len(s._context_stack)-1]._event)
     var __result int
     if __rv := s._context_stack[len(s._context_stack)-1]._return; __rv != nil { __result = __rv.(int) }
-    s._context_stack = s._context_stack[:len(s._context_stack)-1]
     return __result
 }
 
@@ -210,7 +210,7 @@ func (s *NoPersist) _state_Active(__e *NoPersistFrameEvent, compartment *NoPersi
 
 func (s *NoPersist) _s_Active_hdl_user_bump(__e *NoPersistFrameEvent, compartment *NoPersistCompartment) {
     {
-    self.count = self.count + 1
+    s.count = s.count + 1
     }
 }
 
@@ -230,7 +230,7 @@ func (s *NoPersist) _s_Active_hdl_user_set_cache(__e *NoPersistFrameEvent, compa
     v := __e._parameters[0].(int)
     _ = v
     {
-    self.cache = v
+    s.cache = v
     }
 }
 

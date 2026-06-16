@@ -159,24 +159,39 @@ class LinearFsm {
         $__e = new LinearFsmFrameEvent("start", []);
         $__ctx = new LinearFsmFrameContext($__e, null);
         $this->_context_stack[] = $__ctx;
-        $this->__kernel($__e);
-        return array_pop($this->_context_stack)->_return;
+        try {
+            $this->__kernel($__e);
+            return array_pop($this->_context_stack)->_return;
+        } catch (\Throwable $__frame_err) {
+            array_pop($this->_context_stack);
+            throw $__frame_err;
+        }
     }
 
     public function progress($amount) {
         $__e = new LinearFsmFrameEvent("progress", [$amount]);
         $__ctx = new LinearFsmFrameContext($__e, null);
         $this->_context_stack[] = $__ctx;
-        $this->__kernel($__e);
-        return array_pop($this->_context_stack)->_return;
+        try {
+            $this->__kernel($__e);
+            return array_pop($this->_context_stack)->_return;
+        } catch (\Throwable $__frame_err) {
+            array_pop($this->_context_stack);
+            throw $__frame_err;
+        }
     }
 
     public function finish() {
         $__e = new LinearFsmFrameEvent("finish", []);
         $__ctx = new LinearFsmFrameContext($__e, null);
         $this->_context_stack[] = $__ctx;
-        $this->__kernel($__e);
-        return array_pop($this->_context_stack)->_return;
+        try {
+            $this->__kernel($__e);
+            return array_pop($this->_context_stack)->_return;
+        } catch (\Throwable $__frame_err) {
+            array_pop($this->_context_stack);
+            throw $__frame_err;
+        }
     }
 
     private function _state_Idle($__e, $compartment) {
@@ -215,6 +230,6 @@ class LinearFsm {
 
     private function _s_Active_hdl_user_progress($__e, $compartment) {
         $amount = $__e->_parameters[0];
-        self.total = self.total + amount
+        $this->total = $this->total + amount
     }
 }

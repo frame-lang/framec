@@ -6,12 +6,12 @@
     machine:
         $Running {
             tick() {
-                self.count = self.count + self.step;
-                if self.count >= self.limit {
-                    self.count = 0;
+                @@:self.count = @@:self.count + @@:self.step;
+                if @@:self.count >= @@:self.limit {
+                    @@:self.count = 0;
                 }
             }
-            get_count(): Int { @@:(self.count) }
+            get_count(): Int { @@:(@@:self.count) }
         }
 
     domain:

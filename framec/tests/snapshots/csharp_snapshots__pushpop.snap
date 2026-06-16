@@ -173,32 +173,52 @@ public class PushPop {
         PushPopFrameEvent __e = new PushPopFrameEvent("ping", new List<object>());
         PushPopFrameContext __ctx = new PushPopFrameContext(__e, null);
         _context_stack.Add(__ctx);
-        __kernel(_context_stack[_context_stack.Count - 1]._event);
-        _context_stack.RemoveAt(_context_stack.Count - 1);
+        try {
+            __kernel(_context_stack[_context_stack.Count - 1]._event);
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+        } catch {
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+            throw;
+        }
     }
 
     public void nest() {
         PushPopFrameEvent __e = new PushPopFrameEvent("nest", new List<object>());
         PushPopFrameContext __ctx = new PushPopFrameContext(__e, null);
         _context_stack.Add(__ctx);
-        __kernel(_context_stack[_context_stack.Count - 1]._event);
-        _context_stack.RemoveAt(_context_stack.Count - 1);
+        try {
+            __kernel(_context_stack[_context_stack.Count - 1]._event);
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+        } catch {
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+            throw;
+        }
     }
 
     public void unnest() {
         PushPopFrameEvent __e = new PushPopFrameEvent("unnest", new List<object>());
         PushPopFrameContext __ctx = new PushPopFrameContext(__e, null);
         _context_stack.Add(__ctx);
-        __kernel(_context_stack[_context_stack.Count - 1]._event);
-        _context_stack.RemoveAt(_context_stack.Count - 1);
+        try {
+            __kernel(_context_stack[_context_stack.Count - 1]._event);
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+        } catch {
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+            throw;
+        }
     }
 
     public void leaf() {
         PushPopFrameEvent __e = new PushPopFrameEvent("leaf", new List<object>());
         PushPopFrameContext __ctx = new PushPopFrameContext(__e, null);
         _context_stack.Add(__ctx);
-        __kernel(_context_stack[_context_stack.Count - 1]._event);
-        _context_stack.RemoveAt(_context_stack.Count - 1);
+        try {
+            __kernel(_context_stack[_context_stack.Count - 1]._event);
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+        } catch {
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+            throw;
+        }
     }
 
     private void _state_Idle(PushPopFrameEvent __e, PushPopCompartment compartment) {
@@ -231,11 +251,11 @@ public class PushPop {
     }
 
     private void _s_Idle_hdl_user_ping(PushPopFrameEvent __e, PushPopCompartment compartment) {
-        self.pings = self.pings + 1
+        this.pings = this.pings + 1
     }
 
     private void _s_Nested_hdl_user_leaf(PushPopFrameEvent __e, PushPopCompartment compartment) {
-        self.leaves = self.leaves + 1
+        this.leaves = this.leaves + 1
     }
 
     private void _s_Nested_hdl_user_unnest(PushPopFrameEvent __e, PushPopCompartment compartment) {

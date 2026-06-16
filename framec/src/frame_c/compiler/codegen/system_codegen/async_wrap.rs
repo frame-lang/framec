@@ -117,7 +117,23 @@ pub(crate) fn make_system_async(
     class_node: &mut CodegenNode,
     _system_name: &str,
     lang: TargetLanguage,
+    system: &crate::frame_c::compiler::frame_ast::SystemAst,
 ) {
+    // Operations the user did NOT mark `async` MUST stay synchronous —
+    // they're explicitly non-dispatching, so coroutinizing them yields a
+    // method that returns a coroutine the caller has to await for no
+    // real reason. The pre-RFC-0043 single-class architecture coroutinized
+    // them anyway (because every external call was awaited), but RFC-0043's
+    // casing exposes the asymmetry: a sync casing delegate calling an
+    // async machine op returns an unawaited coroutine. Honor the user's
+    // declaration instead.
+    let sync_operation_names: std::collections::HashSet<&str> = system
+        .operations
+        .iter()
+        .filter(|o| !o.is_async)
+        .map(|o| o.name.as_str())
+        .collect();
+
     // Java path is structurally different — interface methods only, sync
     // internals, no-op init().
     if let CodegenNode::Class {
@@ -183,6 +199,13 @@ pub(crate) fn make_system_async(
                 {
                     continue;
                 }
+                // Skip user-sync operations — they're non-dispatching by
+                // declaration; coroutinizing them would force callers to
+                // await for no real reason and break the RFC-0043 casing's
+                // sync op delegate.
+                if sync_operation_names.contains(name.as_str()) {
+                    continue;
+                }
                 *is_async = true;
                 // Add `await` to internal dispatch calls in NativeBlock strings
                 add_await_to_dispatch_calls(body, lang);
@@ -217,7 +240,10 @@ self._context_stack.pop()"#,
                 s = system_name
             ),
             TargetLanguage::TypeScript | TargetLanguage::JavaScript => format!(
-                r#"const __e = new {s}FrameEvent("$>", null);
+                // FrameEvent's second param is the parameters list (any[]
+                // in TS). Pass an empty array, not null — strict-mode TS
+                // (D-TS-1) rejects null where any[] is expected.
+                r#"const __e = new {s}FrameEvent("$>", []);
 const __ctx = new {s}FrameContext(__e, null);
 this._context_stack.push(__ctx);
 await this.__kernel(__e);

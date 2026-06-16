@@ -163,8 +163,13 @@ class ReturnExplicit {
         final __e = ReturnExplicitFrameEvent("decide", [score]);
         final __ctx = ReturnExplicitFrameContext(__e, '');
         _context_stack.add(__ctx);
-        __kernel(__e);
-        return _context_stack.removeLast()._return;
+        try {
+            __kernel(__e);
+            return _context_stack.removeLast()._return;
+        } catch (__frame_err) {
+            _context_stack.removeLast();
+            rethrow;
+        }
     }
 
     void _state_Judging(ReturnExplicitFrameEvent __e, ReturnExplicitCompartment compartment) {

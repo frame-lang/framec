@@ -200,6 +200,19 @@ shape. The Phase 6 fuzz `two_awaits` pattern (`await A; await B;`)
 exercises sequential awaits — landed in commit referenced in
 `memory/rust_full_parity_2026_04_26.md`.
 
+### Single-driver gate (`@@[async]`)
+
+An `@@[async]` system is emitted as a public **casing** (`pub struct
+<Name>`) wrapping a private **`_<Name>Machine`**. Each interface
+method on the casing returns `Result<T, FrameE703Error>`: if the
+system is already `busy` when a second external call enters, it
+returns `Err(FrameE703Error { .. })` (the single-driver contract,
+**E703**). Rust's surface is **recoverable** — callers `?`-chain or
+`match` the error rather than taking a `panic!` (D5). The gate is
+cleared on the way out by a `_GateGuard` whose `Drop` runs even on an
+early-return or unwind. See
+[language reference § Async](../frame_language.md#async).
+
 ---
 
 ## Cross-system fields use `Rc<RefCell<...>>`
@@ -264,16 +277,20 @@ Reads are `self.n`, writes are `self.n = ...`. The Frame `: type`
 annotation IS the Rust type — you are writing typed Rust syntax in
 Frame domain declarations.
 
-**This is more constrained than dynamic targets.** Frame source
-written for Rust portability declares concrete Rust types, not the
-generic `: int` / `: str` you might write for cross-target. If you
-write `: int` for Rust, framec emits `i32` (the default integer
-width). If you need `i64` or `u64`, declare `: i64` / `: u64`
+**This is more constrained than dynamic targets.** Frame has no type
+system — type annotations pass through to the generated code
+**verbatim** (see [the language reference](../frame_language.md)). Write
+Rust's own type names directly: `i64`, `u32`, `f64`, `String`,
+`Vec<i32>`, `MyType`. There is no generic `int`/`str` that framec
+translates — if you write `: int`, it is emitted as `int`, which is not
+a Rust type and will not compile. Declare `: i64` / `: u64` / `: f64`
 explicitly.
 
-The Frame compiler does not synthesize Rust-specific defaults for
-domain fields beyond `String::from("...")` for string literals. For
-struct types, you must provide an explicit constructor expression.
+Initializer **values** are emitted verbatim too. A `String` field must
+be initialized with a `String` expression — write `String::from("")`,
+not a bare `""` (which is a `&'static str`). For struct types, provide
+the explicit constructor expression. framec does not synthesize or wrap
+init values.
 
 ---
 

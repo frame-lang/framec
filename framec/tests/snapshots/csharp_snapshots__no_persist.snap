@@ -170,36 +170,56 @@ public class NoPersist {
         NoPersistFrameEvent __e = new NoPersistFrameEvent("bump", new List<object>());
         NoPersistFrameContext __ctx = new NoPersistFrameContext(__e, null);
         _context_stack.Add(__ctx);
-        __kernel(_context_stack[_context_stack.Count - 1]._event);
-        _context_stack.RemoveAt(_context_stack.Count - 1);
+        try {
+            __kernel(_context_stack[_context_stack.Count - 1]._event);
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+        } catch {
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+            throw;
+        }
     }
 
     public void set_cache(int v) {
         NoPersistFrameEvent __e = new NoPersistFrameEvent("set_cache", new List<object> { v });
         NoPersistFrameContext __ctx = new NoPersistFrameContext(__e, null);
         _context_stack.Add(__ctx);
-        __kernel(_context_stack[_context_stack.Count - 1]._event);
-        _context_stack.RemoveAt(_context_stack.Count - 1);
+        try {
+            __kernel(_context_stack[_context_stack.Count - 1]._event);
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+        } catch {
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+            throw;
+        }
     }
 
     public int get_count() {
         NoPersistFrameEvent __e = new NoPersistFrameEvent("get_count", new List<object>());
         NoPersistFrameContext __ctx = new NoPersistFrameContext(__e, null);
         _context_stack.Add(__ctx);
-        __kernel(_context_stack[_context_stack.Count - 1]._event);
-        var __result = (int) _context_stack[_context_stack.Count - 1]._return;
-        _context_stack.RemoveAt(_context_stack.Count - 1);
-        return __result;
+        try {
+            __kernel(_context_stack[_context_stack.Count - 1]._event);
+            var __result = (int) _context_stack[_context_stack.Count - 1]._return;
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+            return __result;
+        } catch {
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+            throw;
+        }
     }
 
     public int get_cache() {
         NoPersistFrameEvent __e = new NoPersistFrameEvent("get_cache", new List<object>());
         NoPersistFrameContext __ctx = new NoPersistFrameContext(__e, null);
         _context_stack.Add(__ctx);
-        __kernel(_context_stack[_context_stack.Count - 1]._event);
-        var __result = (int) _context_stack[_context_stack.Count - 1]._return;
-        _context_stack.RemoveAt(_context_stack.Count - 1);
-        return __result;
+        try {
+            __kernel(_context_stack[_context_stack.Count - 1]._event);
+            var __result = (int) _context_stack[_context_stack.Count - 1]._return;
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+            return __result;
+        } catch {
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+            throw;
+        }
     }
 
     private void _state_Active(NoPersistFrameEvent __e, NoPersistCompartment compartment) {
@@ -222,20 +242,20 @@ public class NoPersist {
     }
 
     private void _s_Active_hdl_user_bump(NoPersistFrameEvent __e, NoPersistCompartment compartment) {
-        self.count = self.count + 1
+        this.count = this.count + 1
     }
 
     private void _s_Active_hdl_user_get_cache(NoPersistFrameEvent __e, NoPersistCompartment compartment) {
-        _context_stack[_context_stack.Count - 1]._return = self.cache;
+        _context_stack[_context_stack.Count - 1]._return = this.cache;
     }
 
     private void _s_Active_hdl_user_get_count(NoPersistFrameEvent __e, NoPersistCompartment compartment) {
-        _context_stack[_context_stack.Count - 1]._return = self.count;
+        _context_stack[_context_stack.Count - 1]._return = this.count;
     }
 
     private void _s_Active_hdl_user_set_cache(NoPersistFrameEvent __e, NoPersistCompartment compartment) {
         int v = System.Convert.ToInt32(__e._parameters[0]);
-        self.cache = v
+        this.cache = v
     }
 
     private object __SerComp(NoPersistCompartment comp) {

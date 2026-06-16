@@ -157,16 +157,26 @@ class SelfCall {
         $__e = new SelfCallFrameEvent("kick", []);
         $__ctx = new SelfCallFrameContext($__e, null);
         $this->_context_stack[] = $__ctx;
-        $this->__kernel($__e);
-        return array_pop($this->_context_stack)->_return;
+        try {
+            $this->__kernel($__e);
+            return array_pop($this->_context_stack)->_return;
+        } catch (\Throwable $__frame_err) {
+            array_pop($this->_context_stack);
+            throw $__frame_err;
+        }
     }
 
     public function report() {
         $__e = new SelfCallFrameEvent("report", []);
         $__ctx = new SelfCallFrameContext($__e, null);
         $this->_context_stack[] = $__ctx;
-        $this->__kernel($__e);
-        return array_pop($this->_context_stack)->_return;
+        try {
+            $this->__kernel($__e);
+            return array_pop($this->_context_stack)->_return;
+        } catch (\Throwable $__frame_err) {
+            array_pop($this->_context_stack);
+            throw $__frame_err;
+        }
     }
 
     private function _state_Active($__e, $compartment) {
@@ -181,12 +191,12 @@ class SelfCall {
     }
 
     private function _s_Active_hdl_user_kick($__e, $compartment) {
-        self.count = self.count + 1;
+        $this->count = $this->count + 1;
         $this->report();
         if (count($this->_context_stack) > 0 && $this->_context_stack[count($this->_context_stack) - 1]->_transitioned) return;
     }
 
     private function _s_Active_hdl_user_report($__e, $compartment) {
-        $this->_context_stack[count($this->_context_stack) - 1]->_return = self.count;
+        $this->_context_stack[count($this->_context_stack) - 1]->_return = $this->count;
     }
 }

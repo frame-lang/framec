@@ -91,6 +91,18 @@ pub(super) fn expand_return_call(
         &expr_owned
     };
     let expanded_expr = paren_wrap_if_multiline(&expand_expression(expr, lang, ctx));
+    // #77 (reopen): coerce to the DECLARED return type before the value
+    // enters the erased `_return` slot — this early-return form was the one
+    // write path missed by the original sweep (`@@:return = expr` and
+    // `@@:(expr)` were covered; `@@:return(expr)` was not, so a float
+    // literal here still stored a double and the wrapper's exact-match read
+    // crashed). No-op for non-float-family declarations and non-erased
+    // targets; C marshals via c_return_assign below.
+    let expanded_expr = super::super::codegen_utils::erased_write_coercion(
+        lang,
+        ctx.current_return_type.as_deref().unwrap_or(""),
+        &expanded_expr,
+    );
 
     // Standalone @@ constructs include indent_str on all lines.
     let set_code = match lang {

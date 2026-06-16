@@ -157,16 +157,26 @@ class Actions {
         $__e = new ActionsFrameEvent("increment", [$n]);
         $__ctx = new ActionsFrameContext($__e, null);
         $this->_context_stack[] = $__ctx;
-        $this->__kernel($__e);
-        return array_pop($this->_context_stack)->_return;
+        try {
+            $this->__kernel($__e);
+            return array_pop($this->_context_stack)->_return;
+        } catch (\Throwable $__frame_err) {
+            array_pop($this->_context_stack);
+            throw $__frame_err;
+        }
     }
 
     public function get_total() {
         $__e = new ActionsFrameEvent("get_total", []);
         $__ctx = new ActionsFrameContext($__e, null);
         $this->_context_stack[] = $__ctx;
-        $this->__kernel($__e);
-        return array_pop($this->_context_stack)->_return;
+        try {
+            $this->__kernel($__e);
+            return array_pop($this->_context_stack)->_return;
+        } catch (\Throwable $__frame_err) {
+            array_pop($this->_context_stack);
+            throw $__frame_err;
+        }
     }
 
     private function _state_Counting($__e, $compartment) {
@@ -181,15 +191,15 @@ class Actions {
     }
 
     private function _s_Counting_hdl_user_get_total($__e, $compartment) {
-        $this->_context_stack[count($this->_context_stack) - 1]->_return = self.total;
+        $this->_context_stack[count($this->_context_stack) - 1]->_return = $this->total;
     }
 
     private function _s_Counting_hdl_user_increment($__e, $compartment) {
         $n = $__e->_parameters[0];
-        self._scale(n)
+        $this->_scale(n);
     }
 
     private function _scale($n) {
-                    self.total = self.total + n * 2
+                    $this->total = $this->total + n * 2
     }
 }

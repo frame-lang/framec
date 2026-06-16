@@ -169,18 +169,28 @@ public class Actions {
         ActionsFrameEvent __e = new ActionsFrameEvent("increment", new List<object> { n });
         ActionsFrameContext __ctx = new ActionsFrameContext(__e, null);
         _context_stack.Add(__ctx);
-        __kernel(_context_stack[_context_stack.Count - 1]._event);
-        _context_stack.RemoveAt(_context_stack.Count - 1);
+        try {
+            __kernel(_context_stack[_context_stack.Count - 1]._event);
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+        } catch {
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+            throw;
+        }
     }
 
     public int get_total() {
         ActionsFrameEvent __e = new ActionsFrameEvent("get_total", new List<object>());
         ActionsFrameContext __ctx = new ActionsFrameContext(__e, null);
         _context_stack.Add(__ctx);
-        __kernel(_context_stack[_context_stack.Count - 1]._event);
-        var __result = (int) _context_stack[_context_stack.Count - 1]._return;
-        _context_stack.RemoveAt(_context_stack.Count - 1);
-        return __result;
+        try {
+            __kernel(_context_stack[_context_stack.Count - 1]._event);
+            var __result = (int) _context_stack[_context_stack.Count - 1]._return;
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+            return __result;
+        } catch {
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+            throw;
+        }
     }
 
     private void _state_Counting(ActionsFrameEvent __e, ActionsCompartment compartment) {
@@ -195,15 +205,15 @@ public class Actions {
     }
 
     private void _s_Counting_hdl_user_get_total(ActionsFrameEvent __e, ActionsCompartment compartment) {
-        _context_stack[_context_stack.Count - 1]._return = self.total;
+        _context_stack[_context_stack.Count - 1]._return = this.total;
     }
 
     private void _s_Counting_hdl_user_increment(ActionsFrameEvent __e, ActionsCompartment compartment) {
         int n = System.Convert.ToInt32(__e._parameters[0]);
-        self._scale(n)
+        this._scale(n);
     }
 
     private void _scale(int n) {
-                    self.total = self.total + n * 2
+                    this.total = this.total + n * 2
     }
 }

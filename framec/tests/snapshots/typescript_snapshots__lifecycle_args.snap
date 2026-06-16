@@ -164,24 +164,37 @@ export class LifecycleArgs {
         const __e = new LifecycleArgsFrameEvent("load", [n, label]);
         const __ctx = new LifecycleArgsFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        this._context_stack.pop();
+        try {
+            this.__kernel(__e);
+        } finally {
+            this._context_stack.pop();
+        }
     }
 
     public total(): number {
         const __e = new LifecycleArgsFrameEvent("total", []);
         const __ctx = new LifecycleArgsFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        return this._context_stack.pop()!._return;
+        try {
+            this.__kernel(__e);
+            return this._context_stack.pop()!._return;
+        } catch (__frame_err) {
+            this._context_stack.pop();
+            throw __frame_err;
+        }
     }
 
     public tag(): string {
         const __e = new LifecycleArgsFrameEvent("tag", []);
         const __ctx = new LifecycleArgsFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        return this._context_stack.pop()!._return;
+        try {
+            this.__kernel(__e);
+            return this._context_stack.pop()!._return;
+        } catch (__frame_err) {
+            this._context_stack.pop();
+            throw __frame_err;
+        }
     }
 
     private _state_Idle(__e: LifecycleArgsFrameEvent, compartment: LifecycleArgsCompartment) {
@@ -217,17 +230,17 @@ export class LifecycleArgs {
     private _s_Active_hdl_frame_enter(__e: LifecycleArgsFrameEvent, compartment: LifecycleArgsCompartment) {
         const count = compartment.enter_args[0];
         const name = compartment.enter_args[1];
-        self.sum = count + 1;
-        self.label = name;
+        this.sum = count + 1;
+        this.label = name;
     }
 
     private _s_Active_hdl_user_tag(__e: LifecycleArgsFrameEvent, compartment: LifecycleArgsCompartment) {
-        this._context_stack[this._context_stack.length - 1]._return = self.label;
+        this._context_stack[this._context_stack.length - 1]._return = this.label;
                         return
     }
 
     private _s_Active_hdl_user_total(__e: LifecycleArgsFrameEvent, compartment: LifecycleArgsCompartment) {
-        this._context_stack[this._context_stack.length - 1]._return = self.sum;
+        this._context_stack[this._context_stack.length - 1]._return = this.sum;
                         return
     }
 }

@@ -33,6 +33,17 @@ aux_links:
   framec on GitHub:
     - https://github.com/frame-lang/framec
 aux_links_new_tab: true
+
+# Playable Frame Arcade — a separate deploy (frame-games repo) at its own
+# subdomain. Surfaced as a top-level external nav link that opens in a new
+# tab. just-the-docs renders nav_external_links at the bottom of the
+# sidebar by theme convention. We tried a docs/games.md redirect page to
+# slot it mid-sidebar (between Cookbook and Runtime) but the docs chrome
+# wrapped the redirect instead of firing it instantly, so we reverted.
+nav_external_links:
+  - title: Games
+    url: https://games.frame-lang.org
+    opens_in_new_tab: true
 back_to_top: true
 back_to_top_text: "Back to top"
 

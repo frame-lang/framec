@@ -8,6 +8,9 @@ expression: "compile_fixture(\"11_consts\", \"cpp\")"
 #include <any>
 #include <memory>
 #include <functional>
+#include <stdexcept>
+#include <cstdlib>
+#include <cstdio>
 
 class ConstsFrameEvent {
 public:
@@ -133,14 +136,14 @@ private:
     }
 
     void _s_Running_hdl_user_get_count(ConstsFrameEvent& __e, std::shared_ptr<ConstsCompartment> compartment) {
-        _context_stack.back()._return = std::any(self.count);
+        _context_stack.back()._return = std::any(this->count);
 
     }
 
     void _s_Running_hdl_user_tick(ConstsFrameEvent& __e, std::shared_ptr<ConstsCompartment> compartment) {
-        self.count = self.count + self.step;
-        if self.count >= self.limit {
-            self.count = 0;
+        this->count = this->count + this->step;
+        if this->count >= this->limit {
+            this->count = 0;
         }
 
     }
@@ -176,8 +179,8 @@ public:
         ConstsFrameEvent __e("tick");
         ConstsFrameContext __ctx(std::move(__e));
         _context_stack.push_back(std::move(__ctx));
+        struct __CtxGuard { decltype(_context_stack)& s; ~__CtxGuard() { s.pop_back(); } } __ctx_guard{_context_stack};
         __kernel(_context_stack.back()._event);
-        _context_stack.pop_back();
 
     }
 
@@ -185,9 +188,9 @@ public:
         ConstsFrameEvent __e("get_count");
         ConstsFrameContext __ctx(std::move(__e), std::any(int()));
         _context_stack.push_back(std::move(__ctx));
+        struct __CtxGuard { decltype(_context_stack)& s; ~__CtxGuard() { s.pop_back(); } } __ctx_guard{_context_stack};
         __kernel(_context_stack.back()._event);
         auto __result = std::any_cast<int>(std::move(_context_stack.back()._return));
-        _context_stack.pop_back();
         return __result;
 
     }

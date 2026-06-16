@@ -127,22 +127,16 @@ mod _consts_framec {
 
     #[allow(non_snake_case)]
     impl Consts {
-        pub fn new() -> Self {
-            Self {
+        pub fn __create(step: i32, limit: i32) -> Self {
+            let mut c = Self {
                 _state_stack: Vec::new(),
                 _context_stack: Vec::new(),
                 count: 0,
                 __compartment: ConstsCompartment::new("Running"),
                 __next_compartment: None,
-                step: <i32 as Default>::default(),
-                limit: <i32 as Default>::default(),
-            }
-        }
-
-        pub fn __create(step: i32, limit: i32) -> Self {
-            let mut c = Self::new();
-            c.step = step;
-            c.limit = limit;
+                step: step,
+                limit: limit,
+            };
             c.__compartment = c.__prepareEnter("Running");
             let __e = alloc::rc::Rc::new(ConstsFrameEvent::FrameEnter {});
             let __ctx = ConstsFrameContext::new(alloc::rc::Rc::clone(&__e), None);

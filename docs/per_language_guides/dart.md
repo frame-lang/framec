@@ -79,7 +79,7 @@ class WithInterface {
 }
 ```
 
-Frame's `self.field` lowers to `this.field`. Method calls are
+Frame's `@@:self.field` lowers to `this.field`. Method calls are
 `s.greet("World")`.
 
 ---
@@ -104,9 +104,10 @@ List<int> items = [];
 The Frame `: type` annotation IS the Dart type — write `: String`,
 `: List<int>`, `: Map<String, dynamic>`, etc.
 
-**Frame type names map cleanly to Dart types:**
+**Write Dart's own type names directly** — framec passes the annotation
+through verbatim (the name you write *is* the emitted type):
 
-| Frame              | Dart                | Notes |
+| You write          | Dart meaning        | Notes |
 |--------------------|---------------------|-------|
 | `int`              | `int`               | arbitrary-precision on JIT, 64-bit on AOT |
 | `num`              | `num`               | `int` or `double` |
@@ -177,6 +178,16 @@ Dart async is mature:
   functions returning futures must construct them explicitly.
 - The matrix harness drives async tests via `await` from a
   `Future<void> main()`.
+
+### Single-driver gate (`@@[async]`)
+
+An `@@[async]` system is emitted as a public **casing** (`class
+<Name>`) wrapping a private **`_<Name>Machine`**. Each interface
+method gates external entry: if the system is already `busy` when a
+second call arrives, it throws `StateError("E703: …")` (the
+single-driver contract, **E703**). The gate is set on entry and
+cleared in a `finally`. See
+[language reference § Async](../frame_language.md#async).
 
 ---
 

@@ -11,8 +11,10 @@
 //   @@:(expr)          → ContextReturnExpr (kind=8)
 //   @@:return(expr)    → ReturnCall (kind=9)
 //   @@:self.method()   → ContextSelfCall (kind=10)
-//   @@:self            → ContextSelf (kind=11)
-//   @@:system.state    → ContextSystemState (kind=12)
+//   @@:self[.field]    → ContextSelf (kind=11)
+//   @@:self.field.method(args) → ContextSelfFieldCall (kind=15), RFC-0046 embed/field call
+//   @@:system.state.name → ContextSystemState (kind=12), current state name
+//   @@:system.state    → ContextSystemStateReserved (kind=14), reserved (RFC-0045) → E608
 //   other              → no match (has_result=false)
 //
 // For SystemInstantiation, the FSM sets `result_no_init = true` if the source
@@ -693,8 +695,49 @@ mod _context_parser_fsm_framec {
                     self.result_end = i;
                     self.result_kind = 10; // ContextSelfCall
                     self.has_result = true;
+                } else if i + 1 < end && bytes[i] == b'.'
+                    && (bytes[i + 1].is_ascii_alphabetic() || bytes[i + 1] == b'_')
+                {
+                    // Possible @@:self.field.method(args) — chained call
+                    // through a self field (RFC-0046). `field` is the first
+                    // ident already scanned; look ahead for `.method(`.
+                    let field_end = i; // end of the field identifier
+                    let mut j = i + 1; // skip the second '.'
+                    while j < end && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') {
+                        j += 1;
+                    }
+                    if j < end && bytes[j] == b'(' {
+                        // @@:self.field.method(args) — scan balanced parens
+                        // (quote-aware, mirrors the method-call arm above).
+                        let mut depth: usize = 1;
+                        j += 1; // Skip '('
+                        while j < end && depth > 0 {
+                            if bytes[j] == b'(' { depth += 1; }
+                            if bytes[j] == b')' { depth -= 1; }
+                            if bytes[j] == b'"' || bytes[j] == b'\'' {
+                                let q = bytes[j];
+                                j += 1;
+                                while j < end {
+                                    if bytes[j] == b'\\' && j + 1 < end { j += 2; continue; }
+                                    if bytes[j] == q { break; }
+                                    j += 1;
+                                }
+                            }
+                            if depth > 0 { j += 1; }
+                        }
+                        if depth == 0 { j += 1; } // Skip closing ')'
+                        self.result_end = j;
+                        self.result_kind = 15; // ContextSelfFieldCall
+                        self.has_result = true;
+                    } else {
+                        // `.method` not followed by `(` (e.g. @@:self.a.b.c()):
+                        // capture only the first field; the rest is native.
+                        self.result_end = field_end;
+                        self.result_kind = 11; // ContextSelf (field access)
+                        self.has_result = true;
+                    }
                 } else {
-                    // @@:self.property — bare accessor
+                    // @@:self.field — scalar domain-field accessor
                     self.result_end = i;
                     self.result_kind = 11; // ContextSelf
                     self.has_result = true;
@@ -712,7 +755,9 @@ mod _context_parser_fsm_framec {
         }
 
         fn _s_ParseSystem_hdl_frame_enter(&mut self, __e: &ContextParserFsmFrameEvent) {
-            // @@:system — currently only .state is supported
+            // @@:system — `.state.name` is the current-state name accessor.
+            // Bare `@@:system.state` is RESERVED for future use (RFC-0045)
+            // and rejected with E608; anything else is E604.
             let i = self.pos;
             let end = self.end;
             let bytes = &self.bytes;
@@ -720,12 +765,23 @@ mod _context_parser_fsm_framec {
             if i + 5 < end && &bytes[i..i + 6] == b".state"
                 && (i + 6 >= end || !(bytes[i + 6].is_ascii_alphanumeric() || bytes[i + 6] == b'_'))
             {
-                // @@:system.state — read-only state name accessor
-                self.result_end = i + 6;
-                self.result_kind = 12; // ContextSystemState
-                self.has_result = true;
+                // Matched `.state` at a word boundary — now require `.name`.
+                let j = i + 6;
+                if j + 4 < end && &bytes[j..j + 5] == b".name"
+                    && (j + 5 >= end || !(bytes[j + 5].is_ascii_alphanumeric() || bytes[j + 5] == b'_'))
+                {
+                    // @@:system.state.name — read-only state name accessor
+                    self.result_end = j + 5;
+                    self.result_kind = 12; // ContextSystemState
+                    self.has_result = true;
+                } else {
+                    // @@:system.state (no `.name`) — reserved (RFC-0045) → E608
+                    self.result_end = j;
+                    self.result_kind = 14; // ContextSystemStateReserved
+                    self.has_result = true;
+                }
             } else {
-                // Bare @@:system or unknown variant — emit for validation
+                // Bare @@:system or unknown variant — emit for validation (E604)
                 self.result_end = i;
                 self.result_kind = 13; // ContextSystemBare
                 self.has_result = true;
@@ -777,4 +833,3 @@ mod _context_parser_fsm_framec {
     }
 }
 pub use _context_parser_fsm_framec::*;
-

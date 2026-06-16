@@ -663,13 +663,16 @@ impl GoBackend {
             .join(", ")
     }
 
+    /// Normalize a type annotation for emission. Frame has NO type system:
+    /// user-written type names pass through VERBATIM (docs/frame_language.md).
+    /// Write Go's own names (`int`, `string`, `float64`, `[]int`). The arms
+    /// below are framec-synthesized machinery types only (untyped event
+    /// params, the structural `void` return); there is no `int`->`int` /
+    /// `str`->`string` alias table — it contradicted the passthrough contract
+    /// and was removed.
     fn map_type(&self, t: &str) -> String {
         match t {
             "Any" | "object" | "Object" => "any".to_string(),
-            "string" | "String" | "str" => "string".to_string(),
-            "int" | "i32" | "i64" | "number" => "int".to_string(),
-            "float" | "f64" | "f32" => "float64".to_string(),
-            "bool" | "boolean" => "bool".to_string(),
             "void" | "None" => String::new(), // Go uses no return type for void
             other => other.to_string(),
         }

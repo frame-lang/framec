@@ -8,6 +8,10 @@ expression: "compile_fixture(\"03_persist\", \"cpp\")"
 #include <any>
 #include <memory>
 #include <functional>
+#include <stdexcept>
+#include <cstdlib>
+#include <cstdio>
+#include <nlohmann/json.hpp>
 
 class CounterFrameEvent {
 public:
@@ -134,12 +138,12 @@ private:
 
     void _s_Counting_hdl_user_increment(CounterFrameEvent& __e, std::shared_ptr<CounterCompartment> compartment) {
         auto by = std::any_cast<int>(__e._parameters[0]);
-        self.count = self.count + by
+        this->count = this->count + by
 
     }
 
     void _s_Counting_hdl_user_value(CounterFrameEvent& __e, std::shared_ptr<CounterCompartment> compartment) {
-        _context_stack.back()._return = std::any(self.count);
+        _context_stack.back()._return = std::any(this->count);
 
     }
 
@@ -170,8 +174,8 @@ public:
         CounterFrameEvent __e("increment", std::vector<std::any>{by});
         CounterFrameContext __ctx(std::move(__e));
         _context_stack.push_back(std::move(__ctx));
+        struct __CtxGuard { decltype(_context_stack)& s; ~__CtxGuard() { s.pop_back(); } } __ctx_guard{_context_stack};
         __kernel(_context_stack.back()._event);
-        _context_stack.pop_back();
 
     }
 
@@ -179,15 +183,21 @@ public:
         CounterFrameEvent __e("value");
         CounterFrameContext __ctx(std::move(__e), std::any(0));
         _context_stack.push_back(std::move(__ctx));
+        struct __CtxGuard { decltype(_context_stack)& s; ~__CtxGuard() { s.pop_back(); } } __ctx_guard{_context_stack};
         __kernel(_context_stack.back()._event);
         auto __result = std::any_cast<int>(std::move(_context_stack.back()._return));
-        _context_stack.pop_back();
         return __result;
 
     }
 
     std::string snapshot() {
-        if (!_context_stack.empty()) throw std::runtime_error("E700: system not quiescent");
+        if (!_context_stack.empty()) {
+        #if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
+        throw std::runtime_error("E700: system not quiescent");
+        #else
+        std::fprintf(stderr, "E700: system not quiescent\n"); std::abort();
+        #endif
+        }
         std::function<nlohmann::json(const CounterCompartment*)> __ser = [&](const CounterCompartment* c) -> nlohmann::json {
             if (!c) return nullptr;
             nlohmann::json __cj;
@@ -199,14 +209,14 @@ public:
             nlohmann::json __sa = nlohmann::json::array();
             {
             {
-                for (const auto& v : c->state_args) { try { __sa.push_back(std::any_cast<int>(v)); } catch(...) { try { __sa.push_back(std::any_cast<double>(v)); } catch(...) { __sa.push_back(nullptr); } } }
+                for (const auto& v : c->state_args) { if (auto* __p = std::any_cast<int>(&v)) __sa.push_back(*__p); else if (auto* __p = std::any_cast<double>(&v)) __sa.push_back(*__p); else __sa.push_back(nullptr); }
             }
             }
             __cj["state_args"] = __sa;
             nlohmann::json __ea = nlohmann::json::array();
             {
             {
-                for (const auto& v : c->enter_args) { try { __ea.push_back(std::any_cast<int>(v)); } catch(...) { try { __ea.push_back(std::any_cast<double>(v)); } catch(...) { __ea.push_back(nullptr); } } }
+                for (const auto& v : c->enter_args) { if (auto* __p = std::any_cast<int>(&v)) __ea.push_back(*__p); else if (auto* __p = std::any_cast<double>(&v)) __ea.push_back(*__p); else __ea.push_back(nullptr); }
             }
             }
             __cj["enter_args"] = __ea;

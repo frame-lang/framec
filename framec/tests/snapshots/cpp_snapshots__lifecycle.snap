@@ -8,6 +8,9 @@ expression: "compile_fixture(\"08_lifecycle\", \"cpp\")"
 #include <any>
 #include <memory>
 #include <functional>
+#include <stdexcept>
+#include <cstdlib>
+#include <cstdio>
 
 class LifecycleFrameEvent {
 public:
@@ -156,14 +159,14 @@ private:
     }
 
     void _s_Running_hdl_frame_exit(LifecycleFrameEvent& __e, std::shared_ptr<LifecycleCompartment> compartment) {
-        self.exited = self.exited + 1
+        this->exited = this->exited + 1
 
     }
 
     void _s_Running_hdl_frame_enter(LifecycleFrameEvent& __e, std::shared_ptr<LifecycleCompartment> compartment) {
         auto label = std::any_cast<std::string>(compartment->enter_args[0]);
-        self.entered = self.entered + 1;
-        self.tag = label;
+        this->entered = this->entered + 1;
+        this->tag = label;
 
     }
 
@@ -204,8 +207,8 @@ public:
         LifecycleFrameEvent __e("start", std::vector<std::any>{label});
         LifecycleFrameContext __ctx(std::move(__e));
         _context_stack.push_back(std::move(__ctx));
+        struct __CtxGuard { decltype(_context_stack)& s; ~__CtxGuard() { s.pop_back(); } } __ctx_guard{_context_stack};
         __kernel(_context_stack.back()._event);
-        _context_stack.pop_back();
 
     }
 
@@ -213,8 +216,8 @@ public:
         LifecycleFrameEvent __e("stop");
         LifecycleFrameContext __ctx(std::move(__e));
         _context_stack.push_back(std::move(__ctx));
+        struct __CtxGuard { decltype(_context_stack)& s; ~__CtxGuard() { s.pop_back(); } } __ctx_guard{_context_stack};
         __kernel(_context_stack.back()._event);
-        _context_stack.pop_back();
 
     }
 };

@@ -17,8 +17,14 @@ use crate::frame_c::compiler::frame_ast::Span;
 pub(crate) fn extract_body_content(source: &[u8], span: &Span) -> String {
     let bytes = &source[span.start..span.end];
     let content = String::from_utf8_lossy(bytes).to_string();
+    strip_body_braces(&content)
+}
 
-    // Strip outer braces if present
+/// Strip a body's outer `{ … }` and surrounding blank lines, preserving
+/// internal indentation. Shared by `extract_body_content` (raw span) and
+/// the RFC-0046 action/operation self-expansion (which produces a body
+/// string with the self constructs already lowered).
+pub(crate) fn strip_body_braces(content: &str) -> String {
     let trimmed = content.trim();
     if trimmed.starts_with('{') && trimmed.ends_with('}') {
         let inner = &trimmed[1..trimmed.len() - 1];

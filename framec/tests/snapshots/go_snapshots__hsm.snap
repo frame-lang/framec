@@ -163,24 +163,24 @@ func (s *MiniHsm) Wake() {
     __e := MiniHsmFrameEvent{_message: "wake", _parameters: []any{}}
     __ctx := MiniHsmFrameContext{_event: __e, _data: make(map[string]any)}
     s._context_stack = append(s._context_stack, __ctx)
+    defer func() { s._context_stack = s._context_stack[:len(s._context_stack)-1] }()
     s.__kernel(&s._context_stack[len(s._context_stack)-1]._event)
-    s._context_stack = s._context_stack[:len(s._context_stack)-1]
 }
 
 func (s *MiniHsm) Sleep() {
     __e := MiniHsmFrameEvent{_message: "sleep", _parameters: []any{}}
     __ctx := MiniHsmFrameContext{_event: __e, _data: make(map[string]any)}
     s._context_stack = append(s._context_stack, __ctx)
+    defer func() { s._context_stack = s._context_stack[:len(s._context_stack)-1] }()
     s.__kernel(&s._context_stack[len(s._context_stack)-1]._event)
-    s._context_stack = s._context_stack[:len(s._context_stack)-1]
 }
 
 func (s *MiniHsm) Signal() {
     __e := MiniHsmFrameEvent{_message: "signal", _parameters: []any{}}
     __ctx := MiniHsmFrameContext{_event: __e, _data: make(map[string]any)}
     s._context_stack = append(s._context_stack, __ctx)
+    defer func() { s._context_stack = s._context_stack[:len(s._context_stack)-1] }()
     s.__kernel(&s._context_stack[len(s._context_stack)-1]._event)
-    s._context_stack = s._context_stack[:len(s._context_stack)-1]
 }
 
 func (s *MiniHsm) _state_Live(__e *MiniHsmFrameEvent, compartment *MiniHsmCompartment) {
@@ -235,26 +235,26 @@ func (s *MiniHsm) _s_Live_hdl_user_wake(__e *MiniHsmFrameEvent, compartment *Min
 
 func (s *MiniHsm) _s_Awake_hdl_frame_enter(__e *MiniHsmFrameEvent, compartment *MiniHsmCompartment) {
     {
-    self.awakes = self.awakes + 1
+    s.awakes = s.awakes + 1
     }
 }
 
 func (s *MiniHsm) _s_Awake_hdl_user_signal(__e *MiniHsmFrameEvent, compartment *MiniHsmCompartment) {
     {
-    self.last = 1
+    s.last = 1
     s._state_Live(__e, compartment.parentCompartment)
     }
 }
 
 func (s *MiniHsm) _s_Asleep_hdl_frame_enter(__e *MiniHsmFrameEvent, compartment *MiniHsmCompartment) {
     {
-    self.sleeps = self.sleeps + 1
+    s.sleeps = s.sleeps + 1
     }
 }
 
 func (s *MiniHsm) _s_Asleep_hdl_user_signal(__e *MiniHsmFrameEvent, compartment *MiniHsmCompartment) {
     {
-    self.last = 2
+    s.last = 2
     s._state_Live(__e, compartment.parentCompartment)
     }
 }

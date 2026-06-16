@@ -89,7 +89,7 @@ interface:
     event(a: T, b: U)                 # typed params (types are opaque strings)
     event(): ret                      # return type, no default
     event(): ret = "default"          # return type with default value
-    async event()                     # async variant
+    async event()                     # async variant — requires @@[async] on the system header
 ```
 
 ---
@@ -134,7 +134,7 @@ All use colon-then-namespace, dot for fields:
 | `@@:event` | current interface method name |
 | `@@:data.key` | call-scoped data (per-dispatch) |
 | `@@:self.method(args)` | reentrant self-call (method must be in `interface:` — E601) |
-| `@@:system.state` | current state name (read-only string, no `$`) |
+| `@@:system.state.name` | current state name (read-only string, no `$`) |
 
 **`return expr` is native — does NOT set the return value** (W415). Use `@@:(expr)` / `@@:return = expr` / `@@:return(expr)`.
 
@@ -358,7 +358,7 @@ Assignment to a `const` field in a handler body is E615. Per-target rendering: `
 | **E601** | `@@:self.X()` method not in interface | `X` is in `actions:` or `operations:` |
 | **E602** | `@@:self.X()` arg count mismatch | interface has 2 params, call passes 3 |
 | **E603** | bare `@@:self` | must be `@@:self.method(args)` |
-| **E604** | bare `@@:system` | must be `@@:system.state` (or other member) |
+| **E604** | bare `@@:system` | must be `@@:system.state.name` (or other member) |
 | **E605** | static target, no type on domain field | add `: T` in Rust/C/C++/Go |
 | **E613** | domain field shadows system param | pick different names |
 | **E615** | assigning to `const` field | remove `const` or drop the assignment |
@@ -371,7 +371,7 @@ Assignment to a `const` field in a handler body is E615. Per-target rendering: `
 ## CLI quick reference
 
 ```bash
-framec source.fpy                     # compile to target declared via @@[target(...)]
+framec source.fpy                     # transpile to target declared via @@[target(...)]
 framec source.fpy -l rust             # override target
 framec source.fpy -l graphviz | dot -Tsvg -o diagram.svg
 framec source.fpy -o out.py           # write output to file

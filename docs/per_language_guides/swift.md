@@ -50,7 +50,7 @@ class WithInterface {
 }
 ```
 
-Frame's `self.field` lowers to `self.field` (Swift's instance
+Frame's `@@:self.field` lowers to `self.field` (Swift's instance
 reference is `self`). Method calls are `s.greet("World")`. There
 is no explicit type cast at call sites — Swift's strong typing
 infers from context.
@@ -82,9 +82,10 @@ Reads and writes use `self.field` (with explicit `self.` for
 clarity in handler bodies — Swift requires it inside closures
 and prefers it for readability elsewhere).
 
-**Frame's type names map cleanly to Swift types:**
+**Write Swift's own type names directly** — framec passes the annotation
+through verbatim (the name you write *is* the emitted type):
 
-| Frame              | Swift            | Notes |
+| You write          | Swift meaning    | Notes |
 |--------------------|------------------|-------|
 | `Int`              | `Int`            | platform-width Int |
 | `String`           | `String`         | |
@@ -174,6 +175,18 @@ For non-async interface methods, Swift's `func name() -> T` form
 is used (no `throws`). Frame doesn't add `throws` to non-async
 methods; if you need to throw from a sync handler, write the
 declaration explicitly via Oceans Model passthrough.
+
+### Single-driver gate (`@@[async]`)
+
+An `@@[async]` system is emitted as a public **casing** (`public
+class <Name>`) wrapping a private **`_<Name>Machine`**. The casing
+declares a nested `enum FrameE703Error: Error`, and each interface
+method is `async throws`: if the system is already `busy` when a
+second call arrives, it throws `FrameE703Error.busy(...)` (the
+single-driver contract, **E703**) — which is why the methods carry
+`throws` even when the handler itself can't fail (D2). The gate is
+cleared in a `defer` block. See
+[language reference § Async](../frame_language.md#async).
 
 ---
 
@@ -272,7 +285,7 @@ lowers to `WithInterface()`.
 
 **`self.field` everywhere.** Swift requires `self.` inside
 closures (compile error otherwise) and recommends it elsewhere
-for clarity. Frame's `self.x` lowers to `self.x` in the
+for clarity. Frame's `@@:self.x` lowers to `self.x` in the
 generated Swift.
 
 **Optionals (`T?`) require unwrapping.** A property declared

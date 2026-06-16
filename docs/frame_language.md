@@ -27,7 +27,9 @@ Complete reference for the Frame language. For a tutorial introduction, see [Get
 - [Persistence](#persistence)
 - [Async](#async)
 - [System Instantiation](#system-instantiation)
+- [Versioning & Stability](#versioning--stability)
 - [Token Summary](#token-summary)
+- [Exception Policy](#exception-policy)
 - [Error Codes](#error-codes)
 - [Complete Example](#complete-example)
 - [Appendix: Frame Syntax Taxonomy](#appendix-frame-syntax-taxonomy)
@@ -198,7 +200,7 @@ Three parameter groups configure a system at construction time. Each is optional
 | Enter arg | `$>(name: type)` | Start state's `compartment.enter_args` |
 | Domain arg | `name: type` (bare) | Constructor argument, used in domain field initializers |
 
-Each param body has the same shape (`name: type` or `name: type = default`) regardless of group; only the sigil differs. The framepiler validates that state and enter args have matching declarations on the start state's `$Start(name: type)` and `$>(name: type)` handlers.
+Each param body has the same shape (`name: type` or `name: type = default`) regardless of group; only the sigil differs. framec validates that state and enter args have matching declarations on the start state's `$Start(name: type)` and `$>(name: type)` handlers.
 
 #### Param syntax
 
@@ -235,7 +237,7 @@ name : type = default
 r = @@Robot($(7), "R2D2")       // x = 7 (state arg), name = "R2D2" (domain)
 ```
 
-Note the call site: state args are tagged with `$(...)` so the assembler can route them into `compartment.state_args`. See [System Instantiation](#system-instantiation) for the full call site form.
+Note the call site: state args are tagged with `$(...)` so framec can route them into `compartment.state_args`. See [System Instantiation](#system-instantiation) for the full call site form.
 
 State args are also written by transitions (`-> $Start(42)`). The codegen stores transition-passed args under the same declared param name, so the dispatch reads the param identically whether the state was entered via the system constructor or a transition.
 
@@ -288,7 +290,7 @@ Bare identifiers in the header become **constructor arguments** that are in scop
 c = @@Counter(10)               // value is 10
 ```
 
-The codegen prepends the language-appropriate self-reference (`self.`, `this.`, `@`) to the LHS of the domain field assignment, so `value = value` (param and field with the same name) is unambiguous: it compiles to `self.value = value`.
+The codegen prepends the language-appropriate self-reference (`self.`, `this.`, `@`) to the LHS of the domain field assignment, so `value = value` (param and field with the same name) is unambiguous: it transpiles to `self.value = value`.
 
 ---
 
@@ -359,7 +361,7 @@ $.<varName> (: <type>)? = <initializer_expr>
 | `$.` | Yes | State variable prefix |
 | `<varName>` | Yes | Identifier |
 | `: <type>` | No | Type annotation |
-| `= <initializer_expr>` | Yes | Native expression; evaluated on every state entry |
+| `= <initializer_expr>` | Yes | Native expression; evaluated on every state entry. Omitting it is an error (**E610**) — Frame does not synthesize default values |
 
 **Scope rules:**
 - `$.x` always refers to the enclosing state's variable `x`
@@ -367,7 +369,19 @@ $.<varName> (: <type>)? = <initializer_expr>
 - No duplicates within a state
 - State variable names may shadow domain variables (no ambiguity due to `$.` prefix)
 
-**Portable init expressions:** Use Frame-portable literals for state variable initializers: `""` for strings, `0` for integers, `false` for booleans. The framepiler wraps these to match the target language's type system (e.g., `String::from("")` for Rust, `std::string("")` for C++). Target-language-specific constructors like `String::new()` are NOT portable — the Frame parser may not handle them correctly. If you need a target-specific value, write it as native code and the framepiler will pass it through unchanged.
+**Init values are emitted verbatim.** Frame has no type system and does not interpret or wrap initializer values — the text you write after `=` is passed through to the generated code unchanged, exactly like a domain-field initializer. So write a value that is valid in the **target language** for the declared type:
+
+| Declared type | Write (examples) |
+|---|---|
+| Rust `String` | `String::from("")` (a bare `""` is a `&str` and will not compile) |
+| Rust `f64` / `f32` | `0.0`, `1.0`, `3.14` |
+| C++ `std::string` | `std::string("")` |
+| Java / C# / Kotlin 32-bit `float` | `0.0f` / `0.0F` (a bare `0.0` is a `double`) |
+| Java / C# / Kotlin `double` | `0.0` |
+| Go `float64` | `0.0` (or `0` — untyped constant) |
+| Python / JS / Ruby / Lua (dynamic) | `""`, `0`, `0.0`, `False`/`false` per the target's own literal spelling |
+
+There is no single "portable" literal that is valid across every target — a `String` slot needs `String::from("")` on Rust but `""` on Python; a 32-bit `float` needs `0.0f` on Java but `0.0` on Rust. Write what the target compiler expects. (Earlier versions wrapped a small set of "portable" literals per target; that wrapping was removed — it contradicted the verbatim-passthrough contract.)
 
 ### Event Handlers
 
@@ -422,7 +436,7 @@ $Active {
 ### Argument-receiver contract
 
 A transition that supplies args must have a receiver that can take
-them. The framepiler enforces this at compile time:
+them. framec enforces this at transpile time:
 
 | Site             | Receiver                       | Code  |
 |------------------|--------------------------------|-------|
@@ -430,7 +444,7 @@ them. The framepiler enforces this at compile time:
 | `-> (args) $T`   | target state's `$>(...)`       | E417  |
 | `-> $T(args)`    | target state's state params    | E405  |
 
-If the receiver is missing or its arity doesn't fit, the compile
+If the receiver is missing or its arity doesn't fit, transpilation
 fails. EventParam-backed receivers (E417, E419) honor trailing
 defaults — `<$(a, b = "x")` accepts 1 or 2 supplied args. State
 params (E405) currently have no defaults, so the count must match
@@ -454,7 +468,7 @@ actions:
     }
 ```
 
-**Can access:** domain variables, `@@:return`, `@@:params.x`, `@@:event`, `@@:data.key`, `@@:self.method()`, `@@:system.state`
+**Can access:** domain variables, `@@:return`, `@@:params.x`, `@@:event`, `@@:data.key`, `@@:self.method()`, `@@:system.state.name`
 
 **Cannot access (E401):** `-> $State`, `=> $^`, `push$`, `pop$`, `$.varName`
 
@@ -501,7 +515,7 @@ domain:
 - Init is optional for static targets that zero-initialize (C, C++, Go): `count : int`
 - Multi-line init uses paren wrapper: `items : list = (\n    [1, 2, 3]\n)`
 
-Domain variables persist across state transitions and are accessible via `self.field` / `this.field` / `this->field` (per target language) in handlers.
+Domain variables persist across state transitions and are accessed via **`@@:self.field`** (RFC-0046) in handler, action, and operation bodies. framec lowers `@@:self.field` to the target's native receiver (`self.field`, `this.field`, `this->field`, `$this->field`, `s.field`, `Data#data.field`, …), so a single spelling is portable across all targets. A bare native `self.` is passthrough — valid only where the host language defines `self`.
 
 ### `const` Modifier
 
@@ -617,7 +631,7 @@ See [System Context](#system-context) for full semantics.
 
 ```frame
 @@:self.method(args) // call own interface method (reentrant)
-@@:system.state      // current state name (read-only)
+@@:system.state.name      // current state name (read-only)
 ```
 
 `@@:self` and `@@:system` are syntactic prefixes — neither is a first-class value. Bare `@@:self` (E603) and bare `@@:system` (E604) are errors.
@@ -761,7 +775,7 @@ Each interface call pushes its own context. Nested calls are isolated — inner 
 
 ## Self Reference
 
-`@@:self` is a syntactic prefix used to dispatch through the system's own interface. It is **not** a first-class value — bare `@@:self` is a compile error (E603). The only valid form is `@@:self.method(args)`.
+`@@:self` is a syntactic prefix used to dispatch through the system's own interface. It is **not** a first-class value — bare `@@:self` is a transpile error (E603). The only valid form is `@@:self.method(args)`.
 
 ### Self Accessors
 
@@ -776,12 +790,11 @@ A system can call its own interface methods using `@@:self.<method>(args)`. This
 
 #### Why `@@:self.method()` and not native `self.method()`?
 
-In OO target languages (Python, TypeScript, Rust, Java, Kotlin, Swift, C#, Ruby, PHP, Dart) a plain `self.method()` / `this.method()` inside a handler body *also* reaches the generated interface method and produces the same runtime behavior — the context-stack push/pop and deferred-transition semantics live in the generated interface wrapper, not in the `@@:self.` syntax.
+In OO target languages a plain native `self.method()` / `this.method()` inside a handler body *reaches* the generated interface method (so the call's transition executes), but it is **not** equivalent — and is unsupported. `@@:self.method(args)` is the only correct form, for three reasons:
 
-`@@:self.method(args)` is preferred for two reasons:
-
-1. **Static validation.** The validator checks that `method` exists in the `interface:` block with the right arity (E601/E602). Native calls bypass this.
-2. **Cross-backend portability.** In C and Erlang the handler scope has no `self`/`this` keyword; dispatch goes through a different mechanism. `@@:self.` abstracts that difference so the same Frame source compiles everywhere.
+1. **Caller-side transition guard (correctness).** `@@:self.method()` emits a guard at the call site: if the callee transitions, the caller's remaining statements are short-circuited (`if _transitioned: return;` / the Erlang `case … of` wrapper). A native self-call gets **no** such guard, so the caller keeps running against a system that has already left the state — a silent bug.
+2. **Static validation.** The validator checks `method` exists in the `interface:` block (or is an action) with the right arity (E601/E602). Native calls bypass this.
+3. **Cross-backend portability.** In C and Erlang the handler scope has no `self`/`this` keyword; dispatch goes through a different mechanism. `@@:self.` abstracts that difference so the same Frame source transpiles everywhere.
 
 ```frame
 $Active {
@@ -839,21 +852,26 @@ The generated interface method handles FrameEvent construction, context push/pop
 
 | Syntax | Meaning |
 |--------|---------|
-| `@@:system.state` | Current state name (read-only string) |
+| `@@:system.state.name` | Current state name (read-only string) |
 
-### Current State — `@@:system.state`
+### Current State — `@@:system.state.name`
 
 Returns the current state name as a string, without the `$` prefix. Read-only — assignment is a parse error.
 
 ```frame
 $Processing {
     status(): str {
-        @@:(@@:system.state)    // returns "Processing"
+        @@:(@@:system.state.name)    // returns "Processing"
     }
 }
 ```
 
-`@@:system.state` reads from the compartment's `state` field. It reflects the current state at the time of access — if a transition has been deferred but not yet processed, `@@:system.state` still returns the pre-transition state.
+`@@:system.state.name` reads from the compartment's `state` field. It reflects the current state at the time of access — if a transition has been deferred but not yet processed, `@@:system.state.name` still returns the pre-transition state.
+
+> **Bare `@@:system.state` is reserved** ([RFC-0045](rfcs/rfc-0045.md)). The
+> name accessor is `@@:system.state.name`; writing bare `@@:system.state` is a
+> transpile error (**E608**). The `@@:system.state` path is held for a future
+> direct reference to the current *compartment*, of which the name is one field.
 
 **Available in:** event handlers, enter/exit handlers, actions, non-static operations.
 
@@ -923,52 +941,137 @@ system-level *inclusion* list — `@@[persist_fields([...])]` — is tracked in
 
 ## Async
 
-Interface methods, actions, and operations can be declared `async`:
+Interface methods, actions, and operations can be declared `async`. A system
+that declares **any** async member **must** carry the `@@[async]` attribute on a
+line immediately preceding `@@system` (RFC-0043):
 
 ```frame
-interface:
-    async connect(url: str)
-    async receive(): Message
+@@[async]
+@@system HttpClient {
+    interface:
+        async connect(url: str)
+        async receive(): Message
 
-actions:
-    async fetch_data() {
-        return await http.get("/data")
-    }
+    machine:
+        $Idle {
+            connect(url: str) { ... }
+        }
+
+    actions:
+        async fetch_data() {
+            return await http.get("/data")
+        }
+}
 ```
 
-If ANY interface method is `async`, the entire dispatch chain becomes async (with a couple of per-language carve-outs noted below). Async systems use a two-phase init: `s = @@System()` (sync construct), then `await s.init()` (async — fires the `$>` enter event). Swift is the exception: `init` is a reserved keyword, so the async entry point is named `initAsync()`.
+`@@[async]` opts the system into the async **layered codegen architecture** (see
+below). It takes no arguments. A system that declares no async members **may**
+still carry `@@[async]` to opt into the single-driver gate without becoming
+async.
 
-| Target | Supported | Mechanism | Caller pattern |
+If ANY interface method is `async`, the entire dispatch chain becomes async
+(with a couple of per-language carve-outs noted below). Async systems use a
+two-phase init: `s = @@System()` (sync construct), then `await s.init()` (async
+— fires the `$>` enter event). Swift is the exception: `init` is a reserved
+keyword, so the async entry point is named `initAsync()`.
+
+### Layered architecture: casing + machine
+
+Framec emits an async system `<Name>` as **two classes**:
+
+- **`<Name>` — the casing.** The user-facing class, with the name you declared
+  (`HttpClient`). Each interface method is a *gated wrapper*: it enforces the
+  single-driver contract (below), then delegates to the machine and clears the
+  gate on the way out — on both the happy and the error path. This is the only
+  surface external callers touch; `@@<Other>()` composition and `@@import`
+  resolution always reference this name.
+- **`_<Name>Machine` — the machine.** A private class holding the actual
+  dispatch core — `__kernel`, `__router`, the state methods, the transition
+  loop, the lifecycle cascades. It is byte-for-byte the previous-release
+  single-class emission, minus the public name. Self-calls and kernel-internal
+  dispatch run against the machine directly and **never** touch the gate.
+
+The machine is internal — private to the file / module / namespace per the
+target's privacy unit. **User code must not name `_<Name>Machine` directly**;
+its surface is unstable between releases.
+
+### The single-driver gate (`E703`)
+
+The casing permits **at most one external dispatch in flight at a time**. If an
+interface method is entered while another is already running (re-entrant or
+concurrent external entry), the casing raises **`E703`**:
+
+```
+E703: system busy: cannot enter '<method>' while '<in-flight method>' is in flight
+```
+
+`E703` reports a programming error — a violation of the single-driver contract,
+not a recoverable runtime condition. Operations and persist save/load pass
+through to the machine **without** the gate (they're explicitly non-dispatching).
+
+Two validator errors guard the attribute itself:
+
+- **`E720`** — a system declares an async member but lacks `@@[async]`. This is
+  a **hard cut**: no warning grace period. Add the attribute, or run the
+  migration codemod (below).
+- **`E721`** — a *sync* system has a domain field whose type names an `@@[async]`
+  system declared in the same file. A sync holder can't await the async
+  system's wrappers without itself becoming async; add `@@[async]` to the
+  holder. (Same-file only — cross-file composition via `@@import` is not yet
+  resolved.)
+
+### Per-target support
+
+| Target | Supported | Mechanism | `E703` surface |
 |---|---|---|---|
-| Python | Yes | `async def` + `await` | `asyncio.run(main())` |
-| TypeScript | Yes | `async` + `await`, `Promise<T>` | `await worker.get_status()` |
-| JavaScript | Yes | `async` + `await`, `Promise<T>` | `await worker.get_status()` |
-| Rust | Yes | `async fn` + `.await`, boxed futures for recursion | runtime-dependent (tokio / async-std) |
-| Dart | Yes | `Future<T> foo() async` + `await` | `await worker.get_status()` |
-| GDScript | Yes | bare `await` on dispatch calls (no keyword) | `await worker.get_status()` |
-| Kotlin | Yes | `suspend fun` — suspend→suspend calls are bare, no `await` keyword | `runBlocking { worker.get_status() }` |
-| Swift | Yes | `func foo() async -> T`; async entry is `initAsync()` (not `init()`) | `Task { await worker.get_status() }` |
-| C# | Yes | `async Task<T>` | `await worker.get_status()` (inside an async method) |
-| Java | Yes | `CompletableFuture<T>` on the public interface only — internal dispatch (`__kernel`, `__router`, `_state_X`) stays synchronous. Bodies run sync and wrap the result via `CompletableFuture.completedFuture(...)`. | `worker.get_status().get()` |
-| C++ | Yes (C++23) | `FrameTask<T>` coroutine promise emitted header-guarded at file scope. `suspend_never` initial + `suspend_always` final — bodies run sync until a real `co_await`; callers extract via `.get()`. | `worker.get_status().get()` |
-| C | No | No native async/await. `async` on an interface method is a framec error (the test environment marks these with `@@skip`). | — |
+| Python | Yes | `async def` + `await` | `RuntimeError` |
+| TypeScript | Yes | `async` + `await`, `Promise<T>` | `Error` |
+| JavaScript | Yes | `async` + `await`, `Promise<T>` | `Error` |
+| Rust | Yes | `async fn` + `.await`, boxed futures for recursion | `Err(FrameE703Error)` — recoverable via `?` (D5) |
+| Dart | Yes | `Future<T> foo() async` + `await` | `StateError` |
+| GDScript | Yes | bare `await` on dispatch calls (no keyword) | `push_error(...)` + typed-zero return (D3) |
+| Kotlin | Yes | `suspend fun` — suspend→suspend calls are bare, no `await` keyword | `IllegalStateException` |
+| Swift | Yes | `func foo() async throws -> T`; async entry is `initAsync()` (not `init()`) | `throws FrameE703Error` (D2) |
+| C# | Yes | `async Task<T>` | `InvalidOperationException` |
+| Java | Yes | `CompletableFuture<T>` on the casing only — the machine's internal dispatch (`__kernel`, `__router`, `_state_X`) stays synchronous. Bodies run sync and wrap the result via `CompletableFuture.completedFuture(...)`. | `CompletableFuture.failedFuture(RuntimeException)` |
+| C++ | Yes (C++23) | `FrameTask<T>` coroutine promise emitted header-guarded at file scope. `suspend_never` initial + `suspend_always` final — bodies run sync until a real `co_await`; callers extract via `.get()`. | `std::runtime_error` |
+| C | No | No native async/await. `async` members are a framec error (the test environment marks these with `@@skip`). | — |
 | Go | No | No `async`/`await` keyword. Goroutines + channels model concurrency differently. | — |
 | PHP | No | No native async. Fibers (PHP 8.1+) exist but framec has no PHP fiber backend. | — |
 | Ruby | No | No native async. Fibers/Async gem exist but framec has no Ruby fiber backend. | — |
 | Lua | No | No native async. Coroutines exist but framec has no Lua coroutine backend. | — |
 | Erlang | No | gen_statem is a one-color functional async model — `async` isn't applicable. | — |
 
+The `E703` surface is **recoverable** on every layered backend: callers can
+catch it (`try`/`catch`), `?`-chain it (Rust), or `try?` it (Swift). It is never
+a process-aborting `panic!`/`fatalError`/stripped-`assert`.
+
 **Notes:**
 
 - **Kotlin** is the one supported language that does *not* take an `await` keyword on internal dispatch calls — a `suspend fun` calling another `suspend fun` is bare syntax. This is handled by the framec backend.
-- **Java** (no native async/await) uses `CompletableFuture<T>` for the public interface only; the dispatch chain stays sync so the call graph doesn't explode through `.thenCompose(...)`. Net cost: callers `.get()`.
+- **Java** (no native async/await) uses `CompletableFuture<T>` for the casing only; the machine's dispatch chain stays sync so the call graph doesn't explode through `.thenCompose(...)`. Net cost: callers `.get()`.
 - **C++** target must be `cpp_23` (the default `cpp`/`cpp_17` aliases also work, but the compiler needs ≥ C++20 for coroutines — see `framepiler_design.md` for the `FrameTask<T>` model).
+
+### Migration
+
+Existing pre-RFC-0043 sources that declare async members without `@@[async]` are
+mechanically migrated — the codemod inserts a single `@@[async]` line above each
+affected `@@system` header and changes nothing else:
+
+```bash
+framec project add-async-attr path/to/source-tree
+```
+
+```javascript
+import { migrate_async_attr } from "@frame-lang/framec-wasm";
+const migrated = migrate_async_attr(originalSource);
+```
 
 ---
 
 ## System Instantiation
 
-Use `@@SystemName()` in native code to instantiate a Frame system. The framepiler expands this to the appropriate native constructor and validates that the system name exists and arguments match.
+Use `@@SystemName()` in native code to instantiate a Frame system. framec expands this to the appropriate native constructor and validates that the system name exists and arguments match.
 
 ```frame
 calc = @@Calculator()
@@ -1018,7 +1121,7 @@ Named-form args may be supplied in any order. Defaults are filled in for any omi
 
 #### Defaults are substituted at the call site
 
-Parameters with default values may be omitted from either form. The Frame assembler substitutes the declared default expression at the tagged-instantiation expansion site, so the target language never sees it as a constructor-default — it's a literal arg in the generated call.
+Parameters with default values may be omitted from either form. framec substitutes the declared default expression at the tagged-instantiation expansion site, so the target language never sees it as a constructor-default — it's a literal arg in the generated call.
 
 ```frame
 @@system Counter(initial: int = 0) { ... }
@@ -1030,7 +1133,7 @@ This means default values can use any expression valid in the target language at
 
 #### Instantiation Validation
 
-The framepiler validates at the assembler stage:
+framec validates this when it expands the instantiation:
 
 - The system name exists in this file.
 - Sigils on the call site match the declared groups (`$(...)` for state args, `$>(...)` for enter args, bare for domain).
@@ -1039,6 +1142,46 @@ The framepiler validates at the assembler stage:
 - No duplicate named args.
 - No mixing positional and named within a single call.
 - State and enter args have matching declarations on the start state's `$Start(name: type)` and `$>(name: type)` handlers.
+
+---
+
+## Versioning & Stability
+
+Frame has two version numbers that move on different schedules.
+
+| Number | What it tracks | Example |
+|---|---|---|
+| **framec semver** | The transpiler release line. Bumps signal CLI/codegen changes. | `4.3.0` |
+| **Grammar version** | The Frame language specification itself. Moves much more slowly. | `v0.30` |
+
+The framec version on its own does not tell you the language version, and vice versa. A patch release of framec almost never changes the grammar; a grammar bump only happens when the language surface changes (new syntax, removed syntax, semantics change).
+
+### Source compatibility (what `4.x` means for your `.fpy` files)
+
+`framec` follows semver for **source-level** compatibility of `.fpy` / `.frs` / `.fts` / etc. files:
+
+- **Major** (`4.x` → `5.x`) may require source changes — a grammar version bump usually rides with it. Migration notes ship in `docs/releases/<version>-migration.md`.
+- **Minor** (`4.2` → `4.3`) is additive. Existing valid sources continue to transpile.
+- **Patch** (`4.2.3` → `4.2.4`) is bug-fix only. No source changes required.
+
+### Generated code stability (will codegen churn on upgrade?)
+
+Frame does **not** offer a formal byte-stability contract across versions, but in practice patch and minor releases are de facto byte-stable for sources that don't use changed features. Each release's CHANGELOG entry calls out the specific cases where output differs from the previous release.
+
+For example, the `4.2.4` entry states:
+
+> Output for files without `@@import` is byte-identical to `4.2.3` except for the two fixes below.
+
+**Practical advice:**
+
+- Treat the CHANGELOG as the authoritative diff between releases. If your repo pins `framec` and commits generated code, a CHANGELOG read is enough to know whether `git diff` after `cargo install framec` is expected.
+- Pin `framec` in CI for reproducible builds. Bump intentionally.
+- The `--debug-output` and `--emit-debug` JSON sidecars (source maps, frame-maps, visitor-maps) are not currently positioned as a stable public schema — useful for tooling but expect churn between minor versions.
+
+### Where to look
+
+- `CHANGELOG.md` — per-release notes, including codegen-affecting changes.
+- `docs/releases/` — long-form release notes and migration guides.
 
 ---
 
@@ -1091,7 +1234,67 @@ Both `@@:self` and `@@:system` are syntactic prefixes. Bare forms are errors (E6
 | Token | Meaning |
 |-------|---------|
 | `@@:self.method()` | Self interface call (reentrant) |
-| `@@:system.state` | Current state name (read-only) |
+| `@@:system.state.name` | Current state name (read-only) |
+
+---
+
+## Exception Policy
+
+> Rationale and the full normative rules are in
+> [RFC-0049](rfcs/rfc-0049.md). This section is the summary.
+
+Two principles govern when generated code may use exceptions:
+
+1. **Exceptional vs. expected.** Generated code MAY signal genuine *errors* and
+   broken *preconditions* with the target's idiomatic error mechanism. It MUST
+   NOT use any error mechanism — least of all exceptions — for *expected control
+   flow*, most commonly type discovery (use a non-throwing query like the
+   pointer `std::any_cast<T>(&v)`, `is_number()`, or a type tag).
+2. **One semantic, per-target mechanism, with a fallback.** Where the idiom is a
+   thrown exception and the target can compile exceptions out (notably C++
+   `-fno-exceptions`, required by Godot web), generated code provides a
+   compile-time fallback (`#if defined(__cpp_exceptions)` → `throw`, else
+   `abort`/null-guard) so output stays compilable without an exception runtime.
+
+Frame-generated code maintains its runtime invariants — most importantly the
+context-stack balance `len_after == len_before` around every dispatch — using
+**each language's idiomatic scope-cleanup construct, never a mandatory
+catch-and-rethrow**:
+
+| Family | Backends | Cleanup |
+|--------|----------|---------|
+| RAII (destructor / `Drop`) | C++, Rust | scope-guard pops on scope exit |
+| Scope-exit defer | Swift, Go | `defer { pop }` |
+| `try`/`finally` (always present) | Java, C#, Kotlin, Dart, TypeScript, JavaScript, PHP, Python, Ruby | `finally` pops |
+| Unconditional pop | C, GDScript | single post-dispatch pop (no exceptions exist) |
+
+Because the cleanup never depends on a thrown-and-caught exception, **core
+generated code compiles under a target's no-exceptions mode wherever one exists**
+— notably C++ `-fno-exceptions`, which Godot's web (wasm) engine requires for
+GDExtensions (issue #86). Frame event handlers are state transitions and do not
+throw, so there is nothing for a `catch` to handle on the normal path.
+
+Remaining exception use is confined to **proper error/precondition signalling in
+opt-in features**, always with the `-fno-exceptions` fallback above:
+
+- **`@@[persist]`** — exception-free for the common path (issue #87). The C++
+  save side probes `std::any` with the non-throwing pointer `any_cast<T>(&v)` (no
+  type-discovery-by-catch). The only throws are the **E700** "system not
+  quiescent" precondition guard and tolerant typed restore, both behind
+  `#if defined(__cpp_exceptions)` with an `abort`/null-guard fallback — so
+  persisted systems compile under `-fno-exceptions`. (nlohmann::json self-switches
+  its internal throws to `abort` there.)
+- **`@@[async]`** — a concurrent second driver raises **E703** (single-driver
+  violation), surfaced per backend as a thrown error / rejected future. On C++
+  this is exception-free too (issue #88): the casing's busy-gate cleanup is an
+  RAII guard, the E703 throw is behind `#if defined(__cpp_exceptions)` with an
+  `abort` fallback, and the coroutine `FrameTask`'s `std::rethrow_exception` is a
+  function call (legal with exceptions off, dead because handlers never throw) —
+  so async C++ systems compile under `-fno-exceptions`.
+
+In short: **exceptions are optional, not the rule.** A plain synchronous,
+non-persisted system generates exception-free code on every backend; persisted
+and async C++ systems compile `-fno-exceptions` too.
 
 ---
 
@@ -1137,7 +1340,8 @@ Both `@@:self` and `@@:system` are syntactic prefixes. Bare forms are errors (E6
 | E601 | `unknown-iface-method` | `@@:self.method()` targets method not in `interface:` |
 | E602 | `self-call-arity` | Argument count does not match interface declaration |
 | E603 | `bare-self-reference` | Bare `@@:self` — must be `@@:self.method(args)` |
-| E604 | `bare-system-reference` | Bare `@@:system` — must be `@@:system.state` (or other member) |
+| E604 | `bare-system-reference` | Bare `@@:system` — must be `@@:system.state.name` (or other member) |
+| E608 | `reserved-system-state` | `@@:system.state` is reserved (RFC-0045) — use `@@:system.state.name` for the state name |
 
 ### Domain & Pop Errors (E6xx)
 
@@ -1145,6 +1349,7 @@ Both `@@:self` and `@@:system` are syntactic prefixes. Bare forms are errors (E6
 |------|------|-------------|
 | E605 | `static-field-no-type` | Static target requires explicit type on domain field |
 | E607 | `state-args-on-pop` | State arguments on `pop$` — popped compartment carries its own |
+| E610 | `state-var-no-initializer` | State variable declared without an initializer — Frame does not synthesize default values |
 | E613 | `field-shadows-param` | Domain field name shadows a system parameter |
 | E614 | `duplicate-field` | Duplicate domain field name |
 | E615 | `const-field-assign` | Assignment to `const` domain field in handler body |
@@ -1255,8 +1460,8 @@ if __name__ == '__main__':
 Frame's surface syntax divides into a small, closed set of categories. This
 appendix names each with standard compiler terminology and is the source of the
 vocabulary used throughout this guide. Every classification here is verified
-against *emitted code* by `framec/tests/syntax_taxonomy.rs` — it states what the
-compiler does, not what the syntax looks like.
+against *emitted code* by `framec/tests/syntax_taxonomy.rs` — it states what framec
+does, not what the syntax looks like.
 
 The central fact: **Frame has almost no expression grammar of its own.** There
 are no operators, literals, precedence, or control-flow keywords (`if`/`while`/
@@ -1286,12 +1491,12 @@ Frame reference (`$.x` → `self.x`) spliced in.
 
 4. **Expressions** — yield a value. Frame has exactly two kinds:
    - *Property references* (**getters**): `$.x`, `@@:return`, `@@:data.key`,
-     `@@:event`, `@@:params.x`, `@@:system.state`, `@@:self`.
+     `@@:event`, `@@:params.x`, `@@:system.state.name`, `@@:self`.
    - *Call expressions*: `@@:self.method(args)` (re-entrant self-dispatch) and
      `@@Sys(args)` / `@@!Sys()` (system instantiation). Both are usable in value
      position (assignment RHS) and, standalone, as expression-statements.
 
-5. **Attributes / Pragmas** — compile-time metadata, never runtime:
+5. **Attributes / Pragmas** — transpile-time metadata, never runtime:
    `@@[target(...)]`, `@@[persist]`, `@@[main]`, `@@[create/save/load/no_persist]`,
    and the bare directives `@@import`, `@@codegen`, `@@run-expect`, `@@skip-if`,
    `@@timeout`.
@@ -1314,7 +1519,7 @@ Frame-managed place value. A property exposes up to two **accessors**:
 | `@@:return` | yes | yes (`= e`, `@@:(e)`; `@@:return(e)` also exits) |
 | `@@:event` | yes | — (read-only) |
 | `@@:params.x` | yes | — (read-only) |
-| `@@:system.state` | yes | — (read-only) |
+| `@@:system.state.name` | yes | — (read-only) |
 | `@@:self` | yes | — (read-only) |
 
 "Two kinds of accessor" = getter and setter. A read-only property has only a

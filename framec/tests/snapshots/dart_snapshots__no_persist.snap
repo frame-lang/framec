@@ -165,32 +165,48 @@ class NoPersist {
         final __e = NoPersistFrameEvent("bump", []);
         final __ctx = NoPersistFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(__e);
-        _context_stack.removeLast();
+        try {
+            __kernel(__e);
+        } finally {
+            _context_stack.removeLast();
+        }
     }
 
     void set_cache(int v) {
         final __e = NoPersistFrameEvent("set_cache", [v]);
         final __ctx = NoPersistFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(__e);
-        _context_stack.removeLast();
+        try {
+            __kernel(__e);
+        } finally {
+            _context_stack.removeLast();
+        }
     }
 
     int get_count() {
         final __e = NoPersistFrameEvent("get_count", []);
         final __ctx = NoPersistFrameContext(__e, 0);
         _context_stack.add(__ctx);
-        __kernel(__e);
-        return _context_stack.removeLast()._return;
+        try {
+            __kernel(__e);
+            return _context_stack.removeLast()._return;
+        } catch (__frame_err) {
+            _context_stack.removeLast();
+            rethrow;
+        }
     }
 
     int get_cache() {
         final __e = NoPersistFrameEvent("get_cache", []);
         final __ctx = NoPersistFrameContext(__e, 0);
         _context_stack.add(__ctx);
-        __kernel(__e);
-        return _context_stack.removeLast()._return;
+        try {
+            __kernel(__e);
+            return _context_stack.removeLast()._return;
+        } catch (__frame_err) {
+            _context_stack.removeLast();
+            rethrow;
+        }
     }
 
     void _state_Active(NoPersistFrameEvent __e, NoPersistCompartment compartment) {
@@ -213,20 +229,20 @@ class NoPersist {
     }
 
     void _s_Active_hdl_user_bump(NoPersistFrameEvent __e, NoPersistCompartment compartment) {
-        self.count = self.count + 1
+        this.count = this.count + 1
     }
 
     void _s_Active_hdl_user_get_cache(NoPersistFrameEvent __e, NoPersistCompartment compartment) {
-        this._context_stack[this._context_stack.length - 1]._return = self.cache;
+        this._context_stack[this._context_stack.length - 1]._return = this.cache;
     }
 
     void _s_Active_hdl_user_get_count(NoPersistFrameEvent __e, NoPersistCompartment compartment) {
-        this._context_stack[this._context_stack.length - 1]._return = self.count;
+        this._context_stack[this._context_stack.length - 1]._return = this.count;
     }
 
     void _s_Active_hdl_user_set_cache(NoPersistFrameEvent __e, NoPersistCompartment compartment) {
         final v = __e._parameters[0] as int;
-        self.cache = v
+        this.cache = v
     }
 
     String snapshot() {

@@ -5,7 +5,7 @@
 use super::super::super::ast::{CodegenNode, Param, Visibility};
 use super::super::super::codegen_utils::{
     cpp_map_type, csharp_map_type, expression_to_string, go_map_type, java_map_type,
-    kotlin_map_type, state_var_init_value, swift_map_type, to_snake_case, type_to_cpp_string,
+    kotlin_map_type, state_var_initializer, swift_map_type, to_snake_case, type_to_cpp_string,
     HandlerContext,
 };
 use super::super::super::frame_expansion::{
@@ -31,6 +31,7 @@ pub(crate) fn generate_c_handler_method(
     source: &[u8],
     _has_state_vars: bool,
     defined_systems: &std::collections::HashSet<String>,
+    actions: &std::collections::HashSet<String>,
     _sys_param_locals: &[String],
     _is_start_state: bool,
     state_param_names: &std::collections::HashMap<String, Vec<String>>,
@@ -40,6 +41,9 @@ pub(crate) fn generate_c_handler_method(
     handler_state_var_types: &std::collections::HashMap<String, String>,
     state_hsm_parents: &std::collections::HashMap<String, String>,
     state_param_types: &std::collections::HashMap<(String, String), String>,
+    state_enter_param_types: &std::collections::HashMap<(String, String), String>,
+    state_exit_param_types: &std::collections::HashMap<(String, String), String>,
+    domain_field_types: &std::collections::HashMap<String, String>,
 ) -> CodegenNode {
     let method_name = handler_method_name(state_name, handler);
     let lang = TargetLanguage::C;
@@ -50,6 +54,7 @@ pub(crate) fn generate_c_handler_method(
         event_name: handler.event.clone(),
         parent_state: parent_state.map(|s| s.to_string()),
         defined_systems: defined_systems.clone(),
+        actions: actions.clone(),
         use_sv_comp: false,
         per_handler: true,
         state_var_types: handler_state_var_types.clone(),
@@ -60,48 +65,66 @@ pub(crate) fn generate_c_handler_method(
         state_hsm_parents: state_hsm_parents.clone(),
         current_return_type: handler.return_type.clone(),
         state_param_types: state_param_types.clone(),
+        state_enter_param_types: state_enter_param_types.clone(),
+        state_exit_param_types: state_exit_param_types.clone(),
+        domain_field_types: domain_field_types.clone(),
     };
 
     let mut body = String::new();
 
-    // State-param / handler-param binding from a void* slot. Maps Frame
-    // types to native C types so `str` → `const char*`, `bool` → `int`,
-    // `float`/`double` → `double` (via the runtime's `Sys_unpack_double`
-    // bit-pun helper, since `(intptr_t)(0.5)` truncates), etc. Falls
-    // back to `int` for unknown types — matches `DispatchSyntax::C`'s
-    // `c_param_type_and_cast` helper, extended for floats.
+    // State-param / handler-param binding from a void* slot. Categories
+    // come from `c_marshal::c_marshal_of` (#72) — the same source of truth
+    // the wrapper's pack side uses, so write and read cannot drift:
+    // `str` → `const char*`, `bool` → `int`, `float`/`double` → `double`
+    // (via `Sys_unpack_double`, a NULL-safe deref of the heap/stack box
+    // the push side built — #81; `(intptr_t)(0.5)` truncates), `T*` →
+    // typed cast.
+    //
+    // The Boxed fallback (structs / unknown typedefs) differs by slot:
+    // EVENT params are pushed by the interface wrapper as stack-box
+    // addresses → deref-copy here (`T v = *(T*)val`). STATE/enter/exit
+    // args are pushed by the transition sites, which keep the historical
+    // `(void*)(intptr_t)` form for non-Dbl unknowns → keep the int
+    // fallback there (struct state-args have never been supported on C;
+    // #72 follow-up).
     //
     // Returns (decl_type, full_extract_expr) where the extractor takes
     // the void* value placeholder `{val}`.
-    let c_extract = |type_str: &str, val_expr: &str| -> (String, String) {
+    let c_extract_mode = |type_str: &str, val_expr: &str, boxed_slot: bool| -> (String, String) {
+        use crate::frame_c::compiler::codegen::c_marshal::{c_marshal_of, CMarshal};
         let t = type_str.trim();
-        match t {
-            "str" | "string" | "String" | "char*" | "const char*" => (
+        match c_marshal_of(t) {
+            CMarshal::Str => (
                 "const char*".to_string(),
                 format!("(const char*){}", val_expr),
             ),
-            "float" | "f32" | "f64" | "double" => (
+            CMarshal::Dbl => (
                 "double".to_string(),
                 format!("{}_unpack_double({})", system_name, val_expr),
             ),
             // Frame's `: list` lands as <sys>_FrameVec* (see backends/c.rs
-            // convert_type_to_c). State-args/event-args of list type
-            // need the typed cast, not the int fallthrough.
-            "list" | "List" | "Array" | "Array<any>" => {
+            // convert_type_to_c); `: dict` → <sys>_FrameDict*.
+            CMarshal::Vec => {
                 let typ = format!("{}_FrameVec*", system_name);
                 let extract = format!("({}){}", typ, val_expr);
                 (typ, extract)
             }
-            // Same shape for `: dict` → <sys>_FrameDict*.
-            "dict" | "Dict" | "Record<string, any>" => {
+            CMarshal::Dict => {
                 let typ = format!("{}_FrameDict*", system_name);
                 let extract = format!("({}){}", typ, val_expr);
                 (typ, extract)
             }
-            _ if t.ends_with('*') => (t.to_string(), format!("({}){}", t, val_expr)),
-            _ => ("int".to_string(), format!("(int)(intptr_t){}", val_expr)),
+            CMarshal::Ptr => (t.to_string(), format!("({}){}", t, val_expr)),
+            CMarshal::Boxed if boxed_slot => (t.to_string(), format!("*({}*){}", t, val_expr)),
+            CMarshal::Int | CMarshal::Boxed => {
+                ("int".to_string(), format!("(int)(intptr_t){}", val_expr))
+            }
         }
     };
+    // Event-param slots carry boxed structs (wrapper stack-boxes them);
+    // state/enter/exit-arg slots keep the historical int fallback.
+    let c_extract = |type_str: &str, val_expr: &str| c_extract_mode(type_str, val_expr, false);
+    let c_extract_event = |type_str: &str, val_expr: &str| c_extract_mode(type_str, val_expr, true);
     if let Some(sp_names) = state_param_names.get(state_name) {
         let handler_param_names: std::collections::HashSet<&str> =
             handler.params.iter().map(|p| p.name.as_str()).collect();
@@ -127,9 +150,13 @@ pub(crate) fn generate_c_handler_method(
         }
     }
 
-    // Handler-param binding. Reuse the c_extract helper from above so
+    // Handler-param binding. Same category helper as state-args so
     // float/double params route through `Sys_unpack_double` (intptr_t
-    // cast truncates floats — same root issue as state-args).
+    // cast truncates floats). EVENT params (`__e->_parameters`) come from
+    // the interface wrapper, which stack-boxes struct-by-value params
+    // (#72) — use the boxed-slot extractor; enter/exit args come from the
+    // transition sites and keep the historical fallback.
+    let is_event_params = !handler.is_enter && !handler.is_exit;
     let param_source_pre = if handler.is_enter {
         "compartment->enter_args"
     } else if handler.is_exit {
@@ -140,22 +167,41 @@ pub(crate) fn generate_c_handler_method(
     for (i, param) in handler.params.iter().enumerate() {
         let type_str = param.symbol_type.as_deref().unwrap_or("int");
         let val_expr = format!("{}_FrameVec_get({}, {})", system_name, param_source_pre, i);
-        let (c_decl, extract) = c_extract(type_str, &val_expr);
+        let (c_decl, extract) = if is_event_params {
+            c_extract_event(type_str, &val_expr)
+        } else {
+            c_extract(type_str, &val_expr)
+        };
         body.push_str(&format!("{} {} = {};\n", c_decl, param.name, extract));
         body.push_str(&format!("(void){};\n", param.name));
     }
 
     // State-var init (lifecycle enter only). Uses FrameDict_has + FrameDict_set.
+    // Packing per c_marshal (#77, #81): float/double state-vars heap-box via
+    // pack_double — `(void*)(intptr_t)(0.0)` truncates, and bit-punning
+    // corrupts on 32-bit pointers. Stored OWNED so the dict frees/deep-copies
+    // the box. The matching read-side unpack lives in `expand_state_var`'s
+    // C arm.
     if handler.is_enter {
         for var in state_vars_for_init {
-            let init_val = if let Some(ref init) = var.init {
-                expression_to_string(init, lang)
-            } else {
-                state_var_init_value(&var.var_type, lang)
+            let init_val = state_var_initializer(var);
+            let (packed, setter) = {
+                use crate::frame_c::compiler::codegen::c_marshal::{c_marshal_of, CMarshal};
+                let declared = match &var.var_type {
+                    crate::frame_c::compiler::frame_ast::Type::Custom(t) => t.as_str(),
+                    _ => "",
+                };
+                match c_marshal_of(declared) {
+                    CMarshal::Dbl => (
+                        format!("{}_pack_double({})", system_name, init_val),
+                        "FrameDict_set_owned",
+                    ),
+                    _ => (format!("(void*)(intptr_t)({})", init_val), "FrameDict_set"),
+                }
             };
             body.push_str(&format!(
-                "if (!{}_FrameDict_has(compartment->state_vars, \"{}\")) {{\n    {}_FrameDict_set(compartment->state_vars, \"{}\", (void*)(intptr_t)({}));\n}}\n",
-                system_name, var.name, system_name, var.name, init_val
+                "if (!{}_FrameDict_has(compartment->state_vars, \"{}\")) {{\n    {}_{}(compartment->state_vars, \"{}\", {});\n}}\n",
+                system_name, var.name, system_name, setter, var.name, packed
             ));
         }
     }

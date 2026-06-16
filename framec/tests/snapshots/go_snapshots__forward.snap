@@ -161,16 +161,16 @@ func (s *Forward) Run() {
     __e := ForwardFrameEvent{_message: "run", _parameters: []any{}}
     __ctx := ForwardFrameContext{_event: __e, _data: make(map[string]any)}
     s._context_stack = append(s._context_stack, __ctx)
+    defer func() { s._context_stack = s._context_stack[:len(s._context_stack)-1] }()
     s.__kernel(&s._context_stack[len(s._context_stack)-1]._event)
-    s._context_stack = s._context_stack[:len(s._context_stack)-1]
 }
 
 func (s *Forward) Finish() {
     __e := ForwardFrameEvent{_message: "finish", _parameters: []any{}}
     __ctx := ForwardFrameContext{_event: __e, _data: make(map[string]any)}
     s._context_stack = append(s._context_stack, __ctx)
+    defer func() { s._context_stack = s._context_stack[:len(s._context_stack)-1] }()
     s.__kernel(&s._context_stack[len(s._context_stack)-1]._event)
-    s._context_stack = s._context_stack[:len(s._context_stack)-1]
 }
 
 func (s *Forward) _state_Start(__e *ForwardFrameEvent, compartment *ForwardCompartment) {
@@ -200,7 +200,7 @@ func (s *Forward) _state_End(__e *ForwardFrameEvent, compartment *ForwardCompart
 
 func (s *Forward) _s_Start_hdl_user_run(__e *ForwardFrameEvent, compartment *ForwardCompartment) {
     {
-    self.starts = self.starts + 1
+    s.starts = s.starts + 1
     __compartment := s.__prepareEnter("Middle", []any{}, []any{})
     __compartment.forwardEvent = __e
     s.__transition(__compartment)
@@ -218,7 +218,7 @@ func (s *Forward) _s_Middle_hdl_user_finish(__e *ForwardFrameEvent, compartment 
 
 func (s *Forward) _s_Middle_hdl_user_run(__e *ForwardFrameEvent, compartment *ForwardCompartment) {
     {
-    self.middles = self.middles + 1
+    s.middles = s.middles + 1
     }
 }
 

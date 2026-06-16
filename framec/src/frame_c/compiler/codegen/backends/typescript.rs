@@ -751,14 +751,15 @@ impl LanguageBackend for TypeScriptBackend {
 }
 
 impl TypeScriptBackend {
-    /// Convert type annotation from generic/Python types to TypeScript types
+    /// Normalize a type annotation for emission. Frame has NO type system:
+    /// user-written type names pass through VERBATIM (docs/frame_language.md).
+    /// Write TypeScript's own names (`number`, `string`, `Foo[]`). The arms
+    /// below are framec-synthesized machinery types only; there is no
+    /// `int`->`number` / `str`->`string` alias table (it contradicted the
+    /// passthrough contract and was removed).
     fn convert_type(&self, type_str: &str) -> String {
         match type_str {
             "Any" => "any".to_string(),
-            "int" => "number".to_string(),
-            "float" => "number".to_string(),
-            "str" => "string".to_string(),
-            "bool" => "boolean".to_string(),
             "None" => "void".to_string(),
             "List" => "Array<any>".to_string(),
             "Dict" => "Record<string, any>".to_string(),

@@ -7,6 +7,7 @@
 //! are replaced with generated code using the splicer.
 
 mod async_wrap;
+pub(crate) mod casing;
 mod expand_system;
 mod factory;
 mod fields;
@@ -31,8 +32,8 @@ use super::ast::*;
 use super::backend::get_backend;
 use super::codegen_utils::{
     convert_expression, convert_literal, cpp_map_type, cpp_wrap_any_arg, csharp_map_type,
-    expression_to_string, go_map_type, java_map_type, kotlin_map_type, state_var_init_value,
-    swift_map_type, to_snake_case, type_to_cpp_string, type_to_string, HandlerContext,
+    expression_to_string, go_map_type, java_map_type, kotlin_map_type, swift_map_type,
+    to_snake_case, type_to_cpp_string, type_to_string, HandlerContext,
 };
 use super::frame_expansion::{generate_frame_expansion, get_native_scanner, normalize_indentation};
 use super::interface_gen::{
@@ -69,11 +70,32 @@ pub fn generate_system(
     lang: TargetLanguage,
     source: &[u8],
 ) -> CodegenNode {
-    // Erlang: gen_statem native — completely different codegen path
+    // Erlang and Rust have dedicated pipelines because their structural
+    // model diverges from the class-based-with-runtime-type-erasure
+    // assumption the shared pipeline encodes. See
+    // `docs/codegen_pipeline.md` § "Why two backends have dedicated
+    // pipelines" for the full rationale.
+    //
+    // Practical consequence for cross-cutting codegen changes
+    // (RFC-0043 layered async, future trace hooks, etc.): the change
+    // is applied in `generate_system_shared` for 15 backends and in
+    // `rust_system::generate_rust_system` for Rust separately. Erlang
+    // typically receives a no-op because gen_statem already provides
+    // the guarantee in actor form.
+
+    // Erlang: gen_statem actor model — emits raw Erlang source, not a
+    // CodegenNode tree. The class-based primitive set has no analogue
+    // here (callers use `gen_statem:call/2` through the process
+    // mailbox; internal dispatch is direct `frame_dispatch__/3`).
     if lang == TargetLanguage::Erlang {
         return super::erlang_system::generate_erlang_system(system, arcanum, source);
     }
-    // Rust: dedicated codegen with Rc<RefCell<Compartment>> ownership
+    // Rust: diverges for three independent reasons —
+    //   1. `Rc<RefCell<Compartment>>` ownership (no GC).
+    //   2. Typed per-state `Context` structs (RFC-0025.1) instead of
+    //      a single type-erased compartment.
+    //   3. `Rc<FrameEvent>` to satisfy the borrow checker on event
+    //      passthrough (RFC-0020 § Exceptions: Rust).
     if lang == TargetLanguage::Rust {
         return super::rust_system::generate_rust_system(system, arcanum, source);
     }
@@ -292,7 +314,13 @@ pub fn generate_system_shared(
     // `generate_action` returns a `Vec<CodegenNode>` so trivia
     // (action `leading_comments`) can prepend the method node.
     for action in &system.actions {
-        methods.extend(generate_action(action, &syntax, source));
+        methods.extend(generate_action(
+            action,
+            &syntax,
+            source,
+            &system.name,
+            arcanum,
+        ));
     }
 
     // Operations - same pattern as actions.
@@ -310,7 +338,13 @@ pub fn generate_system_shared(
         if is_framework_managed {
             continue;
         }
-        methods.extend(generate_operation(operation, &syntax, source));
+        methods.extend(generate_operation(
+            operation,
+            &syntax,
+            source,
+            &system.name,
+            arcanum,
+        ));
     }
 
     // Persistence methods (when @@persist is present)
@@ -340,8 +374,18 @@ pub fn generate_system_shared(
         if matches!(lang, TargetLanguage::Java) {
             make_java_interface_async(&mut class_node, system);
         } else {
-            make_system_async(&mut class_node, &system.name, lang);
+            make_system_async(&mut class_node, &system.name, lang, system);
         }
+    }
+
+    // RFC-0043: if the system carries `@@[async]` AND the backend has
+    // been verified for layered emission, wrap the dispatch class (now
+    // the machine) in a casing. Returns a `CodegenNode::Module`
+    // containing the casing + machine pair. Backends that haven't been
+    // flipped on yet (Phase 4 day-1: everything except Python) return
+    // the single-class shape unchanged.
+    if system.is_async_layered() && casing::should_emit_layered(lang) {
+        return casing::wrap_in_casing(system, class_node, lang);
     }
 
     class_node
@@ -569,8 +613,8 @@ mod tests {
     use super::*;
     use crate::frame_c::compiler::codegen::codegen_utils::{
         convert_expression, convert_literal, cpp_map_type, cpp_wrap_any_arg, csharp_map_type,
-        expression_to_string, go_map_type, java_map_type, kotlin_map_type, state_var_init_value,
-        swift_map_type, to_snake_case, type_to_cpp_string, type_to_string, HandlerContext,
+        expression_to_string, go_map_type, java_map_type, kotlin_map_type, swift_map_type,
+        to_snake_case, type_to_cpp_string, type_to_string, HandlerContext,
     };
     use crate::frame_c::compiler::frame_ast::{
         DomainVar, Expression, Literal, Span, SystemAst, Type,

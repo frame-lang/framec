@@ -128,36 +128,56 @@ class NoPersist {
         val __e = NoPersistFrameEvent("bump", mutableListOf())
         val __ctx = NoPersistFrameContext(__e, null)
         _context_stack.add(__ctx)
-        __kernel(_context_stack[_context_stack.size - 1]._event)
-        _context_stack.removeAt(_context_stack.size - 1)
+        try {
+            __kernel(_context_stack[_context_stack.size - 1]._event)
+            _context_stack.removeAt(_context_stack.size - 1)
+        } catch (__frame_err: Throwable) {
+            _context_stack.removeAt(_context_stack.size - 1)
+            throw __frame_err
+        }
     }
 
     fun set_cache(v: Int) {
         val __e = NoPersistFrameEvent("set_cache", mutableListOf(v))
         val __ctx = NoPersistFrameContext(__e, null)
         _context_stack.add(__ctx)
-        __kernel(_context_stack[_context_stack.size - 1]._event)
-        _context_stack.removeAt(_context_stack.size - 1)
+        try {
+            __kernel(_context_stack[_context_stack.size - 1]._event)
+            _context_stack.removeAt(_context_stack.size - 1)
+        } catch (__frame_err: Throwable) {
+            _context_stack.removeAt(_context_stack.size - 1)
+            throw __frame_err
+        }
     }
 
     fun get_count(): Int {
         val __e = NoPersistFrameEvent("get_count", mutableListOf())
         val __ctx = NoPersistFrameContext(__e, 0)
         _context_stack.add(__ctx)
-        __kernel(_context_stack[_context_stack.size - 1]._event)
-        val __result = _context_stack[_context_stack.size - 1]._return as Int
-        _context_stack.removeAt(_context_stack.size - 1)
-        return __result
+        try {
+            __kernel(_context_stack[_context_stack.size - 1]._event)
+            val __result = _context_stack[_context_stack.size - 1]._return as Int
+            _context_stack.removeAt(_context_stack.size - 1)
+            return __result
+        } catch (__frame_err: Throwable) {
+            _context_stack.removeAt(_context_stack.size - 1)
+            throw __frame_err
+        }
     }
 
     fun get_cache(): Int {
         val __e = NoPersistFrameEvent("get_cache", mutableListOf())
         val __ctx = NoPersistFrameContext(__e, 0)
         _context_stack.add(__ctx)
-        __kernel(_context_stack[_context_stack.size - 1]._event)
-        val __result = _context_stack[_context_stack.size - 1]._return as Int
-        _context_stack.removeAt(_context_stack.size - 1)
-        return __result
+        try {
+            __kernel(_context_stack[_context_stack.size - 1]._event)
+            val __result = _context_stack[_context_stack.size - 1]._return as Int
+            _context_stack.removeAt(_context_stack.size - 1)
+            return __result
+        } catch (__frame_err: Throwable) {
+            _context_stack.removeAt(_context_stack.size - 1)
+            throw __frame_err
+        }
     }
 
     private fun _state_Active(__e: NoPersistFrameEvent, compartment: NoPersistCompartment) {
@@ -180,20 +200,20 @@ class NoPersist {
     }
 
     private fun _s_Active_hdl_user_bump(__e: NoPersistFrameEvent, compartment: NoPersistCompartment) {
-        self.count = self.count + 1
+        this.count = this.count + 1
     }
 
     private fun _s_Active_hdl_user_get_cache(__e: NoPersistFrameEvent, compartment: NoPersistCompartment) {
-        _context_stack[_context_stack.size - 1]._return = self.cache
+        _context_stack[_context_stack.size - 1]._return = this.cache
     }
 
     private fun _s_Active_hdl_user_get_count(__e: NoPersistFrameEvent, compartment: NoPersistCompartment) {
-        _context_stack[_context_stack.size - 1]._return = self.count
+        _context_stack[_context_stack.size - 1]._return = this.count
     }
 
     private fun _s_Active_hdl_user_set_cache(__e: NoPersistFrameEvent, compartment: NoPersistCompartment) {
         val v = __e._parameters[0] as Int
-        self.cache = v
+        this.cache = v
     }
 
     private fun __serComp(comp: NoPersistCompartment?): Any? {

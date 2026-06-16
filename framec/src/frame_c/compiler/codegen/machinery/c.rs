@@ -120,12 +120,10 @@ int n = {sys}_hsm_chain(self, leaf, &chain);
 {sys}_Compartment* comp = NULL;
 for (int i = 0; i < n; i++) {{
     {sys}_Compartment* nc = {sys}_Compartment_new(chain[i]);
-    if (state_args) {{
-        for (int j = 0; j < state_args->size; j++) {sys}_FrameVec_push(nc->state_args, state_args->items[j]);
-    }}
-    if (enter_args) {{
-        for (int j = 0; j < enter_args->size; j++) {sys}_FrameVec_push(nc->enter_args, enter_args->items[j]);
-    }}
+    // FrameVec_extend deep-copies vec-owned heap boxes (#81: doubles)
+    // so the caller can destroy its arg vecs after this returns.
+    {sys}_FrameVec_extend(nc->state_args, state_args);
+    {sys}_FrameVec_extend(nc->enter_args, enter_args);
     nc->parent_compartment = comp;  // adopts ref
     comp = nc;
 }}
@@ -151,11 +149,10 @@ return comp;"#,
                 code: format!(
                     r#"{sys}_Compartment* comp = self->__compartment;
 while (comp != NULL) {{
-    // Clear any prior exit_args before copying the new ones in.
-    while (comp->exit_args->size > 0) comp->exit_args->size--;
-    if (exit_args) {{
-        for (int j = 0; j < exit_args->size; j++) {sys}_FrameVec_push(comp->exit_args, exit_args->items[j]);
-    }}
+    // Clear any prior exit_args (freeing vec-owned boxes, #81) before
+    // copying the new ones in; extend deep-copies owned entries.
+    {sys}_FrameVec_clear(comp->exit_args);
+    {sys}_FrameVec_extend(comp->exit_args, exit_args);
     comp = comp->parent_compartment;
 }}"#,
                     sys = sys

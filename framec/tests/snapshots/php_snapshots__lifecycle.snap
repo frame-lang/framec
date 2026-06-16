@@ -160,16 +160,26 @@ class Lifecycle {
         $__e = new LifecycleFrameEvent("start", [$label]);
         $__ctx = new LifecycleFrameContext($__e, null);
         $this->_context_stack[] = $__ctx;
-        $this->__kernel($__e);
-        return array_pop($this->_context_stack)->_return;
+        try {
+            $this->__kernel($__e);
+            return array_pop($this->_context_stack)->_return;
+        } catch (\Throwable $__frame_err) {
+            array_pop($this->_context_stack);
+            throw $__frame_err;
+        }
     }
 
     public function stop() {
         $__e = new LifecycleFrameEvent("stop", []);
         $__ctx = new LifecycleFrameContext($__e, null);
         $this->_context_stack[] = $__ctx;
-        $this->__kernel($__e);
-        return array_pop($this->_context_stack)->_return;
+        try {
+            $this->__kernel($__e);
+            return array_pop($this->_context_stack)->_return;
+        } catch (\Throwable $__frame_err) {
+            array_pop($this->_context_stack);
+            throw $__frame_err;
+        }
     }
 
     private function _state_Idle($__e, $compartment) {
@@ -203,13 +213,13 @@ class Lifecycle {
     }
 
     private function _s_Running_hdl_frame_exit($__e, $compartment) {
-        self.exited = self.exited + 1
+        $this->exited = $this->exited + 1
     }
 
     private function _s_Running_hdl_frame_enter($__e, $compartment) {
         $label = $compartment->enter_args[0];
-        self.entered = self.entered + 1;
-        self.tag = label;
+        $this->entered = $this->entered + 1;
+        $this->tag = label;
     }
 
     private function _s_Running_hdl_user_stop($__e, $compartment) {

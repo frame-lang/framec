@@ -158,6 +158,7 @@ impl LanguageBackend for SwiftBackend {
                 is_async,
                 is_static,
                 visibility,
+                decorators,
                 ..
             } => {
                 let vis = self.emit_visibility_swift(*visibility);
@@ -179,14 +180,28 @@ impl LanguageBackend for SwiftBackend {
                 // Swift: `async` goes between the param list and return type.
                 //   func foo() async -> Int { ... }
                 let async_kw = if *is_async { " async" } else { "" };
+                // RFC-0043 D2: the casing's gated interface wrappers carry a
+                // `__swift_throws__` decorator marker, which we expand here
+                // into a `throws` keyword between `async` and the return
+                // type. The marker is a side-channel from
+                // `system_codegen::casing.rs` because adding a `throws: bool`
+                // field to the shared `Method` node would touch every
+                // backend and 190+ construction sites for a Swift-only
+                // signature element.
+                let throws_kw = if decorators.iter().any(|d| d == "__swift_throws__") {
+                    " throws"
+                } else {
+                    ""
+                };
                 let mut result = format!(
-                    "{}{}{}func {}({}){}{} {{\n",
+                    "{}{}{}func {}({}){}{}{} {{\n",
                     ctx.get_indent(),
                     vis_prefix,
                     static_kw,
                     name,
                     params_str,
                     async_kw,
+                    throws_kw,
                     return_str
                 );
 
@@ -721,23 +736,26 @@ impl SwiftBackend {
         if let Some(base) = t.strip_suffix("[]") {
             return format!("[{}]", self.map_type(base));
         }
+        // Frame has NO type system: user-written type names pass through
+        // VERBATIM (docs/frame_language.md). Write Swift's own names (`Int`,
+        // `String`, `Double`, `[String]`). The arms below are framec-
+        // synthesized machinery types only (untyped event params, the
+        // structural `void` return, the nullable/array shapes handled above);
+        // there is no `int`->`Int` / `str`->`String` alias table — it
+        // contradicted the passthrough contract and was removed.
         match t {
             "Any" | "Object" | "object" => "Any?".to_string(),
-            "string" | "str" => "String".to_string(),
-            "String" => "String".to_string(),
-            "int" | "i32" | "i64" | "number" => "Int".to_string(),
-            "float" | "f64" | "f32" | "double" => "Double".to_string(),
-            "bool" | "boolean" => "Bool".to_string(),
-            "Boolean" => "Bool".to_string(),
             "void" => "Void".to_string(),
             "var" => "Any?".to_string(),
             other => other.to_string(),
         }
     }
 
-    /// Map Frame generic types in raw domain code to Swift types.
-    /// Handles patterns like "name: number = 0" -> "name: Int = 0"
-    /// and "name: string[] = []" -> "name: [String] = []"
+    /// Reformat a raw `name: type[ = init]` domain declaration, normalizing
+    /// the type slot through `map_type`. Under verbatim passthrough this is
+    /// effectively identity for user types (Swift-native names emit as-is);
+    /// it still resolves the nullable/array machinery shapes `map_type`
+    /// handles.
     fn map_domain_types(&self, raw: &str) -> String {
         // Find the colon that separates name from type
         if let Some(colon_pos) = raw.find(':') {
@@ -764,8 +782,8 @@ impl SwiftBackend {
     ///   `<indent>[<vis> ][let|var ]<name>: <type>[ = <init>]\n`
     ///
     /// `let` is emitted when `field.is_const`, `var` otherwise. The
-    /// type is run through `map_type` so Frame-canonical names (`int`,
-    /// `string`) become Swift-canonical (`Int`, `String`). Visibility
+    /// type is run through `map_type`, which passes user-written Swift
+    /// names through verbatim and resolves only machinery shapes. Visibility
     /// `internal` (Frame's `Protected`) becomes Swift's default and
     /// is OMITTED rather than emitted explicitly — matches the
     /// `emit_visibility_swift` empty-string convention used elsewhere.

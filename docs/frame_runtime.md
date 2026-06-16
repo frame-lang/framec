@@ -689,7 +689,7 @@ returns `true`. The state-event pair determines which handler runs,
 which determines the answer.
 
 `@@:(expr)` sets the return value. It's shorthand for
-`@@:return = expr`. Both compile to the same generated code.
+`@@:return = expr`. Both transpile to the same generated code.
 
 The return value needs somewhere to live during the call, so
 FrameContext gains a slot for it:
@@ -750,7 +750,7 @@ def _s_On_hdl_user_is_on(self, __e, compartment):
     self._context_stack[-1]._return = True
 ```
 
-`@@:(false)` compiles to `self._context_stack[-1]._return = False`.
+`@@:(false)` transpiles to `self._context_stack[-1]._return = False`.
 The handler writes to the top-of-stack context's `_return` slot.
 The wrapper reads the same slot when the kernel returns.
 
@@ -773,7 +773,7 @@ state — the basic value of state machines.
 >
 > This means `@@:return` or `@@:(...)` inside a void-declared
 > method is meaningless — the wrapper has nowhere to read the
-> slot. The framepiler rejects this at compile time rather than
+> slot. framec rejects this at transpile time rather than
 > emitting code the target compiler would reject. (Returning a
 > value from a void method is a type error in Java, Rust, Go,
 > Swift, C#, Kotlin, Dart, TypeScript, C, and C++.)
@@ -783,8 +783,8 @@ state — the basic value of state machines.
 > Their wrappers always read and return the slot regardless of
 > whether the source declared a return type. A method declared
 > without `: type` in Python that uses `@@:(42)` will return 42 to
-> the caller; the same source compiled for Java would be rejected
-> by the framepiler.
+> the caller; the same source transpiled for Java would be rejected
+> by framec.
 >
 > The asymmetry is deliberate. Frame matches each target's native
 > conventions rather than imposing a single uniform rule across
@@ -860,7 +860,7 @@ the implicit default may not be what you want.
 ### Native `return` vs `@@:`
 
 Native `return` in a handler exits the dispatch method but does
-not set `_return`. The framepiler emits warning W415 when a
+not set `_return`. framec emits warning W415 when a
 handler uses `return expr` because the value is almost certainly
 meant to be the interface return value. To set the return value,
 use `@@:return = expr` or `@@:(expr)`. Bare `return` (with no
@@ -953,7 +953,7 @@ handler body uses the parameters as ordinary locals.
 > **In statically-typed targets** — `_parameters[0]` is typed
 > "any" (`Object` in Java, `Box<dyn Any>` in Rust, `Any` in
 > Swift), so binding requires a cast to the declared parameter
-> type. The framepiler emits the cast based on the source's type
+> type. framec emits the cast based on the source's type
 > annotation:
 >
 > ```java
@@ -965,7 +965,7 @@ handler body uses the parameters as ordinary locals.
 > ```
 >
 > Same positional access pattern, just with the cast appropriate
-> to the target. Authors don't write the casts; the framepiler
+> to the target. Authors don't write the casts; framec
 > generates them from the parameter's declared type. Because
 > Frame source declares all parameter types, every cast is known
 > at code-generation time — there's no dynamic type checking at
@@ -976,20 +976,20 @@ handler body uses the parameters as ordinary locals.
 `_parameters` is a positional list at the wire level. Frame source
 lets you access parameters by name (`brightness` in the handler
 body, or `@@:params.brightness` if you prefer the explicit form),
-but that named access is a compile-time rewrite. The framepiler
+but that named access is a transpile-time rewrite. framec
 binds each parameter to a typed local at the top of the handler
 and rewrites named references to use that local.
 
 This is the same mechanism every statically-typed language uses
 for function parameters: positional at the calling convention,
 named at the source. The wire format is positional; the source is
-named; the framepiler bridges them.
+named; framec bridges them.
 
 ### `@@:params.x`
 
 `@@:params.x` is the explicit form of named parameter access. In a
 handler body it's interchangeable with the bare parameter name —
-both compile to the same local. It's most useful in actions, which
+both transpile to the same local. It's most useful in actions, which
 don't have parameters of their own but can read the calling
 handler's parameters via the context stack. We'll see actions in
 Step 13.
@@ -1385,7 +1385,7 @@ combination.
 #### Argument-receiver contract
 
 Each of the three arg channels has a strict-match contract enforced
-by framec at compile time:
+by framec at transpile time:
 
 | Site             | Receiver                       | Code  |
 |------------------|--------------------------------|-------|
@@ -1496,7 +1496,7 @@ def _s_On_hdl_frame_enter(self, __e, compartment):
     self.log_event(f"on at {brightness}: {greeting}")  # new
 ```
 
-`log_event(...)` in Frame source compiles to `self.log_event(...)`
+`log_event(...)` in Frame source transpiles to `self.log_event(...)`
 in Python. Same as any method call.
 
 ### What actions can and can't do
@@ -1520,7 +1520,7 @@ specific compartment. Handlers receive their compartment as a
 parameter (we'll see why in later steps). Actions don't — they're
 called from handlers in any state, so there's no single
 compartment that's theirs to receive. `$.varName` has nothing to
-resolve against in an action, so the framepiler rejects it (E401).
+resolve against in an action, so framec rejects it (E401).
 
 If an action needs a value that only a handler has access to, the
 handler passes it as an argument. For state variables (which we
@@ -1597,7 +1597,7 @@ The lamp adds two operations:
 - `get_event_count()` — a non-static method that returns the
   current event count from the domain.
 
-The operations compile straight to methods on the system class:
+The operations transpile straight to methods on the system class:
 
 ```python
 # new in this step
@@ -1761,9 +1761,9 @@ def log_event(self, msg: str):
     self.event_count = self.event_count + 1
 ```
 
-`@@:data.timestamp = expr` compiles to
+`@@:data.timestamp = expr` transpiles to
 `self._context_stack[-1]._data["timestamp"] = expr`.
-`@@:data.timestamp` (read) compiles to the corresponding lookup.
+`@@:data.timestamp` (read) transpiles to the corresponding lookup.
 
 The handler and the action both reach the same `_data` dict
 because both run during the same interface call, with the same
@@ -1801,10 +1801,10 @@ store as what it actually is.
 
 > **In statically-typed targets** — Reads from `_data` return the
 > target's "any" type. When the value is assigned to a typed
-> local or compared against a typed expression, the framepiler
+> local or compared against a typed expression, framec
 > emits the cast automatically based on the use site's expected
 > type. Direct uses (`if @@:data.flag`) work without a cast in
-> targets that auto-coerce; otherwise the framepiler inserts the
+> targets that auto-coerce; otherwise framec inserts the
 > cast. Authors write the same `@@:data.x` syntax regardless of
 > target.
 
@@ -1913,7 +1913,7 @@ desk = @@Lamp()             # default: "Lamp"
 
 `name` is a **domain parameter** — a constructor argument that's
 in scope when domain field initializers run. The domain block
-declares `name: str = name`, which compiles to `self.name = name`
+declares `name: str = name`, which transpiles to `self.name = name`
 in the constructor. The same identifier means parameter on the
 right, field on the left. The constructor signature picks up the
 parameter:
@@ -1934,10 +1934,10 @@ def __init__(self, name: str = "Lamp"):
     self._context_stack.pop()
 ```
 
-The default value (`"Lamp"`) is filled in by the framepiler at the
+The default value (`"Lamp"`) is filled in by framec at the
 call site, so the constructor signature shows it as a default.
 This works even in target languages that don't support parameter
-defaults — the assembler substitutes the default into the call.
+defaults — framec substitutes the default into the call.
 
 ### Three groups of system parameters
 
@@ -1954,7 +1954,7 @@ total:
 | Enter arg | `$>(name: type)` | Start state's `compartment.enter_args` |
 | Domain arg | `name: type` | Constructor parameter, used in domain initializers |
 
-The sigils tell the framepiler where to route the value. State
+The sigils tell framec where to route the value. State
 args go into the start state's compartment so handlers can read
 them. Enter args go to the start state's `$>` handler.
 
@@ -1970,7 +1970,7 @@ to wire up.
 
 ---
 
-## Step 17 — `const` domain fields and `@@:system.state`
+## Step 17 — `const` domain fields and `@@:system.state.name`
 
 ```frame
 @@system Lamp(name: str = "Lamp", max_brightness: int = 100) {
@@ -1983,7 +1983,7 @@ to wire up.
         }
         // new in this step
         get_state(): str {
-            return @@:system.state
+            return @@:system.state.name
         }
 
     interface:
@@ -2030,9 +2030,9 @@ Two additions:
 
 - `max_brightness` is a `const` domain field. It's set from a
   system parameter at construction and can never be reassigned.
-  Handlers that try will be rejected at compile time (E615).
+  Handlers that try will be rejected at transpile time (E615).
 - A new operation, `get_state()`, returns the current state name
-  via `@@:system.state`.
+  via `@@:system.state.name`.
 
 The constructor emits the const field with a marker for its
 immutability:
@@ -2049,7 +2049,7 @@ def __init__(self, name: str = "Lamp", max_brightness: int = 100):
 ```
 
 In Python, `const` is a comment-only marker — Python doesn't have
-true field immutability. In other targets, the framepiler emits
+true field immutability. In other targets, framec emits
 the language's idiomatic keyword:
 
 | Target | Emitted as |
@@ -2063,11 +2063,11 @@ the language's idiomatic keyword:
 | Rust | (fields are immutable by default) |
 | Python, JS, PHP, Ruby, Lua, Erlang, GDScript, C, Go | comment-only |
 
-The framepiler enforces single-assignment at compile time
+framec enforces single-assignment at transpile time
 regardless of target — even in Python, assigning to a `const`
 field in a handler body is E615.
 
-`@@:system.state` compiles to a direct read off the current
+`@@:system.state.name` transpiles to a direct read off the current
 compartment:
 
 ```python
@@ -2086,7 +2086,7 @@ without dispatching an event to find out.
 
 Two prefixes worth knowing about:
 
-- `@@:system.state` — the only `@@:system` reference currently
+- `@@:system.state.name` — the only `@@:system` reference currently
   defined. Reads the current state name.
 - `@@:self.method(args)` — calls the system's own interface
   method. Goes through the full dispatch pipeline. We'll see this
@@ -2205,7 +2205,7 @@ constructed and populated by the state's `$>` handler.
 > **In statically-typed targets** — `state_vars` is typed as a map
 > of "any": `Map<String, Object>` in Java, `HashMap<String, Box<dyn Any>>`
 > in Rust. Same access pattern, with casts at the read site
-> emitted by the framepiler from the declared variable type:
+> emitted by framec from the declared variable type:
 >
 > ```java
 > int failures = (Integer) compartment.state_vars.get("failures");
@@ -2241,8 +2241,8 @@ def _s_Open_hdl_frame_enter(self, __e, compartment):
 ```
 
 The `if "x" not in compartment.state_vars` guard is the
-initialization pattern. Every state variable gets one — the
-framepiler emits the guard at the top of every state's `$>`
+initialization pattern. Every state variable gets one — framec
+emits the guard at the top of every state's `$>`
 handler.
 
 The guard looks redundant: the compartment was just built with an
@@ -2255,7 +2255,7 @@ parent via `=> $^` — each layer's synthesized `$>` initializes
 its own `state_vars` independently, once.
 
 `$Closed` doesn't declare a `$>` handler in the source, but it has
-a state variable to initialize. The framepiler emits one anyway:
+a state variable to initialize. framec emits one anyway:
 
 ```python
 def _s_Closed_hdl_frame_enter(self, __e, compartment):
@@ -2289,15 +2289,15 @@ def _s_Open_hdl_user_tick(self, __e, compartment):
         return
 ```
 
-`$.failures` in Frame source compiles to
+`$.failures` in Frame source transpiles to
 `compartment.state_vars["failures"]` — direct lookup in the dict
 on the compartment parameter. `$.cooldown_remaining` works the
 same way against `$Open`'s compartment.
 
 This is why handlers receive a `compartment` parameter. State
 variables live on a specific compartment; handlers need a
-reference to that compartment to read or write them. The
-framepiler ensures every handler gets passed the right one — the
+reference to that compartment to read or write them. framec
+ensures every handler gets passed the right one — the
 router calls each state's dispatcher with the system's current
 compartment, which is the dispatcher's own state's compartment.
 
@@ -2343,8 +2343,8 @@ it.
 **Scope is hard to escape.** Frame source has `$.varName` syntax
 for state variables but no syntax for "the variable in some other
 state." Each handler can only reach its own state's variables
-through its own compartment parameter. The framepiler enforces
-this at compile time. There's no way to accidentally read or write
+through its own compartment parameter. framec enforces
+this at transpile time. There's no way to accidentally read or write
 another state's variables.
 
 Domain fields and context data exist for cases where data needs
@@ -2420,7 +2420,7 @@ for you — we'll work through the mechanics below.
 
 ### Self-call mechanics
 
-`@@:self.reading()` compiles to `self.reading()` — a normal Python
+`@@:self.reading()` transpiles to `self.reading()` — a normal Python
 method call:
 
 ```python
@@ -2430,7 +2430,7 @@ def _s_Active_hdl_user_calibrate(self, __e, compartment):
     self._context_stack[-1]._return = True
 ```
 
-The framepiler validates at compile time that the method exists
+framec validates at transpile time that the method exists
 in the system's interface (E601 otherwise) and that the argument
 count matches (E602 otherwise). After validation, the emission is
 straightforward — it really is just a method call.
@@ -2476,7 +2476,7 @@ def _s_Active_hdl_user_reading(self, __e, compartment):
     self._context_stack[-1]._return = self.sensor_value + self.offset
 ```
 
-`@@:(...)` compiles to `self._context_stack[-1]._return = ...`.
+`@@:(...)` transpiles to `self._context_stack[-1]._return = ...`.
 The `[-1]` access takes the top of the stack, which is whatever
 context was pushed most recently — `reading()`'s context.
 
@@ -2676,17 +2676,17 @@ one expression trades fineness of control for compactness.
 
 ### Validation
 
-Self-calls have compile-time checks:
+Self-calls have transpile-time checks:
 
 | Code | Check |
 |---|---|
 | E601 | Method doesn't exist in `interface:` |
 | E602 | Argument count doesn't match |
 | E603 | Bare `@@:self` (must be `@@:self.method(args)`) |
-| E604 | Bare `@@:system` (must be `@@:system.state`) |
+| E604 | Bare `@@:system` (must be `@@:system.state.name`) |
 
 The validation runs at the same stage as other interface
-references. By the time the framepiler emits code, all self-calls
+references. By the time framec emits code, all self-calls
 have been resolved against real interface declarations.
 
 ---
@@ -2885,7 +2885,7 @@ The two stacks operate independently.
 
 `-> pop$` on an empty `_state_stack` is undefined. Python raises
 `IndexError`; other targets fail with their language's equivalent.
-The framepiler doesn't check at compile time — keeping push/pop
+framec doesn't check at transpile time — keeping push/pop
 balanced is the author's responsibility, like keeping any other
 stack discipline.
 
@@ -3012,7 +3012,7 @@ class ThermostatCompartment:
 (`$Active`, `$Off`) and points at the parent's compartment for
 HSM children (`$Heating`, `$Cooling`).
 
-The framepiler emits a static topology table that knows which
+framec emits a static topology table that knows which
 states have parents:
 
 ```python
@@ -3028,7 +3028,7 @@ _HSM_CHAIN = {
 Each entry maps a leaf state name to the chain from root to leaf.
 `$Heating`'s chain is `["Active", "Heating"]` — the parent first,
 the leaf last. `$Active` has just itself. The table is generated
-once at compile time from the source's `=> $Parent` declarations.
+once at transpile time from the source's `=> $Parent` declarations.
 
 The transition into an HSM state needs to build the whole chain,
 not just the leaf compartment. A new helper does this:
@@ -3247,10 +3247,10 @@ of mistake the rebuild-on-every-transition rule makes visible.
 ### Self-calls and HSM
 
 The transition guard pattern from Step 19 (checking
-`@@:system.state` after a self-call that might transition) still
-works with HSM. `@@:system.state` reads the leaf state's name —
+`@@:system.state.name` after a self-call that might transition) still
+works with HSM. `@@:system.state.name` reads the leaf state's name —
 which is what you want. After a self-call that transitions from
-`$Heating` to `$Cooling`, `@@:system.state` returns `"Cooling"`.
+`$Heating` to `$Cooling`, `@@:system.state.name` returns `"Cooling"`.
 The guard pattern is unaffected by HSM depth.
 
 ---
@@ -3367,7 +3367,7 @@ For this to be type-safe, every state in the chain has to declare
 the same signature. Mismatched signatures would mean a parent
 expects different arguments than what the transition provides,
 or a child expects different arguments than what propagated to
-it. The framepiler rejects this at compile time.
+it. framec rejects this at transpile time.
 
 The rule applies to all three channels:
 
@@ -3737,7 +3737,7 @@ unhandled events are genuinely ignored.
 
 `=> $^` is only legal in states that declare an HSM parent. A
 state without a parent has nothing to forward to, so the
-declaration is meaningless. The framepiler rejects it at compile
+declaration is meaningless. framec rejects it at transpile
 time.
 
 ### Trace a forwarded event
@@ -4206,7 +4206,7 @@ CompartmentBlob {
 A Python backend produces this as JSON or MessagePack; a Java
 backend produces it via Jackson; a Rust backend uses serde. The
 output is interchangeable across backends — a Python system's
-saved blob can be restored by a Java system compiled from the
+saved blob can be restored by a Java system transpiled from the
 same Frame source.
 
 This is the cross-host migration property the runtime promises:
@@ -4463,14 +4463,14 @@ The canonical format is the same regardless of target backend.
 This means a system saved on one host can be loaded on another:
 
 - A Java service serializes its state and sends the blob to a
-  worker process compiled from the same Frame source but running
+  worker process transpiled from the same Frame source but running
   in Rust. The Rust process restores from the blob and continues.
 - A Python development environment saves a system's state mid-
   test. A Go production service (same Frame source, different
   backend) loads the blob to reproduce the failure conditions.
 - A Kubernetes pod running a Frame-generated state machine is
   drained. Its state is saved, the pod terminates, a new pod
-  spins up (possibly compiled for a different OS/arch), and
+  spins up (possibly transpiled for a different OS/arch), and
   resumes from the saved state.
 
 This works because the format is Frame's contract, not any
@@ -4478,7 +4478,7 @@ backend's. The state machine moves between hosts, preserving its
 logical state.
 
 The property depends on source agreement. Both endpoints must be
-compiled from the same Frame source — same states, same HSM
+transpiled from the same Frame source — same states, same HSM
 topology, same domain fields, same state variables. The
 `_HSM_CHAIN` validation on restore catches topology drift; the
 `schema_version` field in the blob is reserved for future
@@ -4504,5 +4504,5 @@ the data, not the dispatch.
 This is the property the doc has been building toward: a state
 machine's behavior is fully captured by its source. The runtime
 makes that data observable, restorable, and portable, but doesn't
-change the meaning of the source. Two compiled versions of the
+change the meaning of the source. Two transpiled versions of the
 same system on different hosts are the same machine.

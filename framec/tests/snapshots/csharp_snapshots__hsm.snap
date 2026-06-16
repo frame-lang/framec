@@ -177,24 +177,39 @@ public class MiniHsm {
         MiniHsmFrameEvent __e = new MiniHsmFrameEvent("wake", new List<object>());
         MiniHsmFrameContext __ctx = new MiniHsmFrameContext(__e, null);
         _context_stack.Add(__ctx);
-        __kernel(_context_stack[_context_stack.Count - 1]._event);
-        _context_stack.RemoveAt(_context_stack.Count - 1);
+        try {
+            __kernel(_context_stack[_context_stack.Count - 1]._event);
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+        } catch {
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+            throw;
+        }
     }
 
     public void sleep() {
         MiniHsmFrameEvent __e = new MiniHsmFrameEvent("sleep", new List<object>());
         MiniHsmFrameContext __ctx = new MiniHsmFrameContext(__e, null);
         _context_stack.Add(__ctx);
-        __kernel(_context_stack[_context_stack.Count - 1]._event);
-        _context_stack.RemoveAt(_context_stack.Count - 1);
+        try {
+            __kernel(_context_stack[_context_stack.Count - 1]._event);
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+        } catch {
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+            throw;
+        }
     }
 
     public void signal() {
         MiniHsmFrameEvent __e = new MiniHsmFrameEvent("signal", new List<object>());
         MiniHsmFrameContext __ctx = new MiniHsmFrameContext(__e, null);
         _context_stack.Add(__ctx);
-        __kernel(_context_stack[_context_stack.Count - 1]._event);
-        _context_stack.RemoveAt(_context_stack.Count - 1);
+        try {
+            __kernel(_context_stack[_context_stack.Count - 1]._event);
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+        } catch {
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+            throw;
+        }
     }
 
     private void _state_Live(MiniHsmFrameEvent __e, MiniHsmCompartment compartment) {
@@ -251,20 +266,20 @@ public class MiniHsm {
     }
 
     private void _s_Awake_hdl_frame_enter(MiniHsmFrameEvent __e, MiniHsmCompartment compartment) {
-        self.awakes = self.awakes + 1
+        this.awakes = this.awakes + 1
     }
 
     private void _s_Awake_hdl_user_signal(MiniHsmFrameEvent __e, MiniHsmCompartment compartment) {
-        self.last = 1;
+        this.last = 1;
         _state_Live(__e, compartment.parent_compartment);
     }
 
     private void _s_Asleep_hdl_frame_enter(MiniHsmFrameEvent __e, MiniHsmCompartment compartment) {
-        self.sleeps = self.sleeps + 1
+        this.sleeps = this.sleeps + 1
     }
 
     private void _s_Asleep_hdl_user_signal(MiniHsmFrameEvent __e, MiniHsmCompartment compartment) {
-        self.last = 2;
+        this.last = 2;
         _state_Live(__e, compartment.parent_compartment);
     }
 

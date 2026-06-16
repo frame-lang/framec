@@ -32,10 +32,14 @@ read domain variables and the system / self / return accessors but cannot fire
 
 ### async system
 
-A [system](#system) whose [interface](#interface) methods are generated as the
-host language's asynchronous form (`async`/`await`, `CompletableFuture`,
-`Future`, …) while its internal [dispatch](#dispatch) stays synchronous. Enabled
-by an `async` modifier on interface methods. See
+A [system](#system) that declares one or more `async` members (interface
+method, [action](#action), or [operation](#operation)) and carries the
+**required** `@@[async]` header attribute. Its public methods are generated as
+the host language's asynchronous form (`async`/`await`, `CompletableFuture`,
+`Future`, …). An async system is emitted as two classes — a public
+[casing](#casing) that enforces single-driver entry and a private
+[machine](#machine-async-system) that holds the dispatch core. Declaring an async
+member without `@@[async]` is the hard error **E720**. See
 [language reference § Async](frame_language.md#async).
 
 ### backbone
@@ -47,6 +51,18 @@ to [oracles](#oracle). Named for being the structural spine the specialists
 attach to. framec's own parser is organized this way — one `SystemBackbone`
 system whose flat self-looping states cover the entire token-level outer grammar.
 See [RFC-0039](rfcs/rfc-0039.md#terminology).
+
+### casing
+
+The public class framec emits for an [async system](#async-system) — the one
+bearing the user-declared name. Each [interface](#interface) method is a gated
+wrapper that enforces the single-driver contract (raising **E703** on
+concurrent external entry), then delegates to the private
+[machine](#machine-async-system) and clears the gate on both the success and
+the error path. [Operations](#operation) and persist save/load pass through
+without the gate. The casing is the only surface external callers and
+[composition](#composed-system) touch. Introduced in
+[RFC-0043](rfcs/rfc-0043.md). See [language reference § Async](frame_language.md#async).
 
 ### compartment
 
@@ -79,8 +95,20 @@ See [RFC-0015](rfcs/rfc-0015.md).
 The runtime act of routing an incoming [frame event](#frame-event) to the
 [event handler](#event-handler) for the current [state](#state) — walking up the
 [HSM](#hierarchical-state-machine-hsm) parent chain if the current state
-[forwards](#forward). Performed by the per-system *kernel* function. See
+[forwards](#forward). Performed by the per-system [kernel](#kernel) function,
+which calls the [router](#router) and the current state's
+[dispatcher](#dispatcher). See
 [runtime walkthrough § Step 1](frame_runtime.md#step-1--a-system-that-accepts-a-call).
+
+### dispatcher
+
+*(`_state_<State>` in generated code.)* A [state](#state)'s own event-handling
+function — one per state — that matches a [frame event](#frame-event)'s message
+to that state's [event handler](#event-handler) (or does nothing if the state
+has no handler for it). Selected and called by the [router](#router). Not to be
+confused with [dispatch](#dispatch), the runtime *act* of routing an event: the
+dispatcher is the per-state function that performs the final match. See
+[runtime walkthrough § Step 2](frame_runtime.md#step-2--adding-a-state).
 
 ### domain
 
@@ -155,6 +183,22 @@ store. A stack of frame contexts (the *context stack*) exists so a
 event: its name and its positional parameters. See
 [runtime walkthrough § Step 1](frame_runtime.md#step-1--a-system-that-accepts-a-call).
 
+### framec
+
+The Frame [transpiler](#transpiler): the command-line tool that reads a Frame
+source file, expands its `@@system` blocks into an idiomatic state-machine
+implementation in the file's target language, and passes all native
+host code through unchanged. `framec` is the canonical name for the tool in both
+prose and CLI examples (`framec source.fpy -l rust`). Its formal project name is
+the [framepiler](#framepiler).
+
+### framepiler
+
+The formal project name for [framec](#framec) — the Frame
+[transpiler](#transpiler). The two names refer to the same tool: "framepiler" is
+the project/repository name, while `framec` is the binary and the name used
+throughout the guides. Architecture: [framepiler design](framepiler_design.md).
+
 ### hierarchical state machine (HSM)
 
 A [state machine](#machine) in which a [state](#state) may declare a parent
@@ -168,6 +212,15 @@ A [system](#system)'s public API, declared in the `interface:` block: the named
 methods callers may invoke. Each interface call is [dispatched](#dispatch) to
 the current [state](#state). See
 [language reference § Interface Section](frame_language.md#interface-section).
+
+### kernel
+
+*(`__kernel`.)* The per-system runtime entry point for one [dispatch](#dispatch):
+an interface-method wrapper builds a [frame event](#frame-event) and hands it to
+the kernel, which calls the [router](#router) and then drains any pending
+[transitions](#transition). One kernel per system; it holds no state-selection
+logic itself. See
+[runtime walkthrough § Step 2](frame_runtime.md#step-2--adding-a-state).
 
 ### load
 
@@ -186,6 +239,23 @@ A [system](#system)'s state machine, declared in the `machine:` block: its
 [states](#state), their [handlers](#event-handler), and the
 [transitions](#transition) between them. See
 [language reference § Machine Section](frame_language.md#machine-section).
+
+Two other senses of the word appear in the docs: colloquially, *machine* is
+Frame's shorthand for the whole automaton (the systems it generates), and an
+[async system](#async-system) emits a distinct private class — see
+[machine (async system)](#machine-async-system).
+
+### machine (async system)
+
+The private class (`_<Name>Machine`) framec emits for an
+[async system](#async-system), holding the actual dispatch core —
+[kernel](#kernel), [router](#router), state methods, transition loop, and
+lifecycle cascades. It is the previous-release single-class emission minus the
+public name; self-calls and kernel-internal dispatch run against it directly,
+bypassing the [casing](#casing)'s gate. It is internal: user code must not name
+`_<Name>Machine` directly. Distinct from [machine](#machine) (the `machine:`
+block of states) and from the colloquial use of *machine* for the whole
+automaton. Introduced in [RFC-0043](rfcs/rfc-0043.md).
 
 ### no-initialization
 
@@ -269,6 +339,14 @@ instance with [no-initialization](#no-initialization), then call [`load`](#load)
 For a [composed system](#composed-system), the same pattern recurses into nested
 `@@system` domain fields. See [RFC-0015](rfcs/rfc-0015.md).
 
+### router
+
+*(`__router`.)* The single dispatch primitive: it reads the current
+[state](#state) name from the leaf [compartment](#compartment) and calls that
+state's [dispatcher](#dispatcher) — one `if/elif` branch per state. Invoked by
+the [kernel](#kernel). See
+[runtime walkthrough § Step 2](frame_runtime.md#step-2--adding-a-state).
+
 ### save
 
 The serialization half of the [persist contract](#persist-contract): an instance
@@ -325,7 +403,7 @@ with `$.name`. See
 
 A Frame state machine as a unit: the `@@system` declaration with its
 `interface:`, `machine:`, `actions:`, `operations:`, and `domain:` blocks. The
-compilation target. See
+transpilation target. See
 [language reference § System Declaration](frame_language.md#system-declaration).
 
 ### system context
@@ -352,6 +430,15 @@ fresh [compartment](#compartment) for the target, and runs the target's `$>`
 [enter handler](#-enter-handler). See
 [language reference § Transition](frame_language.md#transition---state).
 
+### transpiler
+
+A source-to-source translator: a tool that reads source in one language and
+emits source in another, rather than producing machine code or bytecode.
+[framec](#framec) is a transpiler — it turns Frame `@@system` blocks into
+target-language source (Python, Rust, TypeScript, …) that a developer reads,
+edits, and compiles with that language's own toolchain. Frame uses *transpiler*
+(verb: *transpile*) throughout the documentation.
+
 ---
 
 ## Symbols
@@ -360,7 +447,7 @@ fresh [compartment](#compartment) for the target, and runs the target's `$>`
 
 The *system context* token. On its own it introduces a context accessor
 (`@@:return`, `@@:params.x`, `@@:event`, `@@:data.k`, `@@:system.state`,
-`@@:self.method(...)`); as a prefix it tags compiler-recognized constructs
+`@@:self.method(...)`); as a prefix it tags framec-recognized constructs
 (`@@system`, `@@[...]` attributes, `@@SystemName(...)` instantiation,
 `@@!Foo()`). See [language reference § System Context — `@@`](frame_language.md#system-context--).
 
@@ -377,7 +464,7 @@ and [RFC-0013](rfcs/rfc-0013.md).
 
 ### `@@[target(...)]`
 
-File-level attribute selecting the code-generation backend. See
+File-level attribute selecting the target backend. See
 [language reference § `@@[target(...)]`](frame_language.md#target).
 
 ### `@@[main]`
@@ -427,7 +514,7 @@ a resource handle, which the user reattaches explicitly). Applies only to
 
 Module-level **analysis directive** naming a Frame source file —
 `@@import "./other.frm"`. It tells framec where a referenced [system](#system)'s
-source lives so framec can read it *while compiling the current file*: to check
+source lives so framec can read it *while transpiling the current file*: to check
 this file's use of that system (argument arity/types, existence) and to resolve
 cross-file facts code generation needs (notably a [composed](#composed-system)
 child's [save](#save) / [load](#load) method names). It is **not** a

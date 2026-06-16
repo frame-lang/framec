@@ -158,32 +158,32 @@ func (s *PushPop) Ping() {
     __e := PushPopFrameEvent{_message: "ping", _parameters: []any{}}
     __ctx := PushPopFrameContext{_event: __e, _data: make(map[string]any)}
     s._context_stack = append(s._context_stack, __ctx)
+    defer func() { s._context_stack = s._context_stack[:len(s._context_stack)-1] }()
     s.__kernel(&s._context_stack[len(s._context_stack)-1]._event)
-    s._context_stack = s._context_stack[:len(s._context_stack)-1]
 }
 
 func (s *PushPop) Nest() {
     __e := PushPopFrameEvent{_message: "nest", _parameters: []any{}}
     __ctx := PushPopFrameContext{_event: __e, _data: make(map[string]any)}
     s._context_stack = append(s._context_stack, __ctx)
+    defer func() { s._context_stack = s._context_stack[:len(s._context_stack)-1] }()
     s.__kernel(&s._context_stack[len(s._context_stack)-1]._event)
-    s._context_stack = s._context_stack[:len(s._context_stack)-1]
 }
 
 func (s *PushPop) Unnest() {
     __e := PushPopFrameEvent{_message: "unnest", _parameters: []any{}}
     __ctx := PushPopFrameContext{_event: __e, _data: make(map[string]any)}
     s._context_stack = append(s._context_stack, __ctx)
+    defer func() { s._context_stack = s._context_stack[:len(s._context_stack)-1] }()
     s.__kernel(&s._context_stack[len(s._context_stack)-1]._event)
-    s._context_stack = s._context_stack[:len(s._context_stack)-1]
 }
 
 func (s *PushPop) Leaf() {
     __e := PushPopFrameEvent{_message: "leaf", _parameters: []any{}}
     __ctx := PushPopFrameContext{_event: __e, _data: make(map[string]any)}
     s._context_stack = append(s._context_stack, __ctx)
+    defer func() { s._context_stack = s._context_stack[:len(s._context_stack)-1] }()
     s.__kernel(&s._context_stack[len(s._context_stack)-1]._event)
-    s._context_stack = s._context_stack[:len(s._context_stack)-1]
 }
 
 func (s *PushPop) _state_Idle(__e *PushPopFrameEvent, compartment *PushPopCompartment) {
@@ -219,13 +219,13 @@ func (s *PushPop) _s_Idle_hdl_user_nest(__e *PushPopFrameEvent, compartment *Pus
 
 func (s *PushPop) _s_Idle_hdl_user_ping(__e *PushPopFrameEvent, compartment *PushPopCompartment) {
     {
-    self.pings = self.pings + 1
+    s.pings = s.pings + 1
     }
 }
 
 func (s *PushPop) _s_Nested_hdl_user_leaf(__e *PushPopFrameEvent, compartment *PushPopCompartment) {
     {
-    self.leaves = self.leaves + 1
+    s.leaves = s.leaves + 1
     }
 }
 

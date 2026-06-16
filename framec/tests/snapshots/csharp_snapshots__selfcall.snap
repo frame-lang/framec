@@ -169,18 +169,28 @@ public class SelfCall {
         SelfCallFrameEvent __e = new SelfCallFrameEvent("kick", new List<object>());
         SelfCallFrameContext __ctx = new SelfCallFrameContext(__e, null);
         _context_stack.Add(__ctx);
-        __kernel(_context_stack[_context_stack.Count - 1]._event);
-        _context_stack.RemoveAt(_context_stack.Count - 1);
+        try {
+            __kernel(_context_stack[_context_stack.Count - 1]._event);
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+        } catch {
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+            throw;
+        }
     }
 
     public int report() {
         SelfCallFrameEvent __e = new SelfCallFrameEvent("report", new List<object>());
         SelfCallFrameContext __ctx = new SelfCallFrameContext(__e, null);
         _context_stack.Add(__ctx);
-        __kernel(_context_stack[_context_stack.Count - 1]._event);
-        var __result = (int) _context_stack[_context_stack.Count - 1]._return;
-        _context_stack.RemoveAt(_context_stack.Count - 1);
-        return __result;
+        try {
+            __kernel(_context_stack[_context_stack.Count - 1]._event);
+            var __result = (int) _context_stack[_context_stack.Count - 1]._return;
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+            return __result;
+        } catch {
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+            throw;
+        }
     }
 
     private void _state_Active(SelfCallFrameEvent __e, SelfCallCompartment compartment) {
@@ -195,12 +205,12 @@ public class SelfCall {
     }
 
     private void _s_Active_hdl_user_kick(SelfCallFrameEvent __e, SelfCallCompartment compartment) {
-        self.count = self.count + 1;
+        this.count = this.count + 1;
         this.report();
         if (_context_stack.Count > 0 && _context_stack[_context_stack.Count - 1]._transitioned) return;
     }
 
     private void _s_Active_hdl_user_report(SelfCallFrameEvent __e, SelfCallCompartment compartment) {
-        _context_stack[_context_stack.Count - 1]._return = self.count;
+        _context_stack[_context_stack.Count - 1]._return = this.count;
     }
 }

@@ -8,6 +8,9 @@ expression: "compile_fixture(\"02_hsm\", \"cpp\")"
 #include <any>
 #include <memory>
 #include <functional>
+#include <stdexcept>
+#include <cstdlib>
+#include <cstdio>
 
 class MiniHsmFrameEvent {
 public:
@@ -184,23 +187,23 @@ private:
     }
 
     void _s_Awake_hdl_frame_enter(MiniHsmFrameEvent& __e, std::shared_ptr<MiniHsmCompartment> compartment) {
-        self.awakes = self.awakes + 1
+        this->awakes = this->awakes + 1
 
     }
 
     void _s_Awake_hdl_user_signal(MiniHsmFrameEvent& __e, std::shared_ptr<MiniHsmCompartment> compartment) {
-        self.last = 1;
+        this->last = 1;
         _state_Live(__e, compartment->parent_compartment);
 
     }
 
     void _s_Asleep_hdl_frame_enter(MiniHsmFrameEvent& __e, std::shared_ptr<MiniHsmCompartment> compartment) {
-        self.sleeps = self.sleeps + 1
+        this->sleeps = this->sleeps + 1
 
     }
 
     void _s_Asleep_hdl_user_signal(MiniHsmFrameEvent& __e, std::shared_ptr<MiniHsmCompartment> compartment) {
-        self.last = 2;
+        this->last = 2;
         _state_Live(__e, compartment->parent_compartment);
 
     }
@@ -243,8 +246,8 @@ public:
         MiniHsmFrameEvent __e("wake");
         MiniHsmFrameContext __ctx(std::move(__e));
         _context_stack.push_back(std::move(__ctx));
+        struct __CtxGuard { decltype(_context_stack)& s; ~__CtxGuard() { s.pop_back(); } } __ctx_guard{_context_stack};
         __kernel(_context_stack.back()._event);
-        _context_stack.pop_back();
 
     }
 
@@ -252,8 +255,8 @@ public:
         MiniHsmFrameEvent __e("sleep");
         MiniHsmFrameContext __ctx(std::move(__e));
         _context_stack.push_back(std::move(__ctx));
+        struct __CtxGuard { decltype(_context_stack)& s; ~__CtxGuard() { s.pop_back(); } } __ctx_guard{_context_stack};
         __kernel(_context_stack.back()._event);
-        _context_stack.pop_back();
 
     }
 
@@ -261,8 +264,8 @@ public:
         MiniHsmFrameEvent __e("signal");
         MiniHsmFrameContext __ctx(std::move(__e));
         _context_stack.push_back(std::move(__ctx));
+        struct __CtxGuard { decltype(_context_stack)& s; ~__CtxGuard() { s.pop_back(); } } __ctx_guard{_context_stack};
         __kernel(_context_stack.back()._event);
-        _context_stack.pop_back();
 
     }
 };

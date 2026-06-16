@@ -273,7 +273,7 @@ pub fn build_system_model(system: &SystemAst, target: &str, source: &[u8]) -> Sy
                         .map(|sv| StateVarModel {
                             name: sv.name.clone(),
                             var_type: format_type_opt(&sv.var_type),
-                            init: sv.init.as_ref().map(|e| format_expr(e)),
+                            init: sv.initializer_text.clone(),
                         })
                         .collect(),
                     state_params: s

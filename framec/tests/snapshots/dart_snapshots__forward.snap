@@ -173,16 +173,22 @@ class Forward {
         final __e = ForwardFrameEvent("run", []);
         final __ctx = ForwardFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(__e);
-        _context_stack.removeLast();
+        try {
+            __kernel(__e);
+        } finally {
+            _context_stack.removeLast();
+        }
     }
 
     void finish() {
         final __e = ForwardFrameEvent("finish", []);
         final __ctx = ForwardFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(__e);
-        _context_stack.removeLast();
+        try {
+            __kernel(__e);
+        } finally {
+            _context_stack.removeLast();
+        }
     }
 
     void _state_Start(ForwardFrameEvent __e, ForwardCompartment compartment) {
@@ -211,7 +217,7 @@ class Forward {
     }
 
     void _s_Start_hdl_user_run(ForwardFrameEvent __e, ForwardCompartment compartment) {
-        self.starts = self.starts + 1;
+        this.starts = this.starts + 1;
         final __compartment = this.__prepareEnter("Middle", [], []);
         __compartment.forward_event = __e;
         this.__transition(__compartment);
@@ -225,7 +231,7 @@ class Forward {
     }
 
     void _s_Middle_hdl_user_run(ForwardFrameEvent __e, ForwardCompartment compartment) {
-        self.middles = self.middles + 1
+        this.middles = this.middles + 1
     }
 
     void _s_End_hdl_user_finish(ForwardFrameEvent __e, ForwardCompartment compartment) {

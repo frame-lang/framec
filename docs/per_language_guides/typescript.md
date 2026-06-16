@@ -46,7 +46,7 @@ class WithInterface {
 }
 ```
 
-Frame's `self.field` lowers to `this.field`. Method calls use
+Frame's `@@:self.field` lowers to `this.field`. Method calls use
 `s.greet("World")`.
 
 ---
@@ -71,9 +71,10 @@ items: number[] = [];
 The Frame `: type` annotation IS the TypeScript type — write
 `: string`, `: number[]`, `: Map<string, number>`, etc.
 
-**Frame type names map cleanly to TypeScript types:**
+**Write TypeScript's own type names directly** — framec passes the
+annotation through verbatim (the name you write *is* the emitted type):
 
-| Frame              | TypeScript          | Notes |
+| You write          | TypeScript meaning  | Notes |
 |--------------------|---------------------|-------|
 | `number`           | `number`            | float64 |
 | `string`           | `string`            | |
@@ -130,6 +131,17 @@ async fetch(key: string): Promise<string> {
 
 Promises are first-class in TS; `Promise<T>` is the standard
 async return shape.
+
+### Single-driver gate (`@@[async]`)
+
+An `@@[async]` system is emitted as a public **casing** (`export
+class <Name>`) wrapping a private **`_<Name>Machine`**. Each
+interface method gates external entry: if the system is already
+`busy` when a second call arrives, it throws
+`new Error("E703: …")` (the single-driver contract, **E703**) — a
+normal, catchable error. The gate is set on entry and cleared in a
+`finally`, so it clears on both the resolved and the rejected path.
+See [language reference § Async](../frame_language.md#async).
 
 ---
 

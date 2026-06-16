@@ -56,7 +56,7 @@ class WithInterface {
 }
 ```
 
-Frame's `self.field` lowers to `this.field` (Kotlin's instance
+Frame's `@@:self.field` lowers to `this.field` (Kotlin's instance
 reference is `this`). Method calls are `s.greet("World")` — no
 explicit `this.` needed at call sites.
 
@@ -93,11 +93,12 @@ var parent: Counter? = null
 Frame doesn't auto-add `?` for nullable types — you must declare
 the nullability explicitly in the type string.
 
-**Frame's type names map cleanly to Kotlin types:**
+**Write Kotlin's own type names directly** — framec passes the
+annotation through verbatim (the name you write *is* the emitted type):
 
-| Frame              | Kotlin             | Notes |
+| You write          | Kotlin meaning     | Notes |
 |--------------------|--------------------|-------|
-| `int` / `Int`      | `Int`              | preferred: `Int` for type-fidelity |
+| `Int`              | `Int`              | write `Int`, not a generic `int` |
 | `String`           | `String`           | |
 | `Boolean`          | `Boolean`          | |
 | `Double`           | `Double`           | |
@@ -190,6 +191,16 @@ The dependency: `org.jetbrains.kotlinx:kotlinx-coroutines-core`
 must be on the classpath. The matrix harness configures this
 via `kotlinx-coroutines-core-*.jar` in
 `docker/runners/kotlin_runner.sh`.
+
+### Single-driver gate (`@@[async]`)
+
+An `@@[async]` system is emitted as a public **casing** (`class
+<Name>`) wrapping a private **`_<Name>Machine`**. Each `suspend fun`
+on the casing gates external entry: if the system is already `busy`
+when a second call arrives, it throws
+`IllegalStateException("E703: …")` (the single-driver contract,
+**E703**). The gate is set on entry and cleared in a `finally`. See
+[language reference § Async](../frame_language.md#async).
 
 ---
 
@@ -310,7 +321,7 @@ above.
 lowers to bare `WithInterface()`.
 
 **`this.field`, not `self.field`.** Inside handler bodies,
-Frame's `self.x` lowers to `this.x` (or just `x` since
+Frame's `@@:self.x` lowers to `this.x` (or just `x` since
 Kotlin's resolution is implicit on member access). Native
 passthrough should use `this.` if disambiguation is needed.
 

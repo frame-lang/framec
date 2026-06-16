@@ -166,24 +166,33 @@ export class MiniHsm {
         const __e = new MiniHsmFrameEvent("wake", []);
         const __ctx = new MiniHsmFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        this._context_stack.pop();
+        try {
+            this.__kernel(__e);
+        } finally {
+            this._context_stack.pop();
+        }
     }
 
     public sleep() {
         const __e = new MiniHsmFrameEvent("sleep", []);
         const __ctx = new MiniHsmFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        this._context_stack.pop();
+        try {
+            this.__kernel(__e);
+        } finally {
+            this._context_stack.pop();
+        }
     }
 
     public signal() {
         const __e = new MiniHsmFrameEvent("signal", []);
         const __ctx = new MiniHsmFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        this._context_stack.pop();
+        try {
+            this.__kernel(__e);
+        } finally {
+            this._context_stack.pop();
+        }
     }
 
     private _state_Live(__e: MiniHsmFrameEvent, compartment: MiniHsmCompartment) {
@@ -240,20 +249,20 @@ export class MiniHsm {
     }
 
     private _s_Awake_hdl_frame_enter(__e: MiniHsmFrameEvent, compartment: MiniHsmCompartment) {
-        self.awakes = self.awakes + 1
+        this.awakes = this.awakes + 1
     }
 
     private _s_Awake_hdl_user_signal(__e: MiniHsmFrameEvent, compartment: MiniHsmCompartment) {
-        self.last = 1;
+        this.last = 1;
         this._state_Live(__e, compartment.parent_compartment!);
     }
 
     private _s_Asleep_hdl_frame_enter(__e: MiniHsmFrameEvent, compartment: MiniHsmCompartment) {
-        self.sleeps = self.sleeps + 1
+        this.sleeps = this.sleeps + 1
     }
 
     private _s_Asleep_hdl_user_signal(__e: MiniHsmFrameEvent, compartment: MiniHsmCompartment) {
-        self.last = 2;
+        this.last = 2;
         this._state_Live(__e, compartment.parent_compartment!);
     }
 

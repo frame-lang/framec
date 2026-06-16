@@ -159,7 +159,11 @@ function LinearFsm:start()
     local __e = LinearFsmFrameEvent.new("start", {})
     local __ctx = LinearFsmFrameContext.new(__e, nil)
     self._context_stack[#self._context_stack + 1] = __ctx
-    self:__kernel(__e)
+    local __ok, __err = pcall(self.__kernel, self, __e)
+    if not __ok then
+        self._context_stack[#self._context_stack] = nil
+        error(__err)
+    end
     return table.remove(self._context_stack)._return
 end
 
@@ -167,7 +171,11 @@ function LinearFsm:progress(amount)
     local __e = LinearFsmFrameEvent.new("progress", {amount})
     local __ctx = LinearFsmFrameContext.new(__e, nil)
     self._context_stack[#self._context_stack + 1] = __ctx
-    self:__kernel(__e)
+    local __ok, __err = pcall(self.__kernel, self, __e)
+    if not __ok then
+        self._context_stack[#self._context_stack] = nil
+        error(__err)
+    end
     return table.remove(self._context_stack)._return
 end
 
@@ -175,7 +183,11 @@ function LinearFsm:finish()
     local __e = LinearFsmFrameEvent.new("finish", {})
     local __ctx = LinearFsmFrameContext.new(__e, nil)
     self._context_stack[#self._context_stack + 1] = __ctx
-    self:__kernel(__e)
+    local __ok, __err = pcall(self.__kernel, self, __e)
+    if not __ok then
+        self._context_stack[#self._context_stack] = nil
+        error(__err)
+    end
     return table.remove(self._context_stack)._return
 end
 

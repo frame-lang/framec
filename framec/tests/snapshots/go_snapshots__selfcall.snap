@@ -153,18 +153,18 @@ func (s *SelfCall) Kick() {
     __e := SelfCallFrameEvent{_message: "kick", _parameters: []any{}}
     __ctx := SelfCallFrameContext{_event: __e, _data: make(map[string]any)}
     s._context_stack = append(s._context_stack, __ctx)
+    defer func() { s._context_stack = s._context_stack[:len(s._context_stack)-1] }()
     s.__kernel(&s._context_stack[len(s._context_stack)-1]._event)
-    s._context_stack = s._context_stack[:len(s._context_stack)-1]
 }
 
 func (s *SelfCall) Report() int {
     __e := SelfCallFrameEvent{_message: "report", _parameters: []any{}}
     __ctx := SelfCallFrameContext{_event: __e, _data: make(map[string]any)}
     s._context_stack = append(s._context_stack, __ctx)
+    defer func() { s._context_stack = s._context_stack[:len(s._context_stack)-1] }()
     s.__kernel(&s._context_stack[len(s._context_stack)-1]._event)
     var __result int
     if __rv := s._context_stack[len(s._context_stack)-1]._return; __rv != nil { __result = __rv.(int) }
-    s._context_stack = s._context_stack[:len(s._context_stack)-1]
     return __result
 }
 
@@ -181,7 +181,7 @@ func (s *SelfCall) _state_Active(__e *SelfCallFrameEvent, compartment *SelfCallC
 
 func (s *SelfCall) _s_Active_hdl_user_kick(__e *SelfCallFrameEvent, compartment *SelfCallCompartment) {
     {
-    self.count = self.count + 1
+    s.count = s.count + 1
     s.Report()
     if len(s._context_stack) > 0 && s._context_stack[len(s._context_stack)-1]._transitioned { return }
     }

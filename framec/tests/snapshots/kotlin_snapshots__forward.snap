@@ -134,16 +134,26 @@ class Forward {
         val __e = ForwardFrameEvent("run", mutableListOf())
         val __ctx = ForwardFrameContext(__e, null)
         _context_stack.add(__ctx)
-        __kernel(_context_stack[_context_stack.size - 1]._event)
-        _context_stack.removeAt(_context_stack.size - 1)
+        try {
+            __kernel(_context_stack[_context_stack.size - 1]._event)
+            _context_stack.removeAt(_context_stack.size - 1)
+        } catch (__frame_err: Throwable) {
+            _context_stack.removeAt(_context_stack.size - 1)
+            throw __frame_err
+        }
     }
 
     fun finish() {
         val __e = ForwardFrameEvent("finish", mutableListOf())
         val __ctx = ForwardFrameContext(__e, null)
         _context_stack.add(__ctx)
-        __kernel(_context_stack[_context_stack.size - 1]._event)
-        _context_stack.removeAt(_context_stack.size - 1)
+        try {
+            __kernel(_context_stack[_context_stack.size - 1]._event)
+            _context_stack.removeAt(_context_stack.size - 1)
+        } catch (__frame_err: Throwable) {
+            _context_stack.removeAt(_context_stack.size - 1)
+            throw __frame_err
+        }
     }
 
     private fun _state_Start(__e: ForwardFrameEvent, compartment: ForwardCompartment) {
@@ -172,7 +182,7 @@ class Forward {
     }
 
     private fun _s_Start_hdl_user_run(__e: ForwardFrameEvent, compartment: ForwardCompartment) {
-        self.starts = self.starts + 1
+        this.starts = this.starts + 1
         val __compartment = __prepareEnter("Middle", mutableListOf<Any?>(), mutableListOf<Any?>())
         __compartment.forward_event = __e
         __transition(__compartment)
@@ -186,7 +196,7 @@ class Forward {
     }
 
     private fun _s_Middle_hdl_user_run(__e: ForwardFrameEvent, compartment: ForwardCompartment) {
-        self.middles = self.middles + 1
+        this.middles = this.middles + 1
     }
 
     private fun _s_End_hdl_user_finish(__e: ForwardFrameEvent, compartment: ForwardCompartment) {

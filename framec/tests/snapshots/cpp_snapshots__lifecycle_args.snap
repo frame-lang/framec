@@ -8,6 +8,9 @@ expression: "compile_fixture(\"13_lifecycle_args\", \"cpp\")"
 #include <any>
 #include <memory>
 #include <functional>
+#include <stdexcept>
+#include <cstdlib>
+#include <cstdio>
 
 class LifecycleArgsFrameEvent {
 public:
@@ -158,19 +161,19 @@ private:
     void _s_Active_hdl_frame_enter(LifecycleArgsFrameEvent& __e, std::shared_ptr<LifecycleArgsCompartment> compartment) {
         auto count = std::any_cast<int>(compartment->enter_args[0]);
         auto name = std::any_cast<std::string>(compartment->enter_args[1]);
-        self.sum = count + 1;
-        self.label = name;
+        this->sum = count + 1;
+        this->label = name;
 
     }
 
     void _s_Active_hdl_user_tag(LifecycleArgsFrameEvent& __e, std::shared_ptr<LifecycleArgsCompartment> compartment) {
-        _context_stack.back()._return = std::any(self.label);
+        _context_stack.back()._return = std::any(this->label);
                         return
 
     }
 
     void _s_Active_hdl_user_total(LifecycleArgsFrameEvent& __e, std::shared_ptr<LifecycleArgsCompartment> compartment) {
-        _context_stack.back()._return = std::any(self.sum);
+        _context_stack.back()._return = std::any(this->sum);
                         return
 
     }
@@ -204,8 +207,8 @@ public:
         LifecycleArgsFrameEvent __e("load", std::vector<std::any>{n, label});
         LifecycleArgsFrameContext __ctx(std::move(__e));
         _context_stack.push_back(std::move(__ctx));
+        struct __CtxGuard { decltype(_context_stack)& s; ~__CtxGuard() { s.pop_back(); } } __ctx_guard{_context_stack};
         __kernel(_context_stack.back()._event);
-        _context_stack.pop_back();
 
     }
 
@@ -213,9 +216,9 @@ public:
         LifecycleArgsFrameEvent __e("total");
         LifecycleArgsFrameContext __ctx(std::move(__e), std::any(int()));
         _context_stack.push_back(std::move(__ctx));
+        struct __CtxGuard { decltype(_context_stack)& s; ~__CtxGuard() { s.pop_back(); } } __ctx_guard{_context_stack};
         __kernel(_context_stack.back()._event);
         auto __result = std::any_cast<int>(std::move(_context_stack.back()._return));
-        _context_stack.pop_back();
         return __result;
 
     }
@@ -224,9 +227,9 @@ public:
         LifecycleArgsFrameEvent __e("tag");
         LifecycleArgsFrameContext __ctx(std::move(__e), std::any(std::string()));
         _context_stack.push_back(std::move(__ctx));
+        struct __CtxGuard { decltype(_context_stack)& s; ~__CtxGuard() { s.pop_back(); } } __ctx_guard{_context_stack};
         __kernel(_context_stack.back()._event);
         auto __result = std::any_cast<std::string>(std::move(_context_stack.back()._return));
-        _context_stack.pop_back();
         return __result;
 
     }

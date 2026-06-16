@@ -153,17 +153,17 @@ public class Actions {
         let __e = ActionsFrameEvent(message: "increment", parameters: [n])
         let __ctx = ActionsFrameContext(event: __e)
         _context_stack.append(__ctx)
+        defer { _context_stack.removeLast() }
         __kernel(_context_stack[_context_stack.count - 1]._event)
-        _context_stack.removeLast()
     }
 
     public func get_total() -> Int {
         let __e = ActionsFrameEvent(message: "get_total", parameters: [])
         let __ctx = ActionsFrameContext(event: __e, defaultReturn: 0)
         _context_stack.append(__ctx)
+        defer { _context_stack.removeLast() }
         __kernel(_context_stack[_context_stack.count - 1]._event)
         let __result = _context_stack[_context_stack.count - 1]._return as! Int
-        _context_stack.removeLast()
         return __result
     }
 

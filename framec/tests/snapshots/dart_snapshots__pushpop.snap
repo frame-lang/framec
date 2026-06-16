@@ -169,32 +169,44 @@ class PushPop {
         final __e = PushPopFrameEvent("ping", []);
         final __ctx = PushPopFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(__e);
-        _context_stack.removeLast();
+        try {
+            __kernel(__e);
+        } finally {
+            _context_stack.removeLast();
+        }
     }
 
     void nest() {
         final __e = PushPopFrameEvent("nest", []);
         final __ctx = PushPopFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(__e);
-        _context_stack.removeLast();
+        try {
+            __kernel(__e);
+        } finally {
+            _context_stack.removeLast();
+        }
     }
 
     void unnest() {
         final __e = PushPopFrameEvent("unnest", []);
         final __ctx = PushPopFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(__e);
-        _context_stack.removeLast();
+        try {
+            __kernel(__e);
+        } finally {
+            _context_stack.removeLast();
+        }
     }
 
     void leaf() {
         final __e = PushPopFrameEvent("leaf", []);
         final __ctx = PushPopFrameContext(__e, null);
         _context_stack.add(__ctx);
-        __kernel(__e);
-        _context_stack.removeLast();
+        try {
+            __kernel(__e);
+        } finally {
+            _context_stack.removeLast();
+        }
     }
 
     void _state_Idle(PushPopFrameEvent __e, PushPopCompartment compartment) {
@@ -227,11 +239,11 @@ class PushPop {
     }
 
     void _s_Idle_hdl_user_ping(PushPopFrameEvent __e, PushPopCompartment compartment) {
-        self.pings = self.pings + 1
+        this.pings = this.pings + 1
     }
 
     void _s_Nested_hdl_user_leaf(PushPopFrameEvent __e, PushPopCompartment compartment) {
-        self.leaves = self.leaves + 1
+        this.leaves = this.leaves + 1
     }
 
     void _s_Nested_hdl_user_unnest(PushPopFrameEvent __e, PushPopCompartment compartment) {

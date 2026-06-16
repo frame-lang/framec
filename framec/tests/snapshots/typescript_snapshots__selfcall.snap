@@ -162,16 +162,24 @@ export class SelfCall {
         const __e = new SelfCallFrameEvent("kick", []);
         const __ctx = new SelfCallFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        this._context_stack.pop();
+        try {
+            this.__kernel(__e);
+        } finally {
+            this._context_stack.pop();
+        }
     }
 
     public report(): number {
         const __e = new SelfCallFrameEvent("report", []);
         const __ctx = new SelfCallFrameContext(__e, null);
         this._context_stack.push(__ctx);
-        this.__kernel(__e);
-        return this._context_stack.pop()!._return;
+        try {
+            this.__kernel(__e);
+            return this._context_stack.pop()!._return;
+        } catch (__frame_err) {
+            this._context_stack.pop();
+            throw __frame_err;
+        }
     }
 
     private _state_Active(__e: SelfCallFrameEvent, compartment: SelfCallCompartment) {
@@ -186,12 +194,12 @@ export class SelfCall {
     }
 
     private _s_Active_hdl_user_kick(__e: SelfCallFrameEvent, compartment: SelfCallCompartment) {
-        self.count = self.count + 1;
+        this.count = this.count + 1;
         this.report();
         if (this._context_stack.length > 0 && this._context_stack[this._context_stack.length - 1]._transitioned) return;
     }
 
     private _s_Active_hdl_user_report(__e: SelfCallFrameEvent, compartment: SelfCallCompartment) {
-        this._context_stack[this._context_stack.length - 1]._return = self.count;
+        this._context_stack[this._context_stack.length - 1]._return = this.count;
     }
 }

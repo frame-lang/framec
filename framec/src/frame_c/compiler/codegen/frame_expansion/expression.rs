@@ -117,17 +117,26 @@ pub(super) fn expand_expression(expr: &str, lang: TargetLanguage, ctx: &HandlerC
 /// Uses compartment.state_vars for Python/TypeScript.
 /// For HSM: uses __sv_comp when ctx.use_sv_comp is true (navigates to correct parent compartment)
 fn expand_state_vars_in_expr(expr: &str, lang: TargetLanguage, ctx: &HandlerContext) -> String {
-    // Note: deliberately NOT string-literal-aware. `$.varName` is
-    // expanded even inside string literals because that's the contract
-    // for Frame interpolation — e.g. `f"count is {$.count}"` in Python
-    // needs `$.count` → `self.__compartment.state_vars["count"]` so the
-    // f-string interpolation resolves at runtime. Equivalent pattern
-    // applies to JS/TS backtick ``${ }``, Kotlin `"${ }"`, Ruby
+    // `$.varName` is expanded even inside string literals because that's
+    // the contract for Frame interpolation — e.g. `f"count is {$.count}"`
+    // in Python needs `$.count` → `self.__compartment.state_vars["count"]`
+    // so the f-string interpolation resolves at runtime. Equivalent
+    // pattern applies to JS/TS backtick ``${ }``, Kotlin `"${ }"`, Ruby
     // `"#{}"`, Swift `"\( )"`. Any false-match would require a user
     // literally writing `$.foo` inside a non-interpolating string —
     // exceedingly unusual, and not worth losing interpolation support.
+    //
+    // We DO track the currently-open string delimiter so the Python
+    // dict-subscript key can pick the *opposite* quote. A same-quote
+    // nested f-string (`f"...{d["k"]}..."`) is a SyntaxError before
+    // Python 3.12 / PEP 701 — FRAMEC_BUGS #47. Python is the only target
+    // affected; every other interpolating target tolerates nested
+    // same-quotes inside its substitution syntax.
     let mut result = String::new();
     let bytes = expr.as_bytes();
+
+    // None outside any string literal; Some(b'"') / Some(b'\'') while open.
+    let mut string_delim: Option<u8> = None;
 
     let mut i = 0;
     while i < bytes.len() {
@@ -141,12 +150,20 @@ fn expand_state_vars_in_expr(expr: &str, lang: TargetLanguage, ctx: &HandlerCont
             let var_name = String::from_utf8_lossy(&bytes[start..i]).to_string();
             match lang {
                 TargetLanguage::Python3 => {
+                    // Pick the opposite quote from any surrounding string so an
+                    // interpolated `$.var` inside an f-string doesn't nest
+                    // same-quotes (SyntaxError pre-3.12; FRAMEC_BUGS #47).
+                    let q = match string_delim {
+                        Some(b'"') => '\'',
+                        Some(b'\'') => '"',
+                        _ => '"',
+                    };
                     if ctx.per_handler {
-                        result.push_str(&format!("compartment.state_vars[\"{}\"]", var_name))
+                        result.push_str(&format!("compartment.state_vars[{q}{var_name}{q}]"))
                     } else if ctx.use_sv_comp {
-                        result.push_str(&format!("__sv_comp.state_vars[\"{}\"]", var_name))
+                        result.push_str(&format!("__sv_comp.state_vars[{q}{var_name}{q}]"))
                     } else {
-                        result.push_str(&format!("self.__compartment.state_vars[\"{}\"]", var_name))
+                        result.push_str(&format!("self.__compartment.state_vars[{q}{var_name}{q}]"))
                     }
                 }
                 TargetLanguage::TypeScript | TargetLanguage::JavaScript => {
@@ -164,31 +181,35 @@ fn expand_state_vars_in_expr(expr: &str, lang: TargetLanguage, ctx: &HandlerCont
                     ));
                 }
                 TargetLanguage::C => {
+                    // Category-aware unpack via c_marshal (#77), mirroring
+                    // `expand_state_var`'s C arm: float/double state-vars
+                    // bit-pun through the void* slot — `(int)(intptr_t)`
+                    // truncates them.
                     let c_type = ctx
                         .state_var_types
                         .get(&var_name)
                         .map(|s| s.as_str())
                         .unwrap_or("int");
-                    let cast = match c_type {
-                        "char*" | "const char*" | "str" | "string" | "String" => "(const char*)",
-                        _ => "(int)(intptr_t)",
-                    };
-                    if ctx.per_handler {
-                        result.push_str(&format!(
-                            "{}{}_FrameDict_get(compartment->state_vars, \"{}\")",
-                            cast, ctx.system_name, var_name
-                        ))
+                    let comp = if ctx.per_handler {
+                        "compartment"
                     } else if ctx.use_sv_comp {
-                        result.push_str(&format!(
-                            "{}{}_FrameDict_get(__sv_comp->state_vars, \"{}\")",
-                            cast, ctx.system_name, var_name
-                        ))
+                        "__sv_comp"
                     } else {
-                        result.push_str(&format!(
-                            "{}{}_FrameDict_get(self->__compartment->state_vars, \"{}\")",
-                            cast, ctx.system_name, var_name
-                        ))
-                    }
+                        "self->__compartment"
+                    };
+                    let slot = format!(
+                        "{}_FrameDict_get({}->state_vars, \"{}\")",
+                        ctx.system_name, comp, var_name
+                    );
+                    use super::super::c_marshal::{c_marshal_of, CMarshal};
+                    let read = match c_marshal_of(c_type) {
+                        CMarshal::Str => format!("(const char*){}", slot),
+                        CMarshal::Dbl => {
+                            format!("{}_unpack_double({})", ctx.system_name, slot)
+                        }
+                        _ => format!("(int)(intptr_t){}", slot),
+                    };
+                    result.push_str(&read);
                 }
                 TargetLanguage::Cpp => {
                     let cpp_type = ctx
@@ -393,7 +414,25 @@ fn expand_state_vars_in_expr(expr: &str, lang: TargetLanguage, ctx: &HandlerCont
                 TargetLanguage::Graphviz => unreachable!(),
             }
         } else {
-            result.push(bytes[i] as char);
+            let b = bytes[i];
+            // Maintain string-delimiter state for the Python key-quote swap.
+            if let Some(d) = string_delim {
+                // Inside a string: copy an escape pair verbatim so an
+                // escaped quote doesn't toggle the delimiter; a matching
+                // unescaped delimiter closes the string.
+                if b == b'\\' && i + 1 < bytes.len() {
+                    result.push(b as char);
+                    result.push(bytes[i + 1] as char);
+                    i += 2;
+                    continue;
+                }
+                if b == d {
+                    string_delim = None;
+                }
+            } else if b == b'"' || b == b'\'' {
+                string_delim = Some(b);
+            }
+            result.push(b as char);
             i += 1;
         }
     }

@@ -22,8 +22,7 @@ use super::super::ast::{CodegenNode, Field, Param, Visibility};
 use super::super::backend::ClassSyntax;
 use super::super::codegen_utils::{
     cpp_map_type, csharp_map_type, expression_to_string, go_map_type, java_map_type,
-    kotlin_map_type, state_var_init_value, swift_map_type, to_snake_case, type_to_cpp_string,
-    type_to_string,
+    kotlin_map_type, swift_map_type, to_snake_case, type_to_cpp_string, type_to_string,
 };
 use crate::frame_c::compiler::frame_ast::{Expression, ParamKind, StateAst, SystemAst, Type};
 use crate::frame_c::visitors::TargetLanguage;

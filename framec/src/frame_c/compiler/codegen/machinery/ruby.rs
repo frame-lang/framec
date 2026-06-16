@@ -3,7 +3,9 @@
 //! Moved verbatim from `system_codegen::generate_ruby_machinery` (4.2
 //! plan §7.1.P3). Ruby uses `@`-sigil instance variables, blocks for
 //! iteration (`each do |name|`), `nil` for null, and method-name
-//! dispatch via `respond_to?` + `send`.
+//! dispatch via `respond_to?` + `__send__` (the override-proof alias —
+//! a user event named `send` would otherwise shadow `Object#send` and
+//! break internal dispatch; FRAMEC_BUGS #14).
 
 use crate::frame_c::compiler::codegen::ast::{CodegenNode, Param, Visibility};
 use crate::frame_c::compiler::codegen::machinery::MachineryGenerator;
@@ -168,7 +170,7 @@ end"#,
             body: vec![CodegenNode::NativeBlock {
                 code: r#"handler_name = "_state_#{@__compartment.state}"
 if respond_to?(handler_name, true)
-    send(handler_name, __e, @__compartment)
+    __send__(handler_name, __e, @__compartment)
 end"#
                     .to_string(),
                 span: None,

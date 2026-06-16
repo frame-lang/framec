@@ -5,7 +5,7 @@
 use super::super::super::ast::{CodegenNode, Param, Visibility};
 use super::super::super::codegen_utils::{
     cpp_map_type, csharp_map_type, expression_to_string, go_map_type, java_map_type,
-    kotlin_map_type, state_var_init_value, swift_map_type, to_snake_case, type_to_cpp_string,
+    kotlin_map_type, state_var_initializer, swift_map_type, to_snake_case, type_to_cpp_string,
     HandlerContext,
 };
 use super::super::super::frame_expansion::{
@@ -30,6 +30,7 @@ pub(crate) fn generate_java_handler_method(
     source: &[u8],
     _has_state_vars: bool,
     defined_systems: &std::collections::HashSet<String>,
+    actions: &std::collections::HashSet<String>,
     _sys_param_locals: &[String],
     _is_start_state: bool,
     state_param_names: &std::collections::HashMap<String, Vec<String>>,
@@ -49,6 +50,7 @@ pub(crate) fn generate_java_handler_method(
         event_name: handler.event.clone(),
         parent_state: parent_state.map(|s| s.to_string()),
         defined_systems: defined_systems.clone(),
+        actions: actions.clone(),
         use_sv_comp: false,
         per_handler: true,
         state_var_types: handler_state_var_types.clone(),
@@ -59,6 +61,9 @@ pub(crate) fn generate_java_handler_method(
         state_hsm_parents: state_hsm_parents.clone(),
         current_return_type: handler.return_type.clone(),
         state_param_types: std::collections::HashMap::new(),
+        state_enter_param_types: std::collections::HashMap::new(),
+        state_exit_param_types: std::collections::HashMap::new(),
+        domain_field_types: std::collections::HashMap::new(),
     };
 
     let mut body = String::new();
@@ -127,10 +132,17 @@ pub(crate) fn generate_java_handler_method(
     // State-var init (lifecycle enter only).
     if handler.is_enter {
         for var in state_vars_for_init {
-            let init_val = if let Some(ref init) = var.init {
-                expression_to_string(init, lang)
-            } else {
-                state_var_init_value(&var.var_type, lang)
+            let init_val = state_var_initializer(var);
+            // #77: coerce the initializer to the DECLARED float-family type
+            // before it enters the erased container (a bare literal deduces
+            // to the default float width; the declared-type exact-match read
+            // then crashes at runtime). No-op for other types.
+            let init_val = {
+                let declared = match &var.var_type {
+                    crate::frame_c::compiler::frame_ast::Type::Custom(t) => t.as_str(),
+                    _ => "",
+                };
+                super::super::super::codegen_utils::erased_write_coercion(lang, declared, &init_val)
             };
             body.push_str(&format!(
                 "if (!compartment.state_vars.containsKey(\"{}\")) {{\n    compartment.state_vars.put(\"{}\", {});\n}}\n",
