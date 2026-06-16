@@ -325,10 +325,31 @@ pub struct HandlerBody {
     pub span: Span,
 }
 
-/// Statement in a handler body — Frame statements interleaved with native code
+/// Statement in a handler body — Frame statements interleaved with native code.
+///
+/// # Construct ownership (enforced by construction, not by the type)
+///
+/// `Statement` is shared between the `@@system` and `@@fsm` constructs, but the
+/// two produce **disjoint** subsets — a given AST never mixes them, because the
+/// segmenter routes each construct to its own parser (`pipeline_parser` for
+/// `@@system`, `fsm_parser` for `@@fsm`) producing separate AST types
+/// (`SystemAst` vs `FsmDeclAst`):
+///
+/// - **`@@system` only** (the legacy `machine:`-handler statements): `Transition`,
+///   `Forward`, `StackPush`, `StackPop`, `Return`, `NativeCode`, and the
+///   `StateVar*` / `Context*` context constructs. The `@@system` parser has no
+///   `if`/`loop` keyword, so it never builds `If`/`Loop`/`Block`/`Expression`.
+/// - **`@@fsm` action bodies only** (RFC-0043 statement grammar): `If`, `Loop`,
+///   `Block`, `Expression`. These are built solely by `fsm_parser`; `@@fsm`
+///   action bodies in turn reject `->` transitions (E712).
+///
+/// Consequence: traversal code that only ever sees one construct's AST (e.g. the
+/// `@@system`-only graphviz/model/expansion walkers) will never encounter the
+/// other construct's exclusive variants, so a `_ => {}` arm there is dead-safe.
+/// If a future construct breaks this disjointness, revisit those arms.
 #[derive(Debug, Clone)]
 pub enum Statement {
-    /// Frame transition statement (->)
+    /// Frame transition statement (->)  [@@system]
     Transition(TransitionAst),
     /// Frame transition-forward (-> => $State)
     /// Frame forward to parent (=>)
@@ -345,6 +366,11 @@ pub enum Statement {
     If(IfAst),
     /// Frame loop statement
     Loop(LoopAst),
+    /// A `{ ... }` block of statements. Used by RFC-0043 statement
+    /// bodies (e.g. an `if` branch, an `@@fsm` action block). Carried
+    /// as a single `Statement` so `IfAst`'s `Box<Statement>` branches
+    /// can hold a multi-statement block.
+    Block(BlockAst),
     /// Frame expression (assignments, calls, etc.)
     Expression(ExpressionAst),
     /// Native code chunk within handler body (V4 pipeline: Lexer extracts, Parser stores)
@@ -1006,6 +1032,251 @@ impl SystemSectionSpans {
             SystemSectionKind::Domain => self.domain.as_ref(),
         }
     }
+}
+
+// ============================================================================
+// RFC-0042 — `@@fsm` AST nodes
+// ============================================================================
+//
+// AST shapes produced by the new fsm parser at
+// `framec/src/frame_c/compiler/fsm_parser/`. These types are entirely
+// separate from the `@@system` AST above; per the design contract, no
+// AST types are shared between `@@system` and `@@fsm`. The two
+// construct families coexist as siblings in this module.
+//
+// Where RFC-0042 reuses RFC-0043-defined shapes (statement-body code,
+// expressions), it does so via the existing `Statement`, `Expression`,
+// `Literal`, `BinaryOp`, `UnaryOp`, and the new `BlockAst` defined at
+// the bottom of this section. The fsm-specific types live above the
+// shared `BlockAst`.
+
+/// One complete `@@fsm` declaration. Output of the fsm parser's root
+/// `FsmDeclParser` system. Per RFC-0042 §3.1.
+#[derive(Debug, Clone)]
+pub struct FsmDeclAst {
+    /// Construct name — e.g., `M` in `@@fsm M(text: bytes) ...`.
+    pub name: String,
+    /// `@@[...]` decorations attached to the construct declaration
+    /// (e.g., `@@[max_dfa_states(50)]`, `@@[multiline]`,
+    /// `@@[dispatch(switch)]`).
+    pub attributes: Vec<String>,
+    /// Header parameter list. First parameter is the input source
+    /// per §3.2 and determines the regex alphabet.
+    pub params: Vec<FsmParameter>,
+    /// Declared return type (e.g., `bool`, `int`, `Header`).
+    pub return_type: Type,
+    /// Mandatory default value for the return slot — used on failure
+    /// paths and as the initial value before any bare-expression
+    /// assignment fires. Stored as a raw expression string; later
+    /// passes parse it.
+    pub default_expr: String,
+    /// State declarations in source order. First state is the start
+    /// state per §3.4.
+    pub states: Vec<FsmStateAst>,
+    /// Optional `actions:` block of declared helper functions.
+    pub actions: Option<FsmActionsBlock>,
+    /// Optional `domain:` block of explicit (non-auto-promoted)
+    /// fields.
+    pub domain: Option<FsmDomainBlock>,
+    pub span: Span,
+}
+
+impl FsmDeclAst {
+    /// An empty placeholder, used as the default for a validator/codegen
+    /// FSM's owned-AST domain field before the real AST is assigned.
+    pub fn empty() -> Self {
+        FsmDeclAst {
+            name: String::new(),
+            attributes: Vec::new(),
+            params: Vec::new(),
+            return_type: Type::Unknown,
+            default_expr: String::new(),
+            states: Vec::new(),
+            actions: None,
+            domain: None,
+            span: Span::new(0, 0),
+        }
+    }
+}
+
+/// One parameter in the `@@fsm` header. Auto-promotes to a same-named
+/// domain field on the constructed instance (§3.2).
+#[derive(Debug, Clone)]
+pub struct FsmParameter {
+    pub name: String,
+    pub param_type: Type,
+    /// Optional default expression, parsed as a raw expression string.
+    pub default: Option<String>,
+    pub span: Span,
+}
+
+/// One state declaration inside an `@@fsm` body. Optional label;
+/// one or more matches separated by `|` (ordered choice). The first
+/// state declared is the start state.
+///
+/// Distinguished from `@@system`'s [`StateAst`] (defined earlier in
+/// this module) — fsm states have no lifecycle handlers, no state
+/// variables, no compartments.
+#[derive(Debug, Clone)]
+pub struct FsmStateAst {
+    /// Optional `$label` — required if other code (transition target,
+    /// stage-capture reference) needs to name this state. Unlabeled
+    /// states are valid only as the start state (first body state).
+    pub label: Option<String>,
+    /// Ordered list of matches. Matches separated by `|` in source
+    /// produce multiple elements here.
+    pub matches: Vec<MatchAst>,
+    pub span: Span,
+}
+
+/// One match inside a state. Sequence of elements (stages, action
+/// blocks, bare expressions) optionally followed by a transition
+/// clause. §3.5.1.
+#[derive(Debug, Clone)]
+pub struct MatchAst {
+    pub elements: Vec<MatchElement>,
+    pub transition: Option<FsmTransitionClauseAst>,
+    pub span: Span,
+}
+
+/// One element inside a match. Per §3.5.1, an element is either a
+/// match stage, an action block, or a bare expression (sugar for
+/// `@@:return = expr`).
+#[derive(Debug, Clone)]
+pub enum MatchElement {
+    Stage(StageAst),
+    ActionBlock(BlockAst),
+    BareExpression { expr: Expression, span: Span },
+}
+
+/// One match stage: optional `.label`, `/regex/`, zero or more
+/// embedding actions. §3.5.2 and §3.5.5.
+#[derive(Debug, Clone)]
+pub struct StageAst {
+    /// Optional `.label` — required to reference the stage from
+    /// elsewhere.
+    pub label: Option<String>,
+    /// Parsed regex from [`crate::frame_c::compiler::fsm_regex`].
+    /// Stored as the raw body string at parse time; the regex AST
+    /// resolves later in the pipeline. (Final shape pinned when
+    /// `fsm_regex` is wired in during Task 12 — see
+    /// `_scratch/rfc_0043_parser_design.md`.)
+    pub regex: String,
+    /// Embedding actions attached after the stage's closing `/`.
+    pub embedding_actions: Vec<EmbeddingActionAst>,
+    pub span: Span,
+}
+
+/// One embedding action attached to a stage. §3.5.5.
+#[derive(Debug, Clone)]
+pub struct EmbeddingActionAst {
+    pub op: EmbeddingOp,
+    pub body: BlockAst,
+    pub span: Span,
+}
+
+/// Where in the stage's compiled DFA the embedding action fires.
+/// Maps to RFC-0042 §3.5.5's operator table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EmbeddingOp {
+    /// `>{...}` — DFA start state entry.
+    Start,
+    /// `@{...}` — DFA accepting state entry.
+    Accept,
+    /// `${...}` — every DFA transition.
+    EveryTransition,
+    /// `%{...}` — leaving last accepting state.
+    LeaveAccept,
+    /// `@eof{...}` — end-of-input while mid-match.
+    Eof,
+}
+
+/// Transition clause at the tail of a match. Success branch required
+/// when present; failure branch optional. §3.5.4.
+#[derive(Debug, Clone)]
+pub struct FsmTransitionClauseAst {
+    /// The success target (`-> $X`). `None` for a failure-only clause
+    /// (`: -> $Err` with no success arrow): success leaves the match in
+    /// its final position as an implicit-terminal match (§4.3).
+    pub success: Option<FsmTransitionTarget>,
+    pub failure: Option<FsmTransitionTarget>,
+    pub span: Span,
+}
+
+/// Target of an fsm transition — either a static state/stage
+/// reference or a runtime-chosen alternative from a
+/// statically-enumerable set. §3.5.4.
+#[derive(Debug, Clone)]
+pub enum FsmTransitionTarget {
+    /// `-> $State` or `-> $State.stage`.
+    Static {
+        state: String,
+        stage: Option<String>,
+        span: Span,
+    },
+    /// `-> ( $A when cond, $B when cond, ... )`. Each `cond_alt`
+    /// requires a `when` guard per §3.5.4.1 (E715 if missing).
+    Conditional(Vec<FsmCondAlt>),
+}
+
+/// One `cond_alt` inside a conditional target — a static target with
+/// a `when` guard predicate. §3.5.4.1.
+#[derive(Debug, Clone)]
+pub struct FsmCondAlt {
+    pub target: FsmTransitionTarget,
+    pub condition: Expression,
+    pub span: Span,
+}
+
+/// `actions:` block — declared helper functions callable from match
+/// actions, embedding actions, and other actions. §3.7.
+#[derive(Debug, Clone)]
+pub struct FsmActionsBlock {
+    pub actions: Vec<FsmActionDecl>,
+    pub span: Span,
+}
+
+/// One declared action inside `actions:`. Constraint per §3.7:
+/// actions cannot issue transitions or perform state-aware
+/// operations.
+#[derive(Debug, Clone)]
+pub struct FsmActionDecl {
+    pub name: String,
+    pub params: Vec<FsmParameter>,
+    pub return_type: Option<Type>,
+    pub body: BlockAst,
+    pub span: Span,
+}
+
+/// `domain:` block — explicit (non-auto-promoted) persistent fields
+/// for the fsm instance. §3.8.
+#[derive(Debug, Clone)]
+pub struct FsmDomainBlock {
+    pub vars: Vec<FsmDomainVar>,
+    pub span: Span,
+}
+
+/// One declared `domain:` field. Mandatory typed declaration with a
+/// default initializer (RFC-0042 §3.8).
+#[derive(Debug, Clone)]
+pub struct FsmDomainVar {
+    pub name: String,
+    pub var_type: Type,
+    /// Default initializer — a parsed expression.
+    pub default: Expression,
+    pub span: Span,
+}
+
+/// A `{ ... }` block of RFC-0043 statements. Used by `@@fsm` action
+/// bodies, embedding-action bodies, declared-action bodies, and the
+/// branches of an `if/else` statement.
+///
+/// Reused by any future construct that adopts RFC-0043 statement
+/// syntax; not specific to `@@fsm`.
+#[derive(Debug, Clone)]
+pub struct BlockAst {
+    pub statements: Vec<Statement>,
+    pub span: Span,
 }
 
 #[cfg(test)]

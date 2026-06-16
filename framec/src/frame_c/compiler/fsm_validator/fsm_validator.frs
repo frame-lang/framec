@@ -1,0 +1,99 @@
+@@[target("rust")]
+
+// RFC-0042 §4, §9 — the @@fsm validator as a Frame @@system.
+//
+// One validation PASS per state (mirroring pipeline_supervisor.frs's
+// phase-per-state shape). Each pass's `$>` runs a native check over the
+// owned FsmDeclAst (`decl`) and accumulates FsmDiagnostics; the machine
+// self-drives from $Start to $Done in one `validate()` call. The check
+// bodies are native helpers (in the wrapper module) — Frame owns the
+// pass sequencing, exactly as the dogfooding thesis intends.
+//
+//   $CheckHeader      — E713 (input-param alphabet type).
+//   $CheckTransitions — E731 (undeclared transition-target state),
+//                       E732 (undeclared stage in a stage-ref target).
+//   $CheckCaptures    — E704/E731/E732 for `$state.stage` captures read in
+//                       value position (bare exprs, action/embedding bodies).
+//   $CheckRegex       — per-stage regex compilation (E720-E723, W704,
+//                       anchor deferral) + E701 match exhaustiveness.
+//   $Done             — terminal; `diagnostics` holds the findings.
+//
+// SCOPE (v1): the two checks above. More passes ($CheckStages for E730
+// duplicate stage labels, $CheckTypes for E703/E706, $CheckExhaustive
+// for E701, unused-var warnings) are added as states alongside these.
+//
+// The wrapper (fsm_validator::validate_fsm) builds the system, assigns
+// the cloned `decl`, calls `validate()`, and lifts `diagnostics` out.
+
+@@system FsmValidator {
+    interface:
+        validate()
+
+    machine:
+        $Start {
+            validate() { -> $CheckHeader }
+        }
+
+        $CheckHeader {
+            $>() {
+                if let Some(d) = check_input_param_type(&self.decl) {
+                    self.diagnostics.push(d);
+                }
+                -> $CheckStructure
+            }
+        }
+
+        $CheckStructure {
+            $>() {
+                let mut found = check_structure(&self.decl);
+                self.diagnostics.append(&mut found);
+                -> $CheckTransitions
+            }
+        }
+
+        $CheckTransitions {
+            $>() {
+                let mut found = check_transition_targets(&self.decl);
+                self.diagnostics.append(&mut found);
+                -> $CheckCaptures
+            }
+        }
+
+        $CheckCaptures {
+            $>() {
+                let mut found = check_capture_refs(&self.decl);
+                self.diagnostics.append(&mut found);
+                -> $CheckNames
+            }
+        }
+
+        $CheckNames {
+            $>() {
+                let mut found = check_undeclared_reads(&self.decl);
+                self.diagnostics.append(&mut found);
+                -> $CheckWarnings
+            }
+        }
+
+        $CheckWarnings {
+            $>() {
+                let mut found = check_warnings(&self.decl);
+                self.diagnostics.append(&mut found);
+                -> $CheckRegex
+            }
+        }
+
+        $CheckRegex {
+            $>() {
+                let mut found = check_regexes(&self.decl);
+                self.diagnostics.append(&mut found);
+                -> $Done
+            }
+        }
+
+        $Done { }
+
+    domain:
+        decl: FsmDeclAst = FsmDeclAst::empty()
+        diagnostics: Vec<FsmDiagnostic> = Vec::new()
+}

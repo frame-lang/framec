@@ -1,0 +1,182 @@
+@@[target("rust")]
+
+// RFC-0043 §3.2 — the statement parser as a Frame @@system child of the
+// fsm parser tree. Parses ONE statement from a shared FsmTokenStream:
+//
+//   assignment  ::= lvalue "=" expression     (lvalue parsed as an expr)
+//   call / expr ::= expression                (a bare call/expression stmt)
+//   if_stmt     ::= "if" cond block ("else" "if" cond block)* ("else" block)?
+//
+// Assignment and expression statements are disambiguated by a one-token
+// lookahead after the leading expression: a following `=` makes it an
+// assignment (the leading expression is the lvalue), otherwise it is an
+// expression statement.
+//
+// `if` branches are blocks, parsed by ActionBlockParser and wrapped as
+// `Statement::Block`; `else if` recurses StatementParser. StatementParser
+// and ActionBlockParser are mutually recursive (each module `use`s the
+// other; circular `use` across sibling modules is fine in Rust).
+//
+// SCOPE: assignment, expression statement, if/else(-if). Deferred:
+// `@@:return = expr` / `@@:(expr)` return-statement forms (need probe/
+// return lexing refinement). Composition contract:
+//   - input:  `tokens` set by the parent.
+//   - output: `result` (Some<Statement>) or `error`.
+
+@@system StatementParser {
+    interface:
+        parse()
+
+    machine:
+        $Start {
+            parse() { -> $Dispatch }
+        }
+
+        $Dispatch {
+            $>() {
+                self.span_start = self.tokens.as_ref().unwrap().cur_span();
+                if self.tokens.as_ref().unwrap().at(&FsmTokenKind::KwIf) {
+                    self.tokens.as_mut().unwrap().advance(); // `if`
+                    -> $IfCond
+                }
+                // Leading expression: either an expression statement or the
+                // lvalue of an assignment (decided in $AfterExpr).
+                let mut child = ExpressionParser::__create();
+                child.tokens = self.tokens.take();
+                child.parse();
+                self.tokens = child.tokens.take();
+                if let Some(e) = child.error.take() {
+                    self.error = Some(e);
+                    -> $Done
+                }
+                self.lhs = child.result.take();
+                -> $AfterExpr
+            }
+        }
+
+        $AfterExpr {
+            $>() {
+                let span = self.span_start.clone();
+                if self.tokens.as_mut().unwrap().eat(&FsmTokenKind::Eq) {
+                    // Assignment: leading expr was the lvalue; parse the RHS.
+                    let mut child = ExpressionParser::__create();
+                    child.tokens = self.tokens.take();
+                    child.parse();
+                    self.tokens = child.tokens.take();
+                    if let Some(e) = child.error.take() {
+                        self.error = Some(e);
+                        -> $Done
+                    }
+                    let rhs = child
+                        .result
+                        .take()
+                        .expect("child ExpressionParser sets result when no error");
+                    let lhs = self.lhs.take().unwrap();
+                    self.result = Some(Statement::Expression(ExpressionAst {
+                        expr: Expression::Assign {
+                            target: Box::new(lhs),
+                            value: Box::new(rhs),
+                        },
+                        span,
+                    }));
+                    -> $Done
+                }
+                // Expression statement.
+                let lhs = self.lhs.take().unwrap();
+                self.result = Some(Statement::Expression(ExpressionAst { expr: lhs, span }));
+                -> $Done
+            }
+        }
+
+        $IfCond {
+            $>() {
+                let mut child = ExpressionParser::__create();
+                child.tokens = self.tokens.take();
+                child.parse();
+                self.tokens = child.tokens.take();
+                if let Some(e) = child.error.take() {
+                    self.error = Some(e);
+                    -> $Done
+                }
+                self.cond = child.result.take();
+                -> $IfThen
+            }
+        }
+
+        $IfThen {
+            $>() {
+                let mut child = ActionBlockParser::__create();
+                child.tokens = self.tokens.take();
+                child.parse();
+                self.tokens = child.tokens.take();
+                if let Some(e) = child.error.take() {
+                    self.error = Some(e);
+                    -> $Done
+                }
+                self.then_block = child.result.take();
+                -> $IfElse
+            }
+        }
+
+        $IfElse {
+            $>() {
+                let mut else_branch: Option<Box<Statement>> = None;
+
+                if self.tokens.as_mut().unwrap().eat(&FsmTokenKind::KwElse) {
+                    if self.tokens.as_ref().unwrap().at(&FsmTokenKind::KwIf) {
+                        // `else if ...` — recurse StatementParser.
+                        let mut child = StatementParser::__create();
+                        child.tokens = self.tokens.take();
+                        child.parse();
+                        self.tokens = child.tokens.take();
+                        if let Some(e) = child.error.take() {
+                            self.error = Some(e);
+                            -> $Done
+                        }
+                        let s = child
+                            .result
+                            .take()
+                            .expect("child StatementParser sets result when no error");
+                        else_branch = Some(Box::new(s));
+                    } else {
+                        // `else { ... }`
+                        let mut child = ActionBlockParser::__create();
+                        child.tokens = self.tokens.take();
+                        child.parse();
+                        self.tokens = child.tokens.take();
+                        if let Some(e) = child.error.take() {
+                            self.error = Some(e);
+                            -> $Done
+                        }
+                        let blk = child
+                            .result
+                            .take()
+                            .expect("child ActionBlockParser sets result when no error");
+                        else_branch = Some(Box::new(Statement::Block(blk)));
+                    }
+                }
+
+                let span = self.span_start.clone();
+                let cond = self.cond.take().unwrap();
+                let then_block = self.then_block.take().unwrap();
+                self.result = Some(Statement::If(IfAst {
+                    condition: cond,
+                    then_branch: Box::new(Statement::Block(then_block)),
+                    else_branch,
+                    span,
+                }));
+                -> $Done
+            }
+        }
+
+        $Done { }
+
+    domain:
+        tokens: Option<FsmTokenStream> = None
+        lhs: Option<Expression> = None
+        cond: Option<Expression> = None
+        then_block: Option<BlockAst> = None
+        span_start: Span = Span::new(0, 0)
+        result: Option<Statement> = None
+        error: Option<ParseError> = None
+}

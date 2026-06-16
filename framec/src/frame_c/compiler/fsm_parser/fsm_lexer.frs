@@ -1,0 +1,713 @@
+@@[target("rust")]
+
+// RFC-0042 — the @@fsm lexer as a Frame @@system byte-scanner.
+//
+// Tokenizes the raw bytes of an @@fsm declaration into a Vec<FsmToken>.
+// Built as a state machine because the load-bearing lexing decision —
+// is `/` a regex-literal delimiter or a division operator? — IS a state
+// machine (the classic regex-vs-division problem). The lexer's mode is
+// its state:
+//
+//   $Header       — `@@fsm Name(params) : Type = default {` ... up to and
+//                   including the body-opening `{`. Header punctuation +
+//                   the default expression.
+//   $ElementLevel — the state list / match-element level. A `/` here
+//                   starts a regex literal (scanned whole, emitted as one
+//                   RegexLiteral token).
+//   $ExprLevel    — inside action blocks / when-conditions / bare
+//                   expressions. A `/` here is division. (TODO: full
+//                   expansion — v1 covers only what the smoke fixture
+//                   needs; see the task tracker.)
+//
+// The byte-level work (whitespace/comment skip, token emission) is native
+// Rust inside the `$>` handlers, exactly as expr_scanner.frs and
+// domain_scanner.frs do it. Frame owns the mode control flow.
+//
+// v1 SCOPE: tokenizes the smoke fixture
+//   @@fsm M(text: bytes) : bool = false { /a/ true }
+// into the documented token stream. Embedding-action operators, the full
+// operator set, `when`/`if`/`else`, `@@:` probes, and real $ExprLevel
+// division handling are TODO — added incrementally as later fixtures need
+// them. Each addition keeps the smoke fixture green.
+//
+// The wrapper (fsm_parser/mod.rs::lex_fsm_block) builds this system, sets
+// `bytes`, calls `tokenize()`, and lifts `tokens` / `error` out.
+
+@@system FsmLexer {
+    interface:
+        tokenize()
+
+    machine:
+        $Start {
+            tokenize() { -> $Header }
+        }
+
+        // Lex the @@fsm header through the body-opening `{`.
+        $Header {
+            $>() {
+                let src = &self.bytes;
+                let n = src.len();
+                let mut pos = self.pos;
+
+                // The header is a fixed shape: `@@fsm` IDENT `(` ... `)` `:`
+                // TYPE `=` DEFAULT `{`. We scan token-by-token, skipping
+                // whitespace, until we emit the body-opening `{`.
+                loop {
+                    // Skip whitespace + comments.
+                    pos = skip_ws_comments(src, pos);
+                    if pos >= n {
+                        self.error = Some(ParseError {
+                            message: "unexpected end of input in @@fsm header".to_string(),
+                            span: Span::new(pos, pos),
+                        });
+                        self.pos = pos;
+                        -> $Done
+                    }
+
+                    let b = src[pos];
+
+                    // `@@[...]` construct attribute (RFC-0042 §11.6) — appears
+                    // before `@@fsm`. Captured as one Attribute token holding the
+                    // reconstructed inner text (e.g. `allow(unicode_classes)`),
+                    // using the shared attribute scanner so the lexer and the
+                    // segmenter agree on where the attribute ends.
+                    if b == b'@' && pos + 2 < n && src[pos + 1] == b'@' && src[pos + 2] == b'[' {
+                        let span =
+                            crate::frame_c::compiler::attribute_scanner::scan_attribute(src, pos);
+                        let name = std::str::from_utf8(span.name(src)).unwrap_or("");
+                        let inner = match span.args_with_parens(src) {
+                            Some(args) => {
+                                format!("{}{}", name, std::str::from_utf8(args).unwrap_or(""))
+                            }
+                            None => name.to_string(),
+                        };
+                        self.tokens.push(FsmToken {
+                            kind: FsmTokenKind::Attribute(inner),
+                            span: Span::new(pos, span.end_pos),
+                        });
+                        pos = span.end_pos;
+                        continue;
+                    }
+
+                    // `@@fsm` keyword.
+                    if b == b'@' && pos + 4 < n && &src[pos..pos + 5] == b"@@fsm" {
+                        self.tokens.push(FsmToken {
+                            kind: FsmTokenKind::KwFsm,
+                            span: Span::new(pos, pos + 5),
+                        });
+                        pos += 5;
+                        continue;
+                    }
+
+                    // Punctuation that can appear in a header.
+                    match b {
+                        b'(' => { push1(&mut self.tokens, FsmTokenKind::LParen, pos); pos += 1; continue; }
+                        b')' => { push1(&mut self.tokens, FsmTokenKind::RParen, pos); pos += 1; continue; }
+                        b':' => { push1(&mut self.tokens, FsmTokenKind::Colon, pos); pos += 1; continue; }
+                        b',' => { push1(&mut self.tokens, FsmTokenKind::Comma, pos); pos += 1; continue; }
+                        b'=' => { push1(&mut self.tokens, FsmTokenKind::Eq, pos); pos += 1; continue; }
+                        b'{' => {
+                            // Body opens. Emit LBrace and switch to element level.
+                            push1(&mut self.tokens, FsmTokenKind::LBrace, pos);
+                            pos += 1;
+                            self.pos = pos;
+                            -> $ElementLevel
+                        }
+                        _ => {}
+                    }
+
+                    // Identifier / keyword (true/false). Header identifiers
+                    // are the name, parameter names, type names, and the
+                    // boolean default literal.
+                    if b.is_ascii_alphabetic() || b == b'_' {
+                        let start = pos;
+                        while pos < n && (src[pos].is_ascii_alphanumeric() || src[pos] == b'_') {
+                            pos += 1;
+                        }
+                        let word = std::str::from_utf8(&src[start..pos]).unwrap_or("");
+                        let kind = match word {
+                            "true" => FsmTokenKind::KwTrue,
+                            "false" => FsmTokenKind::KwFalse,
+                            other => FsmTokenKind::Ident(other.to_string()),
+                        };
+                        self.tokens.push(FsmToken { kind, span: Span::new(start, pos) });
+                        continue;
+                    }
+
+                    // Integer literal (header default exprs like `= 0`).
+                    if b.is_ascii_digit() {
+                        let start = pos;
+                        while pos < n && src[pos].is_ascii_digit() {
+                            pos += 1;
+                        }
+                        let text = std::str::from_utf8(&src[start..pos]).unwrap_or("0");
+                        let val: i64 = text.parse().unwrap_or(0);
+                        self.tokens.push(FsmToken {
+                            kind: FsmTokenKind::IntLit(val),
+                            span: Span::new(start, pos),
+                        });
+                        continue;
+                    }
+
+                    // String literal (header default exprs like `= ""`).
+                    if b == b'"' {
+                        let (content, end, ok) = scan_string(src, pos);
+                        if !ok {
+                            self.error = Some(ParseError {
+                                message: "unterminated string literal in @@fsm header".to_string(),
+                                span: Span::new(pos, end),
+                            });
+                            self.pos = end;
+                            -> $Done
+                        }
+                        self.tokens.push(FsmToken {
+                            kind: FsmTokenKind::StringLit(content),
+                            span: Span::new(pos, end),
+                        });
+                        pos = end;
+                        continue;
+                    }
+
+                    // A `$` in the header is the `@@system` compartment sigil
+                    // `$(...)` / `$>(...)`, which has no meaning in a construct
+                    // without compartments (RFC-0042 §3.2, E701).
+                    if b == b'$' {
+                        self.error_code = Some("E701");
+                        self.error = Some(ParseError {
+                            message: "the `$(...)` / `$>(...)` parameter sigil has no meaning in @@fsm (no compartments)".to_string(),
+                            span: Span::new(pos, pos + 1),
+                        });
+                        self.pos = pos;
+                        -> $Done
+                    }
+
+                    // Unexpected byte in header.
+                    self.error = Some(ParseError {
+                        message: format!("unexpected byte '{}' in @@fsm header", b as char),
+                        span: Span::new(pos, pos + 1),
+                    });
+                    self.pos = pos;
+                    -> $Done
+                }
+            }
+        }
+
+        // Match-element level. `/` starts a regex literal here.
+        $ElementLevel {
+            $>() {
+                let src = &self.bytes;
+                let n = src.len();
+                let mut pos = self.pos;
+
+                loop {
+                    pos = skip_ws_comments(src, pos);
+                    if pos >= n {
+                        self.tokens.push(FsmToken {
+                            kind: FsmTokenKind::Eof,
+                            span: Span::new(pos, pos),
+                        });
+                        self.pos = pos;
+                        -> $Done
+                    }
+
+                    let b = src[pos];
+
+                    // Regex literal: scan to the matching unescaped `/`.
+                    if b == b'/' {
+                        let start = pos;
+                        pos += 1; // opening /
+                        let body_start = pos;
+                        while pos < n && src[pos] != b'/' {
+                            if src[pos] == b'\\' && pos + 1 < n {
+                                pos += 2; // escaped char (incl. \/)
+                            } else {
+                                pos += 1;
+                            }
+                        }
+                        if pos >= n {
+                            self.error = Some(ParseError {
+                                message: "unterminated regex literal".to_string(),
+                                span: Span::new(start, pos),
+                            });
+                            self.pos = pos;
+                            -> $Done
+                        }
+                        let body = std::str::from_utf8(&src[body_start..pos])
+                            .unwrap_or("")
+                            .to_string();
+                        pos += 1; // closing /
+                        self.tokens.push(FsmToken {
+                            kind: FsmTokenKind::RegexLiteral(body),
+                            span: Span::new(start, pos),
+                        });
+                        continue;
+                    }
+
+                    // Body close.
+                    if b == b'}' {
+                        push1(&mut self.tokens, FsmTokenKind::RBrace, pos);
+                        pos += 1;
+                        continue;
+                    }
+
+                    // `|` — ordered-choice match separator. Stays element level.
+                    if b == b'|' {
+                        push1(&mut self.tokens, FsmTokenKind::Pipe, pos);
+                        pos += 1;
+                        continue;
+                    }
+
+                    // `->` transition arrow. A lone `-` (not followed by `>`)
+                    // begins a bare expression (unary minus) — fall through to
+                    // the $ExprLevel route below.
+                    if b == b'-' && pos + 1 < n && src[pos + 1] == b'>' {
+                        self.tokens.push(FsmToken {
+                            kind: FsmTokenKind::Arrow,
+                            span: Span::new(pos, pos + 2),
+                        });
+                        pos += 2;
+                        continue;
+                    }
+
+                    // Embedding-action sigils on a stage: `>{` `@{` `${` `%{`
+                    // `@eof{`. Only the sigil is emitted here; the following
+                    // `{` is lexed by the action-block handler below (block
+                    // mode), and StageParser pairs the sigil with that block.
+                    // Longest-match: `@eof{` before `@{`. (`${` is handled here
+                    // before the `$` state-ref branch; `>{`/`%{`/`@{` have no
+                    // other element-level meaning.)
+                    if b == b'@' && pos + 4 < n && &src[pos..pos + 4] == b"@eof" && src[pos + 4] == b'{' {
+                        self.tokens.push(FsmToken {
+                            kind: FsmTokenKind::EmbedEof,
+                            span: Span::new(pos, pos + 4),
+                        });
+                        pos += 4;
+                        continue;
+                    }
+                    if b == b'@' && pos + 1 < n && src[pos + 1] == b'{' {
+                        push1(&mut self.tokens, FsmTokenKind::EmbedAccept, pos);
+                        pos += 1;
+                        continue;
+                    }
+                    if b == b'>' && pos + 1 < n && src[pos + 1] == b'{' {
+                        push1(&mut self.tokens, FsmTokenKind::EmbedStart, pos);
+                        pos += 1;
+                        continue;
+                    }
+                    if b == b'%' && pos + 1 < n && src[pos + 1] == b'{' {
+                        push1(&mut self.tokens, FsmTokenKind::EmbedLeave, pos);
+                        pos += 1;
+                        continue;
+                    }
+                    if b == b'$' && pos + 1 < n && src[pos + 1] == b'{' {
+                        push1(&mut self.tokens, FsmTokenKind::EmbedEvery, pos);
+                        pos += 1;
+                        continue;
+                    }
+
+                    // `:` failure-branch marker (the `:` in `-> $a : -> $b`)
+                    // or a state-label colon (handled with `$` below).
+                    if b == b':' {
+                        push1(&mut self.tokens, FsmTokenKind::Colon, pos);
+                        pos += 1;
+                        continue;
+                    }
+
+                    // `$Name` state reference / label / `$State.stage` ref.
+                    if b == b'$' {
+                        let start = pos;
+                        pos += 1; // `$`
+                        let name_start = pos;
+                        while pos < n && (src[pos].is_ascii_alphanumeric() || src[pos] == b'_') {
+                            pos += 1;
+                        }
+                        let name = std::str::from_utf8(&src[name_start..pos]).unwrap_or("").to_string();
+
+                        // `$State.stage` — a stage-capture / stage-target ref.
+                        if pos < n && src[pos] == b'.' {
+                            pos += 1; // `.`
+                            let stage_start = pos;
+                            while pos < n && (src[pos].is_ascii_alphanumeric() || src[pos] == b'_') {
+                                pos += 1;
+                            }
+                            let stage = std::str::from_utf8(&src[stage_start..pos]).unwrap_or("").to_string();
+                            self.tokens.push(FsmToken {
+                                kind: FsmTokenKind::StageRef { state: name, stage },
+                                span: Span::new(start, pos),
+                            });
+                            // A trailing `.` means a chained member access
+                            // (`$state.stage.return_value`, Mode C §8.3): the
+                            // stage-ref begins a bare expression. Route to
+                            // $ExprLevel so `.field` lexes as Dot + Ident
+                            // (member access), not as a stage label.
+                            if pos < n && src[pos] == b'.' {
+                                self.pos = pos;
+                                self.paren_depth = 0;
+                                self.in_block = false;
+                                -> $ExprLevel
+                            }
+                            continue;
+                        }
+
+                        // `$Name:` — a state-label declaration (consume the `:`).
+                        if pos < n && src[pos] == b':' {
+                            self.tokens.push(FsmToken {
+                                kind: FsmTokenKind::StateLabel(name),
+                                span: Span::new(start, pos + 1),
+                            });
+                            pos += 1; // `:`
+                            continue;
+                        }
+
+                        // `$Name` — a transition target / state reference.
+                        self.tokens.push(FsmToken {
+                            kind: FsmTokenKind::StateRef(name),
+                            span: Span::new(start, pos),
+                        });
+                        continue;
+                    }
+
+                    // `.name` stage label preceding a `/regex/`. (At element
+                    // level a leading `.` is always a stage label; member
+                    // access only occurs inside expressions.)
+                    if b == b'.' && pos + 1 < n && (src[pos + 1].is_ascii_alphabetic() || src[pos + 1] == b'_') {
+                        let start = pos;
+                        pos += 1; // `.`
+                        let name_start = pos;
+                        while pos < n && (src[pos].is_ascii_alphanumeric() || src[pos] == b'_') {
+                            pos += 1;
+                        }
+                        let name = std::str::from_utf8(&src[name_start..pos]).unwrap_or("").to_string();
+                        self.tokens.push(FsmToken {
+                            kind: FsmTokenKind::StageLabel(name),
+                            span: Span::new(start, pos),
+                        });
+                        continue;
+                    }
+
+                    // Section headers `actions:` / `domain:` terminate the
+                    // state list. Detected with a lookahead so a non-section
+                    // identifier still falls through to the $ExprLevel route.
+                    if b.is_ascii_alphabetic() || b == b'_' {
+                        let id_start = pos;
+                        let mut p = pos;
+                        while p < n && (src[p].is_ascii_alphanumeric() || src[p] == b'_') {
+                            p += 1;
+                        }
+                        let word = std::str::from_utf8(&src[id_start..p]).unwrap_or("");
+                        let mut q = p;
+                        while q < n && (src[q] == b' ' || src[q] == b'\t') {
+                            q += 1;
+                        }
+                        let header = match word {
+                            "actions" => Some(FsmTokenKind::KwActions),
+                            "domain" => Some(FsmTokenKind::KwDomain),
+                            _ => None,
+                        };
+                        if let Some(kind) = header {
+                            if q < n && src[q] == b':' {
+                                self.tokens.push(FsmToken {
+                                    kind,
+                                    span: Span::new(id_start, p),
+                                });
+                                pos = q + 1; // consume the `:`
+                                continue;
+                            }
+                        }
+                        // Not a section header — fall through to the bare-
+                        // expression route below (without consuming the ident).
+                    }
+
+                    // `{` opens an action block (a match element). Emit the
+                    // brace and enter $ExprLevel in block mode (paren_depth 1,
+                    // in_block true): it lexes statement tokens until the
+                    // matching `}` closes the block and hands control back.
+                    if b == b'{' {
+                        push1(&mut self.tokens, FsmTokenKind::LBrace, pos);
+                        pos += 1;
+                        self.pos = pos;
+                        self.paren_depth = 1;
+                        self.in_block = true;
+                        -> $ExprLevel
+                    }
+
+                    // Anything else begins a bare expression — hand off to
+                    // $ExprLevel WITHOUT consuming (in_block false, paren_depth
+                    // 0). $ExprLevel lexes expression tokens (where `/` is
+                    // division) until a terminator (`}`, `|`, `$`, `:`, `->` at
+                    // paren-depth 0) returns control here.
+                    self.pos = pos;
+                    self.paren_depth = 0;
+                    self.in_block = false;
+                    -> $ExprLevel
+                }
+            }
+        }
+
+        // Expression level — inside a bare expression / action body /
+        // when-condition. A `/` here is the division operator, not a regex
+        // delimiter. Returns to $ElementLevel at a terminator.
+        $ExprLevel {
+            $>() {
+                let src = &self.bytes;
+                let n = src.len();
+                let mut pos = self.pos;
+
+                loop {
+                    pos = skip_ws_comments(src, pos);
+                    if pos >= n {
+                        // EOF terminates the expression; element level emits Eof.
+                        self.pos = pos;
+                        -> $ElementLevel
+                    }
+
+                    let b = src[pos];
+
+                    // Terminators at paren-depth 0 hand control back to
+                    // $ElementLevel without consuming. Besides the obvious
+                    // block/match terminators (`}` `|`), an expression also
+                    // ends where an element-level construct begins: a state
+                    // label/ref (`$`), a failure-branch marker (`:`), or a
+                    // transition arrow (`->`). (`@@:` probes are matched
+                    // before this check, so a bare `:` here is never a probe.)
+                    if self.paren_depth == 0 {
+                        if b == b'}' || b == b'|' || b == b'$' || b == b':' {
+                            self.pos = pos;
+                            -> $ElementLevel
+                        }
+                        if b == b'-' && pos + 1 < n && src[pos + 1] == b'>' {
+                            self.pos = pos;
+                            -> $ElementLevel
+                        }
+                        // A section header (`actions:` / `domain:`) at depth 0
+                        // ends the current bare expression — hand back to
+                        // $ElementLevel so the header is detected there. (A
+                        // depth-0 `ident :` is never valid expression syntax in
+                        // RFC-0043, so this only fires for real section headers.)
+                        if b.is_ascii_alphabetic() || b == b'_' {
+                            let id_start = pos;
+                            let mut p = pos;
+                            while p < n && (src[p].is_ascii_alphanumeric() || src[p] == b'_') {
+                                p += 1;
+                            }
+                            let word = std::str::from_utf8(&src[id_start..p]).unwrap_or("");
+                            if word == "actions" || word == "domain" {
+                                let mut q = p;
+                                while q < n && (src[q] == b' ' || src[q] == b'\t') {
+                                    q += 1;
+                                }
+                                if q < n && src[q] == b':' {
+                                    self.pos = pos;
+                                    -> $ElementLevel
+                                }
+                            }
+                        }
+                    }
+
+                    // `}` at paren-depth > 0 closes a paren/block level (the
+                    // depth-0 case is the bare-expr terminator handled above).
+                    // Consume it; if it closes the enclosing action block,
+                    // return to $ElementLevel so the next `/` lexes as a regex.
+                    if b == b'}' {
+                        push1(&mut self.tokens, FsmTokenKind::RBrace, pos);
+                        pos += 1;
+                        self.paren_depth = (self.paren_depth - 1).max(0);
+                        if self.paren_depth == 0 && self.in_block {
+                            self.in_block = false;
+                            self.pos = pos;
+                            -> $ElementLevel
+                        }
+                        continue;
+                    }
+
+                    // `$State` / `$State.stage` reference. Only reached at
+                    // paren-depth > 0 (a depth-0 `$` is an element-level
+                    // terminator, handled above) — e.g. the targets inside a
+                    // conditional transition `( $A when ..., $B when ... )`.
+                    if b == b'$' {
+                        let start = pos;
+                        pos += 1; // `$`
+                        let name_start = pos;
+                        while pos < n && (src[pos].is_ascii_alphanumeric() || src[pos] == b'_') {
+                            pos += 1;
+                        }
+                        let name = std::str::from_utf8(&src[name_start..pos]).unwrap_or("").to_string();
+                        if pos < n && src[pos] == b'.' {
+                            pos += 1;
+                            let stage_start = pos;
+                            while pos < n && (src[pos].is_ascii_alphanumeric() || src[pos] == b'_') {
+                                pos += 1;
+                            }
+                            let stage = std::str::from_utf8(&src[stage_start..pos]).unwrap_or("").to_string();
+                            self.tokens.push(FsmToken {
+                                kind: FsmTokenKind::StageRef { state: name, stage },
+                                span: Span::new(start, pos),
+                            });
+                            continue;
+                        }
+                        self.tokens.push(FsmToken {
+                            kind: FsmTokenKind::StateRef(name),
+                            span: Span::new(start, pos),
+                        });
+                        continue;
+                    }
+
+                    // `@@:` context probe — e.g. @@:matched, @@:cursor, @@:return.
+                    if b == b'@' && pos + 2 < n && src[pos + 1] == b'@' && src[pos + 2] == b':' {
+                        let start = pos;
+                        pos += 3; // @@:
+                        // `@@:(` — the concise return setter `@@:(expr)`. Emit
+                        // ConciseReturn; the `(` follows as a normal LParen.
+                        if pos < n && src[pos] == b'(' {
+                            self.tokens.push(FsmToken {
+                                kind: FsmTokenKind::ConciseReturn,
+                                span: Span::new(start, pos),
+                            });
+                            continue;
+                        }
+                        let name_start = pos;
+                        while pos < n && (src[pos].is_ascii_alphanumeric() || src[pos] == b'_') {
+                            pos += 1;
+                        }
+                        let name = std::str::from_utf8(&src[name_start..pos]).unwrap_or("").to_string();
+                        self.tokens.push(FsmToken {
+                            kind: FsmTokenKind::Probe(name),
+                            span: Span::new(start, pos),
+                        });
+                        continue;
+                    }
+
+                    // Identifier / keyword.
+                    if b.is_ascii_alphabetic() || b == b'_' {
+                        let start = pos;
+                        while pos < n && (src[pos].is_ascii_alphanumeric() || src[pos] == b'_') {
+                            pos += 1;
+                        }
+                        let word = std::str::from_utf8(&src[start..pos]).unwrap_or("");
+                        let kind = match word {
+                            "true" => FsmTokenKind::KwTrue,
+                            "false" => FsmTokenKind::KwFalse,
+                            "if" => FsmTokenKind::KwIf,
+                            "else" => FsmTokenKind::KwElse,
+                            "when" => FsmTokenKind::KwWhen,
+                            other => FsmTokenKind::Ident(other.to_string()),
+                        };
+                        self.tokens.push(FsmToken { kind, span: Span::new(start, pos) });
+                        continue;
+                    }
+
+                    // Integer literal.
+                    if b.is_ascii_digit() {
+                        let start = pos;
+                        while pos < n && src[pos].is_ascii_digit() {
+                            pos += 1;
+                        }
+                        let text = std::str::from_utf8(&src[start..pos]).unwrap_or("0");
+                        let val: i64 = text.parse().unwrap_or(0);
+                        self.tokens.push(FsmToken {
+                            kind: FsmTokenKind::IntLit(val),
+                            span: Span::new(start, pos),
+                        });
+                        continue;
+                    }
+
+                    // String literal.
+                    if b == b'"' {
+                        let (content, end, ok) = scan_string(src, pos);
+                        if !ok {
+                            self.error = Some(ParseError {
+                                message: "unterminated string literal".to_string(),
+                                span: Span::new(pos, end),
+                            });
+                            self.pos = end;
+                            -> $Done
+                        }
+                        self.tokens.push(FsmToken {
+                            kind: FsmTokenKind::StringLit(content),
+                            span: Span::new(pos, end),
+                        });
+                        pos = end;
+                        continue;
+                    }
+
+                    // Two-character operators (checked before single-char).
+                    if pos + 1 < n {
+                        let two = &src[pos..pos + 2];
+                        let two_kind = match two {
+                            b"&&" => Some(FsmTokenKind::AndAnd),
+                            b"||" => Some(FsmTokenKind::OrOr),
+                            b"==" => Some(FsmTokenKind::EqEq),
+                            b"!=" => Some(FsmTokenKind::NotEq),
+                            b"<=" => Some(FsmTokenKind::Le),
+                            b">=" => Some(FsmTokenKind::Ge),
+                            // `->` is never valid in an expression (Frame has no
+                            // `>` prefix operator). At depth 0 it already
+                            // terminated the expression above; reaching it here
+                            // means a transition arrow nested inside a block or
+                            // paren group — emit Arrow so the action-block parser
+                            // can reject it (E712).
+                            b"->" => Some(FsmTokenKind::Arrow),
+                            _ => None,
+                        };
+                        if let Some(k) = two_kind {
+                            self.tokens.push(FsmToken { kind: k, span: Span::new(pos, pos + 2) });
+                            pos += 2;
+                            continue;
+                        }
+                    }
+
+                    // Single-character tokens.
+                    let one = match b {
+                        b'(' => { self.paren_depth += 1; Some(FsmTokenKind::LParen) }
+                        b')' => { self.paren_depth = (self.paren_depth - 1).max(0); Some(FsmTokenKind::RParen) }
+                        b'{' => { self.paren_depth += 1; Some(FsmTokenKind::LBrace) }
+                        b'[' => { self.paren_depth += 1; Some(FsmTokenKind::LBracket) }
+                        b']' => { self.paren_depth = (self.paren_depth - 1).max(0); Some(FsmTokenKind::RBracket) }
+                        b',' => Some(FsmTokenKind::Comma),
+                        b';' => Some(FsmTokenKind::Semi),
+                        b'.' => Some(FsmTokenKind::Dot),
+                        // `:` only reaches here at paren-depth > 0 (a depth-0
+                        // `:` terminates the expression above) — e.g. the
+                        // type colon in an `actions:` param list `(s: bytes)`.
+                        b':' => Some(FsmTokenKind::Colon),
+                        b'<' => Some(FsmTokenKind::Lt),
+                        b'>' => Some(FsmTokenKind::Gt),
+                        b'!' => Some(FsmTokenKind::Bang),
+                        b'+' => Some(FsmTokenKind::Plus),
+                        b'-' => Some(FsmTokenKind::Minus),
+                        b'*' => Some(FsmTokenKind::Star),
+                        b'/' => Some(FsmTokenKind::Slash), // division at expression level
+                        b'%' => Some(FsmTokenKind::Percent),
+                        b'=' => Some(FsmTokenKind::Eq),
+                        _ => None,
+                    };
+                    match one {
+                        Some(k) => {
+                            push1(&mut self.tokens, k, pos);
+                            pos += 1;
+                            continue;
+                        }
+                        None => {
+                            self.error = Some(ParseError {
+                                message: format!("unexpected byte '{}' in expression", b as char),
+                                span: Span::new(pos, pos + 1),
+                            });
+                            self.pos = pos;
+                            -> $Done
+                        }
+                    }
+                }
+            }
+        }
+
+        $Done { }
+
+    domain:
+        bytes: Vec<u8> = Vec::new()
+        pos: usize = 0
+        paren_depth: i32 = 0
+        in_block: bool = false
+        tokens: Vec<FsmToken> = Vec::new()
+        error: Option<ParseError> = None
+        error_code: Option<&'static str> = None
+}

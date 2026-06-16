@@ -118,6 +118,17 @@ pub enum Segment {
         /// "public" is rejected by the validator as redundant.
         visibility: Option<String>,
     },
+    /// @@fsm block — a finite-state recognizer construct (RFC-0042).
+    /// Routed to the separate `fsm_parser` / `fsm_validator` (the @@fsm
+    /// toolchain shares no parsing logic with @@system). Codegen for
+    /// @@fsm is a later phase; for now the pipeline parses + validates
+    /// the block and surfaces diagnostics.
+    Fsm {
+        /// Span of the entire block including `@@fsm Name(...) ... { ... }`.
+        outer_span: Span,
+        /// `@@fsm` name extracted during segmentation.
+        name: String,
+    },
 }
 
 /// The result of source segmentation — an ordered, non-overlapping partition of the source
@@ -250,6 +261,11 @@ pub fn segment<S: SyntaxSkipper>(skipper: &S, source: &[u8]) -> Result<SourceMap
     let mut i = 0usize;
     let mut seg_start = 0usize;
     let mut at_sol = true;
+    // RFC-0042 §11.6: a run of `@@[...]` attributes immediately preceding an
+    // `@@fsm` is folded into that fsm's `outer_span` (so the fsm lexer/parser
+    // sees the attributes). Set when such a run is detected; consumed by the
+    // fsm branch as the segment's start.
+    let mut pending_attr_start: Option<usize> = None;
     let mut target: Option<TargetLanguage> = None;
 
     while i < n {
@@ -263,8 +279,11 @@ pub fn segment<S: SyntaxSkipper>(skipper: &S, source: &[u8]) -> Result<SourceMap
 
             // Check for @@ pragma
             if i + 1 < n && source[i] == b'@' && source[i + 1] == b'@' {
-                // Found pragma — emit any preceding native text
-                if seg_start < line_start {
+                // Found pragma — emit any preceding native text. When an
+                // `@@[...]`-attribute run is pending (it decorates the upcoming
+                // `@@fsm`), the bytes between it and the fsm belong to the fsm
+                // span, so suppress the native flush here.
+                if seg_start < line_start && pending_attr_start.is_none() {
                     segments.push(Segment::Native {
                         span: Span {
                             start: seg_start,
@@ -510,6 +529,88 @@ pub fn segment<S: SyntaxSkipper>(skipper: &S, source: &[u8]) -> Result<SourceMap
                         at_sol = true;
                         continue;
                     }
+                    _ if kind == PragmaKind::Other && is_fsm_pragma(source, i) => {
+                        // @@fsm Name(params) : Type = default { ... } — a
+                        // finite-state recognizer construct (RFC-0042). Routed
+                        // to the separate fsm toolchain. We only need the name
+                        // and the outer span here; the fsm parser re-lexes the
+                        // whole block from `@@fsm`.
+                        let (fsm_name, name_end) = extract_fsm_name(source, i);
+
+                        // Find the body-opening `{` (the header — params,
+                        // return type, default — precedes it on one line).
+                        let mut brace_pos = name_end;
+                        while brace_pos < n
+                            && source[brace_pos] != b'{'
+                            && source[brace_pos] != b'\n'
+                        {
+                            brace_pos += 1;
+                        }
+                        if brace_pos >= n || source[brace_pos] != b'{' {
+                            return Err(SegmentError::UnterminatedSystem {
+                                name: fsm_name,
+                                open_brace_pos: brace_pos,
+                            });
+                        }
+
+                        let mut closer = skipper.body_closer();
+                        let close_pos = match closer.close_byte(source, brace_pos) {
+                            Ok(pos) => pos,
+                            Err(_) => {
+                                return Err(SegmentError::UnterminatedSystem {
+                                    name: fsm_name,
+                                    open_brace_pos: brace_pos,
+                                });
+                            }
+                        };
+
+                        let mut outer_end = close_pos + 1;
+                        if outer_end < n && source[outer_end] == b'\n' {
+                            outer_end += 1;
+                        }
+
+                        segments.push(Segment::Fsm {
+                            outer_span: Span {
+                                // Start at a folded `@@[...]` attribute run when
+                                // one precedes this fsm, else at `@@fsm`.
+                                start: pending_attr_start.take().unwrap_or(pragma_start),
+                                end: outer_end,
+                            },
+                            name: fsm_name,
+                        });
+
+                        i = outer_end;
+                        seg_start = i;
+                        at_sol = true;
+                        continue;
+                    }
+                    _ if kind == PragmaKind::Other
+                        && i + 2 < n
+                        && source[i + 1] == b'@'
+                        && source[i + 2] == b'['
+                        && attr_run_precedes_fsm(
+                            source,
+                            crate::frame_c::compiler::attribute_scanner::scan_attribute(source, i)
+                                .end_pos,
+                        ) =>
+                    {
+                        // `@@[...]` attribute(s) decorating the following
+                        // `@@fsm` (RFC-0042 §11.6). Fold into the fsm's span:
+                        // remember the run's start and skip past this attribute
+                        // without emitting a segment. (Native before the run was
+                        // flushed above; the gap to `@@fsm` is suppressed by the
+                        // `pending_attr_start` guard.)
+                        if pending_attr_start.is_none() {
+                            pending_attr_start = Some(pragma_start);
+                        }
+                        let attr_end =
+                            crate::frame_c::compiler::attribute_scanner::scan_attribute(source, i)
+                                .end_pos;
+                        i = attr_end;
+                        seg_start = pragma_start;
+                        at_sol = true;
+                        continue;
+                    }
                     _ => {
                         // Simple pragma (@@run-expect, @@skip-if, @@timeout, etc.)
                         let line_end = find_line_end(source, pragma_start);
@@ -580,6 +681,58 @@ fn is_system_pragma(bytes: &[u8], pos: usize) -> bool {
     let remaining = &bytes[pos..];
     remaining.starts_with(b"@@system")
         && (remaining.len() <= 8 || !remaining[8].is_ascii_alphanumeric())
+}
+
+/// After an `@@[...]` attribute ending at `from`, does the next construct —
+/// skipping whitespace/newlines and any further `@@[...]` attributes — begin
+/// an `@@fsm`? Used to fold a leading attribute run into the fsm's span
+/// (RFC-0042 §11.6) rather than emitting it as a standalone pragma.
+fn attr_run_precedes_fsm(bytes: &[u8], from: usize) -> bool {
+    let n = bytes.len();
+    let mut i = from;
+    loop {
+        while i < n
+            && (bytes[i] == b' ' || bytes[i] == b'\t' || bytes[i] == b'\n' || bytes[i] == b'\r')
+        {
+            i += 1;
+        }
+        if is_fsm_pragma(bytes, i) {
+            return true;
+        }
+        // Another `@@[...]` attribute in the run — skip it and keep looking.
+        if i + 2 < n && bytes[i] == b'@' && bytes[i + 1] == b'@' && bytes[i + 2] == b'[' {
+            let span = crate::frame_c::compiler::attribute_scanner::scan_attribute(bytes, i);
+            if span.end_pos <= i {
+                return false; // defensive: no progress
+            }
+            i = span.end_pos;
+            continue;
+        }
+        return false;
+    }
+}
+
+/// Check if position is at `@@fsm` (RFC-0042), not just any `@@` pragma.
+fn is_fsm_pragma(bytes: &[u8], pos: usize) -> bool {
+    let remaining = &bytes[pos..];
+    remaining.starts_with(b"@@fsm")
+        && (remaining.len() <= 5 || !remaining[5].is_ascii_alphanumeric())
+}
+
+/// Extract the `@@fsm` construct name. `start` is at the first `@` of
+/// `@@fsm`. Returns (name, index just past the name).
+fn extract_fsm_name(bytes: &[u8], start: usize) -> (String, usize) {
+    let n = bytes.len();
+    let mut i = start + 5; // skip "@@fsm"
+    while i < n && (bytes[i] == b' ' || bytes[i] == b'\t') {
+        i += 1;
+    }
+    let name_start = i;
+    while i < n && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+        i += 1;
+    }
+    let name = String::from_utf8_lossy(&bytes[name_start..i]).to_string();
+    (name, i)
 }
 
 /// Identify the kind and value of a pragma at the given position.
@@ -925,6 +1078,49 @@ mod tests {
         let map = segment_py("");
         assert!(map.segments.is_empty());
         assert!(map.target.is_none());
+    }
+
+    #[test]
+    fn fsm_block_segmented() {
+        // An @@fsm block is recognized as a Fsm segment (not native, not
+        // a System) with the right name and an outer span covering it.
+        let source = "import os\n@@fsm M(text: bytes) : bool = false { /a/ true }\nx = 1\n";
+        let map = segment_py(source);
+        let fsm = map
+            .segments
+            .iter()
+            .find_map(|s| match s {
+                Segment::Fsm { name, outer_span } => Some((name.clone(), outer_span.clone())),
+                _ => None,
+            })
+            .expect("expected a Fsm segment");
+        assert_eq!(fsm.0, "M");
+        // The outer span starts at `@@fsm` and covers the whole block
+        // (through the closing `}`).
+        let text = &source[fsm.1.start..fsm.1.end];
+        assert!(text.starts_with("@@fsm M"));
+        assert!(text.contains("/a/ true }"));
+        // No System segment should be produced for an @@fsm block.
+        assert!(!map
+            .segments
+            .iter()
+            .any(|s| matches!(s, Segment::System { .. })));
+    }
+
+    /// An @@system and an @@fsm in the same file are both recognized.
+    #[test]
+    fn system_and_fsm_coexist() {
+        let source =
+            "@@system S { interface: go() machine: $A { go() {} } }\n@@fsm M(text: bytes) : bool = false { /a/ true }\n";
+        let map = segment_py(source);
+        assert!(map
+            .segments
+            .iter()
+            .any(|s| matches!(s, Segment::System { .. })));
+        assert!(map
+            .segments
+            .iter()
+            .any(|s| matches!(s, Segment::Fsm { .. })));
     }
 
     #[test]

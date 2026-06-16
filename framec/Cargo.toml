@@ -32,6 +32,11 @@ indoc = "2.0"
 colored = "2.0"
 petgraph = "0.6"
 regex = "1.10"
+# Unicode general-category / script tables for `@@fsm` regex `\p{...}` classes
+# (RFC-0042 §11.6). Used only as a compile-time data source to expand a class
+# into codepoint ranges that feed the hand-written DFA engine; already present
+# transitively via `regex`, so this adds no new build surface.
+regex-syntax = "0.8"
 toml = "0.9.5"
 uuid = { version = "1", features = ["v4"] }
 tempfile = "3"

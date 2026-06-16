@@ -144,6 +144,13 @@ pub(crate) struct PipelineCtx {
     generated_systems: Vec<(String, String)>,
     /// Soft warnings harvested across all systems (W-codes), surfaced at the end.
     module_warnings: Vec<CompileError>,
+    /// W-code warnings from `@@fsm` blocks (RFC-0042), harvested in
+    /// `do_segment` and merged into the final warnings at codegen time.
+    fsm_warnings: Vec<CompileError>,
+    /// Generated `@@fsm` code keyed by fsm name (RFC-0042). Produced in
+    /// `do_segment` after a block validates; the assembler emits it in
+    /// place of the `Segment::Fsm` block.
+    fsm_generated: Vec<(String, String)>,
 }
 
 impl PipelineCtx {
@@ -162,6 +169,8 @@ impl PipelineCtx {
             arcanum: None,
             generated_systems: Vec::new(),
             module_warnings: Vec::new(),
+            fsm_warnings: Vec::new(),
+            fsm_generated: Vec::new(),
         }
     }
 
@@ -308,6 +317,134 @@ pub(crate) fn do_segment(c: &mut PipelineCtx) -> Option<CompileResult> {
             // (collected into `module_imports`, then resolved into
             // analysis-only systems); no rejection here.
         }
+    }
+
+    // RFC-0042: parse + validate every `@@fsm` block. Errors fail the
+    // compile (returned now); warnings are stashed and merged into the
+    // final warnings at codegen time. @@fsm emits no target code yet, so
+    // clean blocks just pass through (the assembler has an emit-nothing
+    // Fsm arm).
+    let mut fsm_errors: Vec<CompileError> = Vec::new();
+    // Phase 1 — parse every `@@fsm` block. Collect the decls first so each
+    // can be validated with visibility of its siblings: Mode C alphabet
+    // checking (§8.3 / E731) resolves a `/@Inner/` reference against the
+    // other fsms declared in the same module.
+    let mut parsed: Vec<(String, crate::frame_c::compiler::frame_ast::FsmDeclAst)> = Vec::new();
+    for seg in &source_map.segments {
+        if let Segment::Fsm { outer_span, name } = seg {
+            let block = &source_map.source[outer_span.start..outer_span.end];
+            match crate::frame_c::compiler::fsm_parser::parse_fsm_block(block) {
+                Err(pe) => {
+                    fsm_errors.push(CompileError::new(
+                        pe.code,
+                        &format!("@@fsm {}: {}", name, pe.message),
+                    ));
+                }
+                Ok(ast) => parsed.push((name.clone(), ast)),
+            }
+        }
+    }
+    let module: Vec<crate::frame_c::compiler::frame_ast::FsmDeclAst> =
+        parsed.iter().map(|(_, ast)| ast.clone()).collect();
+
+    // Phase 2 — validate (with sibling visibility) and generate each fsm.
+    for (name, ast) in &parsed {
+        let mut had_error = false;
+        for d in crate::frame_c::compiler::fsm_validator::validate_fsm_in_module(ast, &module) {
+            let ce = CompileError::new(d.code, &d.message);
+            if d.code.starts_with('W') {
+                c.fsm_warnings.push(ce);
+            } else {
+                had_error = true;
+                fsm_errors.push(ce);
+            }
+        }
+        // Codegen — v0.1 implements the Python reference backend
+        // and the Rust backend (Phase 8). Other targets surface
+        // a clear capability error rather than silently dropping
+        // the @@fsm.
+        if !had_error {
+            use crate::frame_c::visitors::TargetLanguage;
+            let generated = match c.config.target {
+                TargetLanguage::Python3 => {
+                    Some(crate::frame_c::compiler::codegen::fsm_python::generate(ast))
+                }
+                TargetLanguage::Rust => {
+                    Some(crate::frame_c::compiler::codegen::fsm_rust::generate(ast))
+                }
+                TargetLanguage::Erlang => {
+                    Some(crate::frame_c::compiler::codegen::fsm_erlang::generate(ast))
+                }
+                TargetLanguage::JavaScript => Some(
+                    crate::frame_c::compiler::codegen::fsm_javascript::generate(ast),
+                ),
+                TargetLanguage::TypeScript => Some(
+                    crate::frame_c::compiler::codegen::fsm_typescript::generate(ast),
+                ),
+                TargetLanguage::Go => {
+                    Some(crate::frame_c::compiler::codegen::fsm_go::generate(ast))
+                }
+                TargetLanguage::Ruby => {
+                    Some(crate::frame_c::compiler::codegen::fsm_ruby::generate(ast))
+                }
+                TargetLanguage::Php => {
+                    Some(crate::frame_c::compiler::codegen::fsm_php::generate(ast))
+                }
+                TargetLanguage::Dart => {
+                    Some(crate::frame_c::compiler::codegen::fsm_dart::generate(ast))
+                }
+                TargetLanguage::Lua => {
+                    Some(crate::frame_c::compiler::codegen::fsm_lua::generate(ast))
+                }
+                TargetLanguage::Java => {
+                    Some(crate::frame_c::compiler::codegen::fsm_java::generate(ast))
+                }
+                TargetLanguage::Kotlin => {
+                    Some(crate::frame_c::compiler::codegen::fsm_kotlin::generate(ast))
+                }
+                TargetLanguage::CSharp => {
+                    Some(crate::frame_c::compiler::codegen::fsm_csharp::generate(ast))
+                }
+                TargetLanguage::Swift => {
+                    Some(crate::frame_c::compiler::codegen::fsm_swift::generate(ast))
+                }
+                TargetLanguage::Cpp => {
+                    Some(crate::frame_c::compiler::codegen::fsm_cpp::generate(ast))
+                }
+                TargetLanguage::C => Some(crate::frame_c::compiler::codegen::fsm_c::generate(ast)),
+                TargetLanguage::GDScript => Some(
+                    crate::frame_c::compiler::codegen::fsm_gdscript::generate(ast),
+                ),
+                #[allow(unreachable_patterns)]
+                _ => None,
+            };
+            match generated {
+                Some(Ok(code)) => c.fsm_generated.push((name.clone(), code)),
+                Some(Err(reason)) => fsm_errors.push(CompileError::new(
+                    "E740",
+                    &format!("@@fsm {}: {}", name, reason),
+                )),
+                // All 17 targets now have an @@fsm backend, so this arm is
+                // unreachable; it remains as a defensive backstop should the
+                // target set grow.
+                None => fsm_errors.push(CompileError::new(
+                    "E740",
+                    &format!(
+                        "@@fsm {}: code generation for the {:?} target is not yet \
+                         implemented",
+                        name, c.config.target
+                    ),
+                )),
+            }
+        }
+    }
+    if !fsm_errors.is_empty() {
+        return Some(CompileResult {
+            code: String::new(),
+            errors: fsm_errors,
+            warnings: std::mem::take(&mut c.fsm_warnings),
+            source_map: None,
+        });
     }
 
     c.source_map = Some(source_map);
@@ -1331,6 +1468,8 @@ pub(crate) fn do_validate_codegen(c: &mut PipelineCtx) -> Option<CompileResult> 
 
     c.system_asts = system_asts;
     c.generated_systems = generated_systems;
+    // Merge any @@fsm warnings harvested in do_segment.
+    module_warnings.extend(std::mem::take(&mut c.fsm_warnings));
     c.module_warnings = module_warnings;
     None
 }
@@ -1344,6 +1483,7 @@ pub(crate) fn do_assemble(c: &mut PipelineCtx) -> CompileResult {
     let system_asts = &c.system_asts;
     let module_imports = &c.module_imports;
     let generated_systems = &c.generated_systems;
+    let generated_fsms = std::mem::take(&mut c.fsm_generated);
     let strict_import_errors = std::mem::take(&mut c.strict_import_errors);
     let module_warnings = std::mem::take(&mut c.module_warnings);
     let backend = get_backend(config.target);
@@ -1404,6 +1544,7 @@ pub(crate) fn do_assemble(c: &mut PipelineCtx) -> CompileResult {
     let code = match assembler::assemble(
         &source_map,
         &generated_systems,
+        &generated_fsms,
         &system_params,
         config.target,
         &runtime_imports,
@@ -1680,6 +1821,266 @@ mod tests {
         let error = CompileError::new("E001", "test error").with_location(10, 5);
         assert_eq!(error.line, Some(10));
         assert_eq!(error.column, Some(5));
+    }
+
+    // --- RFC-0042 @@fsm driver wiring (Task 14) ---
+
+    fn compile_py(source: &str) -> CompileResult {
+        use crate::frame_c::compiler::pipeline_supervisor::run_pipeline;
+        let config = PipelineConfig::production(TargetLanguage::Python3);
+        run_pipeline(source.as_bytes(), &config)
+    }
+
+    /// A clean `@@fsm` block compiles without errors and emits the
+    /// generated Python recognizer into the output.
+    #[test]
+    fn fsm_block_clean_compiles() {
+        let r = compile_py("@@fsm M(text: bytes) : bool = false { /a/ true }\n");
+        assert!(
+            r.errors.is_empty(),
+            "expected no errors, got {:?}",
+            r.errors
+        );
+        assert!(
+            r.code.contains("class M"),
+            "expected emitted class, got:\n{}",
+            r.code
+        );
+        assert!(r.code.contains("def _run"), "expected the DFA driver");
+    }
+
+    /// End-to-end: the Python emitted by the full pipeline actually runs
+    /// and produces the FSM-TEST-001 verdicts. Proves `framec compile -l
+    /// python_3` of an `@@fsm` yields runnable output. Self-skips if
+    /// python3 is unavailable.
+    #[test]
+    fn fsm_block_emitted_python_runs() {
+        use std::process::Command;
+        let r = compile_py("@@fsm M(text: bytes) : bool = false { /a/ true }\n");
+        assert!(r.errors.is_empty(), "got {:?}", r.errors);
+        let driver = format!(
+            "{}\nimport sys\nm = M(sys.argv[1])\nprint(m.accepted)\n",
+            r.code
+        );
+        let path = std::env::temp_dir().join("framec_fsm_e2e_pipeline.py");
+        std::fs::write(&path, driver).expect("write temp py");
+        let out = match Command::new("python3").arg(&path).arg("a").output() {
+            Ok(o) => o,
+            Err(_) => return, // python3 absent — skip
+        };
+        assert!(
+            out.status.success(),
+            "python3 failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "True");
+    }
+
+    /// RFC-0042 Mode A/B: a `@@system` handler invokes an `@@fsm` via
+    /// `@@FsmName(args)` (a plain constructor, not the `._create` factory)
+    /// and reads its instance fields. Compiles both into one module and
+    /// runs the system driving the fsm. (Only `int` domain fields are used:
+    /// a `@@system` `bool = false` default emits Python `false`, an
+    /// unrelated pre-existing @@system codegen behavior.)
+    #[test]
+    fn fsm_mode_a_called_from_system() {
+        use std::process::Command;
+        // `@@system` statements/fields are newline-separated (unlike the
+        // whitespace-agnostic `@@fsm` body), so use a real multi-line source.
+        let src = r#"
+@@fsm Digits(text: bytes) : int = 0 { /[0-9]+/ to_int(@@:matched) }
+
+@@system Parser {
+    interface:
+        parse(buf: bytes)
+    machine:
+        $Start {
+            parse(buf) {
+                m = @@Digits(buf)
+                self.value = m.return_value
+                self.cur = m.cursor
+            }
+        }
+    domain:
+        value: int = 0
+        cur: int = 0
+}
+"#;
+        let r = compile_py(src);
+        assert!(r.errors.is_empty(), "got {:?}", r.errors);
+        // The fsm call site is a plain constructor, not the `._create`
+        // factory used for `@@system` instantiation.
+        assert!(
+            r.code.contains("m = Digits(buf)"),
+            "expected plain fsm constructor, got:\n{}",
+            r.code
+        );
+        let driver = format!(
+            "{}\np = Parser._create()\np.parse(\"123\")\nprint(p.value, p.cur)\n\
+             q = Parser._create()\nq.parse(\"xy\")\nprint(q.value, q.cur)\n",
+            r.code
+        );
+        let path = std::env::temp_dir().join("framec_fsm_mode_a.py");
+        std::fs::write(&path, driver).expect("write temp py");
+        let out = match Command::new("python3").arg(&path).output() {
+            Ok(o) => o,
+            Err(_) => return,
+        };
+        assert!(
+            out.status.success(),
+            "python3 failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let text = String::from_utf8_lossy(&out.stdout);
+        let lines: Vec<&str> = text.lines().collect();
+        // "123": fsm matches → return_value 3-digit int, cursor 3.
+        assert_eq!(lines[0], "123 3", "digits input read back through Mode A");
+        // "xy": fsm rejects → return_value stays at its default 0, cursor 0.
+        assert_eq!(lines[1], "0 0", "non-digit input");
+    }
+
+    /// Compile a multi-fsm module via the pipeline, construct `class`
+    /// over `input`, and return `(accepted, return_value, cursor)` as
+    /// Python `repr`/`str`. `None` if python3 is unavailable.
+    fn run_fsm_class(
+        src: &str,
+        class: &str,
+        input: &str,
+        tag: &str,
+    ) -> Option<(String, String, String)> {
+        use std::process::Command;
+        let r = compile_py(src);
+        assert!(r.errors.is_empty(), "compile errors: {:?}", r.errors);
+        let driver = format!(
+            "{}\nm = {}({:?})\nprint(m.accepted)\nprint(repr(m.return_value))\nprint(m.cursor)\n",
+            r.code, class, input
+        );
+        let path = std::env::temp_dir().join(format!("framec_{}.py", tag));
+        std::fs::write(&path, driver).expect("write temp py");
+        let out = Command::new("python3").arg(&path).output().ok()?;
+        assert!(
+            out.status.success(),
+            "python3 failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let text = String::from_utf8_lossy(&out.stdout);
+        let l: Vec<&str> = text.lines().collect();
+        Some((l[0].to_string(), l[1].to_string(), l[2].to_string()))
+    }
+
+    /// FSM-TEST-701 — Mode C bytes-and-return. RFC-0042 §8.3: a `/@Inner/`
+    /// stage calls another fsm at the cursor; `$state.label.return_value` reads
+    /// the inner's return value and the cursor advances by the inner's.
+    /// (Tuple-return variants in FSM-TEST-700 are a separate parser gap.)
+    #[test]
+    fn fsm_mode_c_call_out() {
+        let src = "@@fsm Digit(input: char) : int = 0 { /[0-9]/ to_int(@@:matched) }\n\
+                   @@fsm Wrap(input: char) : int = 0 { $w: .d/@Digit/ $w.d.return_value }\n";
+        let Some((acc, ret, cur)) = run_fsm_class(src, "Wrap", "5", "mc_co_a") else {
+            return;
+        };
+        assert_eq!(
+            (acc.as_str(), ret.as_str(), cur.as_str()),
+            ("True", "5", "1")
+        );
+        // Inner rejects → the Mode C stage fails → outer rejects.
+        let (acc2, _, _) = run_fsm_class(src, "Wrap", "x", "mc_co_b").unwrap();
+        assert_eq!(acc2, "False");
+    }
+
+    /// Mode C `$state.label` (no `.return_value`) is the matched slice,
+    /// distinct from the inner's return value.
+    #[test]
+    fn fsm_mode_c_slice_access() {
+        let src = "@@fsm Digit(input: char) : int = 0 { /[0-9]/ to_int(@@:matched) }\n\
+                   @@fsm Echo(input: char) : int = 0 { $e: .d/@Digit/ to_int($e.d) }\n";
+        let Some((_, ret, _)) = run_fsm_class(src, "Echo", "5", "mc_sl") else {
+            return;
+        };
+        assert_eq!(ret, "5"); // to_int(slice "5") == 5
+    }
+
+    /// Chained Mode C with a regex stage between (FSM-TEST-700 structure,
+    /// summing instead of returning a tuple): `.a/@Digit/ /,/ .b/@Digit/`.
+    #[test]
+    fn fsm_mode_c_chained() {
+        let src = "@@fsm Digit(input: char) : int = 0 { /[0-9]/ to_int(@@:matched) }\n\
+                   @@fsm Sum(input: char) : int = 0 { \
+                   $p: .a/@Digit/ /,/ .b/@Digit/ ($p.a.return_value + $p.b.return_value) }\n";
+        let Some((acc, ret, _)) = run_fsm_class(src, "Sum", "3,7", "mc_ch_a") else {
+            return;
+        };
+        assert_eq!((acc.as_str(), ret.as_str()), ("True", "10"));
+        // "3-7": the `/,/` stage fails on '-' → reject.
+        let (acc2, _, _) = run_fsm_class(src, "Sum", "3-7", "mc_ch_b").unwrap();
+        assert_eq!(acc2, "False");
+    }
+
+    // (Removed `fsm_block_unsupported_target_e740`: all 17 targets now have
+    // an @@fsm backend, so no target reaches the E740 unsupported-target
+    // path. The defensive `None` arm in `do_segment` remains as a backstop.)
+
+    /// A bad input-parameter type surfaces E713 through the pipeline.
+    #[test]
+    fn fsm_block_e713_errors() {
+        let r = compile_py("@@fsm M(text: float) : bool = false { /a/ true }\n");
+        assert!(
+            r.errors.iter().any(|e| e.code == "E713"),
+            "expected E713, got {:?}",
+            r.errors
+        );
+    }
+
+    /// A `@@fsm` parse error (missing return type) surfaces as a compile error.
+    #[test]
+    fn fsm_block_parse_error_surfaces() {
+        let r = compile_py("@@fsm M(text: bytes) = false { /a/ true }\n");
+        assert!(!r.errors.is_empty(), "expected a parse error, got none");
+    }
+
+    /// An unused domain field surfaces W703 as a warning (and still compiles).
+    #[test]
+    fn fsm_block_w703_warning() {
+        let r = compile_py(
+            "@@fsm M(text: bytes) : bool = false { /a/ true  domain: unused: int = 0 }\n",
+        );
+        assert!(
+            r.errors.is_empty(),
+            "expected no errors, got {:?}",
+            r.errors
+        );
+        assert!(
+            r.warnings.iter().any(|w| w.code == "W703"),
+            "expected W703 warning, got {:?}",
+            r.warnings
+        );
+    }
+
+    /// A forbidden regex construct inside an `@@fsm` surfaces its engine
+    /// diagnostic (E720) through the full pipeline.
+    #[test]
+    fn fsm_block_regex_e720_errors() {
+        // Lookahead is non-regular → E720 (lazy quantifiers now compile).
+        let r = compile_py("@@fsm M(text: bytes) : bool = false { /a(?=b)/ true }\n");
+        assert!(
+            r.errors.iter().any(|e| e.code == "E720"),
+            "expected E720, got {:?}",
+            r.errors
+        );
+    }
+
+    /// A broken `@@fsm` alongside a valid `@@system` fails the compile with
+    /// the fsm diagnostic.
+    #[test]
+    fn fsm_alongside_system() {
+        let src = "@@system S { interface: go() machine: $A { go() {} } }\n\
+                   @@fsm M(text: float) : bool = false { /a/ true }\n";
+        let r = compile_py(src);
+        assert!(
+            r.errors.iter().any(|e| e.code == "E713"),
+            "got {:?}",
+            r.errors
+        );
     }
 
     #[test]

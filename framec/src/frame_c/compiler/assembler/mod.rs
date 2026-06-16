@@ -60,6 +60,7 @@ impl std::error::Error for AssemblyError {}
 pub fn assemble(
     source_map: &SourceMap,
     generated_systems: &[(String, String)],
+    generated_fsms: &[(String, String)],
     system_params: &[(String, Vec<SystemParam>)],
     lang: TargetLanguage,
     runtime_imports: &[String],
@@ -124,6 +125,10 @@ pub fn assemble(
         .iter()
         .map(|(name, params)| (name.as_str(), params.as_slice()))
         .collect();
+
+    // RFC-0042 Mode A/B: `@@FsmName(args)` call sites resolve to a plain
+    // fsm constructor, distinct from a `@@system`'s `._create` factory.
+    let fsm_names: HashSet<&str> = generated_fsms.iter().map(|(n, _)| n.as_str()).collect();
 
     // GDScript multi-system: the system whose name matches
     // `main_system` (RFC-0014's `@@[main]`) emits at script-module
@@ -191,6 +196,7 @@ pub fn assemble(
                 let expanded = expand_system_instantiations(
                     &text,
                     &defined_system_names,
+                    &fsm_names,
                     &params_by_name,
                     lang,
                 )?;
@@ -218,6 +224,7 @@ pub fn assemble(
                     let expanded = expand_system_instantiations(
                         code,
                         &defined_system_names,
+                        &fsm_names,
                         &params_by_name,
                         lang,
                     )?;
@@ -329,6 +336,20 @@ pub fn assemble(
                             system_code.keys().collect::<Vec<_>>()
                         ),
                     });
+                }
+            }
+
+            Segment::Fsm { name, .. } => {
+                // RFC-0042: emit the generated recognizer in place of the
+                // `@@fsm` block. Generation happened in `do_segment` after
+                // the block validated; an absent entry means the target has
+                // no @@fsm backend (the pipeline already raised E740), so we
+                // emit nothing rather than fail assembly.
+                if let Some((_, code)) = generated_fsms.iter().find(|(n, _)| n == name) {
+                    output.push_str(code);
+                    if !code.ends_with('\n') {
+                        output.push('\n');
+                    }
                 }
             }
         }
@@ -593,6 +614,7 @@ fn format_call_args_error(err: &CallArgsError) -> String {
 fn expand_system_instantiations(
     text: &str,
     defined_systems: &HashSet<String>,
+    fsm_names: &HashSet<&str>,
     params_by_name: &HashMap<&str, &[SystemParam]>,
     lang: TargetLanguage,
 ) -> Result<String, AssemblyError> {
@@ -609,8 +631,15 @@ fn expand_system_instantiations(
                 args,
                 no_init,
             } => {
-                let rendered =
-                    expand_one(&name, &args, no_init, defined_systems, params_by_name, lang)?;
+                let rendered = expand_one(
+                    &name,
+                    &args,
+                    no_init,
+                    defined_systems,
+                    fsm_names,
+                    params_by_name,
+                    lang,
+                )?;
                 result.push_str(&rendered);
             }
         }
@@ -627,6 +656,7 @@ fn expand_one(
     args_text: &str,
     is_no_init: bool,
     defined_systems: &HashSet<String>,
+    fsm_names: &HashSet<&str>,
     params_by_name: &HashMap<&str, &[SystemParam]>,
     lang: TargetLanguage,
 ) -> Result<String, AssemblyError> {
@@ -636,6 +666,12 @@ fn expand_one(
                 name, lang,
             ),
         );
+    }
+    // RFC-0042 Mode A/B: `@@FsmName(args)` constructs an fsm instance. Unlike
+    // a `@@system` (RFC-0017 `._create` factory), an `@@fsm` runs recognition
+    // in its plain constructor, so the call site is just `FsmName(args)`.
+    if fsm_names.contains(name) {
+        return Ok(generate_fsm_constructor(name, args_text, lang));
     }
     if defined_systems.contains(name) {
         let resolved_args = match params_by_name.get(name) {
@@ -654,6 +690,22 @@ fn expand_one(
     } else {
         // Cross-file system: no params metadata; pass args through verbatim.
         Ok(generate_constructor(name, args_text, lang))
+    }
+}
+
+/// Generate the constructor call for an `@@fsm` (RFC-0042 Mode A/B). An
+/// fsm runs recognition in its plain constructor — no RFC-0017 factory —
+/// so this is `Name(args)` in Python (v0.1's only fsm backend); other
+/// targets fall back to the same plain spelling (they can't reach here in
+/// v0.1 — a non-Python `@@fsm` is blocked by E740 before assembly).
+fn generate_fsm_constructor(name: &str, args: &str, lang: TargetLanguage) -> String {
+    match lang {
+        TargetLanguage::TypeScript
+        | TargetLanguage::JavaScript
+        | TargetLanguage::Cpp
+        | TargetLanguage::Java
+        | TargetLanguage::CSharp => format!("new {}({})", name, args),
+        _ => format!("{}({})", name, args),
     }
 }
 
@@ -833,8 +885,18 @@ mod tests {
                 },
             }],
         );
-        let result =
-            assemble(&map, &[], &[], TargetLanguage::Python3, &[], &[], &[], None).unwrap();
+        let result = assemble(
+            &map,
+            &[],
+            &[],
+            &[],
+            TargetLanguage::Python3,
+            &[],
+            &[],
+            &[],
+            None,
+        )
+        .unwrap();
         assert_eq!(result, src);
     }
 
@@ -881,6 +943,7 @@ mod tests {
             &map,
             &generated,
             &[],
+            &[],
             TargetLanguage::Python3,
             &[],
             &[],
@@ -910,8 +973,18 @@ mod tests {
                 },
             ],
         );
-        let result =
-            assemble(&map, &[], &[], TargetLanguage::Python3, &[], &[], &[], None).unwrap();
+        let result = assemble(
+            &map,
+            &[],
+            &[],
+            &[],
+            TargetLanguage::Python3,
+            &[],
+            &[],
+            &[],
+            None,
+        )
+        .unwrap();
         assert_eq!(result, "import os\n");
     }
 
@@ -931,8 +1004,14 @@ mod tests {
         let src = "s = @@Foo()\n";
         let systems: HashSet<String> = vec!["Foo".to_string()].into_iter().collect();
         let params = empty_params();
-        let result =
-            expand_system_instantiations(src, &systems, &params, TargetLanguage::Python3).unwrap();
+        let result = expand_system_instantiations(
+            src,
+            &systems,
+            &std::collections::HashSet::<&str>::new(),
+            &params,
+            TargetLanguage::Python3,
+        )
+        .unwrap();
         assert_eq!(result, "s = Foo._create()\n");
     }
 
@@ -942,9 +1021,14 @@ mod tests {
         let src = "let s = @@Foo()\n";
         let systems: HashSet<String> = vec!["Foo".to_string()].into_iter().collect();
         let params = empty_params();
-        let result =
-            expand_system_instantiations(src, &systems, &params, TargetLanguage::TypeScript)
-                .unwrap();
+        let result = expand_system_instantiations(
+            src,
+            &systems,
+            &std::collections::HashSet::<&str>::new(),
+            &params,
+            TargetLanguage::TypeScript,
+        )
+        .unwrap();
         assert_eq!(result, "let s = Foo._create()\n");
     }
 
@@ -955,8 +1039,14 @@ mod tests {
         let src = "let s = @@Foo();\n";
         let systems: HashSet<String> = vec!["Foo".to_string()].into_iter().collect();
         let params = empty_params();
-        let result =
-            expand_system_instantiations(src, &systems, &params, TargetLanguage::Rust).unwrap();
+        let result = expand_system_instantiations(
+            src,
+            &systems,
+            &std::collections::HashSet::<&str>::new(),
+            &params,
+            TargetLanguage::Rust,
+        )
+        .unwrap();
         assert_eq!(result, "let s = Foo::__create();\n");
     }
 
@@ -967,8 +1057,14 @@ mod tests {
         let src = "struct Foo* s = @@Foo();\n";
         let systems: HashSet<String> = vec!["Foo".to_string()].into_iter().collect();
         let params = empty_params();
-        let result =
-            expand_system_instantiations(src, &systems, &params, TargetLanguage::C).unwrap();
+        let result = expand_system_instantiations(
+            src,
+            &systems,
+            &std::collections::HashSet::<&str>::new(),
+            &params,
+            TargetLanguage::C,
+        )
+        .unwrap();
         assert_eq!(result, "struct Foo* s = Foo_create();\n");
     }
 
@@ -978,8 +1074,14 @@ mod tests {
         let src = "s = @@Foo(1, \"hello\")\n";
         let systems: HashSet<String> = vec!["Foo".to_string()].into_iter().collect();
         let params = empty_params();
-        let result =
-            expand_system_instantiations(src, &systems, &params, TargetLanguage::Python3).unwrap();
+        let result = expand_system_instantiations(
+            src,
+            &systems,
+            &std::collections::HashSet::<&str>::new(),
+            &params,
+            TargetLanguage::Python3,
+        )
+        .unwrap();
         assert_eq!(result, "s = Foo._create(1, \"hello\")\n");
     }
 
@@ -992,8 +1094,14 @@ mod tests {
         let src = "let x = @@Bar(7);\n";
         let systems: HashSet<String> = vec!["Foo".to_string()].into_iter().collect();
         let params = empty_params();
-        let result =
-            expand_system_instantiations(src, &systems, &params, TargetLanguage::Rust).unwrap();
+        let result = expand_system_instantiations(
+            src,
+            &systems,
+            &std::collections::HashSet::<&str>::new(),
+            &params,
+            TargetLanguage::Rust,
+        )
+        .unwrap();
         assert_eq!(result, "let x = Bar::__create(7);\n");
     }
 
@@ -1004,8 +1112,14 @@ mod tests {
         let src = "let x = @@!Bar();\n";
         let systems: HashSet<String> = vec!["Foo".to_string()].into_iter().collect();
         let params = empty_params();
-        let result =
-            expand_system_instantiations(src, &systems, &params, TargetLanguage::Rust).unwrap();
+        let result = expand_system_instantiations(
+            src,
+            &systems,
+            &std::collections::HashSet::<&str>::new(),
+            &params,
+            TargetLanguage::Rust,
+        )
+        .unwrap();
         assert_eq!(result, "let x = Bar::new();\n");
     }
 
@@ -1019,8 +1133,14 @@ mod tests {
         let src = "s = @@Bar(a, b, c)\n";
         let systems: HashSet<String> = vec!["Foo".to_string()].into_iter().collect();
         let params = empty_params();
-        let result =
-            expand_system_instantiations(src, &systems, &params, TargetLanguage::Python3).unwrap();
+        let result = expand_system_instantiations(
+            src,
+            &systems,
+            &std::collections::HashSet::<&str>::new(),
+            &params,
+            TargetLanguage::Python3,
+        )
+        .unwrap();
         assert_eq!(result, "s = Bar._create(a, b, c)\n");
     }
 
@@ -1029,8 +1149,14 @@ mod tests {
         let src = "# s = @@Foo()\n";
         let systems: HashSet<String> = vec!["Foo".to_string()].into_iter().collect();
         let params = empty_params();
-        let result =
-            expand_system_instantiations(src, &systems, &params, TargetLanguage::Python3).unwrap();
+        let result = expand_system_instantiations(
+            src,
+            &systems,
+            &std::collections::HashSet::<&str>::new(),
+            &params,
+            TargetLanguage::Python3,
+        )
+        .unwrap();
         assert_eq!(result, "# s = @@Foo()\n");
     }
 
@@ -1039,8 +1165,14 @@ mod tests {
         let src = "s = \"@@Foo()\"\n";
         let systems: HashSet<String> = vec!["Foo".to_string()].into_iter().collect();
         let params = empty_params();
-        let result =
-            expand_system_instantiations(src, &systems, &params, TargetLanguage::Python3).unwrap();
+        let result = expand_system_instantiations(
+            src,
+            &systems,
+            &std::collections::HashSet::<&str>::new(),
+            &params,
+            TargetLanguage::Python3,
+        )
+        .unwrap();
         assert_eq!(result, "s = \"@@Foo()\"\n");
     }
 
@@ -1116,6 +1248,7 @@ mod tests {
             &map,
             &generated,
             &[],
+            &[],
             TargetLanguage::Python3,
             &[],
             &[],
@@ -1147,7 +1280,17 @@ mod tests {
                 visibility: None,
             }],
         );
-        let result = assemble(&map, &[], &[], TargetLanguage::Python3, &[], &[], &[], None);
+        let result = assemble(
+            &map,
+            &[],
+            &[],
+            &[],
+            TargetLanguage::Python3,
+            &[],
+            &[],
+            &[],
+            None,
+        );
         assert!(result.is_err());
         assert!(result.unwrap_err().message.contains("Foo"));
     }
@@ -1164,8 +1307,14 @@ mod tests {
         let src = "s = @@Unknown()\n";
         let systems: HashSet<String> = HashSet::new();
         let params: HashMap<&str, &[SystemParam]> = HashMap::new();
-        let result =
-            expand_system_instantiations(src, &systems, &params, TargetLanguage::Python3).unwrap();
+        let result = expand_system_instantiations(
+            src,
+            &systems,
+            &std::collections::HashSet::<&str>::new(),
+            &params,
+            TargetLanguage::Python3,
+        )
+        .unwrap();
         assert_eq!(result, "s = Unknown._create()\n");
     }
 
@@ -1210,6 +1359,7 @@ mod tests {
         let result = assemble(
             &map,
             &generated,
+            &[],
             &[],
             TargetLanguage::Python3,
             &[],
@@ -1257,6 +1407,7 @@ mod tests {
         let result = assemble(
             &map,
             &generated,
+            &[],
             &[],
             TargetLanguage::Python3,
             &runtime_imports,

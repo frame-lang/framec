@@ -15,12 +15,33 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      DOTNET_NOLOGO: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install TypeScript (fsm_typescript type-check tests)
+        # The fsm_typescript tests type-check generated @@fsm output with
+        # `npx --no-install tsc`. Without a resolvable typescript they skip;
+        # installing it here makes that coverage actually run in CI.
+        run: npm install --no-save typescript
+      - name: Warm dotnet first-run (fsm_csharp tests)
+        # The fsm_csharp tests run `dotnet run <file>.cs` from parallel cargo
+        # test threads. On a cold runner the first invocation triggers the
+        # first-time-use configurer + NuGet migration, whose named-mutex shm dir
+        # races across threads (EEXIST). Completing first-run once, serially,
+        # here removes the race; the env vars above suppress what they can.
+        run: |
+          echo 'System.Console.WriteLine("warm");' > "${RUNNER_TEMP}/warm.cs"
+          dotnet run "${RUNNER_TEMP}/warm.cs"
       - name: Build
         run: cargo build --workspace
       - name: Test
