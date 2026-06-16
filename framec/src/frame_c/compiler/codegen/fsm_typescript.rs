@@ -1293,6 +1293,20 @@ mod tests {
     /// the emitted JS via `node`, returning stdout lines. `None` if the
     /// toolchain is unavailable. A `tsc` type error fails the test.
     fn ts_run(code: &str, driver: &str, tag: &str) -> Option<Vec<String>> {
+        // Skip unless a real `tsc` is resolvable. On hosts without a local or
+        // global typescript, `npx --no-install tsc` resolves the *unrelated*
+        // `tsc` npm package and exits non-zero with no `error TS` diagnostics —
+        // that is "toolchain unavailable", not a compile error, so we skip
+        // (return None) rather than fail. A version probe distinguishes the two:
+        // it only succeeds when a genuine typescript is present, after which a
+        // non-zero compile is a real type error worth asserting on.
+        match Command::new("npx")
+            .args(["--no-install", "tsc", "--version"])
+            .output()
+        {
+            Ok(o) if o.status.success() => {}
+            _ => return None,
+        }
         let dir = std::env::temp_dir().join(format!("framec_ts_{}", tag));
         std::fs::create_dir_all(&dir).ok()?;
         let ts_path = dir.join("m.ts");

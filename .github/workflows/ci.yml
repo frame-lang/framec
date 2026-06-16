@@ -21,6 +21,14 @@ jobs:
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install TypeScript (fsm_typescript type-check tests)
+        # The fsm_typescript tests type-check generated @@fsm output with
+        # `npx --no-install tsc`. Without a resolvable typescript they skip;
+        # installing it here makes that coverage actually run in CI.
+        run: npm install --no-save typescript
       - name: Build
         run: cargo build --workspace
       - name: Test
