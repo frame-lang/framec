@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [4.5.0] - 2026-06-16
+
+### Added
+
+- **`@@fsm` — finite-state recognizer construct (RFC-0042).** A new top-level
+  construct that compiles a regular-language recognizer to a Pike-VM-backed state
+  machine, emitted on **all 17 target languages at full behavioral parity**. It
+  implements the RE2 regular-expression dialect across the regular-language
+  feature set: literal, character-class, and Unicode `\d`/`\w`/`\s` alphabets
+  (plus `\p{...}` classes via `@@[allow(unicode_classes)]`); `|` ordered choice;
+  greedy **and** lazy quantifiers; edge **and** interior anchors; character-,
+  byte-, and Unicode-aware word boundaries `\b`/`\B`; inline flags `(?i)`/`(?m)`/`(?s)`
+  and scoped `(?ims:…)`/`(?-i:…)`; captures with action blocks; `when`-conditional
+  and stage-reference transition targets; a token alphabet; multi-match (`|`)
+  states; embedding; and Mode-C sub-fsm call-out. Zero-width assertions are
+  evaluated by a dedicated Pike-VM `Assert` opcode wired into every backend. The
+  action-body statement grammar is specified in RFC-0050.
+- **`@@:self` — portable, blessed self-reference (RFC-0046).** Write
+  `@@:self.field`, `@@:self.action()`, and `@@:self.field.method()` (embed calls),
+  including inside return expressions and across systems; framec lowers each to its
+  target's native `self`/`this` idiom on all 17 backends. This replaces the
+  per-language textual self-rewriters with segment-driven lowering.
+
 ### Changed
 
 - **Type annotations now emit verbatim on every backend (#61).** Removed the
@@ -23,6 +46,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
   comment leader to the target's native one (`#`/`--`/`%`). Comments pass through
   unchanged like everything else — write your target's own comment syntax
   everywhere. This was the last source transform framec performed.
+- **State variables now require an explicit initializer (#84, `E610`).** The
+  synthesized-default value table was deleted — no magic. A state variable
+  declared without an initializer is now an `E610` error; write the native init
+  value for its declared type, exactly as for a domain field. *Breaking;
+  pre-public-beta, mechanical to fix.*
 
 ### Fixed
 
@@ -40,12 +68,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
   `Default::default()` in the parameterless `new()` — uncompilable for non-`Default`
   types. For systems with such fields, framec now skips `new()` and builds
   `__create(<params>)` directly with the params in scope (`inner: Inner::__create(p)`).
+- **C: `float`/`double` arguments on `pop$` now marshal correctly (#83, RFC-0048).**
+  C is the only backend whose `void*` argument slots are not self-describing, so a
+  floating-point value pushed for a `pop$` transition was reinterpreted, not
+  converted. A C11 `_Generic` value-dispatch macro (`{sys}_ARG_PUSH`) now boxes
+  each argument by its static type. RFC-0048 generalizes the contract for future
+  low-level targets.
+- **C: doubles are heap-boxed through `void*` slots — pointer-width safe (#81).**
+  A `double` no longer aliases a pointer slot (truncated on wasm32/32-bit targets);
+  it is boxed in an owned allocation, with the ISO-C `strdup` shim for strings.
+- **C: category-driven `void*`-slot marshalling (#72) and pointer-typed embed
+  calls (#73).** Floats unpack by value, structs box; pointer-typed embed calls
+  lower to the free-function family.
+- **Declared-type coercion at every type-erasure write site (#77, #78).** The
+  coercion that re-types a value leaving an untyped compartment slot now also
+  covers the `@@:return(expr)` early-return path, with runtime gates.
+- **C++ and Swift core generated code is now exception-free / exception-safe
+  (RFC-0049; #86, #87, #88, #89).** Per the new Exception Policy, core dispatch
+  maintains its context-stack invariant with each language's idiomatic
+  scope-cleanup rather than a mandatory catch-and-rethrow, so it compiles under a
+  target's no-exceptions mode wherever one exists:
+  - **C++ dispatch (#86):** a method-local RAII scope-guard replaces the
+    `try { … } catch(...) { pop; throw }` wrapper, so output compiles **and links**
+    under `-fno-exceptions` (required by Godot web GDExtensions).
+  - **C++ persist (#87):** no-throw pointer probing `std::any_cast<T>(&v)` replaces
+    `try { any_cast } catch`; the `E700` type-mismatch path is `#if`-fallback to
+    `abort()` when exceptions are off.
+  - **C++ async (#88):** an RAII gate-guard replaces the busy-gate try/catch; the
+    `E703` single-driver violation uses the same `#if`-guarded throw/abort fallback.
+  - **Swift (#89):** context-stack cleanup moved into `defer`, exception-safe (R4).
+- **C++: persisted systems now `#include <nlohmann/json.hpp>` (#94).** Persist
+  codegen emitted `nlohmann::json` without the include, so a persisted system did
+  not compile standalone; the include is now emitted whenever a system persists.
 
 ### Docs
 
 - Per-language guides, the language reference's type-contract and "init values"
   sections, and the portable-float guidance (#62) updated to the verbatim-native
   contract. See [4.5.0 migration](docs/releases/4.5.0-migration.md).
+- New RFCs: **RFC-0042** (`@@fsm`; updated with §1 motivation, §6.10 RE2-compliance
+  matrix, §12 status), **RFC-0046** (`@@:self`), **RFC-0047** (guard-syntax survey
+  placeholder), **RFC-0048** (self-describing argument marshalling), **RFC-0049**
+  (exception philosophy — errors vs. queries, cross-language fallback), and
+  **RFC-0050** (Frame statement syntax). The language reference gains an
+  **Exception Policy** section.
 
 ### CI
 
@@ -55,6 +121,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
   mode with the existing Rust/Java representatives. They were previously gated
   only by the nightly full matrix; now they run on every PR alongside
   Python/Rust/Java/Erlang.
+- **The `fsm_typescript` type-check tests now run a real `tsc` in CI.** The harness
+  skips cleanly when no genuine TypeScript is resolvable (instead of misreading an
+  unrelated `tsc` npm package's non-zero exit as a compile error), and CI installs
+  TypeScript so the generated `@@fsm` TypeScript is actually type-checked.
+- **`dotnet` first-run is warmed once before the parallel test step**, removing a
+  NuGet-migration named-mutex race that intermittently failed the `fsm_csharp`
+  tests on cold runners.
 
 ## [4.4.0] - 2026-06-06
 
