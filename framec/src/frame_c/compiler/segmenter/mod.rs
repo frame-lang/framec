@@ -18,6 +18,7 @@
 
 use std::convert::TryFrom;
 
+use crate::frame_c::compiler::body_closer::BodyCloser;
 use crate::frame_c::compiler::native_region_scanner::unified::SyntaxSkipper;
 use crate::frame_c::visitors::TargetLanguage;
 
@@ -553,16 +554,23 @@ pub fn segment<S: SyntaxSkipper>(skipper: &S, source: &[u8]) -> Result<SourceMap
                             });
                         }
 
-                        let mut closer = skipper.body_closer();
-                        let close_pos = match closer.close_byte(source, brace_pos) {
-                            Ok(pos) => pos,
-                            Err(_) => {
-                                return Err(SegmentError::UnterminatedSystem {
-                                    name: fsm_name,
-                                    open_brace_pos: brace_pos,
-                                });
-                            }
-                        };
+                        // An @@fsm body is Frame content with `/.../` regex
+                        // literals, not target-language code; use the
+                        // regex-literal-aware closer rather than the language
+                        // one (which would mis-count braces/quotes inside a
+                        // regex — framec#103).
+                        let close_pos =
+                            match crate::frame_c::compiler::body_closer::fsm::FsmBodyCloser
+                                .close_byte(source, brace_pos)
+                            {
+                                Ok(pos) => pos,
+                                Err(_) => {
+                                    return Err(SegmentError::UnterminatedSystem {
+                                        name: fsm_name,
+                                        open_brace_pos: brace_pos,
+                                    });
+                                }
+                            };
 
                         let mut outer_end = close_pos + 1;
                         if outer_end < n && source[outer_end] == b'\n' {
