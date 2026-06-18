@@ -12,6 +12,7 @@ pub mod native_region_scanner;
 pub mod paren_balance_scanner;
 pub mod pragma_scanner;
 pub mod prolog_scanner;
+pub mod prolog_scanner_fsm;
 pub mod splice;
 pub mod validator;
 
