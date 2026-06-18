@@ -2,7 +2,7 @@
 
 ![CI](https://github.com/frame-lang/framec/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue)
-![Version](https://img.shields.io/badge/version-4.4.0-green)
+![Version](https://img.shields.io/badge/version-4.5.0-green)
 
 framec (aka the **framepiler**) — is the transpiler for the Frame language. Currently framec supports output to 17 target languges + Graphviz. Frame is a domain-specific language for specifying state machines that transpiles to production code in multiple target languages. You write `@@system` blocks inside your native source files, and the framepiler expands them into full state machine implementations. All native code passes through unchanged — your native compiler handles everything outside the `@@system` blocks and other `@@` tagged pragmas and statements.
 
@@ -125,7 +125,7 @@ The same documentation is also available as source in this repository:
 
 Frame has two version numbers that move on different schedules:
 
-- **framec semver** (e.g. `4.3.0`) tracks the compiler release line. Patch and minor releases are bug-fix and additive — existing `.fpy` / `.frs` / `.fts` sources continue to compile. Major bumps may require source changes; migration notes ship in [`docs/releases/`](docs/releases/).
+- **framec semver** (e.g. `4.5.0`) tracks the compiler release line. Patch and minor releases are bug-fix and additive — existing `.fpy` / `.frs` / `.fts` sources continue to compile. Major bumps may require source changes; migration notes ship in [`docs/releases/`](docs/releases/).
 - **Grammar version** (e.g. `v0.30`) tracks the Frame language specification itself, and moves much more slowly than the compiler.
 
 Generated code is de facto byte-stable across patch and minor releases of `framec` for sources that don't use changed features. Each release's `CHANGELOG.md` entry calls out specifically where output differs from the previous version. See [Versioning & Stability](docs/frame_language.md#versioning--stability) in the language reference for the full contract.
