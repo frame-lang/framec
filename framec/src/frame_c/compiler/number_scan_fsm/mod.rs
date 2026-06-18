@@ -29,7 +29,8 @@ mod fsm {
 /// classification (float iff the matched slice contains `.`) and the value
 /// parse mirror `lex_number` exactly — `unwrap_or` defaults included.
 pub fn scan(bytes: &[u8]) -> Option<(Token, usize)> {
-    let m = fsm::NumberScan::new(bytes.iter().map(|&b| b as char).collect());
+    // RFC-0042.1: scans the host's `&[u8]` directly (zero-copy).
+    let m = fsm::NumberScan::new(bytes);
     if !m.accepted {
         return None;
     }

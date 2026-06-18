@@ -297,12 +297,18 @@ impl<'a> Generator<'a> {
             "impl {name}Input for &[{elem}] {{ fn fsm_get(&self, i: usize) -> {elem} {{ {get_owned} }} fn fsm_len(&self) -> usize {{ self.len() }} }}"
         )
         .ok();
-        // Byte/char alphabet: also borrow the host's raw `&[u8]` (true zero-copy
-        // for a byte scanner — each byte read as its code point).
+        // Byte/char alphabet: also accept the host's raw bytes — borrowed
+        // `&[u8]` (true zero-copy for a byte scanner) and owned `Vec<u8>` —
+        // each byte read as its code point.
         if elem == "char" {
             writeln!(
                 out,
                 "impl {name}Input for &[u8] {{ fn fsm_get(&self, i: usize) -> char {{ self[i] as char }} fn fsm_len(&self) -> usize {{ self.len() }} }}"
+            )
+            .ok();
+            writeln!(
+                out,
+                "impl {name}Input for Vec<u8> {{ fn fsm_get(&self, i: usize) -> char {{ self[i] as char }} fn fsm_len(&self) -> usize {{ self.len() }} }}"
             )
             .ok();
         }
@@ -956,8 +962,14 @@ impl<'a> Generator<'a> {
         .ok();
         // Each element is guarded by `if _enter <= <idx>` so a stage-ref
         // re-entry skips leading elements (plain entry has `_enter == 0`).
+        // The first element uses `== 0` (`<= 0` on a `usize` is an absurd
+        // comparison — `clippy::absurd_extreme_comparisons`).
         for (idx, el) in m.elements.iter().enumerate() {
-            writeln!(out, "        if _enter <= {} {{", idx).ok();
+            if idx == 0 {
+                out.push_str("        if _enter == 0 {\n");
+            } else {
+                writeln!(out, "        if _enter <= {} {{", idx).ok();
+            }
             self.emit_element(out, el, m, &state_label, "            ", sid)?;
             out.push_str("        }\n");
         }
@@ -1677,7 +1689,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join(", ");
         let driver = format!(
-            "{code}\nfn main() {{\n    let m = {class}::new(vec![{chars}]);\n    println!(\"{{}}\", m.accepted);\n    println!(\"{{:?}}\", m.return_value);\n}}\n",
+            "{code}\nfn main() {{\n    let m: {class}<Vec<char>> = {class}::new(vec![{chars}]);\n    println!(\"{{}}\", m.accepted);\n    println!(\"{{:?}}\", m.return_value);\n}}\n",
             code = code,
             class = class,
             chars = chars

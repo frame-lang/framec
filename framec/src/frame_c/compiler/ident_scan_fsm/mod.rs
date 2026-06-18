@@ -31,7 +31,8 @@ mod fsm {
 /// `push$`/`pop$` and the section-`:` second token are not produced here — they
 /// are the lexer's lookahead composites around the recognized word.
 pub fn scan(bytes: &[u8]) -> Option<(Token, usize)> {
-    let m = fsm::IdentScan::new(bytes.iter().map(|&b| b as char).collect());
+    // RFC-0042.1: scans the host's `&[u8]` directly (zero-copy).
+    let m = fsm::IdentScan::new(bytes);
     if !m.accepted {
         return None;
     }

@@ -31,10 +31,10 @@ mod fsm {
 /// [`PrologErrorKind`]s collapse to one here. The hand scanner remains the
 /// source of typed errors; this wrapper exists for the differential test.
 pub fn scan(bytes: &[u8]) -> Result<RegionSpan, PrologError> {
-    // The `bytes` alphabet generates a `Vec<char>` recognizer on the Rust
-    // backend; each source byte maps to one `char` (value 0–255), so offsets
-    // stay byte-aligned.
-    let m = fsm::PrologScan::new(bytes.iter().map(|&b| b as char).collect());
+    // RFC-0042.1: the recognizer is generic over its input source, so it scans
+    // the host's `&[u8]` directly (zero-copy); each byte is read as its code
+    // point, so offsets stay byte-aligned.
+    let m = fsm::PrologScan::new(bytes);
     if m.accepted {
         Ok(RegionSpan {
             start: m.line_start as usize,
