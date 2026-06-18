@@ -680,49 +680,43 @@ impl Lexer {
     // ========================================================================
 
     fn lex_identifier_or_keyword(&mut self, start: usize) -> Result<(), LexError> {
-        let word = self.scan_identifier();
+        // Dogfood (RFC-0042): the generated `@@fsm` `IdentScan` recognizes the
+        // identifier `[A-Za-z_][A-Za-z0-9_]*` and classifies the keywords
+        // (interface/machine/…/return/true/false). The lexer keeps the
+        // lookahead composites around the word — `push$`/`pop$` and the
+        // section `:` — which are not identifier recognition.
+        let Some((tok, end)) = super::ident_scan_fsm::scan(&self.source[start..self.end]) else {
+            // The dispatcher only routes here on an identifier start, so the
+            // recognizer always matches; nothing to emit otherwise.
+            return Ok(());
+        };
+        let word = String::from_utf8_lossy(&self.source[start..start + end]).to_string();
+        self.cursor = start + end;
 
-        // Check for push$ and pop$
-        if word == "push" && self.cursor < self.end && self.source[self.cursor] == b'$' {
+        // push$ / pop$ — the word immediately followed by `$`.
+        if (word == "push" || word == "pop")
+            && self.cursor < self.end
+            && self.source[self.cursor] == b'$'
+        {
             self.cursor += 1;
-            self.emit(Token::PushState, start, self.cursor);
+            let t = if word == "push" {
+                Token::PushState
+            } else {
+                Token::PopState
+            };
+            self.emit(t, start, self.cursor);
             return Ok(());
         }
-        if word == "pop" && self.cursor < self.end && self.source[self.cursor] == b'$' {
-            self.cursor += 1;
-            self.emit(Token::PopState, start, self.cursor);
-            return Ok(());
-        }
 
-        // Check for section keywords (with look-ahead for section colon)
-        match word.as_str() {
-            "interface" => {
-                self.emit(Token::Interface, start, self.cursor);
-                self.try_emit_section_colon();
-            }
-            "machine" => {
-                self.emit(Token::Machine, start, self.cursor);
-                self.try_emit_section_colon();
-            }
-            "actions" => {
-                self.emit(Token::Actions, start, self.cursor);
-                self.try_emit_section_colon();
-            }
-            "operations" => {
-                self.emit(Token::Operations, start, self.cursor);
-                self.try_emit_section_colon();
-            }
-            "domain" => {
-                self.emit(Token::Domain, start, self.cursor);
-                self.try_emit_section_colon();
-            }
-            "var" => self.emit(Token::Ident("var".to_string()), start, self.cursor),
-            "return" => self.emit(Token::Return, start, self.cursor),
-            "true" => self.emit(Token::BoolLit(true), start, self.cursor),
-            "false" => self.emit(Token::BoolLit(false), start, self.cursor),
-            _ => self.emit(Token::Ident(word), start, self.cursor),
+        let is_section = matches!(
+            tok,
+            Token::Interface | Token::Machine | Token::Actions | Token::Operations | Token::Domain
+        );
+        self.emit(tok, start, self.cursor);
+        if is_section {
+            // Look ahead for the section `:`.
+            self.try_emit_section_colon();
         }
-
         Ok(())
     }
 
@@ -745,35 +739,15 @@ impl Lexer {
     // ========================================================================
 
     fn lex_number(&mut self, start: usize) -> Result<(), LexError> {
-        // Handle negative sign
-        if self.source[self.cursor] == b'-' {
-            self.cursor += 1;
-        }
-
-        // Consume digits
-        while self.cursor < self.end && self.source[self.cursor].is_ascii_digit() {
-            self.cursor += 1;
-        }
-
-        // Check for float: digits followed by . and more digits
-        if self.cursor < self.end
-            && self.source[self.cursor] == b'.'
-            && self.cursor + 1 < self.end
-            && self.source[self.cursor + 1].is_ascii_digit()
-        {
-            self.cursor += 1; // Skip .
-            while self.cursor < self.end && self.source[self.cursor].is_ascii_digit() {
-                self.cursor += 1;
-            }
-            let text = std::str::from_utf8(&self.source[start..self.cursor]).unwrap_or("0.0");
-            let value = text.parse::<f64>().unwrap_or(0.0);
-            self.emit(Token::FloatLit(value), start, self.cursor);
-        } else {
-            let text = std::str::from_utf8(&self.source[start..self.cursor]).unwrap_or("0");
-            let value = text.parse::<i64>().unwrap_or(0);
-            self.emit(Token::IntLit(value), start, self.cursor);
-        }
-
+        // Dogfood (RFC-0042): the integer/float literal grammar
+        // `-?[0-9]+(\.[0-9]+)?` is recognized by the generated `@@fsm`
+        // `NumberScan`, driven zero-copy over the host bytes. The dispatcher
+        // only calls this on a digit (or `-` before a digit), so a match is
+        // guaranteed; the wrapper also does the int/float `parse`.
+        let (tok, end) = super::number_scan_fsm::scan(&self.source[start..self.end])
+            .expect("number dispatch guarantees a literal at `start`");
+        self.cursor = start + end;
+        self.emit(tok, start, self.cursor);
         Ok(())
     }
 
@@ -782,30 +756,23 @@ impl Lexer {
     // ========================================================================
 
     fn lex_string(&mut self, start: usize) -> Result<(), LexError> {
-        let quote = self.source[self.cursor];
-        self.cursor += 1;
-
-        let mut content = String::new();
-        while self.cursor < self.end {
-            let b = self.source[self.cursor];
-            if b == b'\\' && self.cursor + 1 < self.end {
-                // Escape sequence — include the escaped character
-                content.push(self.source[self.cursor + 1] as char);
-                self.cursor += 2;
-                continue;
+        // Dogfood (RFC-0042): the quoted-string grammar
+        // `"([^"\\]|\\.)*"` / `'…'` is recognized by the generated `@@fsm`
+        // `StringScan`, driven zero-copy over the host bytes. The wrapper also
+        // rebuilds the unescaped `StringLit` content. No match ⇒ unterminated.
+        match super::string_scan_fsm::scan(&self.source[start..self.end]) {
+            Some((tok, end)) => {
+                self.cursor = start + end;
+                self.emit(tok, start, self.cursor);
+                Ok(())
             }
-            if b == quote {
-                self.cursor += 1;
-                self.emit(Token::StringLit(content), start, self.cursor);
-                return Ok(());
+            None => {
+                self.cursor = self.end;
+                Err(LexError::UnterminatedString {
+                    span: Span::new(start, self.cursor),
+                })
             }
-            content.push(b as char);
-            self.cursor += 1;
         }
-
-        Err(LexError::UnterminatedString {
-            span: Span::new(start, self.cursor),
-        })
     }
 
     // ========================================================================
@@ -937,21 +904,25 @@ impl Lexer {
     }
 
     fn scan_identifier(&mut self) -> String {
-        let start = self.cursor;
+        // Dogfood (RFC-0042): the identifier extent is recognized by the
+        // generated `@@fsm` `IdentScan`, bounded by the active scan limit
+        // (`native_end` in native-aware mode). Callers enter on an identifier
+        // start (e.g. the name after `$.`), so the `[A-Za-z_]`-led grammar
+        // matches; a non-identifier start yields an empty word as before.
         let end = if self.mode == LexerMode::NativeAware {
             self.native_end
         } else {
             self.end
         };
-        while self.cursor < end {
-            let b = self.source[self.cursor];
-            if b.is_ascii_alphanumeric() || b == b'_' {
-                self.cursor += 1;
-            } else {
-                break;
+        match super::ident_scan_fsm::scan(&self.source[self.cursor..end]) {
+            Some((_, len)) => {
+                let word = String::from_utf8_lossy(&self.source[self.cursor..self.cursor + len])
+                    .to_string();
+                self.cursor += len;
+                word
             }
+            None => String::new(),
         }
-        String::from_utf8_lossy(&self.source[start..self.cursor]).to_string()
     }
 
     fn scan_dot_key(&mut self, end: usize) -> String {
