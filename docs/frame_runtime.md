@@ -4387,28 +4387,20 @@ This is the only error class besides `RestoreError` that
 `@@[persist]` adds; together with `save_state`, `restore_state`,
 and the quiescent check, they are the entire `@@[persist]` surface.
 
-### ⚠️  Python uses pickle — untrusted-input warning
+### Python uses JSON
 
-Python's `save_state()` is implemented as `pickle.dumps(self)`;
-`restore_state()` calls `pickle.loads(blob)`. **`pickle.loads`
-runs arbitrary code from its input** (a documented Python
-vulnerability — see Python's pickle docs: "Never unpickle data
-that could have come from an untrusted source").
+Python's `save_state()` produces field-by-field UTF-8 JSON
+(`json.dumps(state_data).encode("utf-8")`); `restore_state()`
+reads it back with `json.loads`. There is no `pickle.dumps`/
+`pickle.loads` in generated Python, so restoring a snapshot does
+not execute arbitrary code from the blob, the same as the JS,
+Java, Rust, etc. backends.
 
-If you persist Frame system state to any storage an attacker
-might write to (network, cookies, shared databases, user-uploaded
-files), you have an RCE vector. Other backends (JS, Java, Rust,
-etc.) use JSON and don't have this issue.
-
-Safe uses: local files written and read by the same trusted
-process; process snapshots; test fixtures.
-
-Unsafe without additional validation: session state in cookies;
-cross-machine state transfer; anything the user can edit.
-
-A migration to JSON-based Python persist is proposed in
-[RFC-0012](rfcs/rfc-0012.md); deferred pending customer feedback.
-The Python per-language guide repeats this warning.
+JSON persist saves the domain fields rather than a whole-object
+graph, so it does not preserve shared object identity or
+reference cycles. RFC-0012 discusses that trade-off; the
+pickle → JSON migration itself shipped in 4.5.0 (see
+[`CHANGELOG.md`](CHANGELOG.md)).
 
 `_HSM_CHAIN` is the source of truth on restore, not the saved
 chain. This is deliberate. If the destination's Frame source has

@@ -249,10 +249,10 @@ abort, or push_error). Only call `save_state` between events.
 **Nested `@@SystemName` fields persist recursively.** All 17
 backends; each child's state embeds in the parent's blob.
 
-**Python uses pickle.** Untrusted-source blobs run arbitrary code
-on `restore_state`. Don't unpickle data you didn't write yourself
-without validation. JSON migration for Python is in RFC-0012,
-deferred pending customer feedback.
+**Python uses JSON.** `save_state()` emits field-by-field UTF-8
+JSON and `restore_state()` reads it with `json.loads`, so a
+snapshot does not run arbitrary code on restore. The pickle → JSON
+migration shipped in 4.5.0; RFC-0012 covers the design trade-off.
 
 ---
 
