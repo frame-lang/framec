@@ -9,6 +9,7 @@ pub mod call_site_scanner;
 pub mod domain_scanner;
 pub mod mir;
 pub mod native_region_scanner;
+pub mod number_scan_fsm;
 pub mod paren_balance_scanner;
 pub mod pragma_scanner;
 pub mod prolog_scanner;
