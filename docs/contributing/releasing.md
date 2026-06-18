@@ -126,6 +126,42 @@ caught them all (`git grep -n "<old-version>"`):
 | `README.md` | the `![Version]` shields.io badge. |
 | `CHANGELOG.md` | promote the `[Unreleased]` section to `[X.Y.Z] - <date>` and start a fresh `[Unreleased]`. |
 
+> **Watch for a no-op bump.** When `Cargo.toml` is *already* at the
+> target version (e.g. the work accreted under an unreleased version),
+> this step looks done and is easy to skip wholesale — but the
+> README badge and the doc sweep below still need doing. The 4.5.0
+> release shipped with a stale `4.4.0` README badge for exactly this
+> reason. Always run the sweep, even when the version string didn't
+> change.
+
+### 3a. Sweep the docs for current-release references
+
+The version string lives in more than three files. Review **every**
+doc for references that name *the current/latest release* and update
+them — but leave **historical** references untouched. The distinction:
+
+- **Update** (these name "the current release"): the README
+  `![Version]` badge, any "latest is `X.Y.Z`" / "currently `X.Y.Z`"
+  prose, the README semver `(e.g. ...)` example, version-pinned
+  install/download snippets (`cargo install framec@`, a
+  `releases/download/vX.Y.Z/` URL, `npm install …@X.Y.Z`).
+- **Leave** (these are historical fact, and bumping them is *wrong*):
+  CHANGELOG entries, `docs/releases/<old>.md` per-release notes,
+  RFC status lines (`Status: Shipped in framec 4.1.0`),
+  feature-introduced markers (`rejected with E819 at framec 4.1.0+`).
+
+Recipe — list candidates, then read each in context before editing:
+
+```bash
+# Everything that mentions a version, minus the historical files.
+git grep -nE "[0-9]+\.[0-9]+\.[0-9]+|shields\.io/badge/version|latest (release|version)" -- \
+  README.md docs/ ':!CHANGELOG.md' ':!docs/releases/'
+```
+
+A reference survives the sweep only if it's *deliberately* historical.
+If a line names a version and is talking about "now," it must read
+`X.Y.Z`.
+
 Commit the bump on its own (`chore(release): X.Y.Z`) so the tag
 lands on a clean, self-describing commit.
 
@@ -193,6 +229,29 @@ cargo publish -p framec             # irreversible: a version can be yanked but 
 number. If a published version is broken, `cargo yank` it and ship
 `vX.Y.(Z+1)`. This is why the `--dry-run` + the RC bar matter.
 
+### 5b. Publish the WASM package to npm (manual)
+
+`@frame-lang/framec-wasm` is the in-process WASM build (`framec-wasm`
+crate, `publish = false` for crates.io — it ships only to npm). Like
+crates.io, this is **not** automated and runs by hand from the tagged
+commit. It inherits the workspace version, so a rebuild produces
+`X.Y.Z` automatically.
+
+```bash
+cd framec-wasm
+wasm-pack build --target nodejs --scope frame-lang --release
+# Sanity-check the rebuilt package before publishing:
+grep '"version"' pkg/package.json            # must read X.Y.Z
+node -e 'console.log(require("./pkg/framec_wasm.js").run("@@fsm D(t:bytes):bool=false{ /[0-9]+/ true }", "rust").slice(0,40))'
+cd pkg
+npm publish --access public --dry-run        # final gate
+npm publish --access public                  # one-way, like crates.io
+```
+
+`npm whoami` should report the `cogiton` account (org `frame-lang`).
+npm publishes are **one-way** too — a version can be deprecated but
+not overwritten.
+
 ---
 
 ## 6. Post-release
@@ -238,11 +297,14 @@ Automated (RFC-0031 Layer 4), but know what feeds the next release:
     cargo package, and full fuzz for a release)
 [ ] CI green on the main you're tagging
 [ ] Bump version: Cargo.toml + README badge + CHANGELOG
+[ ] Sweep all docs for current-release refs (badge, prose, install snippets);
+    leave historical refs (CHANGELOG, releases/, RFC status, "4.x.0+" markers)
 [ ] CHANGELOG entry written (edited, not git-log dump) — complete, covers all user-visible changes
 [ ] Migration guide added (if breaking)
 [ ] Commit bump, push main
 [ ] git tag -a vX.Y.Z + push tag  → release.yml builds binaries + GitHub Release
 [ ] cargo publish -p framec  (manual; --dry-run first; one-way)
+[ ] npm publish @frame-lang/framec-wasm  (wasm-pack build; --dry-run first; one-way)
 [ ] Announce + monitor 24 h
 ```
 
