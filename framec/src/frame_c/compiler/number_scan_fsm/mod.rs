@@ -48,37 +48,45 @@ pub fn scan(bytes: &[u8]) -> Option<(Token, usize)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::frame_c::compiler::frame_ast::Span;
-    use crate::frame_c::compiler::lexer::lex;
-    use crate::frame_c::visitors::TargetLanguage;
 
-    /// The `@@fsm` recognizer + wrapper produce the same first token and end
-    /// offset as the real structural lexer (`lex_number` via `lex`).
+    /// The `@@fsm` recognizer + wrapper produce the expected `(Token, end)` for
+    /// the integer/float literal grammar `-?[0-9]+(\.[0-9]+)?`.
+    ///
+    /// This is a direct behavioral assertion, not a differential vs. the lexer:
+    /// the production `lex_number` now drives this very recognizer, so a
+    /// `scan` vs. `lex` comparison would be circular.
     #[test]
-    fn fsm_matches_hand_lexer() {
-        let corpus = [
-            "123", "0", "007", // leading zeros
-            "-5",  // signed (dispatched here: `-` before a digit)
-            "-0", "123.5", // float
-            "0.0", "-3.14",
-            "123.",     // dot not followed by digit → int, dot left for next token
-            "12.34.56", // float 12.34, rest is separate tokens
-            "1.0", "99999999", // large int
-            "-0.5",
+    fn scan_recognizes_number_literals() {
+        use Token::*;
+        let cases: &[(&[u8], Token, usize)] = &[
+            (b"123", IntLit(123), 3),
+            (b"0", IntLit(0), 1),
+            (b"007", IntLit(7), 3), // leading zeros → decimal 7
+            (b"-5", IntLit(-5), 2), // signed (dispatched here: `-` before a digit)
+            (b"-0", IntLit(0), 2),
+            (b"123.5", FloatLit(123.5), 5),
+            (b"0.0", FloatLit(0.0), 3),
+            (b"-3.25", FloatLit(-3.25), 5),
+            (b"123.", IntLit(123), 3), // dot not followed by digit → int, dot left
+            (b"12.34.56", FloatLit(12.34), 5), // float 12.34; rest is separate tokens
+            (b"1.0", FloatLit(1.0), 3),
+            (b"99999999", IntLit(99999999), 8),
+            (b"-0.5", FloatLit(-0.5), 4),
         ];
-        for s in corpus {
-            let bytes = s.as_bytes();
-            let toks =
-                lex(bytes, Span::new(0, bytes.len()), TargetLanguage::Python3).expect("lexes");
-            assert!(!toks.is_empty(), "no tokens for {:?}", s);
-            let hand = &toks[0];
-
-            let (tok, end) =
-                scan(bytes).unwrap_or_else(|| panic!("number not recognized: {:?}", s));
-
-            assert_eq!(hand.token, tok, "token mismatch on {:?}", s);
-            assert_eq!(hand.span.start, 0, "expected start 0 on {:?}", s);
-            assert_eq!(hand.span.end, end, "end mismatch on {:?}", s);
+        for (bytes, tok, end) in cases {
+            assert_eq!(
+                scan(bytes),
+                Some((tok.clone(), *end)),
+                "on {:?}",
+                std::str::from_utf8(bytes).unwrap()
+            );
         }
+
+        // Not a number → None. The dispatcher never routes these here, but the
+        // recognizer must still reject them (no spurious match).
+        assert_eq!(scan(b""), None);
+        assert_eq!(scan(b"-"), None); // sign with no digit
+        assert_eq!(scan(b"abc"), None);
+        assert_eq!(scan(b".5"), None); // no leading integer part
     }
 }

@@ -55,51 +55,53 @@ pub fn scan(bytes: &[u8]) -> Option<(Token, usize)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::frame_c::compiler::frame_ast::Span;
-    use crate::frame_c::compiler::lexer::lex;
-    use crate::frame_c::visitors::TargetLanguage;
 
-    /// The `@@fsm` recognizer + classification produce the same first token and
-    /// end offset as the real structural lexer's identifier/keyword path.
+    /// The `@@fsm` recognizer + keyword classification produce the expected
+    /// `(Token, end)` for the identifier grammar `[A-Za-z_][A-Za-z0-9_]*`.
+    ///
+    /// Direct behavioral assertion, not a differential vs. the lexer: the
+    /// production identifier path now drives this very recognizer, so a `scan`
+    /// vs. `lex` comparison would be circular. `push$`/`pop$` and the section
+    /// `:` are lexer composites *around* the word and are out of scope here.
     #[test]
-    fn fsm_matches_hand_lexer() {
-        let corpus = [
+    fn scan_recognizes_identifiers_and_keywords() {
+        use Token::*;
+        let cases: &[(&[u8], Token, usize)] = &[
             // Plain identifiers.
-            "foo",
-            "bar_baz",
-            "_x",
-            "_",
-            "x123",
-            "ABC",
-            "a1_b2",
+            (b"foo", Ident("foo".to_string()), 3),
+            (b"bar_baz", Ident("bar_baz".to_string()), 7),
+            (b"_x", Ident("_x".to_string()), 2),
+            (b"_", Ident("_".to_string()), 1),
+            (b"x123", Ident("x123".to_string()), 4),
+            (b"ABC", Ident("ABC".to_string()), 3),
+            (b"a1_b2", Ident("a1_b2".to_string()), 5),
             // Keywords (word → keyword token).
-            "interface",
-            "machine",
-            "actions",
-            "operations",
-            "domain",
-            "return",
-            "true",
-            "false",
-            "var", // maps to Ident("var")
-            // First token only: the rest is a separate token.
-            "interface:", // [Interface, SectionColon] — compare Interface
-            "foo bar",    // [Ident("foo"), ...] — compare Ident("foo")
-            "count123 = 0",
+            (b"interface", Interface, 9),
+            (b"machine", Machine, 7),
+            (b"actions", Actions, 7),
+            (b"operations", Operations, 10),
+            (b"domain", Domain, 6),
+            (b"return", Return, 6),
+            (b"true", BoolLit(true), 4),
+            (b"false", BoolLit(false), 5),
+            (b"var", Ident("var".to_string()), 3),
+            // First token only: the rest is separate input.
+            (b"interface:", Interface, 9),
+            (b"foo bar", Ident("foo".to_string()), 3),
+            (b"count123 = 0", Ident("count123".to_string()), 8),
         ];
-        for s in corpus {
-            let bytes = s.as_bytes();
-            let toks =
-                lex(bytes, Span::new(0, bytes.len()), TargetLanguage::Python3).expect("lexes");
-            assert!(!toks.is_empty(), "no tokens for {:?}", s);
-            let hand = &toks[0];
-
-            let (tok, end) =
-                scan(bytes).unwrap_or_else(|| panic!("identifier not recognized: {:?}", s));
-
-            assert_eq!(hand.token, tok, "token mismatch on {:?}", s);
-            assert_eq!(hand.span.start, 0, "expected start 0 on {:?}", s);
-            assert_eq!(hand.span.end, end, "end mismatch on {:?}", s);
+        for (bytes, tok, end) in cases {
+            assert_eq!(
+                scan(bytes),
+                Some((tok.clone(), *end)),
+                "on {:?}",
+                std::str::from_utf8(bytes).unwrap()
+            );
         }
+
+        // No identifier start → None.
+        assert_eq!(scan(b""), None);
+        assert_eq!(scan(b"123"), None); // digit start is not an identifier
+        assert_eq!(scan(b" foo"), None); // leading space
     }
 }

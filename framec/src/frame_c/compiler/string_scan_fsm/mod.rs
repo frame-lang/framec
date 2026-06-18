@@ -55,40 +55,41 @@ pub fn scan(bytes: &[u8]) -> Option<(Token, usize)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::frame_c::compiler::frame_ast::Span;
-    use crate::frame_c::compiler::lexer::lex;
-    use crate::frame_c::visitors::TargetLanguage;
 
-    /// The `@@fsm` recognizer + wrapper produce the same first token and end
-    /// offset as the real structural lexer (`lex_string` via `lex`).
+    /// The `@@fsm` recognizer + wrapper produce the expected unescaped
+    /// `StringLit` content and end offset for the quoted-string grammar.
+    ///
+    /// Direct behavioral assertion, not a differential vs. the lexer: the
+    /// production `lex_string` now drives this very recognizer, so a `scan`
+    /// vs. `lex` comparison would be circular.
     #[test]
-    fn fsm_matches_hand_lexer() {
-        let corpus = [
-            r#""abc""#,         // basic
-            r#""""#,            // empty
-            r#""a b c""#,       // spaces
-            r#""a\"b""#,        // escaped quote
-            r#""a\\b""#,        // escaped backslash
-            r#""line\nbreak""#, // \n is dropped-backslash → "linenbreak"
-            r#""tab\ttab""#,
-            r#"'x'"#,     // single quotes
-            r#"'it\'s'"#, // escaped single quote
-            r#""mixed ' inside""#,
-            r#""trailing"rest"#, // string ends at second quote; `rest` is separate
+    fn scan_recognizes_string_literals() {
+        // (input bytes, expected unescaped content, end offset)
+        let cases: &[(&[u8], &str, usize)] = &[
+            (br#""abc""#, "abc", 5),
+            (br#""""#, "", 2),
+            (br#""a b c""#, "a b c", 7),
+            (br#""a\"b""#, "a\"b", 6),               // escaped quote
+            (br#""a\\b""#, "a\\b", 6),               // escaped backslash
+            (br#""line\nbreak""#, "linenbreak", 13), // backslash dropped, `n` kept
+            (br#""tab\ttab""#, "tabttab", 10),
+            (br#"'x'"#, "x", 3), // single quotes
+            (br#"'it\'s'"#, "it's", 7),
+            (br#""mixed ' inside""#, "mixed ' inside", 16),
+            (br#""trailing"rest"#, "trailing", 10), // ends at the second quote
         ];
-        for s in corpus {
-            let bytes = s.as_bytes();
-            let toks =
-                lex(bytes, Span::new(0, bytes.len()), TargetLanguage::Python3).expect("lexes");
-            assert!(!toks.is_empty(), "no tokens for {:?}", s);
-            let hand = &toks[0];
-
-            let (tok, end) =
-                scan(bytes).unwrap_or_else(|| panic!("string not recognized: {:?}", s));
-
-            assert_eq!(hand.token, tok, "token mismatch on {:?}", s);
-            assert_eq!(hand.span.start, 0, "expected start 0 on {:?}", s);
-            assert_eq!(hand.span.end, end, "end mismatch on {:?}", s);
+        for (bytes, content, end) in cases {
+            assert_eq!(
+                scan(bytes),
+                Some((Token::StringLit((*content).to_string()), *end)),
+                "on {:?}",
+                std::str::from_utf8(bytes).unwrap()
+            );
         }
+
+        // Unterminated / not a string → None.
+        assert_eq!(scan(b"\"unterminated"), None);
+        assert_eq!(scan(b"abc"), None); // does not start with a quote
+        assert_eq!(scan(b""), None);
     }
 }
