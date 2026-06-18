@@ -1,0 +1,18 @@
+@@[target("rust")]
+// Identifier scanner — dogfooded as an RFC-0042 @@fsm recognizer.
+//
+// Recognizes the identifier shape that `Lexer::scan_identifier` consumes,
+// entered (per the structural dispatch) on an alphabetic or `_` lead — digits
+// route to the number lexer:
+//
+//     [A-Za-z_][A-Za-z0-9_]*
+//
+// The recognizer reports accept + `cursor` (= identifier end). Keyword
+// classification (interface/machine/return/true/false/…) is a finite lookup
+// over the recognized word — transformation, not recognition — so it stays in
+// the wrapper, mirroring `lex_identifier_or_keyword`. The `push$`/`pop$` and
+// section-colon composites are 1-char-lookahead lexer logic *around* the
+// identifier, not part of identifier recognition, and are out of scope here.
+@@fsm IdentScan(src: bytes) : bool = false {
+    /[A-Za-z_][A-Za-z0-9_]*/  true
+}

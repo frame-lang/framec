@@ -30,6 +30,7 @@ pub mod fsm_validator;
 pub mod gdscript_multisys;
 pub mod graphviz;
 pub mod hsm_cycle_validator;
+pub mod ident_scan_fsm;
 pub mod lexer;
 pub mod model;
 pub mod name;
