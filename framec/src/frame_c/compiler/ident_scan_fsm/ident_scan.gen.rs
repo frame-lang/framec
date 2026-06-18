@@ -32,14 +32,16 @@ pub struct IdentScan<I: IdentScanInput> {
     enter: usize,
 }
 
-impl<I: IdentScanInput> IdentScan<I> {
-    pub fn new(src: I) -> Self {
+impl IdentScan<Vec<char>> {
+    pub fn new(src: Vec<char>) -> Self {
         let mut _m = Self::over(src);
         _m.run();
         if _m.accepted { _m.reject_position = 0; }
         _m
     }
+}
 
+impl<I: IdentScanInput> IdentScan<I> {
     pub fn over(src: I) -> Self {
         Self {
             accepted: false,
@@ -116,3 +118,4 @@ impl<I: IdentScanInput> IdentScan<I> {
     }
 
 }
+

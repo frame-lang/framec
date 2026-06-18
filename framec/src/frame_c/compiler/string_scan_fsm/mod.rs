@@ -31,9 +31,9 @@ mod fsm {
 /// The recognizer (`@@fsm`) finds the extent; the content is rebuilt exactly as
 /// `lex_string` does — each `\` is dropped and the next byte kept literally.
 pub fn scan(bytes: &[u8]) -> Option<(Token, usize)> {
-    // RFC-0042.1: scans the host's `&[u8]` directly (zero-copy).
-    let m = fsm::StringScan::new(bytes);
-    if !m.accepted {
+    // RFC-0042.1: build over the host's `&[u8]` (zero-copy) and scan from 0.
+    let mut m = fsm::StringScan::over(bytes);
+    if !m.scan_at(0) {
         return None;
     }
     let end = m.cursor; // one past the closing quote

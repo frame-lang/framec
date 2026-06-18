@@ -34,14 +34,16 @@ pub struct StringScan<I: StringScanInput> {
     enter: usize,
 }
 
-impl<I: StringScanInput> StringScan<I> {
-    pub fn new(src: I) -> Self {
+impl StringScan<Vec<char>> {
+    pub fn new(src: Vec<char>) -> Self {
         let mut _m = Self::over(src);
         _m.run();
         if _m.accepted { _m.reject_position = 0; }
         _m
     }
+}
 
+impl<I: StringScanInput> StringScan<I> {
     pub fn over(src: I) -> Self {
         Self {
             accepted: false,
@@ -123,3 +125,4 @@ impl<I: StringScanInput> StringScan<I> {
     }
 
 }
+

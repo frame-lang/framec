@@ -477,8 +477,11 @@ impl<'a> Generator<'a> {
     }
 
     fn emit_impl(&self, out: &mut String) -> Result<(), String> {
-        writeln!(out, "impl<I: {n}Input> {n}<I> {{", n = self.decl.name).ok();
+        // `new` (owned, construct-and-run) goes on the *concrete* owned
+        // specialization so callers like `X::new(s.chars().collect())` infer
+        // the element type from its parameter; see `emit_new`.
         self.emit_new(out);
+        writeln!(out, "impl<I: {n}Input> {n}<I> {{", n = self.decl.name).ok();
         self.emit_over(out);
         self.emit_scan_at(out);
         self.emit_tok_id(out);
@@ -545,7 +548,7 @@ impl<'a> Generator<'a> {
         Ok(())
     }
 
-    /// The `(input: I, param: T, …)` parameter list shared by `new`/`over`.
+    /// The `(input: I, param: T, …)` parameter list for the generic `over`.
     fn ctor_sig(&self) -> String {
         let mut sig = String::new();
         for (i, p) in self.decl.params.iter().enumerate() {
@@ -554,6 +557,24 @@ impl<'a> Generator<'a> {
             }
             if i == 0 {
                 write!(sig, "{}: I", p.name).ok();
+            } else {
+                write!(sig, "{}: {}", p.name, Self::rust_type(&p.param_type)).ok();
+            }
+        }
+        sig
+    }
+
+    /// As `ctor_sig`, but the input parameter is the *concrete* owned buffer
+    /// type (`Vec<char>` / `Vec<String>`) rather than the generic `I`. Used by
+    /// the owned `new` so `.collect()` at the call site is unambiguous.
+    fn ctor_sig_owned(&self) -> String {
+        let mut sig = String::new();
+        for (i, p) in self.decl.params.iter().enumerate() {
+            if i > 0 {
+                sig.push_str(", ");
+            }
+            if i == 0 {
+                write!(sig, "{}: {}", p.name, self.input_type()).ok();
             } else {
                 write!(sig, "{}: {}", p.name, Self::rust_type(&p.param_type)).ok();
             }
@@ -597,8 +618,23 @@ impl<'a> Generator<'a> {
         out.push_str("        }\n    }\n\n");
     }
 
+    /// `new(input, …)` — construct over an OWNED buffer and run (back-compat).
+    ///
+    /// Emitted on the *concrete* owned specialization (`<Name><Vec<char>>` /
+    /// `<Name><Vec<String>>`), not the generic `impl<I>`, so a call like
+    /// `X::new(s.chars().collect())` infers the buffer's element type from
+    /// `new`'s parameter. A generic `new` would leave `.collect()` ambiguous
+    /// (E0283: the source could be `Vec<char>`, `Vec<u8>`, …). Borrowed and
+    /// callback sources are zero-copy via `over` + `scan_at`.
     fn emit_new(&self, out: &mut String) {
-        writeln!(out, "    pub fn new({}) -> Self {{", self.ctor_sig()).ok();
+        writeln!(
+            out,
+            "impl {n}<{owned}> {{",
+            n = self.decl.name,
+            owned = self.input_type()
+        )
+        .ok();
+        writeln!(out, "    pub fn new({}) -> Self {{", self.ctor_sig_owned()).ok();
         out.push_str("        let mut _m = Self::over(");
         for (i, p) in self.decl.params.iter().enumerate() {
             if i > 0 {
@@ -609,7 +645,8 @@ impl<'a> Generator<'a> {
         out.push_str(");\n");
         out.push_str("        _m.run();\n");
         out.push_str("        if _m.accepted { _m.reject_position = 0; }\n");
-        out.push_str("        _m\n    }\n\n");
+        out.push_str("        _m\n    }\n");
+        out.push_str("}\n\n");
     }
 
     /// `scan_at(start)` — re-run recognition from `start` over the same input
