@@ -440,11 +440,30 @@ fn alphabet_name(a: Alphabet) -> &'static str {
 /// - **E731 — alphabet mismatch (FSM-TEST-703).** Mode C drives the inner
 ///   recognizer over the *same* input, so the inner fsm must declare the same
 ///   alphabet as the outer one (a `char` outer cannot drive a `bytes` inner).
-///   Checked only when `<name>` resolves to a sibling fsm in `module`; an
-///   unresolved name is left to other passes (no false E731/E732).
+///   Checked when `<name>` resolves to a sibling fsm in `module`.
 ///
-/// The two are mutually exclusive per reference: a runtime name is reported
-/// E732 and not also probed for an alphabet match.
+/// Two further malformed forms are rejected E732 so they never reach codegen
+/// (framec#100): a body that is not a bare identifier after the `@` (an
+/// unescaped literal `@`, e.g. `/@@target/`), and a syntactically valid name
+/// that resolves to no fsm in the module (`/@Unknown/`). Without these the
+/// reference would fall through to the backends' `mode_c_inner`, which emits
+/// `<name>::new(...)` for a type that does not exist.
+///
+/// A runtime name (E732 dynamic dispatch) is reported and not also probed for
+/// an alphabet match.
+/// A Mode C reference body must be exactly an identifier
+/// (`[A-Za-z_][A-Za-z0-9_]*`). Anything else after the `@` — a leftover `@`
+/// from an unescaped literal (`/@@target/`), or trailing regex metacharacters
+/// — is not a valid call-out and must be diagnosed, not handed to codegen.
+fn is_fsm_ident(s: &str) -> bool {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) if c == '_' || c.is_ascii_alphabetic() => {}
+        _ => return false,
+    }
+    chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
+}
+
 pub(crate) fn check_mode_c(decl: &FsmDeclAst, module: &[FsmDeclAst]) -> Vec<FsmDiagnostic> {
     let mut out = Vec::new();
     let outer_alpha = alphabet_of(decl);
@@ -467,6 +486,25 @@ pub(crate) fn check_mode_c(decl: &FsmDeclAst, module: &[FsmDeclAst]) -> Vec<FsmD
                 let Some(target) = stage.regex.strip_prefix('@') else {
                     continue;
                 };
+                // A Mode C reference body is exactly `@<identifier>`. If what
+                // follows the `@` is not a bare identifier, this is not a valid
+                // call-out — almost always an unescaped literal `@` (e.g.
+                // `/@@target/`, whose body after the first `@` is `@target…`).
+                // Diagnose it here; otherwise the backends' `mode_c_inner`
+                // strips the one `@` and emits code naming a bogus inner fsm
+                // that does not compile (framec#100).
+                if !is_fsm_ident(target) {
+                    out.push(FsmDiagnostic {
+                        code: "E732",
+                        span: stage.span.clone(),
+                        message: format!(
+                            "invalid Mode C reference `/@{target}/`: the inner fsm name must be a \
+                             plain identifier. To match a literal `@`, escape it as `\\@` (as `\\/` \
+                             escapes a literal slash)."
+                        ),
+                    });
+                    continue;
+                }
                 if runtime.contains(target) {
                     out.push(FsmDiagnostic {
                         code: "E732",
@@ -497,6 +535,21 @@ pub(crate) fn check_mode_c(decl: &FsmDeclAst, module: &[FsmDeclAst]) -> Vec<FsmD
                             ),
                         });
                     }
+                } else {
+                    // A valid identifier, not a runtime value, but no sibling
+                    // fsm in the module declares it: an undeclared call-out
+                    // target. Without this branch the reference falls through
+                    // to codegen, which emits `<name>::new(...)` for a type
+                    // that does not exist (framec#100).
+                    out.push(FsmDiagnostic {
+                        code: "E732",
+                        span: stage.span.clone(),
+                        message: format!(
+                            "Mode C reference `/@{target}/` names no `@@fsm` in this module. \
+                             Declare an `@@fsm {target}(...)` with a matching alphabet, or — to \
+                             match a literal `@` — escape it as `\\@`."
+                        ),
+                    });
                 }
             }
         }
@@ -1299,6 +1352,43 @@ mod tests {
                 .iter()
                 .any(|x| x.code == "E731" || x.code == "E732"),
             "a statically-named matching-alphabet Mode C ref must be accepted"
+        );
+    }
+
+    /// framec#100 — a regex stage beginning with `@` is a Mode C reference; an
+    /// invalid one must be diagnosed (E732), not handed to codegen (which would
+    /// emit `<garbage>::new(...)` for a non-existent type). Two sub-cases:
+    ///
+    /// 1. **Unescaped literal `@`** — `/@@target/` (the prolog token). After the
+    ///    sigil the body is `@target`, not an identifier → E732, with the hint
+    ///    to escape it as `\@`.
+    /// 2. **Undeclared name** — `/@Unknown/` names no fsm in the module → E732.
+    ///
+    /// The escaped form `/\@\@target/` and a resolved sibling stay clean.
+    #[test]
+    fn e732_invalid_mode_c_reference_not_codegen() {
+        // (1) unescaped `@@target` → invalid identifier after the sigil.
+        let d = diags(b"@@fsm M(src: bytes) : bool = false { /@@target/ true }");
+        assert!(
+            d.iter().any(|x| x.code == "E732"),
+            "expected E732 for `/@@target/`, got {:?}",
+            d
+        );
+
+        // (2) a syntactically valid name that resolves to no fsm.
+        let d = diags(b"@@fsm M(src: bytes) : bool = false { /@Unknown/ true }");
+        assert!(
+            d.iter().any(|x| x.code == "E732"),
+            "expected E732 for undeclared `/@Unknown/`, got {:?}",
+            d
+        );
+
+        // The escaped literal `@` is a normal regex stage — no Mode C, no error.
+        let ok = diags(b"@@fsm M(src: bytes) : bool = false { /\\@\\@target/ true }");
+        assert!(
+            !ok.iter().any(|x| x.code == "E731" || x.code == "E732"),
+            "escaped `\\@` must not be treated as a Mode C reference, got {:?}",
+            ok
         );
     }
 
