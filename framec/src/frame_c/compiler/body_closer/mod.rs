@@ -32,6 +32,7 @@ pub mod csharp;
 pub mod dart;
 pub mod erlang;
 pub mod frame_structural;
+pub mod fsm;
 pub mod gdscript;
 pub mod go;
 pub mod java;
