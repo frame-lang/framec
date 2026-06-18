@@ -15,6 +15,7 @@ pub mod pragma_scanner;
 pub mod prolog_scanner;
 pub mod prolog_scanner_fsm;
 pub mod splice;
+pub mod string_scan_fsm;
 pub mod validator;
 
 pub mod assembler;

@@ -1,0 +1,22 @@
+@@[target("rust")]
+// String lexer — dogfooded as an RFC-0042 @@fsm recognizer.
+//
+// Recognizes the quoted-string grammar that `Lexer::lex_string` matches by
+// hand: a double- or single-quoted run where `\<any>` is an escape:
+//
+//     "([^"\\]|\\.)*"   |   '([^'\\]|\\.)*'
+//
+// Open and close quote are the same fixed character per alternative — two
+// ordered-choice branches, not a backreference (which would be non-regular).
+// The recognizer reports accept + `cursor` (one past the closing quote); an
+// unterminated string does not match (the hand scanner's UnterminatedString).
+// Building the unescaped content (drop each backslash, keep the next byte) is
+// transformation, so it stays in the wrapper.
+//
+// (The literal `"`/`'` here exercise framec#103 — the @@fsm body closer must
+// treat the regex literals as opaque rather than counting their quotes.)
+@@fsm StringScan(src: bytes) : bool = false {
+    /"([^"\\]|\\.)*"/  true
+    |
+    /'([^'\\]|\\.)*'/  true
+}
