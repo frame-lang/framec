@@ -334,35 +334,25 @@ restore from a prior snapshot. See
 [`docs/frame_runtime.md`](../frame_runtime.md) and
 [`rfc-0012`](../rfcs/rfc-0012.md) for the full contract.
 
-## ⚠️  Persist uses pickle — security warning
+## Persist uses JSON
 
-Frame's Python `save_state()` returns `pickle.dumps(self)` and
-`restore_state()` calls `pickle.loads(blob)`. **`pickle.loads`
-runs arbitrary code from the input** — a documented Python
-vulnerability (see Python's pickle docs: "Never unpickle data
-that could have come from an untrusted source").
+Frame's Python `save_state()` returns field-by-field UTF-8 JSON
+bytes (`json.dumps(state_data).encode("utf-8")`) and
+`restore_state()` reads them back with `json.loads`. There is no
+`pickle.dumps`/`pickle.loads` in generated Python, so restoring a
+snapshot does not execute arbitrary code from the blob.
 
-If you persist Frame system state to **any** storage that an
-attacker might write to — network sockets, user-uploaded files,
-shared databases, browser cookies, IPC channels — you have an
-RCE vector. An attacker crafts a pickle blob that runs arbitrary
-Python on `restore_state()`.
+The blob carries the saveable fields, not a whole-object graph:
+`save_state()` returns `bytes` regardless of the declared
+`@@[persist(<type>)]` argument, and the canonical JSON shape is
+the same wire format the other dynamic backends already use. See
+[`frame_runtime.md`](../frame_runtime.md) "The canonical format"
+for the structured `StateBlob` layout.
 
-**Safe uses:**
-- Local files written and read by the same trusted process.
-- Process-snapshot-for-crash-recovery on a single machine.
-- Test fixtures.
-
-**Unsafe uses without additional validation:**
-- Session state in cookies.
-- Cross-process / cross-machine state transfer.
-- Anything the user can edit.
-
-**Mitigation:** today, validate the source before calling
-`restore_state`. RFC-0012 captures a proposed migration to
-JSON-based persist that closes this hole; it's deferred pending
-customer feedback. See `docs/rfcs/rfc-0012.md` "Python: switch
-from pickle to JSON-based persist."
+Unlike whole-object pickle, JSON persist does not preserve shared
+object identity or reference cycles in the domain. RFC-0012
+discusses that trade-off; the pickle → JSON migration itself
+shipped in 4.2.0 (see `CHANGELOG.md`).
 
 ---
 
