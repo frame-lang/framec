@@ -6,6 +6,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [4.6.0] - 2026-06-19
+
+### Added
+
+- **RFC-0042.1 — pluggable input source for Rust `@@fsm` recognizers.** A generated
+  Rust recognizer is now generic over where it reads input: an owned buffer
+  (`Vec<char>` / `Vec<String>` / `Vec<u8>`), a borrowed slice (`&[char]` / `&[u8]` /
+  `&[String]`, zero-copy over the host's buffer), or a host callback
+  (`<Name>Fn(closure, len)`) — all behind a small per-fsm `fsm_get` / `fsm_len`
+  accessor. Two new drive forms join the unchanged `new()`: `over(src)` builds the
+  recognizer **without** running it, and `scan_at(start)` re-seeds and re-runs from
+  any offset. Build once, scan many: an `@@fsm` can now be used as a reusable,
+  zero-copy scan-at-cursor lexer primitive instead of being constructed with its full
+  input each call. Mode-C inner recognizers stay owned (materialized through the
+  accessor). Existing `@@fsm` source compiles identically — this is additive to the
+  generated API. Rust backend only; the other 16 backends keep the
+  construction-driven form (the `fsm_get`/`fsm_len` + `over`/`scan_at` contract is
+  uniform for the follow-on).
+
+### Changed
+
+- **The framec lexer now recognizes number, string, and identifier tokens through
+  generated `@@fsm` recognizers** — dogfooding `@@fsm` on the compiler's own lexical
+  leaves, driven zero-copy over the source bytes via RFC-0042.1. Tokenization is
+  unchanged: identical output across all 17 targets (the differential matrix is
+  unaffected). Internal refactor, no user-visible behavior change.
+
+### Removed
+
+- Dead internal scanner modules `pragma_scanner` and `prolog_scanner` (no production
+  callers).
+
+### Fixed
+
+- **`@@fsm` Mode C:** an invalid `@`-reference at the start of a regex stage now
+  raises a diagnostic (E731/E732) instead of emitting uncompilable code (#100).
+- **`@@fsm` segmentation:** the block body closer is now regex-literal-aware, so a
+  literal `{` / `}` or an unbalanced quote inside a regex literal no longer trips
+  `E001 Unterminated` (#103).
+- **Docs:** Python `@@[persist]` is documented as JSON, not pickle — `save_state()`
+  emits field-by-field UTF-8 JSON and `restore_state()` reads it with `json.loads`,
+  so a restored snapshot does not execute code from the blob. The pickle → JSON
+  migration itself shipped in 4.2.0 (#101, #104).
+
 ## [4.5.0] - 2026-06-16
 
 ### Added
