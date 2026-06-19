@@ -352,7 +352,7 @@ for the structured `StateBlob` layout.
 Unlike whole-object pickle, JSON persist does not preserve shared
 object identity or reference cycles in the domain. RFC-0012
 discusses that trade-off; the pickle → JSON migration itself
-shipped in 4.5.0 (see `CHANGELOG.md`).
+shipped in 4.2.0 (see `CHANGELOG.md`).
 
 ---
 

@@ -252,7 +252,7 @@ backends; each child's state embeds in the parent's blob.
 **Python uses JSON.** `save_state()` emits field-by-field UTF-8
 JSON and `restore_state()` reads it with `json.loads`, so a
 snapshot does not run arbitrary code on restore. The pickle → JSON
-migration shipped in 4.5.0; RFC-0012 covers the design trade-off.
+migration shipped in 4.2.0; RFC-0012 covers the design trade-off.
 
 ---
 

@@ -4399,7 +4399,7 @@ Java, Rust, etc. backends.
 JSON persist saves the domain fields rather than a whole-object
 graph, so it does not preserve shared object identity or
 reference cycles. RFC-0012 discusses that trade-off; the
-pickle → JSON migration itself shipped in 4.5.0 (see
+pickle → JSON migration itself shipped in 4.2.0 (see
 [`CHANGELOG.md`](CHANGELOG.md)).
 
 `_HSM_CHAIN` is the source of truth on restore, not the saved
