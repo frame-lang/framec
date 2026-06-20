@@ -11,6 +11,7 @@
 
 use crate::frame_c::compiler::codegen::ast::*;
 use crate::frame_c::compiler::codegen::backend::*;
+use crate::frame_c::compiler::codegen::codegen_utils::capitalize_first;
 use crate::frame_c::visitors::TargetLanguage;
 
 /// Go backend for code generation
@@ -710,15 +711,6 @@ impl GoBackend {
             field.name,
             type_str
         )
-    }
-}
-
-/// Capitalize the first letter of a string (for Go export visibility)
-fn capitalize_first(s: &str) -> String {
-    let mut chars = s.chars();
-    match chars.next() {
-        None => String::new(),
-        Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
     }
 }
 

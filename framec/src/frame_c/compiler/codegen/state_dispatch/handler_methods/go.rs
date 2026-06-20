@@ -41,6 +41,7 @@ pub(crate) fn generate_go_handler_method(
     handler_state_var_types: &std::collections::HashMap<String, String>,
     state_hsm_parents: &std::collections::HashMap<String, String>,
     state_param_types: &std::collections::HashMap<(String, String), String>,
+    domain_field_types: &std::collections::HashMap<String, String>,
 ) -> CodegenNode {
     let method_name = handler_method_name(state_name, handler);
     let lang = TargetLanguage::Go;
@@ -64,7 +65,11 @@ pub(crate) fn generate_go_handler_method(
         state_param_types: std::collections::HashMap::new(),
         state_enter_param_types: std::collections::HashMap::new(),
         state_exit_param_types: std::collections::HashMap::new(),
-        domain_field_types: std::collections::HashMap::new(),
+        // #112: thread the real field→type map so `@@:self.field.method()`
+        // is recognized as a cross-system call and the exported (capitalized)
+        // method name is emitted. Was `HashMap::new()`, which forced is_embed
+        // false → the raw lowercase name → undefined-method compile error.
+        domain_field_types: domain_field_types.clone(),
     };
 
     let mut body = String::new();
