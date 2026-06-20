@@ -741,7 +741,14 @@ impl LanguageBackend for DartBackend {
     }
 
     fn runtime_imports(&self) -> Vec<String> {
-        vec![]
+        // #110: suppress `dart analyze` warnings/lints on the generated runtime
+        // scaffolding (unused fields/elements/locals, snake_case identifiers,
+        // library-private types in public API, …) — the Dart parallel to the
+        // Rust backend's `#![allow(...)]`. Emitted at the top of the file by the
+        // assembler, so it covers the whole generated unit. `type=lint` blankets
+        // the style lints; the named entries are analyzer *warnings*, which
+        // `type=lint` does not cover.
+        vec!["// ignore_for_file: unused_field, unused_element, unused_local_variable, non_constant_identifier_names, constant_identifier_names, library_private_types_in_public_api, prefer_final_fields, type=lint".to_string()]
     }
 
     fn class_syntax(&self) -> ClassSyntax {

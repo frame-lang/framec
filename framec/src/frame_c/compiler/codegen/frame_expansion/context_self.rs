@@ -280,7 +280,15 @@ pub(super) fn expand_context_self_call(
             format!("this.{}{}", method_name, args_with_parens)
         }
         TargetLanguage::Go => {
-            let go_method = format!("{}{}", method_name[..1].to_uppercase(), &method_name[1..]);
+            // Interface methods are exported (PascalCase); actions are private
+            // helpers and stay lowercase. Capitalize only an interface self-call,
+            // not an `@@:self.<action>()` call, or it would reference an
+            // undefined exported method (#115).
+            let go_method = if ctx.actions.contains(method_name) {
+                method_name.to_string()
+            } else {
+                format!("{}{}", method_name[..1].to_uppercase(), &method_name[1..])
+            };
             format!("s.{}{}", go_method, args_with_parens)
         }
         TargetLanguage::Php => format!("$this->{}{}", method_name, args_with_parens),

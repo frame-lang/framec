@@ -8,6 +8,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Dart: generated files now carry an `// ignore_for_file` header (#110).** The
+  Dart backend emitted no suppression header, so the generated runtime
+  scaffolding (`_parameters`, `_state_stack`, `__prepareExit`, snake_case members,
+  …) tripped `dart analyze` warnings/lints in any normal project (a 3-system FSM
+  raised ~900). framec now prepends the header — the Dart parallel to the Rust
+  backend's `#![allow(...)]` — driving generated output to 0 analyzer issues.
+- **Go: same-system action calls are no longer PascalCased (#115).** `@@:self.<m>()`
+  was always capitalized for Go (`s.M()`), correct for exported interface methods
+  but wrong for **actions**, which are private/lowercase (`func helper`) — so the
+  call referenced an undefined exported method and the generated Go didn't compile.
+  Capitalization is now gated on the method being an interface method, not an
+  action. (Pre-existing in 4.6.0; surfaced alongside #112, which fixed the inverse
+  cross-system interface-call case.)
 - **Dart: the generated system's parameter-taking constructor is now public
   (#108).** Dart construction previously went through `static {Sys} _create(...)`,
   whose leading underscore makes it **library-private** — a system generated into
