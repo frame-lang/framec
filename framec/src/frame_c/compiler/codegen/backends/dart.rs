@@ -200,7 +200,8 @@ impl LanguageBackend for DartBackend {
                 super_call,
             } => {
                 // RFC-0017 Phase A4: split into bare ctor +
-                // `_frame_init` member + static `_create` factory.
+                // `_frame_init` member + public `factory .create`
+                // constructor (#108; was a library-private `static _create`).
                 // Replaces the prior D7 `_no_init` named ctor.
                 //
                 // Framework helper classes keep the original single-ctor
@@ -300,11 +301,17 @@ impl LanguageBackend for DartBackend {
                 }
                 result.push_str(&format!("{}}}\n", ctx.get_indent()));
 
-                // Emit `static Counter _create(<params>)` — factory
+                // Emit `factory Counter.create(<params>)` — the public
+                // construction entry point (#108). A `static _create` would be
+                // library-private in Dart (leading `_`), so a system generated
+                // into its own file could not be constructed from a separate
+                // host library. A named *factory constructor* is public,
+                // idiomatic, and — unlike a `static create` method — coexists
+                // with a user interface method named `create`.
                 result.push('\n');
                 let create_params = self.emit_params(params);
                 result.push_str(&format!(
-                    "{}static {} _create({}) {{\n",
+                    "{}factory {}.create({}) {{\n",
                     ctx.get_indent(),
                     class_name,
                     create_params

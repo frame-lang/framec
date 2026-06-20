@@ -80,7 +80,7 @@ class StateArgs {
         _context_stack.removeLast();
     }
 
-    static StateArgs _create() {
+    factory StateArgs.create() {
         final c = StateArgs();
         c._frame_init();
         return c;

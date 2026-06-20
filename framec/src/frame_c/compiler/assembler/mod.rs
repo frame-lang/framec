@@ -833,9 +833,10 @@ pub(crate) fn generate_constructor(name: &str, args: &str, lang: TargetLanguage)
             }
         }
         TargetLanguage::Dart => {
-            // RFC-0017 Phase A4: Dart factory expansion uses `Counter._create(args)`.
-            // Bare `Counter()` is reserved for `@@!Counter()`.
-            format!("{}._create({})", name, args)
+            // RFC-0017 Phase A4: Dart factory expansion uses the public
+            // `Counter.create(args)` factory constructor (#108 — `_create`
+            // was library-private). Bare `Counter()` is reserved for `@@!Counter()`.
+            format!("{}.create({})", name, args)
         }
         TargetLanguage::GDScript => {
             // RFC-0017 Phase A4: GDScript factory expansion uses

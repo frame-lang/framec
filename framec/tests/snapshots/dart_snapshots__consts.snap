@@ -85,7 +85,7 @@ class Consts {
         _context_stack.removeLast();
     }
 
-    static Consts _create([int step = 5, int limit = 20]) {
+    factory Consts.create([int step = 5, int limit = 20]) {
         final c = Consts();
         c._frame_init(step, limit);
         return c;

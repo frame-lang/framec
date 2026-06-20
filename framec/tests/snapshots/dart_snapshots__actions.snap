@@ -81,7 +81,7 @@ class Actions {
         _context_stack.removeLast();
     }
 
-    static Actions _create() {
+    factory Actions.create() {
         final c = Actions();
         c._frame_init();
         return c;
