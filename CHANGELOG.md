@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- **Go: cross-system interface calls now use the exported (PascalCase) method
+  name (#112).** Go exports interface methods by capitalizing the first letter
+  (`tick` → `Tick`), but a cross-system call `@@:self.field.method()` emitted the
+  raw lowercase name (`s.field.tick(...)`), referencing a method that doesn't
+  exist — the generated Go didn't compile. Root cause: the Go per-handler context
+  was built with an empty `domain_field_types` map, so the call was never
+  recognized as a cross-system (embed) call. framec now threads the field→type map
+  into the Go handler context and capitalizes the method at embed call sites,
+  using the same shared `capitalize_first` as the definition rename so the two
+  can't drift. Go-only.
+
 ## [4.6.0] - 2026-06-19
 
 ### Added

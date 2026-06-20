@@ -12,7 +12,7 @@
 //!   emitted separately by `emit_handler_body_via_statements` so
 //!   it lands at a statement boundary.
 
-use super::super::codegen_utils::{to_snake_case, HandlerContext};
+use super::super::codegen_utils::{capitalize_first, to_snake_case, HandlerContext};
 use super::expand_expression;
 use super::utility::strip_outer_parens;
 use crate::frame_c::compiler::native_region_scanner::{RegionSpan, SegmentMetadata};
@@ -166,7 +166,18 @@ pub(super) fn expand_context_self_field_call(
         }
         // PHP: every object method call uses `->`.
         TargetLanguage::Php => format!("$this->{field}->{method}{args}"),
-        TargetLanguage::Go => format!("s.{field}.{method}{args}"),
+        // Go exports interface methods by capitalizing the first letter
+        // (`tick` → `Tick`). A cross-system (embed) call must use that same
+        // exported spelling, or it references an undefined method (#112). A
+        // non-embed scalar-field call targets a native Go method whose name
+        // framec does not control, so it stays verbatim.
+        TargetLanguage::Go => {
+            if is_embed {
+                format!("s.{field}.{}{args}", capitalize_first(method))
+            } else {
+                format!("s.{field}.{method}{args}")
+            }
+        }
         TargetLanguage::Python3
         | TargetLanguage::GDScript
         | TargetLanguage::Ruby

@@ -430,6 +430,19 @@ pub(crate) fn to_snake_case(s: &str) -> String {
     crate::frame_c::compiler::name::to_snake_case(s)
 }
 
+/// Uppercase the first character (rest verbatim). This is the Go
+/// backend's export rename for public method names (`tick` → `Tick`,
+/// `get_lives` → `Get_lives`). It is shared so the method *definition*
+/// (go.rs) and a cross-system *call site* (`@@:self.field.method()`,
+/// `context_self.rs`) use the identical mapping and can't drift (#112).
+pub(crate) fn capitalize_first(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+    }
+}
+
 // ─── String-aware literal replace ────────────────────────────────────
 //
 // Used by codegen branches that need to rewrite tokens inside generated
