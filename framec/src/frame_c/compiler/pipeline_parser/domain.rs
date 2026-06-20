@@ -115,4 +115,24 @@ mod tests {
         assert!(out.contains("class Repro"), "did not compile:\n{out}");
         assert!(out.contains("42"), "scalar default lost:\n{out}");
     }
+
+    #[test]
+    fn apostrophe_in_trailing_comment_does_not_swallow_following_field() {
+        // #113: a lone apostrophe in a trailing `#` comment opened a string in
+        // the single-line RHS scanner that ran past the newline, swallowing the
+        // next field into the first field's initializer (emitted verbatim, not
+        // `self.b = ...`). The string scan must stop at the depth-0 newline.
+        let out = py("        a = None   # it's here\n        b = 0");
+        assert!(out.contains("class Repro"), "did not compile:\n{out}");
+        assert!(
+            out.contains("self.b = 0"),
+            "field after an apostrophe-comment was swallowed:\n{out}"
+        );
+        // A balanced double-quote in a comment was never affected; keep it green.
+        let out2 = py("        a = 0   # say \"hi\"\n        b = 1");
+        assert!(
+            out2.contains("self.b = 1"),
+            "field after a quoted comment was swallowed:\n{out2}"
+        );
+    }
 }

@@ -28,6 +28,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
   into the Go handler context and capitalizes the method at embed call sites,
   using the same shared `capitalize_first` as the definition rename so the two
   can't drift. Go-only.
+- **Scanner: an apostrophe in a `#` comment on a `domain:` field no longer
+  swallows the following field (#113).** A lone `'` (e.g. in "it's") inside a
+  trailing comment opened a string in the single-line domain-RHS scanner
+  (`ExprScannerFsm`) that ran past the newline, absorbing the next field
+  declaration into the first field's initializer — emitted **verbatim** into the
+  generated constructor instead of being transpiled (a silent miscompile;
+  `framec` exited 0). The scanner now stops an unterminated string at the
+  depth-0 newline in single-line mode. Pre-backend, so all targets benefit; a
+  balanced `"…"` in a comment was never affected.
 
 ## [4.6.0] - 2026-06-19
 

@@ -294,6 +294,15 @@ mod _expr_scanner_fsm_framec {
             
                 // Handle string literals
                 if let Some(q) = in_string {
+                    // A raw newline inside an unterminated string means the
+                    // opening quote was not a real delimiter — most often an
+                    // apostrophe in a trailing comment (`a = None  # it's here`).
+                    // In single-line mode (`stop_newline`) a string must not
+                    // consume past the line and swallow the next field (#113).
+                    // Stop here, excluding the newline.
+                    if b == b'\n' && self.stop_newline {
+                        break;
+                    }
                     if b == b'\\' && i + 1 < end {
                         i += 2;
                         continue;
@@ -343,3 +352,4 @@ mod _expr_scanner_fsm_framec {
     }
 }
 pub use _expr_scanner_fsm_framec::*;
+
