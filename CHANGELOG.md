@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [4.6.1] - 2026-06-20
+
 ### Fixed
 
 - **Dart: generated files now carry an `// ignore_for_file` header (#110).** The
