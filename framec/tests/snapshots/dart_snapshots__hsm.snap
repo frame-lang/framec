@@ -83,7 +83,7 @@ class MiniHsm {
         _context_stack.removeLast();
     }
 
-    static MiniHsm _create() {
+    factory MiniHsm.create() {
         final c = MiniHsm();
         c._frame_init();
         return c;

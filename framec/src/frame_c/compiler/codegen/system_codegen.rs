@@ -189,8 +189,9 @@ pub fn generate_system_shared(
                 methods.push(generate_static_factory_alias(
                     system,
                     factory_name,
+                    // #108: delegate to the public `.create` factory constructor.
                     &format!(
-                        "return {}._create({});",
+                        "return {}.create({});",
                         system.name,
                         params_arg_list(system)
                     ),

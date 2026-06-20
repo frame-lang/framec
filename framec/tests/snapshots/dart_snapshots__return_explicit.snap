@@ -80,7 +80,7 @@ class ReturnExplicit {
         _context_stack.removeLast();
     }
 
-    static ReturnExplicit _create() {
+    factory ReturnExplicit.create() {
         final c = ReturnExplicit();
         c._frame_init();
         return c;

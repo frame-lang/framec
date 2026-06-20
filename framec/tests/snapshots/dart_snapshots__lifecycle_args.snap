@@ -82,7 +82,7 @@ class LifecycleArgs {
         _context_stack.removeLast();
     }
 
-    static LifecycleArgs _create() {
+    factory LifecycleArgs.create() {
         final c = LifecycleArgs();
         c._frame_init();
         return c;

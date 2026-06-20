@@ -81,7 +81,7 @@ class LinearFsm {
         _context_stack.removeLast();
     }
 
-    static LinearFsm _create() {
+    factory LinearFsm.create() {
         final c = LinearFsm();
         c._frame_init();
         return c;

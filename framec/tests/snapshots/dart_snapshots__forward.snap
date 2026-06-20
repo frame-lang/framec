@@ -82,7 +82,7 @@ class Forward {
         _context_stack.removeLast();
     }
 
-    static Forward _create() {
+    factory Forward.create() {
         final c = Forward();
         c._frame_init();
         return c;

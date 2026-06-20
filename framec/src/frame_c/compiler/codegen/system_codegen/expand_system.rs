@@ -140,7 +140,7 @@ mod tests {
             (TargetLanguage::Rust, "Counter::__create(7)"),
             (TargetLanguage::C, "Counter_create(7)"),
             (TargetLanguage::Go, "CreateCounter(7)"),
-            (TargetLanguage::Dart, "Counter._create(7)"),
+            (TargetLanguage::Dart, "Counter.create(7)"),
             (TargetLanguage::JavaScript, "Counter._create(7)"),
             (TargetLanguage::TypeScript, "Counter._create(7)"),
             (TargetLanguage::Ruby, "Counter._create(7)"),

@@ -82,7 +82,7 @@ class PushPop {
         _context_stack.removeLast();
     }
 
-    static PushPop _create() {
+    factory PushPop.create() {
         final c = PushPop();
         c._frame_init();
         return c;

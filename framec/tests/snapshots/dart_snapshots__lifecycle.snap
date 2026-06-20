@@ -83,7 +83,7 @@ class Lifecycle {
         _context_stack.removeLast();
     }
 
-    static Lifecycle _create() {
+    factory Lifecycle.create() {
         final c = Lifecycle();
         c._frame_init();
         return c;

@@ -82,7 +82,7 @@ class NoPersist {
         _context_stack.removeLast();
     }
 
-    static NoPersist _create() {
+    factory NoPersist.create() {
         final c = NoPersist();
         c._frame_init();
         return c;

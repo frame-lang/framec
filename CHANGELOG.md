@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- **Dart: the generated system's parameter-taking constructor is now public
+  (#108).** Dart construction previously went through `static {Sys} _create(...)`,
+  whose leading underscore makes it **library-private** — a system generated into
+  its own file could not be instantiated from a separate host library (the public
+  no-arg `{Sys}()` left `late` domain fields uninitialized → `LateInitializationError`).
+  framec now emits a public **factory constructor** `factory {Sys}.create(...)`.
+  This is the idiomatic Dart form and — unlike a `static create` method — coexists
+  with a user interface method named `create`. Call sites (`@@Sys(...)` instantiation
+  and the `@@[create(name)]` alias) updated to `{Sys}.create(...)`. Dart-only; every
+  other backend's factory was already cross-module-callable.
+
 ## [4.6.0] - 2026-06-19
 
 ### Added

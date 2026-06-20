@@ -81,7 +81,7 @@ class Counter {
         _context_stack.removeLast();
     }
 
-    static Counter _create() {
+    factory Counter.create() {
         final c = Counter();
         c._frame_init();
         return c;

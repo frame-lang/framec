@@ -81,7 +81,7 @@ class SelfCall {
         _context_stack.removeLast();
     }
 
-    static SelfCall _create() {
+    factory SelfCall.create() {
         final c = SelfCall();
         c._frame_init();
         return c;
