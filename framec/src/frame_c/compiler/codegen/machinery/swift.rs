@@ -32,16 +32,24 @@ impl MachineryGenerator for SwiftMachinery {
         // stored properties are initialized; Swift forbids instance-method
         // calls on `self` until that point).
         let mut chain_method =
-            String::from("private static func hsm_chain() -> [String: [String]] {\n    return [\n");
-        for (leaf, chain) in chains {
-            let chain_str = chain
-                .iter()
-                .map(|n| format!("\"{}\"", n))
-                .collect::<Vec<_>>()
-                .join(", ");
-            chain_method.push_str(&format!("        \"{}\": [{}],\n", leaf, chain_str));
+            String::from("private static func hsm_chain() -> [String: [String]] {\n");
+        if chains.is_empty() {
+            // Swift's empty *dictionary* literal is `[:]`; `[]` is an empty
+            // ARRAY and fails to type-check against `[String: [String]]`. A
+            // machine-less system (interface/data only) has no chain entries.
+            chain_method.push_str("    return [:]\n}");
+        } else {
+            chain_method.push_str("    return [\n");
+            for (leaf, chain) in chains {
+                let chain_str = chain
+                    .iter()
+                    .map(|n| format!("\"{}\"", n))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                chain_method.push_str(&format!("        \"{}\": [{}],\n", leaf, chain_str));
+            }
+            chain_method.push_str("    ]\n}");
         }
-        chain_method.push_str("    ]\n}");
         Some(CodegenNode::NativeBlock {
             code: chain_method,
             span: None,

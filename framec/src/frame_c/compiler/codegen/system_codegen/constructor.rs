@@ -469,6 +469,26 @@ pub(crate) fn generate_constructor(system: &SystemAst, syntax: &ClassSyntax) -> 
         }
     }
 
+    // Machine-less / empty system (legal: `@@system Foo {}`) has no start
+    // state, so the compartment init below never runs. Kotlin requires every
+    // `var` property to be initialized — seed __compartment with a sentinel
+    // (never dispatched: no states/handlers). The other 13 targets tolerate the
+    // uninitialized field; Rust handles this in its own constructor path.
+    let has_start_state = system
+        .machine
+        .as_ref()
+        .and_then(|m| m.states.first())
+        .is_some();
+    if !has_start_state && matches!(syntax.language, TargetLanguage::Kotlin) {
+        body.push(CodegenNode::NativeBlock {
+            code: format!(
+                "this.__compartment = {sys}Compartment(\"\")\nthis.__next_compartment = null",
+                sys = system.name
+            ),
+            span: None,
+        });
+    }
+
     // Set initial state (first state in machine)
     // All languages now use the kernel/router/compartment pattern
     if let Some(ref machine) = system.machine {
@@ -1405,5 +1425,42 @@ self._context_stack.pop_back()"#,
         params,
         body,
         super_call,
+    }
+}
+
+#[cfg(test)]
+mod empty_system_tests {
+    // A machine-less / empty system (`@@system Foo {}`) is legal Frame but has
+    // no start state. The compartment machinery must still initialize cleanly,
+    // or the generated code fails to compile (Swift empty dict, Rust/Kotlin
+    // uninitialized field). The matrix has no machine-less fixtures, so these
+    // pin the generated init shape directly.
+    use crate::run;
+
+    #[test]
+    fn swift_empty_system_uses_empty_dict_literal() {
+        let out = run("@@[target(\"swift\")]\n@@[main]\n@@system Foo {}\n", "swift");
+        assert!(
+            out.contains("return [:]"),
+            "Swift empty hsm_chain must use `[:]` (empty dict), not `[]`:\n{out}"
+        );
+    }
+
+    #[test]
+    fn rust_empty_system_initializes_compartment() {
+        let out = run("@@[target(\"rust\")]\n@@[main]\n@@system Foo {}\n", "rust");
+        assert!(
+            out.contains("FooCompartment::new(\"\")"),
+            "Rust empty system must seed __compartment with a sentinel:\n{out}"
+        );
+    }
+
+    #[test]
+    fn kotlin_empty_system_initializes_compartment() {
+        let out = run("@@[target(\"kotlin\")]\n@@[main]\n@@system Foo {}\n", "kotlin");
+        assert!(
+            out.contains("this.__compartment = FooCompartment(\"\")"),
+            "Kotlin empty system must seed __compartment with a sentinel:\n{out}"
+        );
     }
 }

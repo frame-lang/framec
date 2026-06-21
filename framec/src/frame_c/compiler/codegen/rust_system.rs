@@ -464,8 +464,10 @@ fn generate_rust_constructor(system: &SystemAst) -> CodegenNode {
     // literal (just the leaf state, no ancestors). After the struct is
     // built we replace via __prepareEnter so the chain cascades through
     // the runtime helper exactly like every other transition.
+    let mut start_state_present = false;
     if let Some(ref machine) = system.machine {
         if let Some(first_state) = machine.states.first() {
+            start_state_present = true;
             body.push(CodegenNode::assign(
                 CodegenNode::field(CodegenNode::self_ref(), "__compartment"),
                 CodegenNode::Ident(format!(
@@ -537,6 +539,20 @@ fn generate_rust_constructor(system: &SystemAst) -> CodegenNode {
                 span: None,
             });
         }
+    }
+    if !start_state_present {
+        // Machine-less / empty system (legal: `@@system Foo {}`) — no start
+        // state, so the start-state init above never ran. Initialize the
+        // compartment field to a sentinel so the struct is complete; it is
+        // never dispatched to (there are no states/handlers).
+        body.push(CodegenNode::assign(
+            CodegenNode::field(CodegenNode::self_ref(), "__compartment"),
+            CodegenNode::Ident(format!("{}Compartment::new(\"\")", system.name)),
+        ));
+        body.push(CodegenNode::assign(
+            CodegenNode::field(CodegenNode::self_ref(), "__next_compartment"),
+            CodegenNode::Ident("None".to_string()),
+        ));
     }
 
     // System params as constructor parameters
