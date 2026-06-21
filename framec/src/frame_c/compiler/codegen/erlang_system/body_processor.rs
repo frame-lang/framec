@@ -51,10 +51,43 @@ pub(super) fn erlang_capitalize_params(line: &str, param_names: &[(&str, String)
     for (original, capitalized) in &sorted_params {
         // Word-boundary replacement: only replace standalone identifiers
         let mut new_result = String::new();
-        let mut chars = result.chars().peekable();
         let mut i = 0;
         let orig_len = original.len();
+        let bytes = result.as_bytes();
         while i < result.len() {
+            // Copy string literals (`"..."`), quoted atoms (`'...'`) and line
+            // comments (`% ...`) VERBATIM: a param name appearing as a word
+            // inside them is text/atom content, not a variable, and must not be
+            // capitalized (param `msg` must leave `"msg received"` intact).
+            // `$"`/`$'`/`$%` are character literals, not region openers, so a
+            // preceding `$` disables this.
+            let is_char_lit = i > 0 && bytes[i - 1] == b'$';
+            match bytes[i] {
+                q @ (b'"' | b'\'') if !is_char_lit => {
+                    new_result.push(q as char);
+                    i += 1;
+                    while i < result.len() {
+                        let b = bytes[i];
+                        new_result.push(b as char);
+                        i += 1;
+                        if b == b'\\' && i < result.len() {
+                            new_result.push(bytes[i] as char);
+                            i += 1;
+                        } else if b == q {
+                            break;
+                        }
+                    }
+                    continue;
+                }
+                b'%' if !is_char_lit => {
+                    while i < result.len() && bytes[i] != b'\n' {
+                        new_result.push(bytes[i] as char);
+                        i += 1;
+                    }
+                    continue;
+                }
+                _ => {}
+            }
             if result[i..].starts_with(original) {
                 // Check word boundaries
                 // Don't capitalize identifiers inside record access patterns (#record.field)

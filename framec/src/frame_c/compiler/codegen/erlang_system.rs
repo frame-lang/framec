@@ -90,10 +90,22 @@ pub(crate) const ERLANG_COMPARTMENT_CONTEXT_FIELDS: &[&str] =
 /// Simple rewrite for contexts where Data threading isn't needed (expressions only)
 fn erlang_rewrite_expr(line: &str, action_names: &[String]) -> String {
     let l = line.trim();
-    for action in action_names {
-        let pattern = format!("self.{}(", action);
-        if l.contains(&pattern) {
-            let replaced = l.replace(&pattern, &format!("{}(Data, ", action));
+    // Action calls `self.<action>(` → `<action>(Data, ` (Data threading),
+    // collapsing the zero-arg form. String/comment-safe (a literal like
+    // `"calls self.foo()"` must be left intact) — the same primitive the field
+    // branch below uses, applied to all actions at once so a line with two
+    // action calls rewrites both.
+    let action_subs: Vec<(String, String)> = action_names
+        .iter()
+        .map(|a| (format!("self.{}(", a), format!("{}(Data, ", a)))
+        .collect();
+    if !action_subs.is_empty() {
+        let refs: Vec<(&str, &str)> = action_subs
+            .iter()
+            .map(|(a, b)| (a.as_str(), b.as_str()))
+            .collect();
+        let replaced = replace_outside_strings_and_comments(l, TargetLanguage::Erlang, &refs);
+        if replaced != l {
             return replaced.replace("(Data, )", "(Data)");
         }
     }
@@ -1832,31 +1844,127 @@ pub(crate) fn generate_erlang_system(
         // form). Stops bogus matches like `Data#data._inc(` or
         // `'_inc(` (already quoted).
         let mut out = String::with_capacity(code.len());
-        let mut cursor = 0;
-        while cursor < code.len() {
-            let rel = match code[cursor..].find(&needle) {
-                Some(r) => r,
-                None => break,
-            };
-            let abs = cursor + rel;
-            let prev_ok = if abs == 0 {
-                true
-            } else {
-                let prev = code.as_bytes()[abs - 1];
-                !(prev.is_ascii_alphanumeric() || prev == b'_' || prev == b'\'')
-            };
-            out.push_str(&code[cursor..abs]);
-            if prev_ok {
-                out.push_str(&replacement);
-            } else {
-                out.push_str(&needle);
+        let bytes = code.as_bytes();
+        let mut i = 0;
+        while i < code.len() {
+            // Copy string literals (`"..."`), quoted atoms (`'...'`) and line
+            // comments (`% ...`) VERBATIM — a `_name(` occurrence inside them is
+            // text, not a call site, and must not be quoted (it would corrupt a
+            // passthrough string like `"see _inc() docs"`). The `'...'` skip also
+            // leaves an already-quoted `'_inc'(` untouched. `$"`/`$'`/`$%` are
+            // character literals, not region openers.
+            let is_char_lit = i > 0 && bytes[i - 1] == b'$';
+            match bytes[i] {
+                q @ (b'"' | b'\'') if !is_char_lit => {
+                    out.push(q as char);
+                    i += 1;
+                    while i < code.len() {
+                        let b = bytes[i];
+                        out.push(b as char);
+                        i += 1;
+                        if b == b'\\' && i < code.len() {
+                            out.push(bytes[i] as char);
+                            i += 1;
+                        } else if b == q {
+                            break;
+                        }
+                    }
+                    continue;
+                }
+                b'%' if !is_char_lit => {
+                    while i < code.len() && bytes[i] != b'\n' {
+                        out.push(bytes[i] as char);
+                        i += 1;
+                    }
+                    continue;
+                }
+                _ => {}
             }
-            cursor = abs + needle.len();
+            if code[i..].starts_with(&needle) {
+                // Word boundary: previous char must not extend an identifier
+                // (`x_inc(`) or be an opening atom quote (already handled by the
+                // skip above, kept for safety).
+                let prev_ok = i == 0 || {
+                    let prev = bytes[i - 1];
+                    !(prev.is_ascii_alphanumeric() || prev == b'_' || prev == b'\'')
+                };
+                if prev_ok {
+                    out.push_str(&replacement);
+                    i += needle.len();
+                    continue;
+                }
+            }
+            out.push(bytes[i] as char);
+            i += 1;
         }
-        out.push_str(&code[cursor..]);
         code = out;
     }
 
     // Wrap in a NativeBlock — the assembler will stitch prolog + this + epilog
     CodegenNode::NativeBlock { code, span: None }
+}
+
+#[cfg(test)]
+mod erlang_string_safety_tests {
+    // The Erlang body rewriters (param capitalization, underscore-action
+    // quoting) must NOT edit text inside string literals: a param name or an
+    // action name appearing as a word in a `"..."` literal is data, not a
+    // variable / call site, and rewriting it changes the program's output.
+    use crate::run;
+
+    #[test]
+    fn param_name_in_string_literal_not_capitalized() {
+        let src = "@@[target(\"erlang\")]\n\
+                   @@[main]\n\
+                   @@system S {\n\
+                   \x20   interface:\n\
+                   \x20       go(msg: string)\n\
+                   \x20   machine:\n\
+                   \x20       $A {\n\
+                   \x20           go(msg: string) {\n\
+                   \x20               io:format(\"msg received~n\")\n\
+                   \x20           }\n\
+                   \x20       }\n\
+                   }\n";
+        let out = run(src, "erlang");
+        assert!(
+            out.contains("\"msg received~n\""),
+            "param `msg` was capitalized inside a string literal:\n{out}"
+        );
+        // The real variable use IS still capitalized.
+        assert!(
+            out.contains("Msg"),
+            "param variable not capitalized:\n{out}"
+        );
+    }
+
+    #[test]
+    fn underscore_action_in_string_literal_not_quoted() {
+        let src = "@@[target(\"erlang\")]\n\
+                   @@[main]\n\
+                   @@system S {\n\
+                   \x20   interface:\n\
+                   \x20       go()\n\
+                   \x20   machine:\n\
+                   \x20       $A {\n\
+                   \x20           go() {\n\
+                   \x20               io:format(\"call _inc() now~n\")\n\
+                   \x20               @@:self._inc()\n\
+                   \x20           }\n\
+                   \x20       }\n\
+                   \x20   actions:\n\
+                   \x20       _inc() {\n\
+                   \x20       }\n\
+                   }\n";
+        let out = run(src, "erlang");
+        assert!(
+            out.contains("\"call _inc() now~n\""),
+            "action `_inc` was quoted inside a string literal:\n{out}"
+        );
+        // The real call site IS quoted (Erlang reserves bare `_name`).
+        assert!(
+            out.contains("'_inc'(Data)"),
+            "real action call site not quoted:\n{out}"
+        );
+    }
 }
