@@ -10,6 +10,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Paren-less-`if` targets: a cross-system call in a condition is no longer
+  terminated (#117).** The #116 statement-position scanner excluded
+  expression-position calls via paren depth (`if (cond)`), correct for C#/Java —
+  but Go/Rust/Swift/Kotlin write `if cond {` with no parens, so `if @@:self.f.m()`
+  got a stray `;` (`if s.f.M(); {` → "missing condition"). The scanner now also
+  treats a call immediately following a condition keyword
+  (`if`/`while`/`for`/`switch`/`match`/`when`) as expression position. Verified
+  with `go build`.
 - **C#/semicolon targets: a void cross-system interface-call statement is now
   terminated with `;` (#116).** `@@:self.field.method()` used as a statement was
   emitted without a trailing `;` (`CS1002: ; expected`), while same-system action

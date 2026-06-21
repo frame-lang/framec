@@ -364,6 +364,25 @@ fn call_segment_at_statement_position(out: &str, lang: TargetLanguage) -> bool {
     if assign_in_run {
         return false; // RHS of an assignment (covers the cast case)
     }
+    // A call immediately following a control-flow keyword is that construct's
+    // condition/scrutinee — expression position, not a statement (#117). C# /
+    // Java parenthesize the condition (`if (cond)`), already excluded above by
+    // depth; the paren-less-`if` targets (Go, Rust, Swift, Kotlin) write
+    // `if cond {`, so the keyword is the last token before the call.
+    let last_word: String = run
+        .chars()
+        .rev()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    if matches!(
+        last_word.as_str(),
+        "if" | "while" | "for" | "switch" | "match" | "when" | "elif"
+    ) {
+        return false;
+    }
     // Not whitespace and no assignment: a statement iff the run does not end on
     // an operator / open delimiter (which would mean an operand is still
     // expected). Closing parens / identifiers / literals complete a statement.
@@ -900,6 +919,44 @@ mod statement_terminator_tests {
              }}\n"
         );
         run(&src, "csharp")
+    }
+
+    // #117: paren-less-`if` targets (Go/Rust/Swift/Kotlin) — a value-returning
+    // call in a condition must NOT be terminated (`if s.ship.alive() {`, not
+    // `if s.ship.alive(); {`).
+    fn go(body: &str) -> String {
+        let src = format!(
+            "@@[target(\"go\")]\n\
+             package main\n\
+             @@system Ship {{\n\
+             \x20   interface:\n\
+             \x20       alive(): bool\n\
+             \x20       tick()\n\
+             }}\n\
+             @@[main]\n\
+             @@system Game {{\n\
+             \x20   interface:\n\
+             \x20       run()\n\
+             \x20   machine:\n\
+             \x20       $S {{ run() {{ {body} }} }}\n\
+             \x20   domain:\n\
+             \x20       ship: Ship = @@Ship()\n\
+             }}\n"
+        );
+        run(&src, "go")
+    }
+
+    #[test]
+    fn go_call_in_paren_less_if_condition_not_terminated() {
+        let out = go("if @@:self.ship.alive() { return }");
+        assert!(
+            out.contains("if s.ship.Alive() {"),
+            "stray `;` in a paren-less if-condition:\n{out}"
+        );
+        assert!(
+            !out.contains("Alive();"),
+            "spurious `;` spliced into an if-condition call:\n{out}"
+        );
     }
 
     #[test]
