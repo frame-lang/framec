@@ -660,7 +660,13 @@ pub(crate) fn emit_handler_body_via_statements(
                 .collect::<Vec<_>>()
                 .join("\n")
         } else {
-            text.replace(";;", ";")
+            // String/comment-safe: a literal `";;"` in user code must keep both
+            // semicolons; only collapse a real double-terminator.
+            super::super::codegen_utils::replace_outside_strings_and_comments(
+                &text,
+                lang,
+                &[(";;", ";")],
+            )
         };
         strip_java_unreachable(&text)
     } else {
@@ -939,6 +945,17 @@ mod statement_terminator_tests {
         assert!(
             out.contains("this.ship.a();") && !out.contains("this.ship.a();;"),
             "user-written `;` was doubled:\n{out}"
+        );
+    }
+
+    #[test]
+    fn double_semicolon_inside_string_literal_preserved() {
+        // The `;;`→`;` post-processing collapse must not touch a `;;` that is
+        // part of a string literal.
+        let out = cs("string sep = \"a;;b\";");
+        assert!(
+            out.contains("\"a;;b\""),
+            "`;;` collapsed inside a string literal:\n{out}"
         );
     }
 }

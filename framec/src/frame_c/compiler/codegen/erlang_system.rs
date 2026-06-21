@@ -1967,4 +1967,26 @@ mod erlang_string_safety_tests {
             "real action call site not quoted:\n{out}"
         );
     }
+
+    #[test]
+    fn action_call_in_operation_string_literal_not_rewritten() {
+        // The operation-body action-call Data-threading rewrite must not touch a
+        // `self.<action>(` that appears inside a string literal.
+        let src = "@@[target(\"erlang\")]\n\
+                   @@[main]\n\
+                   @@system S {\n\
+                   \x20   operations:\n\
+                   \x20       describe(): string { return \"uses self.helper() inside\" }\n\
+                   \x20   interface:\n\
+                   \x20       go()\n\
+                   \x20   actions:\n\
+                   \x20       helper() {\n\
+                   \x20       }\n\
+                   }\n";
+        let out = run(src, "erlang");
+        assert!(
+            out.contains("\"uses self.helper() inside\""),
+            "action call rewritten inside a string literal:\n{out}"
+        );
+    }
 }

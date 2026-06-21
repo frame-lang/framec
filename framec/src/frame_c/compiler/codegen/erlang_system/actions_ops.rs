@@ -424,20 +424,37 @@ pub(super) fn emit_actions_and_operations(
                 // would otherwise collapse it to a record-field read).
                 // Non-static ops only — static ops have no Data.
                 let l = if !op.is_static {
-                    let mut out = l.clone();
-                    for action in action_names {
-                        let pattern = format!("self.{}(", action);
-                        if out.contains(&pattern) {
+                    // String/comment-safe action-call Data threading
+                    // (`self.<action>(` → `<action>(Data, `): a literal like
+                    // `"calls self.foo()"` must be left intact. The `(Data, )`
+                    // → `(Data)` collapse acts only on the framec-emitted form.
+                    let action_subs: Vec<(String, String)> = action_names
+                        .iter()
+                        .map(|a| {
+                            (
+                                format!("self.{}(", a),
+                                format!("{}(Data, ", erlang_op_name(a.as_str())),
+                            )
+                        })
+                        .collect();
+                    if action_subs.is_empty() {
+                        l
+                    } else {
+                        let refs: Vec<(&str, &str)> = action_subs
+                            .iter()
+                            .map(|(a, b)| (a.as_str(), b.as_str()))
+                            .collect();
+                        let mut out =
+                            replace_outside_strings_and_comments(&l, TargetLanguage::Erlang, &refs);
+                        for action in action_names {
                             let action_lc = erlang_op_name(action.as_str());
-                            let rep = format!("{}(Data, ", action_lc);
-                            out = out.replace(&pattern, &rep);
                             out = out.replace(
                                 &format!("{}(Data, )", action_lc),
                                 &format!("{}(Data)", action_lc),
                             );
                         }
+                        out
                     }
-                    out
                 } else {
                     l
                 };

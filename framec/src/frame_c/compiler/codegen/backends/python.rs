@@ -441,7 +441,13 @@ impl LanguageBackend for PythonBackend {
                 result.push_str(&format!("{}c = cls()\n", ctx.get_indent()));
                 if !frame_init_lines.is_empty() {
                     for line in &frame_init_lines {
-                        let rewritten = line.replace("self.", "c.");
+                        // String/comment-safe: a `self.` inside a string literal
+                        // (e.g. a string-valued initializer) must not be rewritten.
+                        let rewritten = crate::frame_c::compiler::codegen::codegen_utils::replace_outside_strings_and_comments(
+                            line,
+                            crate::frame_c::visitors::TargetLanguage::Python3,
+                            &[("self.", "c.")],
+                        );
                         result.push_str(&rewritten);
                         if !rewritten.ends_with('\n') {
                             result.push('\n');

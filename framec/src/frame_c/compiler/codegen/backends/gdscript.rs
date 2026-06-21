@@ -426,7 +426,13 @@ impl LanguageBackend for GDScriptBackend {
                     class_name
                 ));
                 for line in &frame_init_lines {
-                    let rewritten = line.replace("self.", "c.");
+                    // String/comment-safe: a `self.` inside a string literal must
+                    // not be rewritten.
+                    let rewritten = crate::frame_c::compiler::codegen::codegen_utils::replace_outside_strings_and_comments(
+                        line,
+                        crate::frame_c::visitors::TargetLanguage::GDScript,
+                        &[("self.", "c.")],
+                    );
                     result.push_str(&rewritten);
                 }
                 result.push_str(&format!("{}return c\n", ctx.get_indent()));

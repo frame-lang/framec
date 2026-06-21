@@ -30,7 +30,15 @@ pub struct JavaBackend;
 /// non-word character. Avoids double-prefixing (`c.c.X`) by
 /// skipping symbols whose immediate prefix is already `c.`.
 fn rewrite_java_member_refs_for_factory(line: &str) -> String {
-    let after_this = line.replace("this.", "c.");
+    // String/comment-safe: a `this.` inside a string literal must not be
+    // rewritten. The MEMBERS prefixing below uses framec-internal `__`-names
+    // that never appear in a user string, so it stays word-boundary-only.
+    let after_this =
+        crate::frame_c::compiler::codegen::codegen_utils::replace_outside_strings_and_comments(
+            line,
+            crate::frame_c::visitors::TargetLanguage::Java,
+            &[("this.", "c.")],
+        );
     const MEMBERS: &[&str] = &[
         "__compartment",
         "_context_stack",

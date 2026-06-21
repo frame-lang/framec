@@ -128,7 +128,7 @@ pub(crate) fn wrap_in_casing(
     // NativeBlock method bodies (e.g. TypeScript's `AsyncBasic._HSM_CHAIN[leaf]`
     // in `__prepareEnter`). After rename those references would point at
     // the casing class instead of the machine. Rewrite them.
-    rewrite_class_name_refs_in_machine(&mut machine_class, &system.name, &machine_name);
+    rewrite_class_name_refs_in_machine(&mut machine_class, &system.name, &machine_name, lang);
 
     let casing = generate_casing(system, &machine_name, lang);
 
@@ -150,32 +150,38 @@ pub(crate) fn wrap_in_casing(
 }
 
 /// Substitute `<original>.` → `<machine>.` in every `NativeBlock` body
-/// inside the machine class's methods. The trailing dot anchors the
-/// match to member-access syntax (e.g. `Counter._HSM_CHAIN`,
-/// `Counter.staticHelper()`) and avoids rewriting bare occurrences in
-/// string literals.
+/// inside the machine class's methods. The trailing dot anchors the match to
+/// member-access syntax (e.g. `Counter._HSM_CHAIN`, `Counter.staticHelper()`).
+/// String/comment-safe: a literal `"Counter.foo"` inside a string is NOT
+/// rewritten (the trailing dot alone does not protect it — `replace_outside_…`
+/// does).
 fn rewrite_class_name_refs_in_machine(
     machine_class: &mut CodegenNode,
     original_name: &str,
     machine_name: &str,
+    lang: TargetLanguage,
 ) {
     if let CodegenNode::Class { methods, .. } = machine_class {
         let from = format!("{}.", original_name);
         let to = format!("{}.", machine_name);
         for method in methods.iter_mut() {
-            rewrite_native_blocks(method, &from, &to);
+            rewrite_native_blocks(method, &from, &to, lang);
         }
     }
 }
 
-fn rewrite_native_blocks(node: &mut CodegenNode, from: &str, to: &str) {
+fn rewrite_native_blocks(node: &mut CodegenNode, from: &str, to: &str, lang: TargetLanguage) {
     match node {
         CodegenNode::NativeBlock { code, .. } if code.contains(from) => {
-            *code = code.replace(from, to);
+            *code = super::super::codegen_utils::replace_outside_strings_and_comments(
+                code,
+                lang,
+                &[(from, to)],
+            );
         }
         CodegenNode::Method { body, .. } | CodegenNode::Constructor { body, .. } => {
             for child in body.iter_mut() {
-                rewrite_native_blocks(child, from, to);
+                rewrite_native_blocks(child, from, to, lang);
             }
         }
         _ => {}
