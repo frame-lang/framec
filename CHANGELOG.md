@@ -10,22 +10,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
-- **Paren-less-`if` targets: a cross-system call in a condition is no longer
-  terminated (#117).** The #116 statement-position scanner excluded
-  expression-position calls via paren depth (`if (cond)`), correct for C#/Java —
-  but Go/Rust/Swift/Kotlin write `if cond {` with no parens, so `if @@:self.f.m()`
-  got a stray `;` (`if s.f.M(); {` → "missing condition"). The scanner now also
-  treats a call immediately following a condition keyword
-  (`if`/`while`/`for`/`switch`/`match`/`when`) as expression position. Verified
-  with `go build`.
-- **C#/semicolon targets: a void cross-system interface-call statement is now
-  terminated with `;` (#116).** `@@:self.field.method()` used as a statement was
-  emitted without a trailing `;` (`CS1002: ; expected`), while same-system action
-  calls and value-returning calls were fine. The fix adds a statement-position
-  scanner — real lexical analysis (string/comment/paren-depth and assignment
-  aware) — that decides whether a Frame call segment is a standalone statement or
-  is embedded in an expression. A C-style cast (`x = (double) @@:self.m()`) is
-  resolved structurally by the depth-0 `=` it sits behind, not by a token guess.
+- **Semicolon targets: Frame call statements are terminated by a forward,
+  provably-closed rule (#116, #117).** A Frame call segment (`@@:self.method()`
+  or `@@:self.field.method()`) needs a trailing `;` on semicolon targets when —
+  and only when — it ends a statement. The original fix detected this by scanning
+  *backward* over what precedes the call (parens, then condition keywords, …), an
+  open-ended enumeration of expression contexts that could never be complete: it
+  shipped #116 (a void field-call statement got no `;` → `CS1002`), then its
+  patch shipped #117 (a value call in a paren-less `if @@:self.f.m() {` got a
+  stray `;` → "missing condition" on Go/Rust/Swift). Both are now decided by a
+  single *forward* characterization — a call ends a statement iff nothing
+  continues the expression after it on its source line (the next token past
+  horizontal whitespace and an optional line comment is a line break, `}`, or
+  end-of-body). This is closed and target-independent, and additionally fixes
+  latent cases the backward rule missed — an assignment ending in a call
+  (`int x = @@:self.f.reading()`) and a call with a call-valued argument
+  (`@@:self.f.poke(@@:self.f.reading())`) — while declining conditions and
+  arguments. A user-written `;` is never doubled. Validated by an adversarial
+  cross-product (every call position × all 12 semicolon backends, generated and
+  compiled with the real toolchain) plus the 17-language matrix. Contract: framec
+  terminates a line only when its own emitted call is that line's last token; a
+  call written mid-expression with a native tail (`@@:self.f() + 1`) is the
+  author's to terminate, per the Oceans model (native is passthrough).
 - **Deterministic codegen: the auto-derived interface (no explicit `interface:`
   section) is emitted in source order.** It previously iterated a `HashSet`, so
   interface-method emission order was randomized per run — non-reproducible

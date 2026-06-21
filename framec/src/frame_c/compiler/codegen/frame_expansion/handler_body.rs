@@ -232,182 +232,58 @@ fn needs_statement_terminator(out: &str, lang: TargetLanguage) -> bool {
     true
 }
 
-/// #116 — statement-position scanner. Answers, structurally: is a Frame *call*
-/// segment about to be emitted at the end of `out` a standalone **statement**
-/// (so it needs a trailing `;` on semicolon targets), or is it embedded in a
-/// surrounding native expression (the RHS of an assignment, an argument, a
-/// condition, a cast operand — where value-returning calls live and a `;`
-/// would break parsing)?
+/// Forward-looking statement-terminator test for a Frame **call** segment
+/// (`@@:self.method()` or `@@:self.field.method()`): does this call end a
+/// statement — so it needs a trailing `;` on semicolon targets — or is it
+/// embedded in a larger construct (a condition, an argument, an operand, an
+/// assignment that continues) where a synthesized `;` would break parsing?
 ///
-/// Unlike the char-suffix [`needs_statement_terminator`], this scans the native
-/// run since the last statement boundary (`;` / `{` / `}` at depth 0), skipping
-/// string literals and line/block comments and tracking paren/bracket depth.
-/// The run is statement position iff it is empty/whitespace, or it contains no
-/// depth-0 assignment and does not end on an operator or open delimiter.
+/// The decisive choice is *direction*. The test looks at what FOLLOWS the call
+/// in the source (`body_bytes` from `seg_end`), not what precedes it. "Is this
+/// a statement?" has a **closed** forward characterization — a call ends a
+/// statement iff nothing continues the expression after it on its source line —
+/// whereas the backward view (what precedes the call) is open-ended: it has to
+/// enumerate every expression context, parens then `if`/`while`/`for`/`switch`,
+/// then Swift `guard`, Rust `while let`, … target by target, and so can never
+/// be proven complete. The earlier backward scanner shipped exactly that
+/// incompleteness, as #116 then #117.
 ///
-/// The depth-0 assignment test is what resolves the one case a purely
-/// token-trailing rule cannot: a C-style cast, `x = (double) @@:self.m()` — the
-/// run `x = (double) ` holds a depth-0 `=`, so the call is correctly seen as
-/// expression-embedded, not a new statement, without needing to know `double`
-/// is a type.
-fn call_segment_at_statement_position(out: &str, lang: TargetLanguage) -> bool {
-    let uses_semicolons = matches!(
-        lang,
-        TargetLanguage::Rust
-            | TargetLanguage::Java
-            | TargetLanguage::Kotlin
-            | TargetLanguage::Swift
-            | TargetLanguage::CSharp
-            | TargetLanguage::C
-            | TargetLanguage::Cpp
-            | TargetLanguage::JavaScript
-            | TargetLanguage::TypeScript
-            | TargetLanguage::Php
-            | TargetLanguage::Dart
-            | TargetLanguage::Go
-    );
-    if !uses_semicolons {
-        return false;
-    }
-
-    let bytes = out.as_bytes();
-    let n = bytes.len();
-    let mut i = 0usize;
-    let mut depth: i32 = 0;
-    let mut run_start = 0usize; // index just past the last depth-0 boundary
-    let mut assign_in_run = false; // a depth-0 `=` assignment since run_start
-
-    while i < n {
-        let b = bytes[i];
-        // Skip string / char literals (escape-aware).
-        if b == b'"' || b == b'\'' {
-            let q = b;
-            i += 1;
-            while i < n {
-                if bytes[i] == b'\\' && i + 1 < n {
-                    i += 2;
-                    continue;
-                }
-                if bytes[i] == q {
-                    i += 1;
-                    break;
-                }
-                i += 1;
-            }
-            continue;
-        }
-        // Skip line comments (`//` and `#`) and block comments (`/* */`).
-        if b == b'/' && i + 1 < n && bytes[i + 1] == b'/' {
-            while i < n && bytes[i] != b'\n' {
-                i += 1;
-            }
-            continue;
-        }
-        if b == b'#' {
-            while i < n && bytes[i] != b'\n' {
-                i += 1;
-            }
-            continue;
-        }
-        if b == b'/' && i + 1 < n && bytes[i + 1] == b'*' {
-            i += 2;
-            while i + 1 < n && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
-                i += 1;
-            }
-            i += 2;
-            continue;
-        }
-        match b {
-            b'(' | b'[' | b'{' => {
-                if b == b'{' && depth == 0 {
-                    run_start = i + 1;
-                    assign_in_run = false;
-                }
-                depth += 1;
-            }
-            b')' | b']' => depth = (depth - 1).max(0),
-            b'}' => {
-                depth = (depth - 1).max(0);
-                if depth == 0 {
-                    run_start = i + 1;
-                    assign_in_run = false;
-                }
-            }
-            b';' if depth == 0 => {
-                run_start = i + 1;
-                assign_in_run = false;
-            }
-            // A depth-0 single `=` (assignment), excluding `==`, `<=`, `>=`,
-            // `!=` (comparisons — already expression context, but not the
-            // assignment marker) and `=>` (arrow).
-            b'=' if depth == 0 => {
-                let prev = if i > 0 { bytes[i - 1] } else { b' ' };
-                let next = if i + 1 < n { bytes[i + 1] } else { b' ' };
-                if !matches!(prev, b'=' | b'<' | b'>' | b'!') && !matches!(next, b'=' | b'>') {
-                    assign_in_run = true;
-                }
-            }
-            _ => {}
-        }
+/// A call is the line's last token — a statement terminator — iff the next
+/// source content past horizontal whitespace (and an optional trailing line
+/// comment) is a line break, a block close `}`, or end-of-body. Anything else —
+/// `)`, `{`, `.`, `,`, an operator, `==`, or a user-written `;` — means the
+/// expression continues, or is already terminated, so no `;` is synthesized.
+/// (A user-written `;` directly after the call is thus left untouched: no
+/// doubling.) This single rule covers a bare call statement (`@@:self.tick()`),
+/// an assignment that ends in a call (`x = @@:self.reading()`), and correctly
+/// declines a call in a condition (`if (@@:self.alive())`,
+/// `if size >= @@:self.len() {`) or argument position (`f(@@:self.g())`).
+///
+/// Boundary contract (Oceans model): framec terminates a line only when its
+/// own emitted call is that line's last token. A call written *mid*-expression
+/// with a native tail (`int y = @@:self.f() + 1`) is not terminated here — the
+/// `;` after the native tail is the author's to write, since native is
+/// passthrough. One Frame statement-call per source line.
+fn call_segment_ends_statement(body_bytes: &[u8], seg_end: usize) -> bool {
+    let n = body_bytes.len();
+    let mut i = seg_end;
+    // Skip horizontal whitespace — but NOT a newline, which ends the line.
+    while i < n && matches!(body_bytes[i], b' ' | b'\t') {
         i += 1;
     }
-
-    if depth > 0 {
-        // Inside an open delimiter (argument list / index / cast group):
-        // an argument-position call is not a statement.
-        return false;
+    if i >= n {
+        return true; // end of handler body
     }
-    let run = out[run_start..].trim_end();
-    if run.is_empty() {
-        return true; // fresh line / right after a boundary
+    match body_bytes[i] {
+        // Line break or block close: the call is the line's last token.
+        b'\n' | b'\r' | b'}' => true,
+        // A trailing line comment ends the line too (`call() // note`).
+        b'#' => true,
+        b'/' if i + 1 < n && body_bytes[i + 1] == b'/' => true,
+        // `)`, `{`, `.`, `,`, operators, `==`, a user `;`, any other token:
+        // the expression continues (or is already terminated) — no `;`.
+        _ => false,
     }
-    if assign_in_run {
-        return false; // RHS of an assignment (covers the cast case)
-    }
-    // A call immediately following a control-flow keyword is that construct's
-    // condition/scrutinee — expression position, not a statement (#117). C# /
-    // Java parenthesize the condition (`if (cond)`), already excluded above by
-    // depth; the paren-less-`if` targets (Go, Rust, Swift, Kotlin) write
-    // `if cond {`, so the keyword is the last token before the call.
-    let last_word: String = run
-        .chars()
-        .rev()
-        .take_while(|c| c.is_alphanumeric() || *c == '_')
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect();
-    if matches!(
-        last_word.as_str(),
-        "if" | "while" | "for" | "switch" | "match" | "when" | "elif"
-    ) {
-        return false;
-    }
-    // Not whitespace and no assignment: a statement iff the run does not end on
-    // an operator / open delimiter (which would mean an operand is still
-    // expected). Closing parens / identifiers / literals complete a statement.
-    !run.ends_with(|c: char| {
-        matches!(
-            c,
-            '=' | '+'
-                | '-'
-                | '*'
-                | '/'
-                | '%'
-                | '<'
-                | '>'
-                | '&'
-                | '|'
-                | '^'
-                | '!'
-                | '?'
-                | ','
-                | '('
-                | '['
-                | ':'
-                | '.'
-        )
-    })
 }
 
 /// Emit handler body by scanning for Frame segments and walking them as AST statements.
@@ -652,32 +528,45 @@ pub(crate) fn emit_handler_body_via_statements(
                             if !out.is_empty() && !out.ends_with('\n') && expansion.contains('\n') {
                                 out.push('\n');
                             }
-                            // Self-call: bare call expression needs indent
-                            // prefix (standalone) or statement terminator.
+                            // Self-call: a bare call statement that starts its
+                            // own line needs an indent prefix (the preceding
+                            // native newline carries no indentation for it). A
+                            // field call takes its indent from the preserved
+                            // native whitespace, so it needs no prefix.
                             let is_standalone_self_call = *kind
                                 == FrameSegmentKind::ContextSelfCall
                                 && (out.is_empty() || out.ends_with('\n'));
-                            // #116: a cross-system field call (`@@:self.f.m()`) used
-                            // as a statement also needs `;` on semicolon targets.
-                            // Whether it is a statement (vs an expression-embedded
-                            // value call) is decided structurally by the
-                            // statement-position scanner, evaluated BEFORE the
-                            // expansion is appended. Its indentation already comes
-                            // from the preserved native whitespace, so it takes no
-                            // indent prefix.
-                            let terminate_field_call = *kind
-                                == FrameSegmentKind::ContextSelfFieldCall
-                                && call_segment_at_statement_position(&out, lang);
+                            // Statement termination (#116/#117 + the latent
+                            // assignment-ending-in-call cases) is decided FORWARD
+                            // — on what follows the call in the source, not what
+                            // precedes it. A same-system self call or a
+                            // cross-system field call ends a statement iff nothing
+                            // continues the expression after it on its line. The
+                            // per-language `;` (or no-op for Python/Ruby/Lua/
+                            // GDScript) is applied by the match below.
+                            let terminate_call =
+                                matches!(
+                                    kind,
+                                    FrameSegmentKind::ContextSelfCall
+                                        | FrameSegmentKind::ContextSelfFieldCall
+                                ) && call_segment_ends_statement(body_bytes, seg_span.end);
                             if is_standalone_self_call {
                                 out.push_str(&" ".repeat(*indent));
                             }
                             out.push_str(&expansion);
-                            if is_standalone_self_call || terminate_field_call {
+                            if terminate_call {
                                 match lang {
+                                    // Statement-terminator-free targets: newlines
+                                    // (Python/Ruby/Lua/GDScript) or `,`/`.` clause
+                                    // separators (Erlang). A `;` here is a syntax
+                                    // error on these — Erlang's `;` separates
+                                    // clauses, not statements.
                                     TargetLanguage::Python3
                                     | TargetLanguage::GDScript
                                     | TargetLanguage::Ruby
-                                    | TargetLanguage::Lua => {}
+                                    | TargetLanguage::Lua
+                                    | TargetLanguage::Erlang
+                                    | TargetLanguage::Graphviz => {}
                                     _ => out.push(';'),
                                 }
                             }
@@ -898,16 +787,26 @@ fn lower_self_in_fragment(fragment: &str, lang: TargetLanguage, ctx: &HandlerCon
 
 #[cfg(test)]
 mod statement_terminator_tests {
-    // #116: a void cross-system interface call used as a statement
-    // (`@@:self.field.method()`) must be terminated with `;` on semicolon
-    // targets (it was emitted unterminated → CS1002). A value-returning call in
-    // expression position must NOT gain a spurious `;`.
+    // Statement-terminator coverage for Frame call segments. Termination is
+    // decided FORWARD (`call_segment_ends_statement`): a self/field call ends a
+    // statement — and gets a `;` on semicolon targets — iff nothing continues
+    // the expression after it on its source line. The cases below pin every
+    // position that occurs in real Frame source (verified against the matrix
+    // fixtures + frame-games): bare statement (#116), assignment-ending-in-call,
+    // call-as-argument, condition (#117 incl. paren-less), and a user-written
+    // `;` (must not double).
     use crate::run;
 
     fn cs(body: &str) -> String {
         let src = format!(
             "@@[target(\"csharp\")]\n\
-             @@system Ship {{ interface: a() b(n: int) alive(): bool }}\n\
+             @@system Ship {{\n\
+             \x20   interface:\n\
+             \x20       a()\n\
+             \x20       b(n: int)\n\
+             \x20       reading(): int\n\
+             \x20       alive(): bool\n\
+             }}\n\
              @@[main]\n\
              @@system Game {{\n\
              \x20   interface:\n\
@@ -961,26 +860,42 @@ mod statement_terminator_tests {
 
     #[test]
     fn void_field_call_statement_is_terminated() {
+        // (A) bare statement, last token on its line.
         let out = cs("@@:self.ship.a()");
         assert!(
             out.contains("this.ship.a();"),
-            "void cross-system call statement not terminated:\n{out}"
+            "void call statement not terminated:\n{out}"
         );
     }
 
     #[test]
-    fn consecutive_field_call_statements_each_terminated() {
-        // Multiple statements on one line: each gets its own `;`.
-        let out = cs("@@:self.ship.a()  @@:self.ship.b(1)  @@:self.ship.a()");
+    fn assignment_ending_in_field_call_is_terminated() {
+        // (B) the call is the last token of an assignment → `;` after it.
+        let out = cs("int x = @@:self.ship.reading()");
         assert!(
-            out.contains("this.ship.a();  this.ship.b(1);  this.ship.a();"),
-            "consecutive call statements not all terminated:\n{out}"
+            out.contains("int x = this.ship.reading();"),
+            "assignment ending in a call not terminated:\n{out}"
+        );
+    }
+
+    #[test]
+    fn field_call_as_argument_not_terminated() {
+        // (D) outer call ends the line (terminated); the inner call is an
+        // argument (followed by `)`), so it must NOT be terminated.
+        let out = cs("@@:self.ship.b(@@:self.ship.reading())");
+        assert!(
+            out.contains("this.ship.b(this.ship.reading());"),
+            "outer call not terminated / inner arg mis-terminated:\n{out}"
+        );
+        assert!(
+            !out.contains("reading();)"),
+            "spurious `;` spliced into an argument-position call:\n{out}"
         );
     }
 
     #[test]
     fn value_field_call_in_condition_not_terminated() {
-        // A value-returning call in expression position keeps no spurious `;`.
+        // (C) a value call in a condition (followed by `)`) keeps no `;`.
         let out = cs("if (@@:self.ship.alive()) { }");
         assert!(
             out.contains("if (this.ship.alive())"),
@@ -989,6 +904,17 @@ mod statement_terminator_tests {
         assert!(
             !out.contains("this.ship.alive();"),
             "spurious `;` spliced into an expression-position call:\n{out}"
+        );
+    }
+
+    #[test]
+    fn user_written_semicolon_is_not_doubled() {
+        // A `;` the author already wrote (next token after the call) is left
+        // alone — the forward rule sees a non-line-end and declines.
+        let out = cs("@@:self.ship.a();");
+        assert!(
+            out.contains("this.ship.a();") && !out.contains("this.ship.a();;"),
+            "user-written `;` was doubled:\n{out}"
         );
     }
 }
