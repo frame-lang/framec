@@ -470,23 +470,31 @@ pub(crate) fn generate_constructor(system: &SystemAst, syntax: &ClassSyntax) -> 
     }
 
     // Machine-less / empty system (legal: `@@system Foo {}`) has no start
-    // state, so the compartment init below never runs. Kotlin requires every
-    // `var` property to be initialized — seed __compartment with a sentinel
-    // (never dispatched: no states/handlers). The other 13 targets tolerate the
-    // uninitialized field; Rust handles this in its own constructor path.
+    // state, so the compartment init below never runs. Kotlin and Swift require
+    // every stored property initialized in the constructor/init — seed
+    // __compartment with a sentinel (never dispatched: no states/handlers). The
+    // other 12 targets tolerate the uninitialized field; Rust handles this in
+    // its own constructor path. (Swift's gap only surfaces on a full/executable
+    // build, not `-typecheck` — caught by a behavioral matrix fixture.)
     let has_start_state = system
         .machine
         .as_ref()
         .and_then(|m| m.states.first())
         .is_some();
-    if !has_start_state && matches!(syntax.language, TargetLanguage::Kotlin) {
-        body.push(CodegenNode::NativeBlock {
-            code: format!(
-                "this.__compartment = {sys}Compartment(\"\")\nthis.__next_compartment = null",
-                sys = system.name
-            ),
-            span: None,
-        });
+    if !has_start_state {
+        let sys = &system.name;
+        let sentinel = match syntax.language {
+            TargetLanguage::Kotlin => Some(format!(
+                "this.__compartment = {sys}Compartment(\"\")\nthis.__next_compartment = null"
+            )),
+            TargetLanguage::Swift => Some(format!(
+                "self.__compartment = {sys}Compartment(state: \"\")\nself.__next_compartment = nil"
+            )),
+            _ => None,
+        };
+        if let Some(code) = sentinel {
+            body.push(CodegenNode::NativeBlock { code, span: None });
+        }
     }
 
     // Set initial state (first state in machine)
@@ -1439,10 +1447,20 @@ mod empty_system_tests {
 
     #[test]
     fn swift_empty_system_uses_empty_dict_literal() {
-        let out = run("@@[target(\"swift\")]\n@@[main]\n@@system Foo {}\n", "swift");
+        let out = run(
+            "@@[target(\"swift\")]\n@@[main]\n@@system Foo {}\n",
+            "swift",
+        );
         assert!(
             out.contains("return [:]"),
             "Swift empty hsm_chain must use `[:]` (empty dict), not `[]`:\n{out}"
+        );
+        // The init must seed __compartment too, or a full/executable build
+        // fails "return from initializer without initializing all stored
+        // properties" (a `-typecheck`-only check does NOT catch this).
+        assert!(
+            out.contains("self.__compartment = FooCompartment(state: \"\")"),
+            "Swift empty system must seed __compartment in init:\n{out}"
         );
     }
 
@@ -1457,7 +1475,10 @@ mod empty_system_tests {
 
     #[test]
     fn kotlin_empty_system_initializes_compartment() {
-        let out = run("@@[target(\"kotlin\")]\n@@[main]\n@@system Foo {}\n", "kotlin");
+        let out = run(
+            "@@[target(\"kotlin\")]\n@@[main]\n@@system Foo {}\n",
+            "kotlin",
+        );
         assert!(
             out.contains("this.__compartment = FooCompartment(\"\")"),
             "Kotlin empty system must seed __compartment with a sentinel:\n{out}"
