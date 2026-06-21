@@ -232,6 +232,165 @@ fn needs_statement_terminator(out: &str, lang: TargetLanguage) -> bool {
     true
 }
 
+/// #116 — statement-position scanner. Answers, structurally: is a Frame *call*
+/// segment about to be emitted at the end of `out` a standalone **statement**
+/// (so it needs a trailing `;` on semicolon targets), or is it embedded in a
+/// surrounding native expression (the RHS of an assignment, an argument, a
+/// condition, a cast operand — where value-returning calls live and a `;`
+/// would break parsing)?
+///
+/// Unlike the char-suffix [`needs_statement_terminator`], this scans the native
+/// run since the last statement boundary (`;` / `{` / `}` at depth 0), skipping
+/// string literals and line/block comments and tracking paren/bracket depth.
+/// The run is statement position iff it is empty/whitespace, or it contains no
+/// depth-0 assignment and does not end on an operator or open delimiter.
+///
+/// The depth-0 assignment test is what resolves the one case a purely
+/// token-trailing rule cannot: a C-style cast, `x = (double) @@:self.m()` — the
+/// run `x = (double) ` holds a depth-0 `=`, so the call is correctly seen as
+/// expression-embedded, not a new statement, without needing to know `double`
+/// is a type.
+fn call_segment_at_statement_position(out: &str, lang: TargetLanguage) -> bool {
+    let uses_semicolons = matches!(
+        lang,
+        TargetLanguage::Rust
+            | TargetLanguage::Java
+            | TargetLanguage::Kotlin
+            | TargetLanguage::Swift
+            | TargetLanguage::CSharp
+            | TargetLanguage::C
+            | TargetLanguage::Cpp
+            | TargetLanguage::JavaScript
+            | TargetLanguage::TypeScript
+            | TargetLanguage::Php
+            | TargetLanguage::Dart
+            | TargetLanguage::Go
+    );
+    if !uses_semicolons {
+        return false;
+    }
+
+    let bytes = out.as_bytes();
+    let n = bytes.len();
+    let mut i = 0usize;
+    let mut depth: i32 = 0;
+    let mut run_start = 0usize; // index just past the last depth-0 boundary
+    let mut assign_in_run = false; // a depth-0 `=` assignment since run_start
+
+    while i < n {
+        let b = bytes[i];
+        // Skip string / char literals (escape-aware).
+        if b == b'"' || b == b'\'' {
+            let q = b;
+            i += 1;
+            while i < n {
+                if bytes[i] == b'\\' && i + 1 < n {
+                    i += 2;
+                    continue;
+                }
+                if bytes[i] == q {
+                    i += 1;
+                    break;
+                }
+                i += 1;
+            }
+            continue;
+        }
+        // Skip line comments (`//` and `#`) and block comments (`/* */`).
+        if b == b'/' && i + 1 < n && bytes[i + 1] == b'/' {
+            while i < n && bytes[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
+        if b == b'#' {
+            while i < n && bytes[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
+        if b == b'/' && i + 1 < n && bytes[i + 1] == b'*' {
+            i += 2;
+            while i + 1 < n && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                i += 1;
+            }
+            i += 2;
+            continue;
+        }
+        match b {
+            b'(' | b'[' | b'{' => {
+                if b == b'{' && depth == 0 {
+                    run_start = i + 1;
+                    assign_in_run = false;
+                }
+                depth += 1;
+            }
+            b')' | b']' => depth = (depth - 1).max(0),
+            b'}' => {
+                depth = (depth - 1).max(0);
+                if depth == 0 {
+                    run_start = i + 1;
+                    assign_in_run = false;
+                }
+            }
+            b';' if depth == 0 => {
+                run_start = i + 1;
+                assign_in_run = false;
+            }
+            // A depth-0 single `=` (assignment), excluding `==`, `<=`, `>=`,
+            // `!=` (comparisons — already expression context, but not the
+            // assignment marker) and `=>` (arrow).
+            b'=' if depth == 0 => {
+                let prev = if i > 0 { bytes[i - 1] } else { b' ' };
+                let next = if i + 1 < n { bytes[i + 1] } else { b' ' };
+                if !matches!(prev, b'=' | b'<' | b'>' | b'!') && !matches!(next, b'=' | b'>') {
+                    assign_in_run = true;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    if depth > 0 {
+        // Inside an open delimiter (argument list / index / cast group):
+        // an argument-position call is not a statement.
+        return false;
+    }
+    let run = out[run_start..].trim_end();
+    if run.is_empty() {
+        return true; // fresh line / right after a boundary
+    }
+    if assign_in_run {
+        return false; // RHS of an assignment (covers the cast case)
+    }
+    // Not whitespace and no assignment: a statement iff the run does not end on
+    // an operator / open delimiter (which would mean an operand is still
+    // expected). Closing parens / identifiers / literals complete a statement.
+    !run.ends_with(|c: char| {
+        matches!(
+            c,
+            '=' | '+'
+                | '-'
+                | '*'
+                | '/'
+                | '%'
+                | '<'
+                | '>'
+                | '&'
+                | '|'
+                | '^'
+                | '!'
+                | '?'
+                | ','
+                | '('
+                | '['
+                | ':'
+                | '.'
+        )
+    })
+}
+
 /// Emit handler body by scanning for Frame segments and walking them as AST statements.
 ///
 /// Pipeline: source bytes → scanner → regions → statements → expansion walk → output string.
@@ -479,11 +638,22 @@ pub(crate) fn emit_handler_body_via_statements(
                             let is_standalone_self_call = *kind
                                 == FrameSegmentKind::ContextSelfCall
                                 && (out.is_empty() || out.ends_with('\n'));
+                            // #116: a cross-system field call (`@@:self.f.m()`) used
+                            // as a statement also needs `;` on semicolon targets.
+                            // Whether it is a statement (vs an expression-embedded
+                            // value call) is decided structurally by the
+                            // statement-position scanner, evaluated BEFORE the
+                            // expansion is appended. Its indentation already comes
+                            // from the preserved native whitespace, so it takes no
+                            // indent prefix.
+                            let terminate_field_call = *kind
+                                == FrameSegmentKind::ContextSelfFieldCall
+                                && call_segment_at_statement_position(&out, lang);
                             if is_standalone_self_call {
                                 out.push_str(&" ".repeat(*indent));
                             }
                             out.push_str(&expansion);
-                            if is_standalone_self_call {
+                            if is_standalone_self_call || terminate_field_call {
                                 match lang {
                                     TargetLanguage::Python3
                                     | TargetLanguage::GDScript
@@ -705,4 +875,63 @@ fn lower_self_in_fragment(fragment: &str, lang: TargetLanguage, ctx: &HandlerCon
         .map(|s| s.strip_suffix('}').unwrap_or(s))
         .unwrap_or(&lowered);
     inner.to_string()
+}
+
+#[cfg(test)]
+mod statement_terminator_tests {
+    // #116: a void cross-system interface call used as a statement
+    // (`@@:self.field.method()`) must be terminated with `;` on semicolon
+    // targets (it was emitted unterminated → CS1002). A value-returning call in
+    // expression position must NOT gain a spurious `;`.
+    use crate::run;
+
+    fn cs(body: &str) -> String {
+        let src = format!(
+            "@@[target(\"csharp\")]\n\
+             @@system Ship {{ interface: a() b(n: int) alive(): bool }}\n\
+             @@[main]\n\
+             @@system Game {{\n\
+             \x20   interface:\n\
+             \x20       run()\n\
+             \x20   machine:\n\
+             \x20       $S {{ run() {{ {body} }} }}\n\
+             \x20   domain:\n\
+             \x20       ship: Ship = @@Ship()\n\
+             }}\n"
+        );
+        run(&src, "csharp")
+    }
+
+    #[test]
+    fn void_field_call_statement_is_terminated() {
+        let out = cs("@@:self.ship.a()");
+        assert!(
+            out.contains("this.ship.a();"),
+            "void cross-system call statement not terminated:\n{out}"
+        );
+    }
+
+    #[test]
+    fn consecutive_field_call_statements_each_terminated() {
+        // Multiple statements on one line: each gets its own `;`.
+        let out = cs("@@:self.ship.a()  @@:self.ship.b(1)  @@:self.ship.a()");
+        assert!(
+            out.contains("this.ship.a();  this.ship.b(1);  this.ship.a();"),
+            "consecutive call statements not all terminated:\n{out}"
+        );
+    }
+
+    #[test]
+    fn value_field_call_in_condition_not_terminated() {
+        // A value-returning call in expression position keeps no spurious `;`.
+        let out = cs("if (@@:self.ship.alive()) { }");
+        assert!(
+            out.contains("if (this.ship.alive())"),
+            "expected un-terminated call inside if():\n{out}"
+        );
+        assert!(
+            !out.contains("this.ship.alive();"),
+            "spurious `;` spliced into an expression-position call:\n{out}"
+        );
+    }
 }

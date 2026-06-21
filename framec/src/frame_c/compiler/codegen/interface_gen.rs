@@ -57,7 +57,14 @@ pub(crate) fn generate_interface_wrappers(
         system.interface.clone()
     } else {
         // Auto-generate interface from event handlers
+        // `events` only dedups; `order` records first-seen source order so the
+        // derived interface is emitted deterministically (the same source
+        // declaration order the explicit-`interface:` path uses). Iterating the
+        // HashSet was non-deterministic across runs — the same class of bug as
+        // commit 72f3ea5 (deterministic state + handler iteration), missed on
+        // this auto-derive path.
         let mut events: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut order: Vec<String> = Vec::new();
         let mut method_info: std::collections::HashMap<String, (Vec<MethodParam>, Option<Type>)> =
             std::collections::HashMap::new();
 
@@ -73,6 +80,7 @@ pub(crate) fn generate_interface_wrappers(
                         continue;
                     }
                     if events.insert(handler.event.clone()) {
+                        order.push(handler.event.clone());
                         // First time seeing this event - capture its params and return type
                         let params: Vec<MethodParam> = handler
                             .params
@@ -91,7 +99,7 @@ pub(crate) fn generate_interface_wrappers(
             }
         }
 
-        events
+        order
             .into_iter()
             .map(|event| {
                 let (params, return_type) = method_info.get(&event).cloned().unwrap_or_default();
@@ -1239,3 +1247,34 @@ pub(crate) fn generate_persistence_methods(
 // ============================================================================
 // Erlang gen_statem code generation
 // ============================================================================
+
+#[cfg(test)]
+mod derived_interface_order_tests {
+    // The interface auto-derived from state handlers (no explicit `interface:`
+    // section) must be emitted in source/declaration order, deterministically.
+    // It used to iterate a HashSet (`events.into_iter()`), randomizing the
+    // method order across runs — the residual of commit 72f3ea5 (deterministic
+    // state + handler iteration) on this derive path.
+    use crate::run;
+
+    #[test]
+    fn derived_interface_methods_in_source_order() {
+        // `e1` declared before `e2`; no explicit `interface:` section.
+        let src = "@@[target(\"csharp\")]\n\
+                   @@system S {\n\
+                   \x20   machine:\n\
+                   \x20       $A => $P {\n\
+                   \x20           e1() {{ => $^; }}\n\
+                   \x20           e2() {{ => $^; }}\n\
+                   \x20       }\n\
+                   \x20       $P { }\n\
+                   }\n";
+        let out = run(src, "csharp");
+        let p1 = out.find("public void e1(").expect("e1 method missing");
+        let p2 = out.find("public void e2(").expect("e2 method missing");
+        assert!(
+            p1 < p2,
+            "derived interface methods out of source order (e2 before e1):\n{out}"
+        );
+    }
+}

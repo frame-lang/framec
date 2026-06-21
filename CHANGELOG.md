@@ -10,6 +10,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **C#/semicolon targets: a void cross-system interface-call statement is now
+  terminated with `;` (#116).** `@@:self.field.method()` used as a statement was
+  emitted without a trailing `;` (`CS1002: ; expected`), while same-system action
+  calls and value-returning calls were fine. The fix adds a statement-position
+  scanner — real lexical analysis (string/comment/paren-depth and assignment
+  aware) — that decides whether a Frame call segment is a standalone statement or
+  is embedded in an expression. A C-style cast (`x = (double) @@:self.m()`) is
+  resolved structurally by the depth-0 `=` it sits behind, not by a token guess.
+- **Deterministic codegen: the auto-derived interface (no explicit `interface:`
+  section) is emitted in source order.** It previously iterated a `HashSet`, so
+  interface-method emission order was randomized per run — non-reproducible
+  output, and flaky codegen diffs/snapshots. Now emitted in declaration order,
+  matching the explicit-`interface:` path. (Residual of commit `72f3ea5`, which
+  made state/handler iteration deterministic but missed this derive path.)
 - **Dart: generated files now carry an `// ignore_for_file` header (#110).** The
   Dart backend emitted no suppression header, so the generated runtime
   scaffolding (`_parameters`, `_state_stack`, `__prepareExit`, snake_case members,
