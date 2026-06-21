@@ -606,7 +606,14 @@ fn generate_casing_constructor(machine_name: &str, lang: TargetLanguage) -> Code
         // suppress any name-shadowing surprise from member-initializer
         // syntax.
         TargetLanguage::Cpp => "this->busy = false;".to_string(),
-        _ => String::new(),
+        // Reachable backends are gated by `should_emit_layered`; each has an
+        // explicit arm above. A silent `String::new()` would emit an empty,
+        // gate-less async wrapper for a future backend — the #116/#117 failure
+        // mode. Fail loudly instead.
+        _ => unreachable!(
+            "async layered casing (constructor body): unhandled backend {lang:?} \
+             — should_emit_layered() admitted a target with no explicit arm"
+        ),
     };
 
     CodegenNode::Constructor {
@@ -968,7 +975,10 @@ fn generate_casing_interface_wrapper(ifm: &InterfaceMethod, lang: TargetLanguage
                 success = success_expr
             )
         }
-        _ => String::new(),
+        _ => unreachable!(
+            "async layered casing (interface-wrapper body): unhandled backend {lang:?} \
+             — should_emit_layered() admitted a target with no explicit arm"
+        ),
     };
 
     let params = ifm
@@ -1167,7 +1177,10 @@ fn generate_casing_operation_delegate(op: &OperationAst, lang: TargetLanguage) -
                 )
             }
         }
-        _ => String::new(),
+        _ => unreachable!(
+            "async layered casing (operation-delegate body): unhandled backend {lang:?} \
+             — should_emit_layered() admitted a target with no explicit arm"
+        ),
     };
 
     let params = op
@@ -1234,7 +1247,10 @@ fn generate_casing_save_delegate(system: &SystemAst, lang: TargetLanguage) -> Op
         TargetLanguage::Dart => format!("return this.machine.{name}();", name = save_name),
         TargetLanguage::GDScript => format!("return self.machine.{name}()", name = save_name),
         TargetLanguage::Cpp => format!("return this->machine.{name}();", name = save_name),
-        _ => String::new(),
+        _ => unreachable!(
+            "async layered casing (persist save-delegate): unhandled backend {lang:?} \
+             — should_emit_layered() admitted a target with no explicit arm"
+        ),
     };
     Some(CodegenNode::Method {
         name: save_name.to_string(),
@@ -1274,7 +1290,10 @@ fn generate_casing_restore_delegate(
         TargetLanguage::Dart => format!("this.machine.{name}(data);", name = load_name),
         TargetLanguage::GDScript => format!("self.machine.{name}(data)", name = load_name),
         TargetLanguage::Cpp => format!("this->machine.{name}(data);", name = load_name),
-        _ => String::new(),
+        _ => unreachable!(
+            "async layered casing (persist restore-delegate): unhandled backend {lang:?} \
+             — should_emit_layered() admitted a target with no explicit arm"
+        ),
     };
     Some(CodegenNode::Method {
         name: load_name.to_string(),
@@ -1369,7 +1388,10 @@ fn generate_casing_init_delegate(lang: TargetLanguage) -> CodegenNode {
         // and `co_return;` (void coroutine). The casing's init is a
         // coroutine itself (is_async=true) so it returns FrameTask<void>.
         TargetLanguage::Cpp => "co_await this->machine.init();\nco_return;".to_string(),
-        _ => String::new(),
+        _ => unreachable!(
+            "async layered casing (init-delegate): unhandled backend {lang:?} \
+             — should_emit_layered() admitted a target with no explicit arm"
+        ),
     };
     let init_name = match lang {
         TargetLanguage::Swift => "initAsync",

@@ -148,21 +148,31 @@ pub(super) fn context_return_read_typed(
     }
 }
 
-/// True when `out` ends with NativeCode whose last non-whitespace
-/// character is not a statement terminator for `lang`, and `lang`
-/// is a semicolon-bearing target language. Used to insert a `;`
-/// before a Frame expansion (transition, etc.) so the preceding
-/// user-written statement is terminated.
+/// True when the already-EMITTED output `out` ends with an unterminated
+/// statement, and `lang` is a semicolon-bearing target — i.e. a `;` must be
+/// spliced before the block-level Frame expansion (transition / return /
+/// standalone self-call) about to be appended.
 ///
-/// Python / Ruby / Lua / GDScript / Erlang use newlines or
-/// language-native separators — no `;` insertion needed there.
+/// This asks a different question from [`call_segment_ends_statement`] and so
+/// is correctly *backward*, over `out`, not the source. It does not guess the
+/// nature of the *current* segment (that was the #116/#117 mistake — now a
+/// closed forward rule); it inspects what has ALREADY been emitted to decide
+/// whether the prior statement closed. `out` is the right source of truth here
+/// precisely because it reflects prior *expansions*: a self-call emitted just
+/// above already carries its own `;` (via `call_segment_ends_statement`), and a
+/// transition above ended with `return` — the original source text would show
+/// neither terminator, so reading source here would double- or mis-terminate.
+/// The caller gates this on `segment_at_line_start` + `!inline_self_call`, so it
+/// only fires when the expansion genuinely starts a new statement.
 ///
-/// "Already-terminated" forms include the obvious statement
-/// terminators (`;` / `{` / `}`) AND every operator/punctuation
-/// that signals "user is in the middle of an expression":
-/// assignment `=`, binary operators, open delimiters. Inserting
-/// `;` after any of these would split the expression and break
-/// parsing.
+/// Python / Ruby / Lua / GDScript / Erlang use newlines or language-native
+/// separators — no `;` insertion there.
+///
+/// The classification is exhaustive for the emitted-tail question: `;`/`{`/`}`
+/// = already closed; a trailing operator / open delimiter = the emitted output
+/// is mid-expression (a multi-line expression whose next line is this segment,
+/// e.g. `x = a +\n@@:self.b()`), so a `;` would split it; otherwise (identifier
+/// / literal / closing `)`/`]`) the statement is complete and needs `;`.
 fn needs_statement_terminator(out: &str, lang: TargetLanguage) -> bool {
     let uses_semicolons = matches!(
         lang,
@@ -428,6 +438,14 @@ pub(crate) fn emit_handler_body_via_statements(
                         // (`x = (double); this.m()`), which fails to compile on
                         // C#/Java/etc. A self-call is standalone (a real new
                         // statement) only when it starts its own line.
+                        // `out.ends_with('\n')` is intentional and correct here:
+                        // this asks whether the EMITTED cursor sits at a line
+                        // start (so the self-call begins its own output line),
+                        // which is an output-position question, not the
+                        // segment-nature guess that #116/#117 was. A self-call
+                        // that begins its own line is a standalone statement; one
+                        // with emitted content before it on the line (e.g. the
+                        // cast operand `x = (double) @@:self.m()`) is inline.
                         let inline_self_call = matches!(kind, FrameSegmentKind::ContextSelfCall)
                             && !(out.is_empty() || out.ends_with('\n'));
                         if (is_transition
@@ -533,6 +551,12 @@ pub(crate) fn emit_handler_body_via_statements(
                             // native newline carries no indentation for it). A
                             // field call takes its indent from the preserved
                             // native whitespace, so it needs no prefix.
+                            // Output-position check (see `inline_self_call`): the
+                            // indent prefix depends on whether the EMITTED cursor
+                            // is at a line start — correct here especially for
+                            // indentation-sensitive targets (GDScript/Python),
+                            // where it must follow prior multi-line expansions'
+                            // output, not the segment's source column.
                             let is_standalone_self_call = *kind
                                 == FrameSegmentKind::ContextSelfCall
                                 && (out.is_empty() || out.ends_with('\n'));
