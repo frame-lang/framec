@@ -76,3 +76,68 @@ pub fn transform_blocks(text: &str, mode: BlockTransformMode) -> String {
 
     parser.result
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{transform_blocks, BlockTransformMode::Lua};
+
+    // #122: Lua table-constructor braces `{ ... }` in handler bodies must be
+    // left intact; only control-flow braces become `do/then … end`.
+
+    #[test]
+    fn table_literal_in_while_body_preserved() {
+        let out = transform_blocks(
+            "while i < n {\n    table.insert(t, {size = i + 1, alive = true})\n}",
+            Lua,
+        );
+        // table braces survive; the while brace becomes do/end
+        assert!(
+            out.contains("{size = i + 1, alive = true}"),
+            "table eaten: {out}"
+        );
+        assert!(out.contains("while i < n do"), "while not lowered: {out}");
+        assert!(out.trim_end().ends_with("end"), "missing end: {out}");
+        assert!(!out.contains("trueend"), "table close became end: {out}");
+    }
+
+    #[test]
+    fn nested_and_empty_tables_preserved() {
+        let out = transform_blocks(
+            "if x {\n    local n = {a = {b = {c = 1}}}\n    local e = {}\n}",
+            Lua,
+        );
+        assert!(out.contains("{a = {b = {c = 1}}}"), "nested eaten: {out}");
+        assert!(out.contains("local e = {}"), "empty eaten: {out}");
+        assert!(out.contains("if x then"));
+    }
+
+    #[test]
+    fn return_with_table_keeps_braces() {
+        let out = transform_blocks("if x {\n    return {first = 1, n = 2}\n}", Lua);
+        assert!(
+            out.contains("return {first = 1, n = 2}"),
+            "return table eaten: {out}"
+        );
+        assert!(
+            !out.contains("2end"),
+            "return table close became end: {out}"
+        );
+    }
+
+    #[test]
+    fn table_in_if_else_branches() {
+        let out = transform_blocks("if c {\n    t = {1, 2}\n} else {\n    t = {}\n}", Lua);
+        assert!(out.contains("if c then"));
+        assert!(out.contains("else"));
+        assert!(out.contains("t = {1, 2}"));
+        assert!(out.contains("t = {}"));
+        assert!(out.trim_end().ends_with("end"));
+    }
+
+    #[test]
+    fn plain_control_flow_unchanged_by_table_logic() {
+        // No tables — the table-depth tracking must not perturb normal lowering.
+        let out = transform_blocks("while a < b {\n    a = a + 1\n}", Lua);
+        assert_eq!(out, "while a < b do\n    a = a + 1\nend");
+    }
+}

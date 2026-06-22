@@ -31,6 +31,7 @@
                 let n = self.token_kinds.len();
                 let mut ti: usize = 0;
                 let mut block_depth: i32 = 0;
+                let mut table_depth: i32 = 0;
                 let mut after_return = false;
 
                 while ti < n {
@@ -38,6 +39,37 @@
                     let start = self.token_starts[ti];
                     let end = self.token_ends[ti];
                     let text = String::from_utf8_lossy(&bytes[start..end]).to_string();
+
+                    // ---- Table-constructor / expression braces (#122) ----
+                    // Brace matching is a pushdown problem, but it collapses to
+                    // two counters here: a Lua table constructor `{ ... }` can
+                    // only contain expressions, never statements, so a
+                    // control-flow block is never opened inside a table. The
+                    // PDA stack is therefore always stratified (blocks below,
+                    // tables on top), and "table_depth > 0 ⟹ innermost open
+                    // brace is a table" holds exactly. Control-flow openers
+                    // (if/while/else) consume their own `{`, so any LBRACE that
+                    // reaches the main loop opens a table constructor; track its
+                    // depth so the matching RBRACE is emitted verbatim instead
+                    // of being converted to `end`. `return` exprs are handled in
+                    // the RETURN arm below. Guarded by `!after_return`: a
+                    // `return` cannot appear inside a table, so `table_depth` is
+                    // always 0 when `after_return` is set — no desync — and
+                    // unreachable-code stripping is left to the existing logic.
+                    if !after_return {
+                        if kind == 6 {
+                            table_depth += 1;
+                            self.result.push_str(&text);
+                            ti += 1;
+                            continue;
+                        }
+                        if kind == 7 && table_depth > 0 {
+                            table_depth -= 1;
+                            self.result.push_str(&text);
+                            ti += 1;
+                            continue;
+                        }
+                    }
 
                     // ---- RBRACE: check for else/elseif patterns ----
                     if kind == 7 && block_depth > 0 {
@@ -205,7 +237,12 @@
                     if kind == 8 && !after_return {
                         self.result.push_str(&text);
                         // Walk subsequent tokens until newline or block close.
+                        // A returned table constructor (`return { ... }`) keeps
+                        // its braces: track table depth so a table's `}` is
+                        // emitted inline rather than ending the walk and being
+                        // mis-converted to `end` by the outer loop. (#122)
                         let mut look = ti + 1;
+                        let mut ret_table: i32 = 0;
                         while look < n {
                             let lk = self.token_kinds[look];
                             if lk == 10 {
@@ -217,6 +254,28 @@
                                 );
                                 look += 1;
                                 break;
+                            }
+                            if lk == 6 {
+                                // LBRACE — open a table constructor.
+                                ret_table += 1;
+                                self.result.push_str(
+                                    &String::from_utf8_lossy(
+                                        &self.bytes[self.token_starts[look]..self.token_ends[look]],
+                                    ),
+                                );
+                                look += 1;
+                                continue;
+                            }
+                            if lk == 7 && ret_table > 0 {
+                                // RBRACE closing a table constructor — emit inline.
+                                ret_table -= 1;
+                                self.result.push_str(
+                                    &String::from_utf8_lossy(
+                                        &self.bytes[self.token_starts[look]..self.token_ends[look]],
+                                    ),
+                                );
+                                look += 1;
+                                continue;
                             }
                             if lk == 7 || lk == 9 {
                                 // RBRACE / END — let the outer loop handle it
