@@ -440,6 +440,27 @@ pub fn assemble(
         }
     }
 
+    // #120: a Lua module must `return` a table for a host file to reach the
+    // systems (`local M = require("x"); M.Game`). Each system/FSM is declared
+    // `local <Name> = {}` at top level, so they are in scope here. The export
+    // goes at the very END — after any user epilog — because Lua requires
+    // `return` to be a block's last statement. (A self-contained script with a
+    // `main` still runs it first; the trailing `return` is harmless.)
+    if matches!(lang, TargetLanguage::Lua) {
+        let mut names: Vec<&str> = generated_systems.iter().map(|(n, _)| n.as_str()).collect();
+        names.extend(generated_fsms.iter().map(|(n, _)| n.as_str()));
+        if !names.is_empty() {
+            if !output.ends_with('\n') {
+                output.push('\n');
+            }
+            output.push_str("\nreturn {\n");
+            for n in &names {
+                output.push_str(&format!("    {n} = {n},\n"));
+            }
+            output.push_str("}\n");
+        }
+    }
+
     Ok(output)
 }
 

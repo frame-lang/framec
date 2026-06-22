@@ -28,6 +28,7 @@ pub(crate) fn generate_lua_handler_method(
     source: &[u8],
     _has_state_vars: bool,
     defined_systems: &std::collections::HashSet<String>,
+    domain_field_types: &std::collections::HashMap<String, String>,
     actions: &std::collections::HashSet<String>,
     _sys_param_locals: &[String],
     _is_start_state: bool,
@@ -60,7 +61,9 @@ pub(crate) fn generate_lua_handler_method(
         state_param_types: std::collections::HashMap::new(),
         state_enter_param_types: std::collections::HashMap::new(),
         state_exit_param_types: std::collections::HashMap::new(),
-        domain_field_types: std::collections::HashMap::new(),
+        // #120: lets `@@:self.field.method()` pick the cross-system call operator
+        // (`:` for an embedded system, `.` for a scalar field's native method).
+        domain_field_types: domain_field_types.clone(),
     };
 
     let mut body = String::new();

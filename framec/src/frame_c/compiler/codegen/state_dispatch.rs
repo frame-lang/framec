@@ -666,6 +666,24 @@ pub(crate) fn generate_state_handlers_via_arcanum(
     // hard requirement for downstream caches (ccache hits to ~70% before
     // this fix, since the C backend's forward-decl section reordered
     // between runs).
+    // Domain field name → declared type — lets `@@:self.field.method()` tell an
+    // embedded system (cross-system call) from a scalar field on the monolithic
+    // dispatch path too. The per-handler path already builds this; without it
+    // the monolithic-path backends (e.g. lua) emitted the wrong call operator
+    // (`.` instead of `:`, #120). Built once per system.
+    let dispatch_domain_field_types: std::collections::HashMap<String, String> = arcanum
+        .systems
+        .get(system_name)
+        .map(|entry| {
+            entry
+                .domain_symbols
+                .iter()
+                .filter_map(|(name, sym)| {
+                    Some((name.clone(), sym.symbol_type.as_deref()?.to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     for state_ast in machine.states.iter() {
         let state_entry = match arcanum.get_enhanced_state(system_name, &state_ast.name) {
             Some(e) => e,
@@ -700,6 +718,7 @@ pub(crate) fn generate_state_handlers_via_arcanum(
             has_state_vars,
             default_forward,
             &defined_systems,
+            &dispatch_domain_field_types,
             is_start_state,
         );
         // State-level leading comments emit as NativeBlock nodes
@@ -1153,6 +1172,7 @@ fn generate_per_handler_method_for_lang(
             source,
             has_state_vars,
             defined_systems,
+            domain_field_types,
             actions,
             sys_param_locals,
             is_start_state,
@@ -1373,6 +1393,7 @@ pub(crate) fn generate_state_method(
     _has_state_vars: bool,
     default_forward: bool,
     defined_systems: &std::collections::HashSet<String>,
+    domain_field_types: &std::collections::HashMap<String, String>,
     is_start_state: bool,
 ) -> CodegenNode {
     // Use single underscore prefix to avoid Python name mangling
@@ -1420,7 +1441,10 @@ pub(crate) fn generate_state_method(
         state_param_types: std::collections::HashMap::new(),
         state_enter_param_types: std::collections::HashMap::new(),
         state_exit_param_types: std::collections::HashMap::new(),
-        domain_field_types: std::collections::HashMap::new(),
+        // Threaded in (#120): the monolithic-dispatch body emits
+        // `@@:self.field.method()` and needs this to pick the cross-system call
+        // operator (e.g. lua `:` vs `.`).
+        domain_field_types: domain_field_types.clone(),
         actions: std::collections::HashSet::new(),
     };
 

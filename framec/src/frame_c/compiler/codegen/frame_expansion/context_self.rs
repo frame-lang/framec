@@ -181,9 +181,19 @@ pub(super) fn expand_context_self_field_call(
         TargetLanguage::Python3
         | TargetLanguage::GDScript
         | TargetLanguage::Ruby
-        | TargetLanguage::Lua
         | TargetLanguage::Swift
         | TargetLanguage::Rust => format!("self.{field}.{method}{args}"),
+        // Lua method calls use `:` (implicit self). A cross-system (embed) call
+        // must use `:`, or `self` is not passed and the first real argument
+        // shifts into it (#120 — the Lua analog of Go #112). A non-embed scalar
+        // field's native method stays `.` (framec does not control its name).
+        TargetLanguage::Lua => {
+            if is_embed {
+                format!("self.{field}:{method}{args}")
+            } else {
+                format!("self.{field}.{method}{args}")
+            }
+        }
         TargetLanguage::TypeScript
         | TargetLanguage::JavaScript
         | TargetLanguage::Dart
