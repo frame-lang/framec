@@ -253,7 +253,12 @@ pub(crate) fn generate_erlang_system(
         .iter()
         .map(|s| format!("{}/3", state_atom(s)))
         .collect();
-    if !state_exports.is_empty() {
+    if state_exports.is_empty() {
+        // #121: a machine-less system emits a synthetic `init_state/3` terminal
+        // state. gen_statem calls state functions as `Module:State/3`
+        // (qualified), so it must be exported even though no user state exists.
+        code.push_str("-export([init_state/3]).\n");
+    } else {
         code.push_str(&format!("-export([{}]).\n", state_exports.join(", ")));
     }
 
@@ -515,6 +520,54 @@ pub(crate) fn generate_erlang_system(
     // on the leaf) by having the leaf's `enter` clause walk the chain
     // and call each ancestor's `frame_enter__<state>` helper before
     // running the leaf's own body.
+    // #121: a machine-less system (operations/interface/domain only — legal
+    // Frame) has no state functions, yet `init/1` starts in `init_state` and
+    // `callback_mode` is `state_functions` — so without an `init_state/3` the
+    // gen_statem crashes on the entry event (`{internal, init_state}`). Emit a
+    // synthetic terminal state: a no-op `enter`, the `{frame_op_call, …}`
+    // dispatch for each operation (the only externally-callable surface of such
+    // a system), and a reply-`ok` catch-all so call events never deadlock.
+    let has_states = system
+        .machine
+        .as_ref()
+        .is_some_and(|m| !m.states.is_empty());
+    if !has_states {
+        code.push_str(
+            "init_state(enter, _OldState, #data{frame_skip_enter__ = true} = Data) ->\n    {keep_state, Data#data{frame_skip_enter__ = false}};\n",
+        );
+        code.push_str("init_state(enter, _OldState, Data) ->\n    {keep_state, Data};\n");
+        for op in &system.operations {
+            if op.is_static
+                || op
+                    .attributes
+                    .iter()
+                    .any(|a| a.name == "save" || a.name == "load")
+            {
+                continue;
+            }
+            let op_lc = erlang_op_name(&op.name);
+            let arg_vars: Vec<String> = (0..op.params.len())
+                .map(|i| format!("A{}", i + 1))
+                .collect();
+            let pattern_args = if arg_vars.is_empty() {
+                "[]".to_string()
+            } else {
+                format!("[{}]", arg_vars.join(", "))
+            };
+            let call_args = if arg_vars.is_empty() {
+                "Data".to_string()
+            } else {
+                format!("Data, {}", arg_vars.join(", "))
+            };
+            code.push_str(&format!(
+                "init_state({{call, From}}, {{frame_op_call, {}, {}}}, Data) ->\n    {{NewData, __Result}} = {}({}),\n    {{keep_state, NewData, [{{reply, From, __Result}}]}};\n",
+                op_lc, pattern_args, op_lc, call_args
+            ));
+        }
+        code.push_str(
+            "init_state({call, From}, _Event, Data) ->\n    {keep_state, Data, [{reply, From, ok}]}.\n\n",
+        );
+    }
     if let Some(ref machine) = system.machine {
         let by_name: std::collections::HashMap<&str, &_> = machine
             .states
