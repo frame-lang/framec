@@ -108,6 +108,169 @@ pub(super) fn erlang_lower_native_if(text: &str) -> String {
     out.join("\n")
 }
 
+/// Token-driven `{ }` → `case … of … end` lowering (#123). Drives the shared
+/// `OutputBlockLexerFsm` (via `lex_blocks`, Erlang `%` comments) so structure is
+/// recovered from real tokens — `if`/`else`/braces inside strings and comments
+/// are never miscounted — and brace nesting is one principled stack pass rather
+/// than accreted line special-cases. Emits the same intermediate shape the
+/// downstream passes (`erlang_nest_early_exits`, comma insertion,
+/// `erlang_smart_join`) consume; those passes trim, so exact indentation here is
+/// cosmetic (Erlang is whitespace-insensitive). Leading whitespace passes
+/// through verbatim, so the first emitted line inherits the source indent.
+fn erlang_blocks_to_case(text: &str) -> String {
+    use crate::frame_c::compiler::codegen::block_transform::lex_blocks;
+    let (kinds, starts, ends) = lex_blocks(text, b'%', false);
+    let bytes = text.as_bytes();
+    let n = kinds.len();
+    let mut out = String::new();
+    // (kind, has_else): kind 0 = `if`, 1 = `elif` (the case an else-if opened).
+    let mut stack: Vec<(u8, bool)> = Vec::new();
+
+    // A `{`/`}` is a BLOCK brace only when it sits at a line-structural position
+    // (`if … {` with the `{` ending the line, `}` starting the line). Erlang
+    // tuple/map braces (`{call, From}`, `#{…}`) appear mid-line and must pass
+    // through verbatim — the same whole-line discipline the old line scanner had,
+    // now expressed over the FSM lexer's tokens.
+    let hws = |k: usize| {
+        kinds[k] == 11
+            && bytes[starts[k]..ends[k]]
+                .iter()
+                .all(|&b| b == b' ' || b == b'\t')
+    };
+    // First meaningful token is on this line? (only horizontal whitespace before
+    // it back to the previous NEWLINE.)
+    let at_line_start = |ti: usize| -> bool {
+        let mut k = ti;
+        while k > 0 {
+            k -= 1;
+            if kinds[k] == 10 {
+                return true;
+            }
+            if hws(k) {
+                continue;
+            }
+            return false;
+        }
+        true
+    };
+    // Index of the NEWLINE ending `ti`'s line (or `n`).
+    let line_end = |ti: usize| -> usize {
+        let mut k = ti;
+        while k < n && kinds[k] != 10 {
+            k += 1;
+        }
+        k
+    };
+    // Last meaningful token on the line `(ti, le)` (or `ti` if none follow).
+    let last_on_line = |ti: usize, le: usize| -> usize {
+        let mut k = le;
+        while k > ti {
+            k -= 1;
+            if hws(k) {
+                continue;
+            }
+            return k;
+        }
+        ti
+    };
+    // First meaningful token after `from` within the line (or `le`).
+    let next_on_line = |from: usize, le: usize| -> usize {
+        let mut k = from;
+        while k < le && hws(k) {
+            k += 1;
+        }
+        k
+    };
+
+    let mut ti = 0;
+    while ti < n {
+        // `if <cond> {` — IF at line start, block `{` ending the line.
+        if kinds[ti] == 1 && at_line_start(ti) {
+            let le = line_end(ti);
+            let k = last_on_line(ti + 1, le);
+            if k > ti && kinds[k] == 6 {
+                let cond = text[ends[ti]..starts[k]].trim();
+                out.push_str(&format!("case ({cond}) of\n    true ->\n"));
+                stack.push((0, false));
+                ti = k + 1;
+                continue;
+            }
+        }
+
+        // `}` at line start → close / else / else-if.
+        if kinds[ti] == 7 && at_line_start(ti) && !stack.is_empty() {
+            let le = line_end(ti);
+            let a = next_on_line(ti + 1, le);
+            if a < le && kinds[a] == 3 {
+                // `} else …` — block `{` ends the line.
+                let k = last_on_line(a + 1, le);
+                let b = next_on_line(a + 1, le);
+                if b < le && kinds[b] == 1 && k > b && kinds[k] == 6 {
+                    // `} else if <cond> {`
+                    let cond = text[ends[b]..starts[k]].trim();
+                    stack.pop();
+                    out.push_str(&format!(
+                        "    ; false ->\n        case ({cond}) of\n            true ->\n"
+                    ));
+                    stack.push((1, false));
+                    stack.push((0, false));
+                    ti = k + 1;
+                    continue;
+                }
+                if kinds[k] == 6 {
+                    // `} else {`
+                    if let Some(last) = stack.last_mut() {
+                        last.1 = true;
+                    }
+                    out.push_str("    ; false ->\n");
+                    ti = k + 1;
+                    continue;
+                }
+            } else if a >= le {
+                // `}` alone on its line → close the case (+ enclosing elifs).
+                let (ctx, has_else) = stack.pop().unwrap();
+                if !has_else && ctx == 0 {
+                    out.push_str("    ; false -> ok\n");
+                }
+                if out.trim_end().ends_with("->") {
+                    out.push_str("    ok\n");
+                }
+                out.push_str("end");
+                if ctx == 1 {
+                    if !stack.is_empty() {
+                        stack.pop();
+                        out.push_str("\nend");
+                    }
+                } else {
+                    while let Some(&(octx, _)) = stack.last() {
+                        if octx != 1 {
+                            break;
+                        }
+                        stack.pop();
+                        if let Some(&(c, _)) = stack.last() {
+                            if c == 0 {
+                                stack.pop();
+                            }
+                        }
+                        out.push_str("\nend");
+                    }
+                }
+                out.push('\n');
+                ti += 1;
+                continue;
+            }
+            // Otherwise (content after `}` that isn't `else`): a tuple/expression
+            // brace — fall through to verbatim.
+        }
+
+        // Default: emit the token's bytes verbatim (TEXT/STRING/COMMENT/NEWLINE/…).
+        out.push_str(&text[starts[ti]..ends[ti]]);
+        ti += 1;
+    }
+
+    out
+}
+
 /// Transform C-family `if/else { }` block syntax to Erlang `case/of/end`.
 ///
 /// Runs on the spliced handler body text AFTER Frame statements have
@@ -115,112 +278,12 @@ pub(super) fn erlang_lower_native_if(text: &str) -> String {
 /// keywords. Leaves other `{` alone (maps, tuples, records, gen_statem
 /// return tuples).
 pub(super) fn erlang_transform_blocks(text: &str) -> String {
-    let mut result = String::new();
-    // Track block contexts: ("if", has_else), ("elif", _)
-    let mut block_depth: Vec<(&str, bool)> = Vec::new();
-
-    for line in text.lines() {
-        let trimmed = line.trim();
-        let indent = &line[..line.len() - trimmed.len()];
-
-        if trimmed.is_empty() {
-            result.push('\n');
-            continue;
-        }
-
-        // `if condition {` → `case (condition) of true ->`
-        if trimmed.starts_with("if ") && trimmed.ends_with('{') {
-            let condition = trimmed[3..trimmed.len() - 1].trim();
-            result.push_str(&format!(
-                "{}case ({}) of\n{}    true ->",
-                indent, condition, indent
-            ));
-            block_depth.push(("if", false));
-            result.push('\n');
-            continue;
-        }
-
-        // `} else if condition {` → `; false -> case (condition) of true ->`
-        if (trimmed.starts_with("} else if ") || trimmed.starts_with("}else if "))
-            && trimmed.ends_with('{')
-        {
-            let rest = if trimmed.starts_with("} else if ") {
-                &trimmed[10..trimmed.len() - 1]
-            } else {
-                &trimmed[9..trimmed.len() - 1]
-            };
-            let condition = rest.trim();
-            if !block_depth.is_empty() {
-                block_depth.pop();
-            }
-            result.push_str(&format!(
-                "{}    ; false ->\n{}        case ({}) of\n{}            true ->",
-                indent, indent, condition, indent
-            ));
-            block_depth.push(("elif", false));
-            block_depth.push(("if", false));
-            result.push('\n');
-            continue;
-        }
-
-        // `} else {` → `; false ->`
-        if trimmed == "} else {" || trimmed == "}else{" || trimmed == "} else{" {
-            if let Some(last) = block_depth.last_mut() {
-                last.1 = true;
-            }
-            result.push_str(&format!("{}    ; false ->", indent));
-            result.push('\n');
-            continue;
-        }
-
-        // `}` that closes an if block → `end`
-        if trimmed == "}" && !block_depth.is_empty() {
-            let (ctx, has_else) = match block_depth.pop() {
-                Some(v) => v,
-                None => continue,
-            };
-            if !has_else && ctx == "if" {
-                result.push_str(&format!("{}    ; false -> ok\n", indent));
-            }
-            let result_trimmed = result.trim_end();
-            if result_trimmed.ends_with("->") {
-                result.push_str("    ok\n");
-            }
-            result.push_str(&format!("{}end", indent));
-            // If this was an elif, we also need to close the outer case.
-            if ctx == "elif" {
-                if !block_depth.is_empty() {
-                    block_depth.pop();
-                    result.push_str(&format!("\n{}end", indent));
-                }
-            } else if ctx == "if" {
-                // Close any enclosing `elif` case(s). This runs whether or not
-                // the chain ended in a trailing `else`: a bare `} else if c {`
-                // (no final `else`) still opened an outer case via its
-                // `; false -> case (c) of …`, and that outer case needs its own
-                // `end`. (Previously gated on `has_else`, which dropped the
-                // outer `end` for else-if chains without a trailing else and
-                // left the case unclosed — a syntax error.)
-                while let Some(&(outer_ctx, _)) = block_depth.last() {
-                    if outer_ctx != "elif" {
-                        break;
-                    }
-                    block_depth.pop();
-                    if let Some(&(c, _)) = block_depth.last() {
-                        if c == "if" {
-                            block_depth.pop();
-                        }
-                    }
-                    result.push_str(&format!("\n{}end", indent));
-                }
-            }
-            result.push('\n');
-            continue;
-        }
-
-        result.push_str(line);
-        result.push('\n');
-    }
+    // Pass 1: brace → `case/of/end`, driven by the shared `OutputBlockLexerFsm`
+    // (string/comment-safe scanning) rather than hand-rolled line matching — so
+    // `if`/`else`/`{`/`}` inside strings and comments are never mistaken for
+    // structure, and the brace nesting is tracked by one principled pass
+    // instead of accreted special cases (#123).
+    let result = erlang_blocks_to_case(text);
 
     // Second pass: nest sequential if-without-else blocks (early-exit pattern)
     let result_lines: Vec<&str> = result.lines().collect();

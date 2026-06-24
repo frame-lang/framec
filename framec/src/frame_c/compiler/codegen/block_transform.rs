@@ -30,6 +30,28 @@ mod _output_block_parser {
 use _output_block_lexer::OutputBlockLexerFsm;
 use _output_block_parser::OutputBlockParserFsm;
 
+/// Exhaustively tokenize `text` with the shared `OutputBlockLexerFsm`, returning
+/// `(kinds, starts, ends)`. This is the string/comment-safe scanner other
+/// backends' block transforms should drive instead of hand-rolling line scans
+/// (see #123). Token kinds: 1=IF, 2=ELSEIF, 3=ELSE, 4=WHILE, 5=FOR, 6=LBRACE,
+/// 7=RBRACE, 8=RETURN, 9=END, 10=NEWLINE, 11=TEXT, 12=COMMENT, 13=STRING.
+/// `comment_char`/`comment_double`: `(b'-', true)` for Lua `--`, `(b'%', false)`
+/// for Erlang `%`.
+pub(crate) fn lex_blocks(
+    text: &str,
+    comment_char: u8,
+    comment_double: bool,
+) -> (Vec<usize>, Vec<usize>, Vec<usize>) {
+    let bytes = text.as_bytes();
+    let mut lexer = OutputBlockLexerFsm::new();
+    lexer.bytes = bytes.to_vec();
+    lexer.end = bytes.len();
+    lexer.comment_char = comment_char;
+    lexer.comment_double = comment_double;
+    lexer.do_lex();
+    (lexer.token_kinds, lexer.token_starts, lexer.token_ends)
+}
+
 /// Block transformation mode
 #[derive(Clone, Copy)]
 pub enum BlockTransformMode {
