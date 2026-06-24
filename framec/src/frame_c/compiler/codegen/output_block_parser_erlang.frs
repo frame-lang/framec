@@ -1,0 +1,192 @@
+@@[target("rust")]
+
+// Erlang Output Block Parser — Frame state machine (dogfood, #123).
+//
+// Consumes the exhaustive token stream from OutputBlockLexer (the same
+// string/comment-safe scanner Lua uses) and emits the Erlang
+// `case … of … end` lowering of Frame's C-style `if/else`/`else if` blocks.
+//
+// Token kinds: 1=IF, 3=ELSE, 6=LBRACE, 7=RBRACE, 10=NEWLINE, 11=TEXT.
+//
+// A `{`/`}` is a BLOCK brace only at a line-structural position (`if … {`
+// ending its line, `}` starting its line); Erlang tuple/map braces
+// (`{call, From}`, `#{…}`) appear mid-line and pass through verbatim. Brace
+// nesting (incl. else-if chains, with or without a trailing else) is one
+// principled stack pass. Emits the intermediate shape the downstream passes
+// (`erlang_nest_early_exits`, comma insertion, `erlang_smart_join`) consume;
+// those trim, so exact indentation here is cosmetic.
+
+@@system ErlangBlockParserFsm {
+    interface:
+        do_parse()
+
+    machine:
+        $Init {
+            do_parse() { -> $Parsing }
+        }
+
+        $Parsing {
+            $>() {
+                let kinds = self.token_kinds.clone();
+                let starts = self.token_starts.clone();
+                let ends = self.token_ends.clone();
+                let bytes = self.bytes.clone();
+                let n = kinds.len();
+
+                // Whitespace-only TEXT token.
+                let hws = |k: usize| {
+                    kinds[k] == 11
+                        && bytes[starts[k]..ends[k]]
+                            .iter()
+                            .all(|&b| b == b' ' || b == b'\t')
+                };
+                // Is `ti` the first meaningful token on its line? (block form,
+                // no early `return` — keeps framec's W415 handler-return check
+                // from mis-firing on a closure.)
+                let at_line_start = |ti: usize| -> bool {
+                    let mut k = ti;
+                    let mut is_start = true;
+                    let mut done = false;
+                    while k > 0 && !done {
+                        k -= 1;
+                        if kinds[k] == 10 {
+                            done = true;
+                        } else if !hws(k) {
+                            is_start = false;
+                            done = true;
+                        }
+                    }
+                    is_start
+                };
+                // Index of the NEWLINE ending `ti`'s line (or `n`).
+                let line_end = |ti: usize| -> usize {
+                    let mut k = ti;
+                    while k < n && kinds[k] != 10 {
+                        k += 1;
+                    }
+                    k
+                };
+                // Last meaningful token on line `(ti, le)` (or `ti`).
+                let last_on_line = |ti: usize, le: usize| -> usize {
+                    let mut k = le;
+                    let mut found = ti;
+                    let mut done = false;
+                    while k > ti && !done {
+                        k -= 1;
+                        if !hws(k) {
+                            found = k;
+                            done = true;
+                        }
+                    }
+                    found
+                };
+                // First meaningful token at/after `from` within the line.
+                let next_on_line = |from: usize, le: usize| -> usize {
+                    let mut k = from;
+                    while k < le && hws(k) {
+                        k += 1;
+                    }
+                    k
+                };
+
+                // (kind, has_else): kind 0 = `if`, 1 = `elif`.
+                let mut stack: Vec<(u8, bool)> = Vec::new();
+                let mut ti: usize = 0;
+                while ti < n {
+                    // `if <cond> {` — IF at line start, block `{` ending the line.
+                    if kinds[ti] == 1 && at_line_start(ti) {
+                        let le = line_end(ti);
+                        let k = last_on_line(ti + 1, le);
+                        if k > ti && kinds[k] == 6 {
+                            let cond = String::from_utf8_lossy(&bytes[ends[ti]..starts[k]]);
+                            let cond = cond.trim();
+                            self.result
+                                .push_str(&format!("case ({}) of\n    true ->\n", cond));
+                            stack.push((0, false));
+                            ti = k + 1;
+                            continue;
+                        }
+                    }
+
+                    // `}` at line start → close / else / else-if.
+                    if kinds[ti] == 7 && at_line_start(ti) && !stack.is_empty() {
+                        let le = line_end(ti);
+                        let a = next_on_line(ti + 1, le);
+                        if a < le && kinds[a] == 3 {
+                            let k = last_on_line(a + 1, le);
+                            let b = next_on_line(a + 1, le);
+                            if b < le && kinds[b] == 1 && k > b && kinds[k] == 6 {
+                                // `} else if <cond> {`
+                                let cond = String::from_utf8_lossy(&bytes[ends[b]..starts[k]]);
+                                let cond = cond.trim();
+                                stack.pop();
+                                self.result.push_str(&format!(
+                                    "    ; false ->\n        case ({}) of\n            true ->\n",
+                                    cond
+                                ));
+                                stack.push((1, false));
+                                stack.push((0, false));
+                                ti = k + 1;
+                                continue;
+                            }
+                            if kinds[k] == 6 {
+                                // `} else {`
+                                if let Some(last) = stack.last_mut() {
+                                    last.1 = true;
+                                }
+                                self.result.push_str("    ; false ->\n");
+                                ti = k + 1;
+                                continue;
+                            }
+                        } else if a >= le {
+                            // `}` alone on its line → close the case (+ elifs).
+                            let (ctx, has_else) = stack.pop().unwrap();
+                            if !has_else && ctx == 0 {
+                                self.result.push_str("    ; false -> ok\n");
+                            }
+                            if self.result.trim_end().ends_with("->") {
+                                self.result.push_str("    ok\n");
+                            }
+                            self.result.push_str("end");
+                            if ctx == 1 {
+                                if !stack.is_empty() {
+                                    stack.pop();
+                                    self.result.push_str("\nend");
+                                }
+                            } else {
+                                while let Some(&(octx, _)) = stack.last() {
+                                    if octx != 1 {
+                                        break;
+                                    }
+                                    stack.pop();
+                                    if let Some(&(c, _)) = stack.last() {
+                                        if c == 0 {
+                                            stack.pop();
+                                        }
+                                    }
+                                    self.result.push_str("\nend");
+                                }
+                            }
+                            self.result.push('\n');
+                            ti += 1;
+                            continue;
+                        }
+                        // Otherwise (content after `}` that isn't `else`): a
+                        // tuple/expression brace — fall through to verbatim.
+                    }
+
+                    // Default: emit the token's bytes verbatim.
+                    self.result
+                        .push_str(&String::from_utf8_lossy(&bytes[starts[ti]..ends[ti]]));
+                    ti += 1;
+                }
+            }
+        }
+
+    domain:
+        bytes: Vec<u8> = Vec::new()
+        token_kinds: Vec<usize> = Vec::new()
+        token_starts: Vec<usize> = Vec::new()
+        token_ends: Vec<usize> = Vec::new()
+        result: String = String::new()
+}

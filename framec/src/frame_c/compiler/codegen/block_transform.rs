@@ -27,8 +27,36 @@ mod _output_block_parser {
     include!("output_block_parser.gen.rs");
 }
 
+#[allow(unreachable_patterns)]
+#[allow(unused_mut)]
+#[allow(dead_code)]
+#[allow(non_snake_case)]
+#[allow(unused_variables)]
+mod _output_block_parser_erlang {
+    include!("output_block_parser_erlang.gen.rs");
+}
+
 use _output_block_lexer::OutputBlockLexerFsm;
 use _output_block_parser::OutputBlockParserFsm;
+use _output_block_parser_erlang::ErlangBlockParserFsm;
+
+/// Erlang `{ }` → `case … of … end` lowering: scanned by the shared
+/// `OutputBlockLexerFsm` and emitted by the dogfooded `ErlangBlockParserFsm`
+/// (#123) — replacing the hand-rolled line/token logic that lived in
+/// `erlang_system/blocks.rs`. Both stages are now Frame state machines.
+pub(crate) fn erlang_blocks_to_case(text: &str) -> String {
+    if text.is_empty() {
+        return String::new();
+    }
+    let (kinds, starts, ends) = lex_blocks(text, b'%', false);
+    let mut parser = ErlangBlockParserFsm::new();
+    parser.bytes = text.as_bytes().to_vec();
+    parser.token_kinds = kinds;
+    parser.token_starts = starts;
+    parser.token_ends = ends;
+    parser.do_parse();
+    parser.result
+}
 
 /// Exhaustively tokenize `text` with the shared `OutputBlockLexerFsm`, returning
 /// `(kinds, starts, ends)`. This is the string/comment-safe scanner other
