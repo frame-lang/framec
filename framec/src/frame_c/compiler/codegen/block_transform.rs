@@ -128,6 +128,67 @@ pub fn transform_blocks(text: &str, mode: BlockTransformMode) -> String {
 }
 
 #[cfg(test)]
+mod erlang_tests {
+    use super::erlang_blocks_to_case;
+
+    // Every `case … of` opened must be closed by exactly one `end`.
+    fn balanced(s: &str) -> bool {
+        let opens = s
+            .lines()
+            .filter(|l| {
+                let t = l.trim();
+                (t.starts_with("case ") || t.starts_with("case(")) && t.ends_with(" of")
+            })
+            .count();
+        let ends = s.lines().filter(|l| l.trim() == "end").count();
+        opens == ends
+    }
+
+    // #123: a no-else `if` followed by trailing code is an early exit — the
+    // trailing code lands in the `case`'s false arm, with the `end` after it.
+    #[test]
+    fn early_exit_trailing_in_false_arm() {
+        let out = erlang_blocks_to_case("if c == 1 {\nT\n}\nX\n");
+        assert!(balanced(&out), "unbalanced:\n{out}");
+        // structure: case … true -> T ; false -> X end  (no `; false -> ok`)
+        assert!(out.contains("case (c == 1) of"), "{out}");
+        assert!(out.contains("; false ->"), "{out}");
+        assert!(!out.contains("; false -> ok"), "trailing must be the false arm:\n{out}");
+        let f = out.find("; false ->").unwrap();
+        let e = out.rfind("end").unwrap();
+        assert!(out[f..e].contains('X'), "trailing X not in false arm:\n{out}");
+    }
+
+    // A no-else `if` that IS the last statement keeps `; false -> ok end`.
+    #[test]
+    fn no_trailing_keeps_ok_arm() {
+        let out = erlang_blocks_to_case("if c == 1 {\nT\n}\n");
+        assert!(balanced(&out), "{out}");
+        assert!(out.contains("; false -> ok"), "{out}");
+    }
+
+    // Nested early exit: outer trailing lands in the OUTER false arm, not the
+    // inner case (the bug `nest_early_exits` shipped).
+    #[test]
+    fn nested_early_exit_outer_trailing_outer_arm() {
+        let out = erlang_blocks_to_case("if a == 1 {\nif b == 1 {\nT\n}\nINNER\n}\nOUTER\n");
+        assert!(balanced(&out), "unbalanced:\n{out}");
+        // exactly two cases, two ends, two `; false ->` (one per case)
+        assert_eq!(out.matches("case (").count(), 2, "{out}");
+        // OUTER must appear after the LAST `; false ->` (the outer false arm)
+        let last_false = out.rfind("; false ->").unwrap();
+        assert!(out[last_false..].contains("OUTER"), "OUTER not in outer false arm:\n{out}");
+    }
+
+    // Erlang tuple braces in a handler body are NOT treated as blocks.
+    #[test]
+    fn tuple_braces_preserved() {
+        let out = erlang_blocks_to_case("foo({call, From}, X)\n");
+        assert_eq!(out.trim(), "foo({call, From}, X)", "tuple mangled:\n{out}");
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::{transform_blocks, BlockTransformMode::Lua};
 

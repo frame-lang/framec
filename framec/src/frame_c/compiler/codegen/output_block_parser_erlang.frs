@@ -89,8 +89,37 @@
                     k
                 };
 
-                // (kind, has_else): kind 0 = `if`, 1 = `elif`.
-                let mut stack: Vec<(u8, bool)> = Vec::new();
+                // After the `}` at `ti`, is there meaningful content before the
+                // enclosing scope closes (a line-start `}`) or the handler ends?
+                // If so, a no-else `if` is an EARLY EXIT: its condition, when
+                // true, returns; otherwise the trailing code runs. That trailing
+                // code must land in the `case`'s false arm, so we emit `; false ->`
+                // (not `; false -> ok end`) and DEFER the `end` until this scope
+                // closes (tracked by `owed`). Replaces the hand-rolled
+                // `erlang_nest_early_exits` post-pass — and fixes its mis-nesting
+                // of trailing code into the wrong arm.
+                let has_trailing = |ti: usize| -> bool {
+                    let mut k = ti + 1;
+                    let mut found = false;
+                    let mut done = false;
+                    while k < n && !done {
+                        if kinds[k] == 10 || hws(k) {
+                            k += 1;
+                        } else if kinds[k] == 7 && at_line_start(k) {
+                            done = true; // enclosing close — no trailing
+                        } else {
+                            found = true;
+                            done = true;
+                        }
+                    }
+                    found
+                };
+
+                // Stack of open cases: (kind, has_else, saved_owed). kind 0 =
+                // `if`, 1 = `elif`. `saved_owed` restores `owed` when this case
+                // closes; `owed` = deferred early-exit `end`s in the current arm.
+                let mut stack: Vec<(u8, bool, usize)> = Vec::new();
+                let mut owed: usize = 0;
                 let mut ti: usize = 0;
                 while ti < n {
                     // `if <cond> {` — IF at line start, block `{` ending the line.
@@ -102,7 +131,8 @@
                             let cond = cond.trim();
                             self.result
                                 .push_str(&format!("case ({}) of\n    true ->\n", cond));
-                            stack.push((0, false));
+                            stack.push((0, false, owed));
+                            owed = 0;
                             ti = k + 1;
                             continue;
                         }
@@ -112,6 +142,12 @@
                     if kinds[ti] == 7 && at_line_start(ti) && !stack.is_empty() {
                         let le = line_end(ti);
                         let a = next_on_line(ti + 1, le);
+                        // The arm ending at this `}` flushes its deferred
+                        // early-exit `end`s before this brace's own handling.
+                        while owed > 0 {
+                            self.result.push_str("end\n");
+                            owed -= 1;
+                        }
                         if a < le && kinds[a] == 3 {
                             let k = last_on_line(a + 1, le);
                             let b = next_on_line(a + 1, le);
@@ -119,13 +155,14 @@
                                 // `} else if <cond> {`
                                 let cond = String::from_utf8_lossy(&bytes[ends[b]..starts[k]]);
                                 let cond = cond.trim();
-                                stack.pop();
+                                let (_, _, saved) = stack.pop().unwrap();
                                 self.result.push_str(&format!(
                                     "    ; false ->\n        case ({}) of\n            true ->\n",
                                     cond
                                 ));
-                                stack.push((1, false));
-                                stack.push((0, false));
+                                stack.push((1, false, saved));
+                                stack.push((0, false, 0));
+                                owed = 0;
                                 ti = k + 1;
                                 continue;
                             }
@@ -140,7 +177,17 @@
                             }
                         } else if a >= le {
                             // `}` alone on its line → close the case (+ elifs).
-                            let (ctx, has_else) = stack.pop().unwrap();
+                            let (ctx, has_else, saved) = stack.pop().unwrap();
+                            // Early exit: a no-else `if` followed by trailing code
+                            // — emit `; false ->` and defer this case's `end` to
+                            // the enclosing close (the trailing IS the false arm).
+                            if ctx == 0 && !has_else && has_trailing(ti) {
+                                self.result.push_str("    ; false ->\n");
+                                owed = saved + 1;
+                                ti += 1;
+                                continue;
+                            }
+                            owed = saved;
                             if !has_else && ctx == 0 {
                                 self.result.push_str("    ; false -> ok\n");
                             }
@@ -150,18 +197,21 @@
                             self.result.push_str("end");
                             if ctx == 1 {
                                 if !stack.is_empty() {
-                                    stack.pop();
+                                    let (_, _, s2) = stack.pop().unwrap();
+                                    owed = s2;
                                     self.result.push_str("\nend");
                                 }
                             } else {
-                                while let Some(&(octx, _)) = stack.last() {
+                                while let Some(&(octx, _, _)) = stack.last() {
                                     if octx != 1 {
                                         break;
                                     }
-                                    stack.pop();
-                                    if let Some(&(c, _)) = stack.last() {
+                                    let (_, _, s2) = stack.pop().unwrap();
+                                    owed = s2;
+                                    if let Some(&(c, _, _)) = stack.last() {
                                         if c == 0 {
-                                            stack.pop();
+                                            let (_, _, s3) = stack.pop().unwrap();
+                                            owed = s3;
                                         }
                                     }
                                     self.result.push_str("\nend");
@@ -179,6 +229,12 @@
                     self.result
                         .push_str(&String::from_utf8_lossy(&bytes[starts[ti]..ends[ti]]));
                     ti += 1;
+                }
+
+                // Flush any early-exit `end`s deferred to the handler's end.
+                while owed > 0 {
+                    self.result.push_str("\nend");
+                    owed -= 1;
                 }
             }
         }

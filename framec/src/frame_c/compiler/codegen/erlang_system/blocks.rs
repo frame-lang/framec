@@ -12,10 +12,10 @@
 //!    Frame-style `if Cond { X } else { Y }` so the C-family
 //!    transform downstream has a uniform input. (Native Erlang
 //!    `if` breaks the SSA renamer.)
-//! 2. `erlang_transform_blocks` — the main `{ }` → `case ... of`
-//!    lowering, with three sub-passes inside: block translation,
-//!    sequential early-exit nesting (`erlang_nest_early_exits`),
-//!    and trailing-`end`-comma insertion.
+//! 2. `erlang_transform_blocks` — the `{ }` → `case ... of` lowering.
+//!    Pass 1 (scan + emit, incl. early-exit deferred-`end` nesting) is the
+//!    dogfooded `OutputBlockLexerFsm` + `ErlangBlockParserFsm`; this module
+//!    keeps only the trailing-`end`-comma formatting pass (#123).
 //! 3. `erlang_smart_join` — the statement-joiner that picks the
 //!    right separator between two emitted lines (Erlang has three:
 //!    `,` for expressions in a clause, `;` for case-arm separators,
@@ -120,9 +120,10 @@ pub(super) fn erlang_transform_blocks(text: &str) -> String {
     // machines, no hand-rolled text scanning (#123).
     let result = crate::frame_c::compiler::codegen::block_transform::erlang_blocks_to_case(text);
 
-    // Second pass: nest sequential if-without-else blocks (early-exit pattern)
-    let result_lines: Vec<&str> = result.lines().collect();
-    let pass2 = erlang_nest_early_exits(&result_lines);
+    // Early-exit nesting is now done structurally inside ErlangBlockParserFsm
+    // (the deferred-end fold), replacing the hand-rolled `erlang_nest_early_exits`
+    // post-pass — which also mis-nested trailing code into the wrong arm (#123).
+    let pass2 = result;
 
     // Third pass: add commas after `end` when followed by another expression
     let mut final_result = String::new();
@@ -142,74 +143,6 @@ pub(super) fn erlang_transform_blocks(text: &str) -> String {
     }
 
     final_result
-}
-
-/// Nest sequential if-without-else blocks into right-nested case expressions.
-/// This converts the early-exit pattern (common in Frame handlers) into valid
-/// Erlang where each function clause returns exactly one value.
-fn erlang_nest_early_exits(lines: &[&str]) -> String {
-    let mut output_lines: Vec<String> = lines.iter().map(|s| s.to_string()).collect();
-
-    let mut changed = true;
-    while changed {
-        changed = false;
-        let mut i = 0;
-        while i < output_lines.len() {
-            let is_false_ok = output_lines[i].trim() == "; false -> ok";
-
-            if is_false_ok {
-                let mut j = i + 1;
-                while j < output_lines.len() && output_lines[j].trim().is_empty() {
-                    j += 1;
-                }
-
-                let is_end = j < output_lines.len() && {
-                    let t = output_lines[j].trim().to_string();
-                    t == "end" || t == "end,"
-                };
-                if is_end {
-                    let remaining_start = j + 1;
-                    let mut remaining: Vec<String> = Vec::new();
-                    for k in remaining_start..output_lines.len() {
-                        if !output_lines[k].trim().is_empty() {
-                            remaining.push(output_lines[k].clone());
-                        }
-                    }
-
-                    let has_real_code = remaining.iter().any(|r| {
-                        let t = r.trim();
-                        !t.is_empty()
-                            && t != "end"
-                            && t != "end,"
-                            && !t.starts_with("; false -> ok")
-                            && !t.starts_with("; false ->")
-                    });
-                    if has_real_code {
-                        let indent_len = output_lines[i].len() - output_lines[i].trim_start().len();
-                        let indent = " ".repeat(indent_len);
-                        output_lines[i] = format!("{}; false ->", indent);
-                        let mut new_section: Vec<String> = Vec::new();
-                        for r in &remaining {
-                            new_section.push(format!("{}    {}", indent, r.trim()));
-                        }
-                        new_section.push(format!("{}end", indent));
-
-                        output_lines.drain(j..);
-                        let insert_pos = i + 1;
-                        for (idx, new_line) in new_section.into_iter().enumerate() {
-                            output_lines.insert(insert_pos + idx, new_line);
-                        }
-
-                        changed = true;
-                        break;
-                    }
-                }
-            }
-            i += 1;
-        }
-    }
-
-    output_lines.join("\n")
 }
 
 /// Join processed Erlang lines with proper comma/newline separators.
