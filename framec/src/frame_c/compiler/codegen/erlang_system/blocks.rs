@@ -193,7 +193,14 @@ pub(super) fn erlang_transform_blocks(text: &str) -> String {
                     block_depth.pop();
                     result.push_str(&format!("\n{}end", indent));
                 }
-            } else if ctx == "if" && has_else {
+            } else if ctx == "if" {
+                // Close any enclosing `elif` case(s). This runs whether or not
+                // the chain ended in a trailing `else`: a bare `} else if c {`
+                // (no final `else`) still opened an outer case via its
+                // `; false -> case (c) of …`, and that outer case needs its own
+                // `end`. (Previously gated on `has_else`, which dropped the
+                // outer `end` for else-if chains without a trailing else and
+                // left the case unclosed — a syntax error.)
                 while let Some(&(outer_ctx, _)) = block_depth.last() {
                     if outer_ctx != "elif" {
                         break;
