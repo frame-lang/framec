@@ -351,88 +351,347 @@ pub(super) fn rewrite_mixed_case_arms(
     result
 }
 
-/// Post-process emitted handler lines to inject gen_statem reply tuples at
-/// orphan `__ReturnVal = "..."` leaves in **nested** case blocks (depth > 1).
+/// Post-process emitted handler lines so every arm of a **nested** case block
+/// (depth ≥ 2) that reaches its close without transitioning yields a
+/// `gen_statem` reply tuple.
 ///
-/// `rewrite_mixed_case_arms` already handles the outermost case — for each
-/// top-level arm that doesn't transition, it injects a reply tuple. But it
-/// only descends one level deep. When a handler uses nested `if/else`
-/// (producing nested case blocks), the inner else branches that just set
-/// `__ReturnVal` without transitioning escape the rewriter and leak bare
-/// values into the gen_statem return, crashing with
-/// `bad_return_from_state_function`.
+/// A `gen_statem` state-function clause must return a status tuple on *every*
+/// path. `rewrite_mixed_case_arms` guarantees this for the outermost case's
+/// arms but only descends one level. When a handler nests `if/else` (or native
+/// `case`), an inner branch that falls through — ending in a bare value like
+/// `ok`, a `__ReturnVal = …` write, or a trailing `DataN = …` mutation, with no
+/// transition — escapes the outer rewriter and leaks that value into the
+/// gen_statem return, crashing with `bad_return_from_state_function`. This pass
+/// closes that gap for arms at depth ≥ 2.
 ///
-/// This pass handles the inner cases: finds every `__ReturnVal = <expr>`
-/// that sits at case nesting depth ≥ 2 AND is the final statement of its
-/// arm (followed by `end`, `; false ->`, or `; _ ->` with no transition or
-/// reply tuple in between), and rewrites it to:
-///     __ReturnVal = <expr>,
-///     {keep_state, <Data>, [{reply, From, __ReturnVal}]}
+/// For each such fall-through leaf it appends
+/// `{keep_state, <DataInScope>, [{reply, From, <ReturnVal>}]}`. `<DataInScope>`
+/// is the `Data` SSA var live at the leaf: brace matching for `case … end` is a
+/// pushdown problem, so we track it with a per-case stack — each `case … of`
+/// pushes the current var, each arm header resets to that pushed var (a sibling
+/// arm's `DataN` binding never leaks), and a `DataN = …` binding advances it.
+/// `<ReturnVal>` is the in-scope `__ReturnVal[_K]` name, or `ok`.
 ///
-/// Depth-1 orphans are left alone because `rewrite_mixed_case_arms` handles
-/// them via its top-level arm-boundary injection.
+/// Depth-1 arms are left to `rewrite_mixed_case_arms`; its `already_has_reply`
+/// check skips any tuple this pass planted at a nested leaf.
 pub(super) fn erlang_inject_orphan_reply_tuples(
     lines: &[String],
     default_data: &str,
 ) -> Vec<String> {
-    let mut result: Vec<String> = Vec::with_capacity(lines.len());
-    let mut depth: i32 = 0;
-
-    for (i, line) in lines.iter().enumerate() {
-        let t = line.trim();
-
-        // Track case nesting depth.
-        let opens_case = (t.starts_with("case ") || t.starts_with("case("))
-            && (t.ends_with(" of") || t.ends_with(" of,"));
-
-        // `end` / `end,` / `end;` closes the innermost case. We bump depth
-        // down AFTER emitting so the `end` line is attributed to its case.
-        let closes_case = t == "end" || t == "end," || t == "end;";
-
-        if opens_case {
-            depth += 1;
+    fn is_terminal(t: &str) -> bool {
+        t.starts_with("frame_transition__(")
+            || t.starts_with("frame_forward_transition__(")
+            || t.starts_with("{next_state,")
+            || t.starts_with("{keep_state,")
+            || t.starts_with("{repeat_state,")
+            || t.starts_with("{stop,")
+    }
+    fn is_data_var(s: &str) -> bool {
+        s.starts_with("Data") && s.len() > 4 && s[4..].chars().all(|c| c.is_ascii_digit())
+    }
+    // The SSA `Data` var bound by this line, if any. Handles both `DataN = …`
+    // and the forward-unwrap tuple bind `{DataN, __FwdNext, __FwdReply} = …`
+    // (the binding, not a `DataN#data…` read).
+    fn data_binding(t: &str) -> Option<String> {
+        let eq = t.find(" = ")?;
+        let lhs = t[..eq].trim();
+        if is_data_var(lhs) {
+            return Some(lhs.to_string());
         }
-
-        let is_orphan_candidate =
-            t.starts_with("__ReturnVal = ") && !t.ends_with(',') && !t.ends_with(';');
-
-        if !is_orphan_candidate || depth < 2 {
-            result.push(line.clone());
-            if closes_case {
-                depth = (depth - 1).max(0);
+        if let Some(inner) = lhs.strip_prefix('{') {
+            let first = inner.split(',').next().unwrap_or("").trim();
+            if is_data_var(first) {
+                return Some(first.to_string());
             }
-            continue;
         }
+        None
+    }
+    // The reply EXPRESSION live after a `__ReturnVal[_K] = <rhs>` write.
+    // `rewrite_mixed_case_arms` strips the *bare* `__ReturnVal = …` binding
+    // (hoisting it into its own reply tuple), so a nested leaf must not
+    // reference the name — inline the bound `<rhs>` instead. SSA-renamed
+    // `__ReturnVal_K` bindings survive, so reference those by name.
+    fn return_value_expr(t: &str) -> Option<String> {
+        let eq = t.find(" = ")?;
+        let lhs = t[..eq].trim();
+        if lhs == "__ReturnVal" {
+            Some(t[eq + 3..].trim().trim_end_matches([',', ';']).to_string())
+        } else if lhs.starts_with("__ReturnVal_") && lhs[12..].chars().all(|c| c.is_ascii_digit()) {
+            Some(lhs.to_string())
+        } else {
+            None
+        }
+    }
+    fn is_arm_header(t: &str) -> bool {
+        if is_terminal(t) || t.starts_with("case ") || t.starts_with("case(") {
+            return false;
+        }
+        let canonical =
+            t.starts_with("true ->") || t.starts_with("; false") || t.starts_with("; _");
+        let semi =
+            t.starts_with("; ") && (t.ends_with(" ->") || t.ends_with("->") || t.contains(" -> "));
+        let bare_first =
+            !t.starts_with(';') && !t.starts_with('{') && (t.ends_with(" ->") || t.ends_with("->"));
+        canonical || semi || bare_first
+    }
 
-        // Look ahead: next non-blank line.
-        let mut j = i + 1;
+    // Trimmed text of the next non-blank line.
+    let next_meaningful = |from: usize| -> &str {
+        let mut j = from + 1;
         while j < lines.len() && lines[j].trim().is_empty() {
             j += 1;
         }
-        let next_trimmed = lines.get(j).map(|s| s.trim()).unwrap_or("");
-        let arm_closes = next_trimmed == "end"
-            || next_trimmed == "end,"
-            || next_trimmed == "end;"
-            || next_trimmed.starts_with("; false")
-            || next_trimmed.starts_with("; _");
+        lines.get(j).map(|s| s.trim()).unwrap_or("")
+    };
+    // Does the arm containing line `idx` close right after it?
+    let arm_closes_after = |idx: usize| -> bool {
+        let nx = next_meaningful(idx);
+        nx == "end"
+            || nx == "end,"
+            || nx == "end;"
+            || (nx.starts_with("; ")
+                && (nx.ends_with("->") || nx.ends_with(" ->") || nx.contains(" -> ")))
+    };
 
-        let already_has_reply = next_trimmed.starts_with("{keep_state,")
-            || next_trimmed.starts_with("{next_state,")
-            || next_trimmed.starts_with("frame_transition__(")
-            || next_trimmed.starts_with("frame_forward_transition__(");
-
-        if arm_closes && !already_has_reply {
-            let lead_len = line.len() - line.trim_start().len();
-            let indent = &line[..lead_len];
-            result.push(format!("{}{},", indent, t));
-            result.push(format!(
-                "{}{{keep_state, {}, [{{reply, From, __ReturnVal}}]}}",
-                indent, default_data
-            ));
-        } else {
-            result.push(line.clone());
+    // Precompute, per `case … of` open-line, whether its matching `end` lacks a
+    // trailing comma. A reply tuple may only be injected at a leaf whose whole
+    // enclosing case chain is in TAIL position — i.e. the case's value IS the
+    // handler's return. A case followed by more statements ends in `end,`
+    // (Erlang's expression separator); injecting there would both return early
+    // (skipping the trailing code) and reference a `DataN` not bound on that
+    // path. `end` / `end;` means the case is in tail position locally; `end,`
+    // means it is not.
+    let mut locally_tail: std::collections::HashMap<usize, bool> = std::collections::HashMap::new();
+    {
+        let mut stack: Vec<usize> = Vec::new();
+        for (i, line) in lines.iter().enumerate() {
+            let t = line.trim();
+            if (t.starts_with("case ") || t.starts_with("case("))
+                && (t.ends_with(" of") || t.ends_with(" of,"))
+            {
+                stack.push(i);
+            } else if t == "end" || t == "end," || t == "end;" {
+                if let Some(open_i) = stack.pop() {
+                    locally_tail.insert(open_i, t != "end,");
+                }
+            }
         }
     }
 
+    let mut result: Vec<String> = Vec::with_capacity(lines.len());
+    let mut depth: i32 = 0;
+    // The handler input record is always `Data`; mutations advance the SSA name.
+    // (`default_data` is the FINAL var, which `rewrite_mixed_case_arms` uses for
+    // the outermost arm — but a nested leaf needs the var live at that point,
+    // which starts from `Data`.)
+    let _ = default_data;
+    let mut cur_data = "Data".to_string();
+    let mut cur_ret = "ok".to_string();
+    let mut data_at_open: Vec<String> = Vec::new();
+    let mut ret_at_open: Vec<String> = Vec::new();
+    // Per-open-case tail flag (parent's tail AND this case's local tail). Only a
+    // leaf whose innermost enclosing case is in tail position may be injected.
+    let mut tail_stack: Vec<bool> = Vec::new();
+
+    for (i, line) in lines.iter().enumerate() {
+        let t = line.trim();
+        let opens = (t.starts_with("case ") || t.starts_with("case("))
+            && (t.ends_with(" of") || t.ends_with(" of,"));
+        let closes = t == "end" || t == "end," || t == "end;";
+        let lead = &line[..line.len() - line.trim_start().len()];
+
+        // An arm header restores the in-scope vars to this case's entry scope,
+        // so a sibling arm never inherits a prior arm's `DataN`/`__ReturnVal`.
+        if depth >= 1 && is_arm_header(t) {
+            if let Some(d) = data_at_open.last() {
+                cur_data = d.clone();
+            }
+            if let Some(r) = ret_at_open.last() {
+                cur_ret = r.clone();
+            }
+        }
+        // Advance in-scope vars on bindings (before any leaf injection uses them).
+        if let Some(v) = data_binding(t) {
+            cur_data = v;
+        }
+        if let Some(r) = return_value_expr(t) {
+            cur_ret = r;
+        }
+
+        if opens {
+            data_at_open.push(cur_data.clone());
+            ret_at_open.push(cur_ret.clone());
+            let parent_tail = tail_stack.last().copied().unwrap_or(true);
+            let locally = locally_tail.get(&i).copied().unwrap_or(true);
+            tail_stack.push(parent_tail && locally);
+            result.push(line.clone());
+            depth += 1;
+            continue;
+        }
+        if closes {
+            result.push(line.clone());
+            depth = (depth - 1).max(0);
+            data_at_open.pop();
+            ret_at_open.pop();
+            tail_stack.pop();
+            continue;
+        }
+
+        // A leaf may only become a return tuple if its enclosing case is in
+        // tail position (its value reaches the handler return).
+        let in_tail = tail_stack.last().copied().unwrap_or(false);
+
+        let inject = |out: &mut Vec<String>, stmt: &str| {
+            let stmt = stmt.trim_end_matches([',', ';']);
+            out.push(format!("{}{},", lead, stmt));
+            out.push(format!(
+                "{}{{keep_state, {}, [{{reply, From, {}}}]}}",
+                lead, cur_data, cur_ret
+            ));
+        };
+
+        // Inline arm-header body: `; false -> ok`.
+        if depth >= 2 && in_tail && is_arm_header(t) {
+            if let Some(p) = t.find(" -> ") {
+                let body = t[p + 4..].trim();
+                if !body.is_empty() && !is_terminal(body) && arm_closes_after(i) {
+                    let pat = &t[..p + 3]; // includes "->"
+                    let stmt = format!("{} {}", pat, body);
+                    inject(&mut result, &stmt);
+                    continue;
+                }
+            }
+            result.push(line.clone());
+            continue;
+        }
+
+        // Standalone fall-through leaf at depth ≥ 2.
+        if depth >= 2 && in_tail && !t.is_empty() && !is_terminal(t) && arm_closes_after(i) {
+            inject(&mut result, t);
+            continue;
+        }
+
+        result.push(line.clone());
+    }
+
     result
+}
+
+#[cfg(test)]
+mod orphan_reply_tests {
+    use super::erlang_inject_orphan_reply_tuples;
+
+    fn run(lines: &[&str], default_data: &str) -> Vec<String> {
+        let owned: Vec<String> = lines.iter().map(|s| s.to_string()).collect();
+        erlang_inject_orphan_reply_tuples(&owned, default_data)
+    }
+
+    // #119: a nested fall-through arm ending in bare `ok` must get a reply
+    // tuple with the in-scope DataN (not the top-level default).
+    #[test]
+    fn nested_bare_ok_leaf_gets_tuple_with_scoped_data() {
+        let out = run(
+            &[
+                "    case P of",
+                "    \"ok\" ->",
+                "    frame_transition__('active', Data, [], [], [], From, ok)",
+                "    ; _ ->",
+                "    Data1 = Data#data{failures = Data#data.failures + 1},",
+                "    case Data1#data.failures >= 3 of",
+                "    true ->",
+                "    frame_transition__('locked', Data1, [], [], [], From, ok)",
+                "    ; false ->",
+                "    ok",
+                "    end",
+                "    end",
+            ],
+            "Data",
+        )
+        .join("\n");
+        assert!(
+            out.contains("{keep_state, Data1, [{reply, From, ok}]}"),
+            "inner fall-through missing scoped tuple:\n{out}"
+        );
+        // The transition arms are untouched.
+        assert!(out.contains("frame_transition__('locked', Data1"));
+    }
+
+    // Inline arm-body form: `; false -> ok` on one line.
+    #[test]
+    fn inline_arm_body_fall_through_gets_tuple() {
+        let out = run(
+            &[
+                "    case (P == \"ok\") of",
+                "    true ->",
+                "    Data1 = Data#data{n = 1},",
+                "    case (Data1#data.n >= 3) of",
+                "    true ->",
+                "    frame_transition__('locked', Data1, [], [], [], From, ok)",
+                "    ; false -> ok",
+                "    end",
+                "    end",
+            ],
+            "Data",
+        )
+        .join("\n");
+        assert!(
+            out.contains("; false -> ok,")
+                && out.contains("{keep_state, Data1, [{reply, From, ok}]}"),
+            "inline fall-through not handled:\n{out}"
+        );
+    }
+
+    // A sibling arm's DataN must not leak into another sibling's leaf.
+    #[test]
+    fn sibling_data_does_not_leak() {
+        let out = run(
+            &[
+                "    case Tag of",
+                "    a ->",
+                "    Data1 = Data#data{x = 1},",
+                "    case (Data1#data.x > 0) of",
+                "    true -> frame_transition__('s', Data1, [], [], [], From, ok)",
+                "    ; false -> ok",
+                "    end",
+                "    ; b ->",
+                "    case (Data#data.y > 0) of",
+                "    true -> frame_transition__('t', Data, [], [], [], From, ok)",
+                "    ; false -> ok",
+                "    end",
+                "    end",
+            ],
+            "Data",
+        )
+        .join("\n");
+        // arm a's inner false uses Data1; arm b's inner false uses Data (NOT Data1).
+        assert!(
+            out.contains("{keep_state, Data1, [{reply, From, ok}]}"),
+            "arm a scope wrong:\n{out}"
+        );
+        assert!(
+            out.contains("{keep_state, Data, [{reply, From, ok}]}"),
+            "arm b leaked Data1:\n{out}"
+        );
+    }
+
+    // A fully-terminal nested case (all arms transition) is left untouched.
+    #[test]
+    fn all_terminal_nested_unchanged() {
+        let input = [
+            "    case X of",
+            "    true ->",
+            "    case Y of",
+            "    true -> frame_transition__('a', Data, [], [], [], From, ok)",
+            "    ; false -> frame_transition__('b', Data, [], [], [], From, ok)",
+            "    end",
+            "    ; false -> frame_transition__('c', Data, [], [], [], From, ok)",
+            "    end",
+        ];
+        let out = run(&input, "Data");
+        assert_eq!(
+            out.iter().filter(|l| l.contains("keep_state")).count(),
+            0,
+            "should not inject into all-terminal case"
+        );
+    }
 }
