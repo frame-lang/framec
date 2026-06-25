@@ -153,10 +153,16 @@ mod erlang_tests {
         // structure: case … true -> T ; false -> X end  (no `; false -> ok`)
         assert!(out.contains("case (c == 1) of"), "{out}");
         assert!(out.contains("; false ->"), "{out}");
-        assert!(!out.contains("; false -> ok"), "trailing must be the false arm:\n{out}");
+        assert!(
+            !out.contains("; false -> ok"),
+            "trailing must be the false arm:\n{out}"
+        );
         let f = out.find("; false ->").unwrap();
         let e = out.rfind("end").unwrap();
-        assert!(out[f..e].contains('X'), "trailing X not in false arm:\n{out}");
+        assert!(
+            out[f..e].contains('X'),
+            "trailing X not in false arm:\n{out}"
+        );
     }
 
     // A no-else `if` that IS the last statement keeps `; false -> ok end`.
@@ -177,7 +183,10 @@ mod erlang_tests {
         assert_eq!(out.matches("case (").count(), 2, "{out}");
         // OUTER must appear after the LAST `; false ->` (the outer false arm)
         let last_false = out.rfind("; false ->").unwrap();
-        assert!(out[last_false..].contains("OUTER"), "OUTER not in outer false arm:\n{out}");
+        assert!(
+            out[last_false..].contains("OUTER"),
+            "OUTER not in outer false arm:\n{out}"
+        );
     }
 
     // Erlang tuple braces in a handler body are NOT treated as blocks.

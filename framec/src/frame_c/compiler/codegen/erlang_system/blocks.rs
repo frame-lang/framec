@@ -40,18 +40,54 @@ use super::lexical::{ends_with_binary_op, paren_balance_unclosed};
 /// Multi-arm `if A -> ; B -> ; true -> end` would need else-if
 /// chaining; not yet handled.
 pub(super) fn erlang_lower_native_if(text: &str) -> String {
+    use crate::frame_c::compiler::codegen::block_transform::lex_blocks;
+    // String/comment-safe keyword recognition (#123): a line opens/closes a
+    // native construct only if its first meaningful byte is an actual `if`/`end`
+    // *token* — the shared lexer separates strings & comments, so an `if`/`end`
+    // inside one is never mistaken for structure. (`case` is not a lexer keyword;
+    // it stays a whole-line check, robust since a structural `case … of` is the
+    // whole line.)
+    let (kinds, starts, _ends) = lex_blocks(text, b'%', false);
+    let mut if_at: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    let mut end_at: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    for (i, &k) in kinds.iter().enumerate() {
+        if k == 1 {
+            if_at.insert(starts[i]);
+        } else if k == 9 {
+            end_at.insert(starts[i]);
+        }
+    }
     let lines: Vec<&str> = text.lines().collect();
+    let mut line_off: Vec<usize> = Vec::with_capacity(lines.len());
+    {
+        let mut off = 0usize;
+        for line in &lines {
+            line_off.push(off);
+            off += line.len() + 1; // + newline
+        }
+    }
+    let first_off = |idx: usize| -> usize {
+        line_off[idx] + (lines[idx].len() - lines[idx].trim_start().len())
+    };
+    let opens_if = |idx: usize| -> bool {
+        let t = lines[idx].trim();
+        if_at.contains(&first_off(idx)) && t.ends_with(" ->") && !t.ends_with('{')
+    };
+    let is_end = |idx: usize| -> bool {
+        let t = lines[idx].trim();
+        end_at.contains(&first_off(idx)) && (t == "end" || t == "end," || t == "end;")
+    };
+
     let mut out: Vec<String> = Vec::with_capacity(lines.len());
     let mut i = 0;
     while i < lines.len() {
-        let line = lines[i];
-        let t = line.trim();
-        let is_native_if = t.starts_with("if ") && t.ends_with(" ->") && !t.ends_with('{');
-        if !is_native_if {
-            out.push(line.to_string());
+        if !opens_if(i) {
+            out.push(lines[i].to_string());
             i += 1;
             continue;
         }
+        let line = lines[i];
+        let t = line.trim();
         let cond = t[3..t.len() - 2].trim().to_string();
         let indent = &line[..line.len() - line.trim_start().len()];
         let mut j = i + 1;
@@ -60,13 +96,12 @@ pub(super) fn erlang_lower_native_if(text: &str) -> String {
         let mut end_idx: Option<usize> = None;
         while j < lines.len() {
             let lt = lines[j].trim();
-            let opens = (lt.starts_with("if ") && lt.ends_with(" ->"))
+            let opens = opens_if(j)
                 || ((lt.starts_with("case ") || lt.starts_with("case("))
                     && (lt.ends_with(" of") || lt.ends_with(" of,")));
-            let closes = lt == "end" || lt == "end," || lt == "end;";
             if opens {
                 depth += 1;
-            } else if closes {
+            } else if is_end(j) {
                 depth -= 1;
                 if depth == 0 {
                     end_idx = Some(j);
