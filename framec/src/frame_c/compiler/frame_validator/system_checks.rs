@@ -11,7 +11,9 @@
 use super::{count_args, FrameValidator, ValidationError};
 use crate::frame_c::compiler::codegen::frame_expansion::get_native_scanner;
 use crate::frame_c::compiler::frame_ast::*;
-use crate::frame_c::compiler::native_region_scanner::{FrameSegmentKind, Region, SegmentMetadata};
+use crate::frame_c::compiler::native_region_scanner::{
+    FrameSegmentKind, Region, RegionSpan, SegmentMetadata,
+};
 use std::collections::{HashMap, HashSet};
 
 impl FrameValidator {
@@ -339,8 +341,46 @@ impl FrameValidator {
 
         // Walk segments and validate
         for region in &scan_result.regions {
-            if let Region::FrameSegment { kind, metadata, .. } = region {
+            if let Region::FrameSegment {
+                kind,
+                metadata,
+                span,
+                ..
+            } = region
+            {
                 match kind {
+                    // W416 (#130): a bare `@@:return` (read mode — no `= e`,
+                    // no `(e)`, no `@@:(e)`) used as a STANDALONE STATEMENT
+                    // lowers to a no-op read of the context return slot and
+                    // does NOT short-circuit — trailing code still runs. The
+                    // getter is semantically valid, but reading-and-discarding
+                    // it in statement position has no effect and almost always
+                    // means the user wanted `@@:return(e)`, `@@:return = e`,
+                    // or native `return`. WARN (do not change semantics).
+                    //
+                    // "Standalone statement" = the getter is alone on its
+                    // logical statement: the bytes from the previous statement
+                    // delimiter up to the segment, and from the segment to the
+                    // next delimiter, are whitespace only. This excludes the
+                    // false-positive case `x = @@:return + 1` (the read is
+                    // consumed by a surrounding expression) without judging the
+                    // expression's contents. The setter shapes never reach here
+                    // (`= e` is `assign_expr: Some`, `(e)`/`@@:(e)` are distinct
+                    // segment kinds).
+                    FrameSegmentKind::ContextReturn
+                        if matches!(
+                            metadata,
+                            SegmentMetadata::ContextReturn { assign_expr: None }
+                        ) && is_standalone_statement(body, span) =>
+                    {
+                        self.warnings.push(ValidationError::new(
+                            "W416",
+                            format!(
+                                "bare `@@:return` as a statement in {}/{} has no effect — it reads the return slot and discards it. Did you mean `@@:return(expr)` (set + exit), `@@:return = expr` (set), or `return` (native exit)?",
+                                scope_outer, scope_inner
+                            ),
+                        ));
+                    }
                     // E601: @@:self.method() — check method exists in interface
                     FrameSegmentKind::ContextSelfCall => {
                         if let SegmentMetadata::SelfCall { method, args } = metadata {
@@ -625,4 +665,50 @@ impl FrameValidator {
             }
         }
     }
+}
+
+/// True when the segment at `span` is alone on its logical statement: the
+/// bytes from the previous statement delimiter up to the segment start, and
+/// from the segment end to the next statement delimiter, are whitespace only.
+///
+/// Statement delimiters are `\n`, `;`, `{`, and `}` — the boundaries that
+/// separate native statements in every target Frame emits into. This is used
+/// for W416 (#130): a bare `@@:return` read that stands alone as a statement
+/// is a no-op, but the same read embedded in an expression (`x = @@:return + 1`)
+/// is consumed and must not warn. Walking to a real delimiter (rather than only
+/// the previous newline) keeps `f(); @@:return` on one line classified as
+/// standalone while never misreading the embedded-expression case.
+fn is_standalone_statement(body: &[u8], span: &RegionSpan) -> bool {
+    let is_delim = |b: u8| b == b'\n' || b == b';' || b == b'{' || b == b'}';
+    let is_ws = |b: u8| b == b' ' || b == b'\t' || b == b'\r';
+
+    // Left: walk back from the segment start. Every byte until a delimiter
+    // (or the body start) must be whitespace.
+    let mut p = span.start;
+    while p > 0 {
+        let b = body[p - 1];
+        if is_delim(b) {
+            break;
+        }
+        if !is_ws(b) {
+            return false;
+        }
+        p -= 1;
+    }
+
+    // Right: walk forward from the segment end. Every byte until a delimiter
+    // (or the body end) must be whitespace.
+    let mut q = span.end;
+    while q < body.len() {
+        let b = body[q];
+        if is_delim(b) {
+            break;
+        }
+        if !is_ws(b) {
+            return false;
+        }
+        q += 1;
+    }
+
+    true
 }

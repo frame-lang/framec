@@ -68,6 +68,8 @@
 //! ## Warnings (W4xx)
 //! - W414: Unreachable state from start state
 //! - W415: `return <expr>` in event handler — value is silently lost
+//! - W416: bare `@@:return` as a standalone statement — reads the return
+//!   slot and discards it (no effect); meant `@@:return(e)` / `= e` / `return`
 //!
 //! ## RFC-0012 amendment hard-cut (E814)
 //! - E814: bare `@@[persist]` form rejected — declare `@@[save]` /
