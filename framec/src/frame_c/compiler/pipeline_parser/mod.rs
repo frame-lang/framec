@@ -903,8 +903,23 @@ impl Parser {
                             }
                         }
                         Token::FatArrow => {
-                            // -> => $State (transition forward)
-                            let target_tok = self.lexer.next_token().map_err(ParseError::from)?;
+                            // -> => $State (transition forward), optionally
+                            // decorated with enter args and/or state args
+                            // (`-> => (enter) $State(state)`). The lexer emits
+                            // each decoration paren as a NativeCode token
+                            // BEFORE the StateRef. The parser doesn't need to
+                            // tell them apart — it only needs ONE Transition
+                            // statement with the right target and
+                            // `is_forward: true` so scanner enrichment can
+                            // pair by source order and the W414 walker sees
+                            // the edge (#128). Absorb every leading NativeCode,
+                            // then read the StateRef. Real arg values are
+                            // copied back by `enrich_handler_body_metadata`.
+                            let mut target_tok =
+                                self.lexer.next_token().map_err(ParseError::from)?;
+                            while matches!(target_tok.token, Token::NativeCode(_)) {
+                                target_tok = self.lexer.next_token().map_err(ParseError::from)?;
+                            }
                             if let Token::StateRef(target) = target_tok.token {
                                 statements.push(Statement::Transition(TransitionAst {
                                     target,
@@ -1020,6 +1035,41 @@ impl Parser {
                                             state_args: Some(state_args_text),
                                             is_pop: false,
                                             is_forward: false,
+                                        }));
+                                    }
+                                }
+                                Token::FatArrow => {
+                                    // -> (enter_args) => $State[(state_args)] —
+                                    // a forward transition with enter args
+                                    // (and optionally state args). Tokenizes as
+                                    // Arrow → NC(enter) → FatArrow →
+                                    // [NC(state)] → StateRef. Without this arm
+                                    // the forward Transition was dropped and
+                                    // the stray `=> $State` was misparsed as a
+                                    // bare event-forward (E403), or the target
+                                    // was flagged W414 unreachable (#128).
+                                    // Absorb any further NativeCode decoration
+                                    // tokens, then read the StateRef; the real
+                                    // arg values are restored by
+                                    // `enrich_handler_body_metadata`.
+                                    let mut target_tok =
+                                        self.lexer.next_token().map_err(ParseError::from)?;
+                                    while matches!(target_tok.token, Token::NativeCode(_)) {
+                                        target_tok =
+                                            self.lexer.next_token().map_err(ParseError::from)?;
+                                    }
+                                    if let Token::StateRef(target) = target_tok.token {
+                                        statements.push(Statement::Transition(TransitionAst {
+                                            target,
+                                            args: vec![Expression::NativeExpr(args)],
+                                            label: None,
+                                            span: Span::new(tok.span.start, target_tok.span.end),
+                                            indent: 0,
+                                            exit_args: None,
+                                            enter_args: None,
+                                            state_args: None,
+                                            is_pop: false,
+                                            is_forward: true,
                                         }));
                                     }
                                 }
@@ -1998,6 +2048,79 @@ mod tests {
         assert_eq!(trans.target, "T");
         assert_eq!(trans.label.as_deref(), Some("hop"));
         assert_eq!(trans.state_args.as_deref(), Some("(2.5)"));
+    }
+
+    /// Locate the (single) Transition statement in `$First`'s first handler.
+    fn first_transition(sys: &SystemAst) -> &TransitionAst {
+        let machine = sys.machine.as_ref().expect("machine");
+        machine.states[0].handlers[0]
+            .body
+            .statements
+            .iter()
+            .find_map(|s| match s {
+                Statement::Transition(t) => Some(t),
+                _ => None,
+            })
+            .expect("decorated forward must parse as a Transition, not be dropped")
+    }
+
+    #[test]
+    fn test_forward_transition_bare() {
+        // `-> => $T` — the bare forward must parse with is_forward.
+        let sys = parse_py(
+            "machine:\n    $S {\n        go() {\n            -> => $T\n        }\n    }\n    $T {\n    }",
+        );
+        let t = first_transition(&sys);
+        assert_eq!(t.target, "T");
+        assert!(t.is_forward, "bare forward must set is_forward");
+    }
+
+    #[test]
+    fn test_forward_transition_state_args() {
+        // `-> => $T(7)` — forward with STATE args. The parser used to drop
+        // the statement entirely (#128) → W414 false positive.
+        let sys = parse_py(
+            "machine:\n    $S {\n        go() {\n            -> => $T(7)\n        }\n    }\n    $T(p: int) {\n    }",
+        );
+        let t = first_transition(&sys);
+        assert_eq!(t.target, "T");
+        assert!(t.is_forward, "decorated forward must keep is_forward");
+    }
+
+    #[test]
+    fn test_forward_transition_enter_args() {
+        // `-> (11) => $T` — forward with ENTER args (#128).
+        let sys = parse_py(
+            "machine:\n    $S {\n        go() {\n            -> (11) => $T\n        }\n    }\n    $T {\n        $>(e: int) { }\n    }",
+        );
+        let t = first_transition(&sys);
+        assert_eq!(t.target, "T");
+        assert!(t.is_forward, "enter-decorated forward must keep is_forward");
+    }
+
+    #[test]
+    fn test_forward_transition_exit_args() {
+        // `(13) -> => $T` — forward with EXIT args (#128).
+        let sys = parse_py(
+            "machine:\n    $S {\n        go() {\n            (13) -> => $T\n        }\n        <$(x: int) { }\n    }\n    $T {\n    }",
+        );
+        let t = first_transition(&sys);
+        assert_eq!(t.target, "T");
+        assert!(t.is_forward, "exit-decorated forward must keep is_forward");
+    }
+
+    #[test]
+    fn test_forward_transition_all_decorations() {
+        // `(17) -> (19) => $T(23)` — exit + enter + state args (#128).
+        let sys = parse_py(
+            "machine:\n    $S {\n        go() {\n            (17) -> (19) => $T(23)\n        }\n        <$(x: int) { }\n    }\n    $T(s: int) {\n        $>(e: int) { }\n    }",
+        );
+        let t = first_transition(&sys);
+        assert_eq!(t.target, "T");
+        assert!(
+            t.is_forward,
+            "fully-decorated forward must keep is_forward and not be dropped"
+        );
     }
 
     #[test]

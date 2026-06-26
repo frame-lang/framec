@@ -217,7 +217,7 @@ public class Forward {
 
     private void _s_Start_hdl_user_run(ForwardFrameEvent __e, ForwardCompartment compartment) {
         this.starts = this.starts + 1;
-        ForwardCompartment __compartment = __prepareEnter("Middle", new ArrayList<>(), new ArrayList<>());
+        ForwardCompartment __compartment = __prepareEnter("Middle", new java.util.ArrayList<>(), new java.util.ArrayList<>());
         __compartment.forward_event = __e;
         __transition(__compartment);
         return;

@@ -1010,6 +1010,7 @@ pub(crate) fn rust_expand_transition(
     exit_str: &Option<String>,
     state_str: &Option<String>,
     enter_str: &Option<String>,
+    is_forward: bool,
 ) -> String {
     // Per-handler architecture with helpers (docs/frame_runtime.md
     // Step 21+): __prepareEnter / __prepareExit / __transition.
@@ -1267,36 +1268,20 @@ pub(crate) fn rust_expand_transition(
         }
     }
 
+    // Forward variant (#128): the destination re-dispatches the
+    // in-flight event after its enter cascade. The state/enter/exit
+    // arg writes above run identically — only this field is extra.
+    if is_forward {
+        code.push_str(&format!(
+            "{}__compartment.forward_event = Some(__e.clone());\n",
+            indent_str
+        ));
+    }
+
     code.push_str(&format!(
         "{}self.__transition(__compartment);\n{}return;",
         indent_str, indent_str
     ));
-    code
-}
-
-/// Rust transition-forward: build chain via __prepareEnter, set forward_event.
-pub(crate) fn rust_expand_forward_transition(
-    indent_str: &str,
-    _ctx: &HandlerContext,
-    target: &str,
-) -> String {
-    let mut code = String::new();
-    // Forward transition supplies no explicit enter_args — the
-    // forwarded event carries its own params, dispatched after the
-    // enter cascade by __process_transition_loop.
-    code.push_str(&format!(
-        "{}let mut __compartment = self.__prepareEnter(\"{}\");\n",
-        indent_str, target
-    ));
-    code.push_str(&format!(
-        "{}__compartment.forward_event = Some(__e.clone());\n",
-        indent_str
-    ));
-    code.push_str(&format!(
-        "{}self.__transition(__compartment);\n",
-        indent_str
-    ));
-    code.push_str(&format!("{}return;", indent_str));
     code
 }
 

@@ -87,11 +87,20 @@ impl FrameValidator {
             // `-> (enter_args) $State` and `-> $State(state_args)` into the
             // same token shape, so we can't distinguish them. Arity checking
             // for these cases defers to the target language compiler.
+            //
+            // Also skip when the transition carries scanner-enriched
+            // `state_args`/`enter_args` metadata: those are validated
+            // precisely (by name and count) in `transitions.rs`'s E405/E417
+            // checks. A decorated FORWARD transition (`-> => $S(args)`)
+            // lands here with an EMPTY `trans.args` (its args live in the
+            // metadata, not the positional vec), so without this guard the
+            // legacy count check would false-positive E405 (#128).
             let has_native_args = trans
                 .args
                 .iter()
                 .any(|a| matches!(a, Expression::NativeExpr(_)));
-            if !has_native_args {
+            let has_decorations = trans.state_args.is_some() || trans.enter_args.is_some();
+            if !has_native_args && !has_decorations {
                 let args_count = trans.args.len();
                 if let Some(expected) = arcanum.get_state_param_count(system_name, &trans.target) {
                     if expected != args_count

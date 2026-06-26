@@ -54,7 +54,7 @@ start(enter, _OldState, Data) ->
     {keep_state, Data};
 start({call, From}, __Event = run, Data) ->
     Data1 = Data#data{starts = Data#data.starts + 1},
-    frame_forward_transition__(middle, __Event, Data1, [], [], [], From)
+    frame_forward_transition__('middle', __Event, Data1, [], [], [], From)
 ;
 start(state_timeout, {frame_enter_transition, Target}, Data) ->
     {next_state, Target, Data};

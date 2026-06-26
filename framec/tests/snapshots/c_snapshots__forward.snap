@@ -620,9 +620,13 @@ static void Forward_state_End(Forward* self, Forward_FrameEvent* __e, Forward_Co
 
 static void Forward_s_Start_hdl_user_run(Forward* self, Forward_FrameEvent* __e, Forward_Compartment* compartment) {
     self->starts = self->starts + 1;
-    Forward_Compartment* __compartment = Forward_prepareEnter(self, "Middle", NULL, NULL);
-    __compartment->forward_event = __e;
-    Forward_transition(self, __compartment);
+    {
+        Forward_FrameVec* __sa = NULL;
+        Forward_FrameVec* __ea = NULL;
+        Forward_Compartment* __compartment = Forward_prepareEnter(self, "Middle", __sa, __ea);
+        __compartment->forward_event = __e;
+        Forward_transition(self, __compartment);
+    }
     return;
 }
 

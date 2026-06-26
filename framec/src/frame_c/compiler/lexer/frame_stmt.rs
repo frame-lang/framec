@@ -146,9 +146,15 @@ impl Lexer {
         if k >= end {
             return false;
         }
-        // -> => $State (transition forward)
+        // -> => $State (transition forward), optionally `-> => (enter) $State`
         if k + 1 < end && src[k] == b'=' && src[k + 1] == b'>' {
             k = skip_wsnl(src, k + 2, end);
+            // Optional enter args after the forward marker (#128).
+            if k < end && src[k] == b'(' {
+                if let Some(k2) = self.skipper.balanced_paren_end(src, k, end) {
+                    k = skip_wsnl(src, k2, end);
+                }
+            }
             return k < end && src[k] == b'$';
         }
         // -> pop$
@@ -164,6 +170,11 @@ impl Lexer {
         if src[k] == b'(' {
             if let Some(k2) = self.skipper.balanced_paren_end(src, k, end) {
                 k = skip_wsnl(src, k2, end);
+                // After (enter args), an optional `=>` forward marker may
+                // appear before the target (`-> (enter) => $State`, #128).
+                if k + 1 < end && src[k] == b'=' && src[k + 1] == b'>' {
+                    k = skip_wsnl(src, k + 2, end);
+                }
                 // After (args), skip optional "label"
                 if k < end && (src[k] == b'"' || src[k] == b'\'') {
                     let quote = src[k];
@@ -221,35 +232,48 @@ impl Lexer {
         // FRAMEC_BUGS #43. Same for the inter-token skips below.
         self.skip_ws_and_newlines();
 
-        // Check for -> => $State (transition forward)
-        if self.cursor + 1 < end
-            && self.source[self.cursor] == b'='
-            && self.source[self.cursor + 1] == b'>'
-        {
-            let fa_start = self.cursor;
-            self.cursor += 2;
-            tokens.push(Spanned {
-                token: Token::FatArrow,
-                span: Span::new(fa_start, self.cursor),
-            });
-            self.skip_ws_and_newlines();
-        }
-
-        // Check for enter args: (args)
-        if self.cursor < end && self.source[self.cursor] == b'(' {
-            if let Some(paren_end) = self
-                .skipper
-                .balanced_paren_end(&self.source, self.cursor, end)
+        // Forward marker `=>` and enter args `(args)` may appear in
+        // EITHER order between `->` and the `$State` (the grammar
+        // permits both `-> => (enter) $S` and `-> (enter) => $S`;
+        // frame_language.md §556). Scan for them in a small loop so a
+        // forward transition's enter args aren't stranded — leaving the
+        // trailing `=> $State` to be mis-lexed as a bare event-forward,
+        // which dropped the transition entirely (#128).
+        loop {
+            // `=>` forward marker
+            if self.cursor + 1 < end
+                && self.source[self.cursor] == b'='
+                && self.source[self.cursor + 1] == b'>'
             {
-                let args_text =
-                    String::from_utf8_lossy(&self.source[self.cursor..paren_end]).to_string();
+                let fa_start = self.cursor;
+                self.cursor += 2;
                 tokens.push(Spanned {
-                    token: Token::NativeCode(args_text),
-                    span: Span::new(self.cursor, paren_end),
+                    token: Token::FatArrow,
+                    span: Span::new(fa_start, self.cursor),
                 });
-                self.cursor = paren_end;
                 self.skip_ws_and_newlines();
+                continue;
             }
+            // enter args `(args)` — but only if a `$State` follows (so
+            // we don't swallow a state-arg paren or a label). A bare
+            // `(args)` here is the enter-args decoration.
+            if self.cursor < end && self.source[self.cursor] == b'(' {
+                if let Some(paren_end) =
+                    self.skipper
+                        .balanced_paren_end(&self.source, self.cursor, end)
+                {
+                    let args_text =
+                        String::from_utf8_lossy(&self.source[self.cursor..paren_end]).to_string();
+                    tokens.push(Spanned {
+                        token: Token::NativeCode(args_text),
+                        span: Span::new(self.cursor, paren_end),
+                    });
+                    self.cursor = paren_end;
+                    self.skip_ws_and_newlines();
+                    continue;
+                }
+            }
+            break;
         }
 
         // Check for label: "label" before $State
@@ -417,21 +441,43 @@ impl Lexer {
 
                 self.skip_inline_whitespace();
 
-                // Optional enter args
-                if self.cursor < end && self.source[self.cursor] == b'(' {
-                    if let Some(pe2) =
-                        self.skipper
-                            .balanced_paren_end(&self.source, self.cursor, end)
+                // Optional forward marker `=>` and enter args `(args)`, in
+                // EITHER order (`(exit) -> => (enter) $S` and
+                // `(exit) -> (enter) => $S` are both valid; #128). Loop so
+                // the forward marker on a decorated exit-arg transition
+                // isn't stranded (which dropped the whole transition and
+                // tripped W414 / E403).
+                loop {
+                    if self.cursor + 1 < end
+                        && self.source[self.cursor] == b'='
+                        && self.source[self.cursor + 1] == b'>'
                     {
-                        let enter_args =
-                            String::from_utf8_lossy(&self.source[self.cursor..pe2]).to_string();
+                        let fa_start = self.cursor;
+                        self.cursor += 2;
                         tokens.push(Spanned {
-                            token: Token::NativeCode(enter_args),
-                            span: Span::new(self.cursor, pe2),
+                            token: Token::FatArrow,
+                            span: Span::new(fa_start, self.cursor),
                         });
-                        self.cursor = pe2;
                         self.skip_inline_whitespace();
+                        continue;
                     }
+                    if self.cursor < end && self.source[self.cursor] == b'(' {
+                        if let Some(pe2) =
+                            self.skipper
+                                .balanced_paren_end(&self.source, self.cursor, end)
+                        {
+                            let enter_args =
+                                String::from_utf8_lossy(&self.source[self.cursor..pe2]).to_string();
+                            tokens.push(Spanned {
+                                token: Token::NativeCode(enter_args),
+                                span: Span::new(self.cursor, pe2),
+                            });
+                            self.cursor = pe2;
+                            self.skip_inline_whitespace();
+                            continue;
+                        }
+                    }
+                    break;
                 }
 
                 // State ref or pop$
@@ -443,6 +489,36 @@ impl Lexer {
                         token: Token::StateRef(name),
                         span: Span::new(sr_start, self.cursor),
                     });
+                    // State args: `$State(args)` — emit the args NativeCode
+                    // BEFORE the StateRef (Arrow → … → NC(state) → StateRef),
+                    // matching `lex_sol_transition`. Without this a decorated
+                    // exit-arg forward `(exit) -> => $S(state)` dropped its
+                    // state args (#128).
+                    if self.cursor < end && self.source[self.cursor] == b'(' {
+                        let paren_start = self.cursor;
+                        if let Some(paren_end) =
+                            self.skipper
+                                .balanced_paren_end(&self.source, self.cursor, end)
+                        {
+                            let args_text =
+                                String::from_utf8_lossy(&self.source[paren_start..paren_end])
+                                    .to_string();
+                            let inner = args_text
+                                .trim_start_matches('(')
+                                .trim_end_matches(')')
+                                .trim();
+                            if !inner.is_empty() {
+                                if let Some(state_ref) = tokens.pop() {
+                                    tokens.push(Spanned {
+                                        token: Token::NativeCode(args_text),
+                                        span: Span::new(paren_start, paren_end),
+                                    });
+                                    tokens.push(state_ref);
+                                }
+                            }
+                            self.cursor = paren_end;
+                        }
+                    }
                 } else if self.cursor + 3 < end
                     && self.source[self.cursor] == b'p'
                     && self.source[self.cursor + 1] == b'o'
