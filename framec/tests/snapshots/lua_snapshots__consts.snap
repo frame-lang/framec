@@ -202,3 +202,7 @@ function Consts:_s_Running_hdl_user_tick(__e, compartment)
         self.count = 0;
     end
 end
+
+return {
+    Consts = Consts,
+}

@@ -200,3 +200,7 @@ end
 function Actions:_scale(n)
     self.total = self.total + n * 2
 end
+
+return {
+    Actions = Actions,
+}

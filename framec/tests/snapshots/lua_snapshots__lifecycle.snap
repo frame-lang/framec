@@ -225,3 +225,7 @@ function Lifecycle:_s_Running_hdl_user_stop(__e, compartment)
     self:__transition(__compartment)
     return
 end
+
+return {
+    Lifecycle = Lifecycle,
+}

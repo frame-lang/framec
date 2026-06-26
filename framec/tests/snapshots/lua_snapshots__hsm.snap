@@ -269,3 +269,7 @@ function MiniHsm:_s_Asleep_hdl_user_wake(__e, compartment)
     self:__transition(__compartment)
     return
 end
+
+return {
+    MiniHsm = MiniHsm,
+}

@@ -290,3 +290,7 @@ function NoPersist:restore(json_str)
     end
     self.count = _parsed.count
 end
+
+return {
+    NoPersist = NoPersist,
+}

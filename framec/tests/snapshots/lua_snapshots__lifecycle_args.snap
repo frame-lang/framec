@@ -237,3 +237,7 @@ function LifecycleArgs:_s_Active_hdl_user_total(__e, compartment)
     self._context_stack[#self._context_stack]._return = self.sum
                     return
 end
+
+return {
+    LifecycleArgs = LifecycleArgs,
+}

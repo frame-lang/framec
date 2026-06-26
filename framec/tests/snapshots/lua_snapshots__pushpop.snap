@@ -245,3 +245,7 @@ function PushPop:_s_Nested_hdl_user_unnest(__e, compartment)
     self:__transition(__saved)
     return
 end
+
+return {
+    PushPop = PushPop,
+}

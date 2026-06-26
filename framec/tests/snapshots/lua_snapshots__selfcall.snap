@@ -197,3 +197,7 @@ end
 function SelfCall:_s_Active_hdl_user_report(__e, compartment)
     self._context_stack[#self._context_stack]._return = self.count
 end
+
+return {
+    SelfCall = SelfCall,
+}
