@@ -10,15 +10,18 @@
 //! - **Pop short-circuit** (`-> pop$`) — delegates to
 //!   `pop_transition::generate_pop_transition` (RFC-0008
 //!   decorations included).
-//! - **Forward short-circuit** (`-> => $State`) — sets the new
-//!   compartment's `forward_event` field so the destination
-//!   re-dispatches the in-flight event after enter completes.
-//! - **Regular transition** — the bulk: per-target compartment
-//!   construction, HSM ancestor chain walking
+//! - **Regular + forward transition** — the bulk: per-target
+//!   compartment construction, HSM ancestor chain walking
 //!   (`__prepareEnter`-style for the dynamic backends; eager
 //!   `parent_compartment` field threading for the static
 //!   backends), state_args / enter_args positional writes, and
-//!   the `__transition()` call.
+//!   the `__transition()` call. The forward variant
+//!   (`-> => $State`, optionally decorated) runs through this SAME
+//!   branch — sharing all exit/enter/state arg emission — and only
+//!   additionally sets the new compartment's `forward_event` field
+//!   (so the destination re-dispatches the in-flight event after
+//!   enter). Keeping the two on one path means the arg channels
+//!   can't drift apart again (#128).
 //!
 //! All language-specific emission stays here — no per-target
 //! crate-level helpers escape from this arm beyond what
@@ -76,293 +79,20 @@ pub(super) fn expand_transition(
             _ => (None, None),
         };
         generate_pop_transition(&indent_str, ctx, lang, &exit_str, &enter_str, is_forward)
-    } else if is_forward {
-        // Forward-transition: -> => $State
-        // Create compartment, set forward_event to current event,
-        // call __transition, return.
-        let target = match metadata {
-            SegmentMetadata::Transition { target_state, .. } => target_state.clone(),
-            _ => "Unknown".to_string(),
-        };
-        // Build the target state's HSM ancestry outer-in. Used
-        // below by the per-handler targets (Python/TS/JS/GDScript/
-        // Ruby/Lua) to construct the parent_compartment chain
-        // eagerly, never duplicating the transition-source
-        // compartment (see
-        // _scratch/bug_parent_compartment_hsm_walk.md).
-        let mut ancestors: Vec<String> = Vec::new();
-        let mut cursor = target.clone();
-        while let Some(parent) = ctx.state_hsm_parents.get(&cursor) {
-            ancestors.push(parent.clone());
-            cursor = parent.clone();
-        }
-        ancestors.reverse();
-
-        match lang {
-            TargetLanguage::Python3 => {
-                // Forward transition: same chain construction as
-                // a regular transition (via __prepareEnter), plus
-                // forward_event field set on the leaf.
-                let mut code = String::new();
-                code.push_str(&format!(
-                    "{}__compartment = self.__prepareEnter(\"{}\", [], [])\n",
-                    indent_str, target
-                ));
-                code.push_str(&format!(
-                    "{}__compartment.forward_event = __e\n",
-                    indent_str
-                ));
-                code.push_str(&format!("{}self.__transition(__compartment)\n", indent_str));
-                code.push_str(&format!("{}return", indent_str));
-                code
-            }
-            TargetLanguage::GDScript => {
-                // Forward transition: same chain via __prepareEnter,
-                // plus forward_event field set on the leaf.
-                let mut code = String::new();
-                code.push_str(&format!(
-                    "{}var __compartment = self.__prepareEnter(\"{}\", [], [])\n",
-                    indent_str, target
-                ));
-                code.push_str(&format!(
-                    "{}__compartment.forward_event = __e\n",
-                    indent_str
-                ));
-                code.push_str(&format!("{}self.__transition(__compartment)\n", indent_str));
-                code.push_str(&format!("{}return", indent_str));
-                code
-            }
-            TargetLanguage::TypeScript | TargetLanguage::JavaScript => {
-                // Forward transition: same chain via __prepareEnter,
-                // plus forward_event field set on the leaf.
-                let mut code = String::new();
-                code.push_str(&format!(
-                    "{}const __compartment = this.__prepareEnter(\"{}\", [], []);\n",
-                    indent_str, target
-                ));
-                code.push_str(&format!(
-                    "{}__compartment.forward_event = __e;\n",
-                    indent_str
-                ));
-                code.push_str(&format!(
-                    "{}this.__transition(__compartment);\n",
-                    indent_str
-                ));
-                code.push_str(&format!("{}return;", indent_str));
-                code
-            }
-            TargetLanguage::Dart => {
-                // Forward transition: same chain via __prepareEnter,
-                // plus forward_event field set on the leaf.
-                let mut code = String::new();
-                code.push_str(&format!(
-                    "{}final __compartment = this.__prepareEnter(\"{}\", [], []);\n",
-                    indent_str, target
-                ));
-                code.push_str(&format!(
-                    "{}__compartment.forward_event = __e;\n",
-                    indent_str
-                ));
-                code.push_str(&format!(
-                    "{}this.__transition(__compartment);\n",
-                    indent_str
-                ));
-                code.push_str(&format!("{}return;", indent_str));
-                code
-            }
-            TargetLanguage::Rust => {
-                super::super::rust_system::rust_expand_forward_transition(&indent_str, ctx, &target)
-            }
-            TargetLanguage::C => {
-                // Forward transition: same chain via __prepareEnter,
-                // plus forward_event field set on the leaf.
-                let mut code = String::new();
-                code.push_str(&format!(
-                            "{}{}_Compartment* __compartment = {}_prepareEnter(self, \"{}\", NULL, NULL);\n",
-                            indent_str, ctx.system_name, ctx.system_name, target
-                        ));
-                code.push_str(&format!(
-                    "{}__compartment->forward_event = __e;\n",
-                    indent_str
-                ));
-                code.push_str(&format!(
-                    "{}{}_transition(self, __compartment);\n",
-                    indent_str, ctx.system_name
-                ));
-                code.push_str(&format!("{}return;", indent_str));
-                code
-            }
-            TargetLanguage::Cpp => {
-                // Forward transition: same chain via __prepareEnter,
-                // plus forward_event field set on the leaf.
-                let mut code = String::new();
-                code.push_str(&format!(
-                            "{}auto __compartment = __prepareEnter(\"{}\", std::vector<std::any>{{}}, std::vector<std::any>{{}});\n",
-                            indent_str, target
-                        ));
-                code.push_str(&format!(
-                    "{}__compartment->forward_event = std::make_unique<{}FrameEvent>(__e);\n",
-                    indent_str, ctx.system_name
-                ));
-                code.push_str(&format!(
-                    "{}__transition(std::move(__compartment));\n",
-                    indent_str
-                ));
-                code.push_str(&format!("{}return;", indent_str));
-                code
-            }
-            TargetLanguage::Java => {
-                // Forward transition: same chain via __prepareEnter,
-                // plus forward_event field set on the leaf.
-                let mut code = String::new();
-                code.push_str(&format!(
-                            "{}{}Compartment __compartment = __prepareEnter(\"{}\", new ArrayList<>(), new ArrayList<>());\n",
-                            indent_str, ctx.system_name, target
-                        ));
-                code.push_str(&format!(
-                    "{}__compartment.forward_event = __e;\n",
-                    indent_str
-                ));
-                code.push_str(&format!("{}__transition(__compartment);\n", indent_str));
-                code.push_str(&format!("{}return;", indent_str));
-                code
-            }
-            TargetLanguage::Kotlin => {
-                // Forward transition: same chain via __prepareEnter,
-                // plus forward_event field set on the leaf.
-                let mut code = String::new();
-                code.push_str(&format!(
-                            "{}val __compartment = __prepareEnter(\"{}\", mutableListOf<Any?>(), mutableListOf<Any?>())\n",
-                            indent_str, target
-                        ));
-                code.push_str(&format!(
-                    "{}__compartment.forward_event = __e\n",
-                    indent_str
-                ));
-                code.push_str(&format!("{}__transition(__compartment)\n", indent_str));
-                code.push_str(&format!("{}return", indent_str));
-                code
-            }
-            TargetLanguage::Swift => {
-                // Forward transition: same chain via __prepareEnter,
-                // plus forward_event field set on the leaf.
-                let mut code = String::new();
-                code.push_str(&format!(
-                    "{}let __compartment = {}.__prepareEnter(\"{}\", [], [])\n",
-                    indent_str, ctx.system_name, target
-                ));
-                code.push_str(&format!(
-                    "{}__compartment.forward_event = __e\n",
-                    indent_str
-                ));
-                code.push_str(&format!("{}__transition(__compartment)\n", indent_str));
-                code.push_str(&format!("{}return", indent_str));
-                code
-            }
-            TargetLanguage::Php => {
-                // Forward transition: same chain via __prepareEnter,
-                // plus forward_event field set on the leaf.
-                let mut code = String::new();
-                code.push_str(&format!(
-                    "{}$__compartment = $this->__prepareEnter(\"{}\", [], []);\n",
-                    indent_str, target
-                ));
-                code.push_str(&format!(
-                    "{}$__compartment->forward_event = $__e;\n",
-                    indent_str
-                ));
-                code.push_str(&format!(
-                    "{}$this->__transition($__compartment);\n",
-                    indent_str
-                ));
-                code.push_str(&format!("{}return;", indent_str));
-                code
-            }
-            TargetLanguage::CSharp => {
-                // Forward transition: same chain via __prepareEnter,
-                // plus forward_event field set on the leaf. Local
-                // is `__next` (not `__compartment`) — see C# regular
-                // transition for why. Wrapped in `{ ... }` block
-                // for the same reason.
-                let mut code = String::new();
-                code.push_str(&format!(
-                            "{}{{ {}Compartment __next = __prepareEnter(\"{}\", new List<object>(), new List<object>());\n",
-                            indent_str, ctx.system_name, target
-                        ));
-                code.push_str(&format!("{}__next.forward_event = __e;\n", indent_str));
-                code.push_str(&format!("{}__transition(__next); }}\n", indent_str));
-                code.push_str(&format!("{}return;", indent_str));
-                code
-            }
-            TargetLanguage::Go => {
-                // Forward transition: same chain via __prepareEnter,
-                // plus forward_event field set on the leaf.
-                let mut code = String::new();
-                code.push_str(&format!(
-                    "{}__compartment := s.__prepareEnter(\"{}\", []any{{}}, []any{{}})\n",
-                    indent_str, target
-                ));
-                code.push_str(&format!("{}__compartment.forwardEvent = __e\n", indent_str));
-                code.push_str(&format!("{}s.__transition(__compartment)\n", indent_str));
-                code.push_str(&format!("{}return", indent_str));
-                code
-            }
-            TargetLanguage::Ruby => {
-                // Forward transition: same chain via __prepareEnter,
-                // plus forward_event field set on the leaf.
-                let mut code = String::new();
-                code.push_str(&format!(
-                    "{}__compartment = __prepareEnter(\"{}\", [], [])\n",
-                    indent_str, target
-                ));
-                code.push_str(&format!(
-                    "{}__compartment.forward_event = __e\n",
-                    indent_str
-                ));
-                code.push_str(&format!("{}__transition(__compartment)\n", indent_str));
-                code.push_str(&format!("{}return", indent_str));
-                code
-            }
-            TargetLanguage::Lua => {
-                // Forward transition. nil for empty args lists
-                // (block-transformer workaround — see regular-
-                // transition Lua case).
-                let mut code = String::new();
-                code.push_str(&format!(
-                    "{}local __compartment = self:__prepareEnter(\"{}\", nil, nil)\n",
-                    indent_str, target
-                ));
-                code.push_str(&format!(
-                    "{}__compartment.forward_event = __e\n",
-                    indent_str
-                ));
-                code.push_str(&format!("{}self:__transition(__compartment)\n", indent_str));
-                code.push_str(&format!("{}return", indent_str));
-                code
-            }
-            TargetLanguage::Erlang => {
-                // Forward transition: cascade exit/enter (same
-                // shape as `frame_transition__`) plus a
-                // `next_event` action that re-dispatches the
-                // originating event (`__Event`) to the new
-                // leaf after gen_statem fires its `state_enter`
-                // callback there. `__Event` is bound by the
-                // handler clause's pattern (see
-                // erlang_system.rs handler emission). Forward
-                // transitions can't carry their own
-                // exit/enter/state args at the Frame level
-                // (the syntax is just `-> => $State`), so all
-                // three arg maps are empty.
-                let erlang_state = to_snake_case(&target);
-                format!(
-                    "{}frame_forward_transition__({}, __Event, Data, [], [], [], From)",
-                    indent_str, erlang_state
-                )
-            }
-            TargetLanguage::Graphviz => unreachable!(),
-        }
     } else {
-        // Normal transition: -> $State with exit/enter/state args
+        // Transition: `(exit) -> (enter) $State(state)`, plus the
+        // forward variant `(exit) -> (enter) => $State(state)`.
+        //
+        // Both variants share ALL arg emission — exit args via
+        // __prepareExit, enter+state args via __prepareEnter — so the
+        // two paths run through THIS one branch (#128: the old separate
+        // forward branch emitted empty arg channels and silently
+        // dropped every decoration). The ONLY difference is the forward
+        // variant additionally sets the new compartment's
+        // `forward_event` field (emitted by `forward_event_line` below,
+        // inserted between __prepareEnter and __transition) so the
+        // destination re-dispatches the in-flight event after enter.
+        //
         // Transition metadata is always populated by the scanner.
         let (target, exit_args, enter_args, state_args) = match metadata {
             SegmentMetadata::Transition {
@@ -390,6 +120,52 @@ pub(super) fn expand_transition(
 
         // Get compartment class name from system name
         let _compartment_class = format!("{}Compartment", ctx.system_name);
+
+        // Forward variant only: the line that sets the destination
+        // compartment's `forward_event` so the in-flight event is
+        // re-dispatched into the target after its enter cascade. The
+        // compartment-local name varies per backend (`__compartment`,
+        // `__next`, `$__compartment`, …), so the caller passes it in.
+        // Returns "" for a non-forward transition (regular path).
+        let forward_event_line = |comp: &str| -> String {
+            if !is_forward {
+                return String::new();
+            }
+            match lang {
+                TargetLanguage::Python3
+                | TargetLanguage::GDScript
+                | TargetLanguage::Swift
+                | TargetLanguage::Kotlin
+                | TargetLanguage::Ruby
+                | TargetLanguage::Lua => {
+                    format!("{}{}.forward_event = __e\n", indent_str, comp)
+                }
+                TargetLanguage::TypeScript | TargetLanguage::JavaScript | TargetLanguage::Dart => {
+                    format!("{}{}.forward_event = __e;\n", indent_str, comp)
+                }
+                TargetLanguage::Java | TargetLanguage::CSharp => {
+                    format!("{}{}.forward_event = __e;\n", indent_str, comp)
+                }
+                TargetLanguage::Php => {
+                    format!("{}{}->forward_event = $__e;\n", indent_str, comp)
+                }
+                TargetLanguage::Go => {
+                    format!("{}{}.forwardEvent = __e\n", indent_str, comp)
+                }
+                TargetLanguage::C => {
+                    format!("{}{}->forward_event = __e;\n", indent_str, comp)
+                }
+                TargetLanguage::Cpp => format!(
+                    "{}{}->forward_event = std::make_unique<{}FrameEvent>(__e);\n",
+                    indent_str, comp, ctx.system_name
+                ),
+                // Rust + Erlang dispatch to dedicated helpers below and
+                // never call this closure.
+                TargetLanguage::Rust | TargetLanguage::Erlang | TargetLanguage::Graphviz => {
+                    String::new()
+                }
+            }
+        };
 
         match lang {
             TargetLanguage::Python3 => {
@@ -467,6 +243,9 @@ pub(super) fn expand_transition(
                     indent_str, target, state_args_list, enter_args_list
                 ));
 
+                // Forward variant: re-dispatch the in-flight event.
+                code.push_str(&forward_event_line("__compartment"));
+
                 // Cache and return.
                 code.push_str(&format!(
                     "{}self.__transition(__compartment)\n{}return",
@@ -535,6 +314,8 @@ pub(super) fn expand_transition(
                     indent_str, target, state_args_list, enter_args_list
                 ));
 
+                code.push_str(&forward_event_line("__compartment"));
+
                 code.push_str(&format!(
                     "{}self.__transition(__compartment)\n{}return",
                     indent_str, indent_str
@@ -601,6 +382,8 @@ pub(super) fn expand_transition(
                     "{}const __compartment = this.__prepareEnter(\"{}\", {}, {});\n",
                     indent_str, target, state_args_list, enter_args_list
                 ));
+
+                code.push_str(&forward_event_line("__compartment"));
 
                 code.push_str(&format!(
                     "{}this.__transition(__compartment);\n{}return;",
@@ -669,6 +452,8 @@ pub(super) fn expand_transition(
                     indent_str, target, state_args_list, enter_args_list
                 ));
 
+                code.push_str(&forward_event_line("__compartment"));
+
                 code.push_str(&format!(
                     "{}this.__transition(__compartment);\n{}return;",
                     indent_str, indent_str
@@ -682,6 +467,7 @@ pub(super) fn expand_transition(
                 &exit_str,
                 &state_str,
                 &enter_str,
+                is_forward,
             ),
             TargetLanguage::C => {
                 // Per-handler architecture with helpers (per
@@ -869,6 +655,12 @@ pub(super) fn expand_transition(
                         indent_str, sys
                     ));
                 }
+                if is_forward {
+                    code.push_str(&format!(
+                        "{}    __compartment->forward_event = __e;\n",
+                        indent_str
+                    ));
+                }
                 code.push_str(&format!(
                     "{}    {}_transition(self, __compartment);\n",
                     indent_str, sys
@@ -933,6 +725,8 @@ pub(super) fn expand_transition(
                     "{}auto __next = __prepareEnter(\"{}\", {}, {});\n",
                     indent_str, target, state_args_list, enter_args_list
                 ));
+
+                code.push_str(&forward_event_line("__next"));
 
                 code.push_str(&format!(
                     "{}__transition(std::move(__next));\n{}return;",
@@ -1008,6 +802,8 @@ pub(super) fn expand_transition(
                     indent_str, ctx.system_name, target, state_args_list, enter_args_list
                 ));
 
+                code.push_str(&forward_event_line("__compartment"));
+
                 code.push_str(&format!(
                     "{}__transition(__compartment);\n{}return;",
                     indent_str, indent_str
@@ -1076,6 +872,8 @@ pub(super) fn expand_transition(
                     indent_str, target, state_args_list, enter_args_list
                 ));
 
+                code.push_str(&forward_event_line("__compartment"));
+
                 code.push_str(&format!(
                     "{}__transition(__compartment)\n{}return",
                     indent_str, indent_str
@@ -1135,6 +933,8 @@ pub(super) fn expand_transition(
                     "{}let __compartment = {}.__prepareEnter(\"{}\", {}, {})\n",
                     indent_str, ctx.system_name, target, state_args_list, enter_args_list
                 ));
+
+                code.push_str(&forward_event_line("__compartment"));
 
                 code.push_str(&format!(
                     "{}__transition(__compartment)\n{}return",
@@ -1213,6 +1013,8 @@ pub(super) fn expand_transition(
                     indent_str, ctx.system_name, target, state_args_list, enter_args_list
                 ));
 
+                code.push_str(&forward_event_line("__next"));
+
                 code.push_str(&format!(
                     "{}__transition(__next); }}\n{}return;",
                     indent_str, indent_str
@@ -1272,6 +1074,8 @@ pub(super) fn expand_transition(
                     "{}__compartment := s.__prepareEnter(\"{}\", {}, {})\n",
                     indent_str, target, state_args_list, enter_args_list
                 ));
+
+                code.push_str(&forward_event_line("__compartment"));
 
                 code.push_str(&format!(
                     "{}s.__transition(__compartment)\n{}return",
@@ -1349,6 +1153,8 @@ pub(super) fn expand_transition(
                     indent_str, target, state_args_list, enter_args_list
                 ));
 
+                code.push_str(&forward_event_line("$__compartment"));
+
                 code.push_str(&format!(
                     "{}$this->__transition($__compartment);\n{}return;",
                     indent_str, indent_str
@@ -1415,6 +1221,8 @@ pub(super) fn expand_transition(
                     "{}__compartment = __prepareEnter(\"{}\", {}, {})\n",
                     indent_str, target, state_args_list, enter_args_list
                 ));
+
+                code.push_str(&forward_event_line("__compartment"));
 
                 code.push_str(&format!(
                     "{}__transition(__compartment)\n{}return",
@@ -1500,6 +1308,8 @@ pub(super) fn expand_transition(
                     indent_str, target, state_arg, enter_arg
                 ));
 
+                code.push_str(&forward_event_line("__compartment"));
+
                 code.push_str(&format!(
                     "{}self:__transition(__compartment)\n{}return",
                     indent_str, indent_str
@@ -1558,10 +1368,25 @@ pub(super) fn expand_transition(
                 // param `active`) the capitalize pass would otherwise
                 // turn the atom into the param's variable form.
                 // `'active'` and `active` are equivalent Erlang atoms.
-                code.push_str(&format!(
-                    "{}frame_transition__('{}', Data, {}, {}, {}, From, __ReturnVal)",
-                    indent_str, erlang_state, exit_list, enter_list, state_list
-                ));
+                if is_forward {
+                    // Forward variant: cascade exit/enter (same lifecycle)
+                    // PLUS a `next_event` action that re-dispatches the
+                    // originating event (`__Event`) to the new leaf after
+                    // gen_statem fires its `state_enter` callback there.
+                    // `__Event` is bound by the handler clause's pattern.
+                    // Decorations now flow through (#128): exit/enter/state
+                    // args are passed positionally, identical to the regular
+                    // form.
+                    code.push_str(&format!(
+                        "{}frame_forward_transition__('{}', __Event, Data, {}, {}, {}, From)",
+                        indent_str, erlang_state, exit_list, enter_list, state_list
+                    ));
+                } else {
+                    code.push_str(&format!(
+                        "{}frame_transition__('{}', Data, {}, {}, {}, From, __ReturnVal)",
+                        indent_str, erlang_state, exit_list, enter_list, state_list
+                    ));
+                }
                 code
             }
             TargetLanguage::Graphviz => unreachable!(),

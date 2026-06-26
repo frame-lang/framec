@@ -837,12 +837,24 @@ fn match_frame_statement<S: SyntaxSkipper>(
         // native `->` forms (Rust `-> T`, Erlang `-> Expr`) from matching.
         let mut k = skip_ws_nl(bytes, pos + 2, end);
 
-        // Check for -> => $State (transition forward)
-        if k + 1 < end && bytes[k] == b'=' && bytes[k + 1] == b'>' {
-            k = skip_ws_nl(bytes, k + 2, end);
-            if k < end && bytes[k] == b'$' {
-                return Some((k, FrameSegmentKind::Transition));
+        // The forward marker `=>` and enter args `(args)` may appear in
+        // EITHER order between `->` and the target (`-> => (enter) $S` and
+        // `-> (enter) => $S` are both valid; frame_language.md §556, #128).
+        // Scan both in a small loop before the pop$/label/$State checks so
+        // a decorated forward transition isn't misclassified (it used to
+        // strand the trailing `=> $State` as a bare event-forward).
+        loop {
+            if k + 1 < end && bytes[k] == b'=' && bytes[k + 1] == b'>' {
+                k = skip_ws_nl(bytes, k + 2, end);
+                continue;
             }
+            if k < end && bytes[k] == b'(' {
+                if let Some(k2) = skipper.balanced_paren_end(bytes, k, end) {
+                    k = skip_ws_nl(bytes, k2, end);
+                    continue;
+                }
+            }
+            break;
         }
 
         // Check for -> pop$ (pop transition — this IS a transition, not standalone pop)
@@ -853,13 +865,6 @@ fn match_frame_statement<S: SyntaxSkipper>(
             && bytes[k + 3] == b'$'
         {
             return Some((k + 4, FrameSegmentKind::Transition));
-        }
-
-        // Check for optional enter args: -> (args) $State
-        if k < end && bytes[k] == b'(' {
-            if let Some(k2) = skipper.balanced_paren_end(bytes, k, end) {
-                k = skip_ws_nl(bytes, k2, end);
-            }
         }
 
         // Check for optional label: -> "label" $State or -> (args) "label" $State
@@ -903,17 +908,28 @@ fn match_frame_statement<S: SyntaxSkipper>(
         }
     }
 
-    // Transition with leading exit args: (exit_args) -> (enter_args) $State
+    // Transition with leading exit args:
+    //   (exit) -> (enter)? $State        (regular)
+    //   (exit) -> => (enter)? $State     (forward, #128)
+    //   (exit) -> (enter)? => $State     (forward, #128)
     if b == b'(' {
         if let Some(k) = skipper.balanced_paren_end(bytes, pos, end) {
             let mut k = skip_ws(bytes, k, end);
             if k + 1 < end && bytes[k] == b'-' && bytes[k + 1] == b'>' {
                 k = skip_ws(bytes, k + 2, end);
-                // Optional enter args
-                if k < end && bytes[k] == b'(' {
-                    if let Some(k2) = skipper.balanced_paren_end(bytes, k, end) {
-                        k = skip_ws(bytes, k2, end);
+                // Forward marker `=>` and enter args `(args)` in either order.
+                loop {
+                    if k + 1 < end && bytes[k] == b'=' && bytes[k + 1] == b'>' {
+                        k = skip_ws(bytes, k + 2, end);
+                        continue;
                     }
+                    if k < end && bytes[k] == b'(' {
+                        if let Some(k2) = skipper.balanced_paren_end(bytes, k, end) {
+                            k = skip_ws(bytes, k2, end);
+                            continue;
+                        }
+                    }
+                    break;
                 }
                 if k < end && bytes[k] == b'$' {
                     return Some((k, FrameSegmentKind::Transition));

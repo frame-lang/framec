@@ -87,6 +87,45 @@ pub fn compile_expect_error(source: &str, target: &str) -> String {
     }
 }
 
+/// Compile inline source and return `(generated_code, warning_strings)`.
+/// Unlike `compile_source`, this exposes the validator's non-fatal
+/// warnings (e.g. `W414`) for assertion — they are otherwise only
+/// printed to stderr by the `compile_module` wrapper. Each warning
+/// string is `"<code>: <message>"`. Panics on a hard compile error.
+pub fn compile_with_warnings(source: &str, target: &str) -> (String, Vec<String>) {
+    use framec::frame_c::compiler::pipeline::{compile_ast_based, PipelineConfig};
+    let lang = TargetLanguage::try_from(target)
+        .unwrap_or_else(|e| panic!("unknown target language '{}': {}", target, e));
+    let config = PipelineConfig::production(lang);
+    match compile_ast_based(source.as_bytes(), &config) {
+        Ok(result) if result.errors.is_empty() => {
+            let warnings = result
+                .warnings
+                .iter()
+                .map(|w| format!("{}: {}", w.code, w.message))
+                .collect();
+            (result.code, warnings)
+        }
+        Ok(result) => {
+            let errs: Vec<String> = result
+                .errors
+                .iter()
+                .map(|e| format!("{}: {}", e.code, e.message))
+                .collect();
+            panic!(
+                "framec failed to compile inline source for target {}:\n{}\n--- source ---\n{}",
+                target,
+                errs.join("\n"),
+                source
+            )
+        }
+        Err(RunError { error, .. }) => panic!(
+            "framec failed to compile inline source for target {}:\n{}\n--- source ---\n{}",
+            target, error, source
+        ),
+    }
+}
+
 // ─── RFC-0034: per-backend in-process compile checks ─────────────────
 //
 // Snapshot tests historically only diff TEXT; the .snap file could
