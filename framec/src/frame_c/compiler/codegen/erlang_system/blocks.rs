@@ -143,6 +143,103 @@ pub(super) fn erlang_lower_native_if(text: &str) -> String {
     out.join("\n")
 }
 
+/// Normalize inline `if`/`else` brace blocks onto their own lines so the
+/// line-oriented `erlang_transform_blocks` can lower them.
+///
+/// Handler bodies reach `erlang_transform_blocks` already statement-split
+/// (each `{`/`}` on its own line) by `emit_handler_body_via_statements`.
+/// Action and operation bodies, however, are read as raw source text and
+/// may carry an `if cond { body }` block all on one physical line, which
+/// the lowering's `trimmed.ends_with('{')` opener test never matches —
+/// leaving the raw brace block in the output (issue #132D).
+///
+/// This pass rewrites only the brace that immediately follows an
+/// `if … `/`} else `/`} else if … ` keyword head: the opener `{` is moved
+/// to end its own line, the body content is placed on a following line,
+/// and the matching `}` is dropped onto its own line. Braces that are NOT
+/// in an `if`/`else` context (maps `#{…}`, tuples, records) are left
+/// untouched, mirroring `erlang_transform_blocks`'s own keyword gating.
+pub(super) fn erlang_split_inline_if_braces(text: &str) -> String {
+    let mut out: Vec<String> = Vec::new();
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        let indent = &line[..line.len() - trimmed.len()];
+        let is_if_head = trimmed.starts_with("if ")
+            || trimmed.starts_with("} else if ")
+            || trimmed.starts_with("}else if ")
+            || trimmed.starts_with("} else {")
+            || trimmed.starts_with("} else{")
+            || trimmed.starts_with("}else{");
+        // Only split when the line both opens an if/else head AND carries
+        // inline body content after the `{` (i.e. it isn't already the
+        // brace-terminated form the lowering expects).
+        if is_if_head && trimmed.contains('{') && !trimmed.trim_end().ends_with('{') {
+            split_one_inline_block(line, indent, &mut out);
+        } else {
+            out.push(line.to_string());
+        }
+    }
+    out.join("\n")
+}
+
+/// Split a single `<head> { <body> }` line into the multi-line form
+/// `<head> {` / `<body>` / `}`, recursing into `<body>` so a nested
+/// inline block is also normalized. The `{` matched is the first one,
+/// which (given the caller's keyword gate) is the if/else opener.
+fn split_one_inline_block(line: &str, indent: &str, out: &mut Vec<String>) {
+    let trimmed = line.trim();
+    let open = match trimmed.find('{') {
+        Some(p) => p,
+        None => {
+            out.push(line.to_string());
+            return;
+        }
+    };
+    // Find the matching close brace for this opener (depth-balanced).
+    let bytes = trimmed.as_bytes();
+    let mut depth = 0i32;
+    let mut close = None;
+    for (idx, &b) in bytes.iter().enumerate().skip(open) {
+        match b {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    close = Some(idx);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let close = match close {
+        Some(c) => c,
+        None => {
+            // Unbalanced — leave as-is rather than corrupt the line.
+            out.push(line.to_string());
+            return;
+        }
+    };
+    let head = trimmed[..open].trim_end();
+    let body = trimmed[open + 1..close].trim();
+    let tail = trimmed[close + 1..].trim();
+    out.push(format!("{}{} {{", indent, head));
+    if !body.is_empty() {
+        // The body may itself contain an inline `if … { … }` (e.g.
+        // `if a { if b { x } }`) — recurse so it too is split.
+        for sub in erlang_split_inline_if_braces(&format!("{}    {}", indent, body)).lines() {
+            out.push(sub.to_string());
+        }
+    }
+    // The closer line carries any trailing `else`/`else if` head so the
+    // lowering can pick it up on the next iteration.
+    if tail.is_empty() {
+        out.push(format!("{}}}", indent));
+    } else {
+        out.push(format!("{}}} {}", indent, tail));
+    }
+}
+
 /// Transform C-family `if/else { }` block syntax to Erlang `case/of/end`.
 ///
 /// Runs on the spliced handler body text AFTER Frame statements have

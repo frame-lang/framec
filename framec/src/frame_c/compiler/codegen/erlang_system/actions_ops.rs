@@ -33,7 +33,7 @@
 //! Frame programmers expect for hand-rolled modules.
 
 use super::super::codegen_utils::{replace_outside_strings_and_comments, to_snake_case};
-use super::blocks::{erlang_smart_join, erlang_transform_blocks};
+use super::blocks::{erlang_smart_join, erlang_split_inline_if_braces, erlang_transform_blocks};
 use super::body_processor::{erlang_capitalize_params, erlang_process_body_lines_full};
 use super::lexical::{erlang_op_name, erlang_safe_capitalize};
 use crate::frame_c::compiler::frame_ast::SystemAst;
@@ -338,6 +338,17 @@ pub(super) fn emit_actions_and_operations(
                 inner,
                 TargetLanguage::Erlang,
             );
+            // Lower Frame brace blocks (`if cond { … }`) to Erlang
+            // `case … of` BEFORE the per-line processor — the operation
+            // body path previously skipped this (the handler path runs it
+            // via `emit_handler_body_via_statements`), so any control flow
+            // in an operation body leaked the raw `if cond {` brace form
+            // into the output and failed to compile (issue #132D). The
+            // raw-source operation body may carry the whole `if cond {
+            // body }` on one line, so first normalize inline braces onto
+            // their own lines, then run the line-oriented lowering.
+            let inner = erlang_split_inline_if_braces(&inner);
+            let inner = erlang_transform_blocks(&inner);
             let inner = inner.as_str();
 
             // Process lines: strip return keyword, capitalize params, rewrite self

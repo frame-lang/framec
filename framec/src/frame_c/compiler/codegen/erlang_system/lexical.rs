@@ -27,6 +27,68 @@
 
 use super::super::codegen_utils::to_snake_case;
 
+/// Erlang's reserved words. Any of these used where Frame would emit a
+/// bare atom (state-function names, the `frame_current_state` atom, the
+/// `-export` entry, router clauses, `frame_state_name__` arms) must be
+/// single-quoted so the parser reads it as an atom rather than a
+/// keyword. `'begin'` is a valid atom; bare `begin` opens a
+/// `begin … end` block.
+const ERLANG_RESERVED: &[&str] = &[
+    "after", "and", "andalso", "band", "begin", "bnot", "bor", "bsl", "bsr", "bxor", "case",
+    "catch", "cond", "div", "end", "fun", "if", "let", "not", "of", "or", "orelse", "receive",
+    "rem", "try", "when", "xor",
+];
+
+/// True if `atom` (already snake-cased) is an Erlang reserved word and
+/// therefore must be single-quoted to be used as an atom.
+fn is_erlang_reserved(atom: &str) -> bool {
+    ERLANG_RESERVED.contains(&atom)
+}
+
+/// Convert a Frame state name (`$Begin`, `$MyState`) to the Erlang atom
+/// used for its state-function name / `frame_current_state` value /
+/// router dispatch. Snake-cases like `to_snake_case`, then single-quotes
+/// the result when it collides with an Erlang reserved word so the
+/// parser treats it as an atom rather than a keyword.
+///
+/// Every site that emits a state name as a *bare atom* (the function
+/// clause head, `{ok, State, …}` in `init`, `frame_current_state =
+/// State`, `-export([State/3])`, the `frame_state_name__` arms, and the
+/// `frame_dispatch__` router) routes through this helper so the quoting
+/// is uniform. Transition *targets* (`frame_transition__('state', …)`)
+/// already arrive pre-quoted from the transition emitter, so quoting a
+/// reserved word there is a no-op — `'begin'` is idempotent under an
+/// outer quote pass because the transition emitter quotes the raw
+/// snake-cased name and the validator never lets a `'`-containing name
+/// reach it.
+pub(crate) fn erlang_state_atom(name: &str) -> String {
+    let snake = to_snake_case(name);
+    if is_erlang_reserved(&snake) {
+        format!("'{}'", snake)
+    } else {
+        snake
+    }
+}
+
+/// Convert a Frame domain-field / record-field name to a valid Erlang
+/// record field. Erlang record fields are atoms and must therefore start
+/// lowercase; an uppercase / PascalCase field (`Big`) is rejected by the
+/// parser. Snake-case downcases the leading character (and any embedded
+/// PascalCase humps) so `Big` → `big`, `MaxCount` → `max_count`. A
+/// reserved-word collision is single-quoted, matching `erlang_state_atom`.
+///
+/// Both the record definition and every `#data{Field = …}` update /
+/// `Data#data.Field` read route through this helper so the field name is
+/// spelled identically at every site.
+pub(crate) fn erlang_record_field(name: &str) -> String {
+    let snake = to_snake_case(name);
+    if is_erlang_reserved(&snake) {
+        format!("'{}'", snake)
+    } else {
+        snake
+    }
+}
+
 /// Word-boundary string substitution. Replaces `needle` with `replacement`
 /// only when `needle` appears as a complete identifier (surrounded by
 /// non-word chars or string boundaries). Used to substitute Frame param
@@ -82,6 +144,60 @@ pub(crate) fn erlang_op_name(name: &str) -> String {
         Some('_') => format!("'{}'", name),
         Some(_) => name.to_string(),
     }
+}
+
+/// Normalize every record-field occurrence of a domain field from its
+/// original Frame spelling (`Big`) to the canonical lowercase Erlang
+/// atom (`big`) across the whole emitted module. Erlang record fields
+/// are atoms and must be lowercase; the record definition and ctor
+/// overrides are already emitted canonical at their source, but
+/// handler/operation bodies derive `Data#data.<field>` reads and
+/// `#data{<field> = …}` updates textually from the user's `self.<Name>`,
+/// preserving the original case — this pass fixes those sites (issue
+/// #132B).
+///
+/// A field name only ever appears in a record-field position, which is
+/// one of:
+///   - a *read*:   `…#data.Big`           (preceded by `.`)
+///   - an *update*: `#data{Big = …}` / `, Big = …` (preceded by `{` or
+///     `,`, followed by ` =`)
+/// Domain field names are globally unique identifiers in Frame, so
+/// anchoring on these contexts is precise: a same-named local/param in
+/// user code never lands in a `#data.`/`#data{}` position.
+pub(super) fn normalize_record_field(code: &str, original: &str, canonical: &str) -> String {
+    if original == canonical || original.is_empty() {
+        return code.to_string();
+    }
+    let bytes = code.as_bytes();
+    let orig = original.as_bytes();
+    let n = bytes.len();
+    let m = orig.len();
+    let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let mut out = String::with_capacity(n);
+    let mut i = 0;
+    while i < n {
+        if i + m <= n && bytes[i..i + m] == *orig {
+            let prev = if i == 0 { b'\n' } else { bytes[i - 1] };
+            let next_ok = i + m == n || !is_word(bytes[i + m]);
+            // Trailing context after the field token (skip spaces) to
+            // confirm a record-update `field = …`.
+            let mut j = i + m;
+            while j < n && (bytes[j] == b' ' || bytes[j] == b'\t') {
+                j += 1;
+            }
+            let followed_by_eq = j < n && bytes[j] == b'=' && (j + 1 >= n || bytes[j + 1] != b'=');
+            let read_ctx = prev == b'.';
+            let update_ctx = (prev == b'{' || prev == b',') && followed_by_eq;
+            if next_ok && (read_ctx || update_ctx) {
+                out.push_str(canonical);
+                i += m;
+                continue;
+            }
+        }
+        out.push(bytes[i] as char);
+        i += 1;
+    }
+    out
 }
 
 /// Word-boundary substring search. Returns true iff `needle` appears in

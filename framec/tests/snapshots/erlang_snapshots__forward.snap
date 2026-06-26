@@ -6,7 +6,7 @@ expression: "compile_fixture(\"07_forward\", \"erlang\")"
 -behaviour(gen_statem).
 -export([start_link/0, frame_init/1, create/0, run/1, finish/1]).
 -export([callback_mode/0, init/1]).
--export([start/3, middle/3, end/3]).
+-export([start/3, middle/3, 'end'/3]).
 -record(data, {
     starts = 0,
     middles = 0,
@@ -80,17 +80,17 @@ middle({call, From}, _Event, Data) ->
 middle(_EventType, _Event, Data) ->
     {keep_state, Data}.
 
-end(enter, _OldState, #data{frame_skip_enter__ = true} = Data) ->
+'end'(enter, _OldState, #data{frame_skip_enter__ = true} = Data) ->
     {keep_state, Data#data{frame_skip_enter__ = false}};
-end(enter, _OldState, Data) ->
+'end'(enter, _OldState, Data) ->
     {keep_state, Data};
-end({call, From}, __Event = finish, Data) ->
+'end'({call, From}, __Event = finish, Data) ->
     {keep_state, Data, [{reply, From, ok}]};
-end(state_timeout, {frame_enter_transition, Target}, Data) ->
+'end'(state_timeout, {frame_enter_transition, Target}, Data) ->
     {next_state, Target, Data};
-end({call, From}, _Event, Data) ->
+'end'({call, From}, _Event, Data) ->
     {keep_state, Data, [{reply, From, ok}]};
-end(_EventType, _Event, Data) ->
+'end'(_EventType, _Event, Data) ->
     {keep_state, Data}.
 
 frame_arg_at__(_, []) -> undefined;
@@ -129,7 +129,7 @@ frame_state_name__(A) when is_atom(A) ->
     case A of
         start -> "Start";
         middle -> "Middle";
-        end -> "End";
+        'end' -> "End";
         _ -> atom_to_list(A)
     end.
 

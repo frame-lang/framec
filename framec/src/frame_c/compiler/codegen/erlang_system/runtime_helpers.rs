@@ -29,6 +29,7 @@
 //! per state with an exit handler.
 
 use super::super::codegen_utils::to_snake_case;
+use super::lexical::erlang_state_atom;
 use crate::frame_c::compiler::frame_ast::SystemAst;
 
 pub(super) fn emit_runtime_helpers(code: &mut String, system: &SystemAst) {
@@ -127,10 +128,13 @@ pub(super) fn emit_runtime_helpers(code: &mut String, system: &SystemAst) {
                 // No exit handler — falls through to the `_ -> Data` arm.
                 continue;
             }
-            let sname = to_snake_case(&state.name);
+            // Match arm = bare state atom (quoted if reserved); the
+            // `frame_exit__` suffix is a plain snake identifier.
+            let arm = erlang_state_atom(&state.name);
+            let suffix = to_snake_case(&state.name);
             code.push_str(&format!(
                 "        {} -> frame_exit__{}(Data);\n",
-                sname, sname
+                arm, suffix
             ));
         }
     }
@@ -148,7 +152,7 @@ pub(super) fn emit_runtime_helpers(code: &mut String, system: &SystemAst) {
     code.push_str("    case A of\n");
     if let Some(ref machine) = system.machine {
         for state in &machine.states {
-            let atom = to_snake_case(&state.name);
+            let atom = erlang_state_atom(&state.name);
             code.push_str(&format!("        {} -> \"{}\";\n", atom, state.name));
         }
     }

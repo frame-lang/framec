@@ -44,8 +44,9 @@ use case_arms::{
     CaseBlockClassification,
 };
 use lexical::{
-    erlang_op_name, erlang_safe_capitalize, expand_system_instantiation_in_domain_erlang,
-    raw_contains_word, replace_whole_word, replace_word, split_top_level_commas,
+    erlang_op_name, erlang_record_field, erlang_safe_capitalize, erlang_state_atom,
+    expand_system_instantiation_in_domain_erlang, normalize_record_field, raw_contains_word,
+    replace_whole_word, replace_word, split_top_level_commas,
 };
 use self_call_guards::erlang_wrap_self_call_guards;
 
@@ -177,11 +178,13 @@ pub(crate) fn generate_erlang_system(
 
     let first_state = states
         .first()
-        .map(|s| to_snake_case(s))
+        .map(|s| erlang_state_atom(s))
         .unwrap_or_else(|| "init_state".to_string());
 
-    // State name conversion: $MyState -> my_state
-    let state_atom = |name: &str| -> String { to_snake_case(name) };
+    // State name conversion: $MyState -> my_state, with reserved-word
+    // atoms (`$Begin` -> `'begin'`) single-quoted so the Erlang parser
+    // reads them as atoms rather than keywords (issue #132A).
+    let state_atom = |name: &str| -> String { erlang_state_atom(name) };
 
     // System params (header parameters): used to thread constructor
     // arguments through start_link/N → init/1 → the #data{} record
@@ -293,7 +296,15 @@ pub(crate) fn generate_erlang_system(
             Some(init) => expand_system_instantiation_in_domain_erlang(init),
             None => "undefined".to_string(),
         };
-        all_fields.push(format!("    {} = {}", var.name, init_for_record));
+        // Erlang record fields are atoms and must be lowercase
+        // (`Big` -> `big`); the matching `Data#data.<field>` reads/updates
+        // are normalized to the same spelling by the post-pass below
+        // (issue #132B).
+        all_fields.push(format!(
+            "    {} = {}",
+            erlang_record_field(&var.name),
+            init_for_record
+        ));
     }
 
     // State variables — prefixed with sv_StateName_ to avoid collisions
@@ -436,7 +447,11 @@ pub(crate) fn generate_erlang_system(
                     let cap = erlang_safe_capitalize(&p.name);
                     substituted = replace_word(&substituted, &p.name, &cap);
                 }
-                record_overrides.push(format!("{} = {}", var.name, substituted));
+                record_overrides.push(format!(
+                    "{} = {}",
+                    erlang_record_field(&var.name),
+                    substituted
+                ));
             }
         }
     }
@@ -732,6 +747,13 @@ pub(crate) fn generate_erlang_system(
                 let enter_body = erlang_transform_blocks(&erlang_lower_native_if(&raw_enter));
 
                 if !enter_body.trim().is_empty() {
+                    // Include BOTH the enter params and the state params
+                    // (declared via `$State(arg: T)`) so the enter body's
+                    // state-arg reads are capitalized to the same bound
+                    // variable the prefetch above emits (`Task =
+                    // frame_arg_at__(…)`). Mirrors the regular event-handler
+                    // path; without the state-param chain the read stayed
+                    // lowercase and unbound (issue #132C).
                     let enter_params: Vec<(&str, String)> = enter
                         .params
                         .iter()
@@ -739,6 +761,10 @@ pub(crate) fn generate_erlang_system(
                             let cap = erlang_safe_capitalize(&p.name);
                             (p.name.as_str(), cap)
                         })
+                        .chain(state.params.iter().map(|sp| {
+                            let cap = erlang_safe_capitalize(&sp.name);
+                            (sp.name.as_str(), cap)
+                        }))
                         .collect();
                     let lines: Vec<&str> = enter_body.lines().collect();
                     let (processed, final_data, _final_rv) = erlang_process_body_lines_with_params(
@@ -1647,8 +1673,12 @@ pub(crate) fn generate_erlang_system(
                 continue;
             }
 
-            let state_atom_name = state_atom(&state.name);
-            code.push_str(&format!("frame_enter__{}(Data) ->\n", state_atom_name));
+            // Function-name *suffix* — snake-cased, never quoted: a
+            // reserved word is fine embedded inside `frame_enter__begin`
+            // (the leading `frame_enter__` makes it a fresh identifier),
+            // unlike a bare atom literal which `erlang_state_atom` quotes.
+            let state_suffix = to_snake_case(&state.name);
+            code.push_str(&format!("frame_enter__{}(Data) ->\n", state_suffix));
 
             if let Some(ref enter) = state.enter {
                 // Extract enter params from frame_enter_args (positional).
@@ -1746,7 +1776,8 @@ pub(crate) fn generate_erlang_system(
     if let Some(ref machine) = system.machine {
         for state in &machine.states {
             if let Some(ref exit) = state.exit {
-                let sname = state_atom(&state.name);
+                // Function-name suffix — snake, unquoted (see frame_enter__).
+                let sname = to_snake_case(&state.name);
                 code.push_str(&format!("frame_exit__{}(Data) ->\n", sname));
 
                 // Extract exit params (positional from frame_exit_args).
@@ -1951,6 +1982,15 @@ pub(crate) fn generate_erlang_system(
             i += 1;
         }
         code = out;
+    }
+
+    // Domain-field case normalization (issue #132B). The record def and
+    // ctor overrides are emitted canonical at source; this normalizes the
+    // body-derived `Data#data.<field>` reads and `#data{<field> = …}`
+    // updates, which inherit the user's `self.<Name>` spelling verbatim.
+    for var in &system.domain {
+        let canonical = erlang_record_field(&var.name);
+        code = normalize_record_field(&code, &var.name, &canonical);
     }
 
     // Wrap in a NativeBlock — the assembler will stitch prolog + this + epilog
