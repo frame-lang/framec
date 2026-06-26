@@ -264,6 +264,15 @@ impl FrameValidator {
         // taking the blob). See docs/rfcs/rfc-0012.md.
         // RFC-0015: also accept the system-level form
         // (`@@[save(name)]` / `@@[load(name)]` at module level).
+        //
+        // RFC-0052 §4 affinity relaxation: this check now fires ONLY
+        // on a system that actually carries `persist_attr` (i.e. had
+        // its own `@@[persist]` or was covered by a `@@[*persist]`
+        // broadcast). It is no longer "if any system in the module
+        // persists, all must" — a sibling without `@@[persist]` has
+        // no `persist_attr` and is simply non-persistable, so it never
+        // reaches this branch. The save/load contract a *persisting*
+        // system must satisfy is unchanged.
         let has_rfc0015_save = system.save_op_name_rfc0015().is_some()
             || system.attributes.iter().any(|a| a.name == "save");
         let has_rfc0015_load = system.load_op_name_rfc0015().is_some()

@@ -986,6 +986,7 @@ mod tests {
                     kind: crate::frame_c::compiler::segmenter::PragmaKind::Target,
                     span: Span { start: 0, end: 18 },
                     value: Some("python_3".to_string()),
+                    is_broadcast: false,
                 },
                 Segment::Native {
                     span: Span {

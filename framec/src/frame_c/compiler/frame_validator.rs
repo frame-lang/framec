@@ -206,6 +206,95 @@ impl FrameValidator {
         }
     }
 
+    /// RFC-0052 §4 E828 cross-system persist-composition pass.
+    ///
+    /// A **persistable** system that *holds* another `@@system` as a
+    /// domain field requires that held system to be persistable too —
+    /// otherwise the parent's generated `save`/`load` cannot recurse
+    /// into the child (there is no `child.save_state()` to embed). This
+    /// replaces the old "all systems must persist because one did"
+    /// blunt rule (relaxed via RFC-0052 §4) with a precise constraint
+    /// that only fires on actual composition.
+    ///
+    /// Like E721, this needs the full system list visible at once: the
+    /// per-system validation loop sees one system and cannot answer "is
+    /// the type named by this field a non-persistable sibling?". The
+    /// detection reuses E721's tokenization — split the field's
+    /// user-written type text on non-identifier characters and match
+    /// each token against the set of sibling system names — so direct
+    /// (`child: Child`) and container-wrapped (`Vec<Child>`,
+    /// `Option<Child>`, `Child?`) composition are both caught without
+    /// parsing generic type syntax.
+    pub fn validate_module_e828_persist_composition(
+        &mut self,
+        systems: &[SystemAst],
+    ) -> Result<(), Vec<ValidationError>> {
+        use crate::frame_c::compiler::frame_ast::Type as FrameType;
+
+        // Names of every system declared in the module, and the subset
+        // that is persistable (carries `persist_attr`).
+        let all_system_names: HashSet<&str> = systems.iter().map(|s| s.name.as_str()).collect();
+        let persistable_names: HashSet<&str> = systems
+            .iter()
+            .filter(|s| s.persist_attr.is_some())
+            .map(|s| s.name.as_str())
+            .collect();
+
+        // Nothing to check unless at least one system persists AND at
+        // least one does not (a fully-persistable or fully-non-persistable
+        // module can't violate the rule).
+        if persistable_names.is_empty() || persistable_names.len() == all_system_names.len() {
+            return if self.errors.is_empty() {
+                Ok(())
+            } else {
+                Err(self.errors.clone())
+            };
+        }
+
+        for system in systems {
+            if system.persist_attr.is_none() {
+                continue;
+            }
+            for var in &system.domain {
+                let type_text = match &var.var_type {
+                    FrameType::Custom(s) => s.as_str(),
+                    FrameType::Unknown => continue,
+                };
+                for token in type_text.split(|c: char| !c.is_alphanumeric() && c != '_') {
+                    if token.is_empty() || token == system.name {
+                        continue;
+                    }
+                    // The token names a sibling system that is NOT
+                    // persistable → the parent can't recurse its save/load.
+                    if all_system_names.contains(token) && !persistable_names.contains(token) {
+                        self.errors.push(
+                            ValidationError::new(
+                                "E828",
+                                format!(
+                                    "persistable @@system '{0}' holds non-persistable @@system '{1}' \
+                                     as domain field '{2}' (RFC-0052 §4). '{0}' has `@@[persist]`, so \
+                                     its generated save/load must recurse into '{1}', but '{1}' has no \
+                                     `@@[persist]` and therefore no save/load to call. Add `@@[persist]` \
+                                     (with `@@[save]`/`@@[load]`) to '{1}', or use `@@[*persist]` at \
+                                     module position to persist the whole graph.",
+                                    system.name, token, var.name
+                                ),
+                            )
+                            .with_span(var.span.clone()),
+                        );
+                        break;
+                    }
+                }
+            }
+        }
+
+        if self.errors.is_empty() {
+            Ok(())
+        } else {
+            Err(self.errors.clone())
+        }
+    }
+
     /// Validate a Frame AST using the enhanced Arcanum
     ///
     /// This is the preferred validation method when the Arcanum has been built.
@@ -2541,6 +2630,260 @@ mod tests {
             assert!(
                 !errs.iter().any(|e| e.code == "E721"),
                 "E721 must not fire when type is a distinct identifier (FetcherCache); got: {:?}",
+                errs.iter().map(|e| &e.code).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    // ===== Issue #127 / RFC-0052 §4: persist attribute affinity =====
+    //
+    // E814 relaxation (per-system opt-in), E828 (persist composition),
+    // E829 (broadcast `*` must be at module position). These run in the
+    // pipeline; `validate_for_target` surfaces them.
+
+    /// (a) RELAXATION: persist on ONE system, sibling has none → COMPILES.
+    /// Before RFC-0052 §4 the module-wide stamp forced the sibling
+    /// persistable and it tripped E814. Now it is simply non-persistable.
+    #[test]
+    fn test_e814_relaxed_partial_persist_multi_system() {
+        let source = r#"
+@@[persist(str)]
+@@[save(snapshot)]
+@@[load(restore)]
+@@[main]
+@@system Persisted {
+    interface:
+        bump()
+    machine:
+        $S { bump() { @@:self.n = @@:self.n + 1 } }
+    domain:
+        n: int = 0
+}
+
+@@system Independent {
+    interface:
+        ping()
+    machine:
+        $T { ping() { @@:self.hits = @@:self.hits + 1 } }
+    domain:
+        hits: int = 0
+}
+"#;
+        let result = validate_for_target(source, VTarget::Python3);
+        if let Err(errs) = &result {
+            assert!(
+                !errs.iter().any(|e| e.code == "E814"),
+                "E814 must not fire on a non-persisting sibling (RFC-0052 §4); got: {:?}",
+                errs.iter().map(|e| &e.code).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// (b) `@@[*persist]` at module position broadcasts to every system —
+    /// neither declares its own persist, both are persistable, no E814.
+    #[test]
+    fn test_broadcast_persist_no_e814() {
+        let source = r#"
+@@[*persist(str)]
+@@[*save(snapshot)]
+@@[*load(restore)]
+@@[main]
+@@system Alpha {
+    interface:
+        a()
+    machine:
+        $A { a() { @@:self.x = @@:self.x + 1 } }
+    domain:
+        x: int = 0
+}
+
+@@system Beta {
+    interface:
+        b()
+    machine:
+        $B { b() { @@:self.y = @@:self.y + 1 } }
+    domain:
+        y: int = 0
+}
+"#;
+        let result = validate_for_target(source, VTarget::Python3);
+        if let Err(errs) = &result {
+            assert!(
+                !errs.iter().any(|e| e.code == "E814"),
+                "broadcast persist must satisfy E814 on every system; got: {:?}",
+                errs.iter().map(|e| &e.code).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// (c) `@@[*persist]` before a non-first system → E829.
+    #[test]
+    fn test_e829_broadcast_must_be_at_module_position() {
+        let source = r#"
+@@[main]
+@@system First {
+    interface:
+        a()
+    machine:
+        $A { a() { } }
+}
+
+@@[*persist(str)]
+@@system Second {
+    interface:
+        b()
+    machine:
+        $B { b() { } }
+}
+"#;
+        let errs = validate_for_target(source, VTarget::Python3).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.code == "E829"),
+            "misplaced `@@[*persist]` must be E829; got: {:?}",
+            errs.iter().map(|e| &e.code).collect::<Vec<_>>()
+        );
+    }
+
+    /// (d) E828: persistable Parent holds non-persistable Child as a
+    /// domain field. The parent's save/load can't recurse → error
+    /// naming both systems.
+    #[test]
+    fn test_e828_persist_composition_gap() {
+        let source = r#"
+@@[persist(str)]
+@@[save(snapshot)]
+@@[load(restore)]
+@@[main]
+@@system Parent {
+    interface:
+        go()
+    machine:
+        $P { go() { } }
+    domain:
+        child: Child = nil
+}
+
+@@system Child {
+    interface:
+        tick()
+    machine:
+        $C { tick() { } }
+}
+"#;
+        let errs = validate_for_target(source, VTarget::Python3).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.code == "E828"),
+            "persistable Parent holding non-persistable Child must be E828; got: {:?}",
+            errs.iter().map(|e| &e.code).collect::<Vec<_>>()
+        );
+        let msg = errs
+            .iter()
+            .find(|e| e.code == "E828")
+            .map(|e| e.message.clone())
+            .unwrap_or_default();
+        assert!(
+            msg.contains("Parent") && msg.contains("Child"),
+            "E828 must name both systems; got: {msg}"
+        );
+    }
+
+    /// E828 catches container-wrapped composition too (`List<Child>`).
+    #[test]
+    fn test_e828_persist_composition_gap_wrapped() {
+        let source = r#"
+@@[persist(str)]
+@@[save(snapshot)]
+@@[load(restore)]
+@@[main]
+@@system Parent {
+    interface:
+        go()
+    machine:
+        $P { go() { } }
+    domain:
+        kids: List<Child> = nil
+}
+
+@@system Child {
+    interface:
+        tick()
+    machine:
+        $C { tick() { } }
+}
+"#;
+        let errs = validate_for_target(source, VTarget::Python3).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.code == "E828"),
+            "wrapped composition (List<Child>) must also be E828; got: {:?}",
+            errs.iter().map(|e| &e.code).collect::<Vec<_>>()
+        );
+    }
+
+    /// (e) REGRESSION: Parent + Child both persist, Parent holds Child →
+    /// clean (no E828, no E814).
+    #[test]
+    fn test_e828_clean_when_both_persist() {
+        let source = r#"
+@@[persist(str)]
+@@[save(snapshot)]
+@@[load(restore)]
+@@[main]
+@@system Parent {
+    interface:
+        go()
+    machine:
+        $P { go() { } }
+    domain:
+        child: Child = nil
+}
+
+@@[persist(str)]
+@@[save(snapshot)]
+@@[load(restore)]
+@@system Child {
+    interface:
+        tick()
+    machine:
+        $C { tick() { } }
+}
+"#;
+        let result = validate_for_target(source, VTarget::Python3);
+        if let Err(errs) = &result {
+            assert!(
+                !errs.iter().any(|e| e.code == "E828" || e.code == "E814"),
+                "both-persist composition must be clean; got: {:?}",
+                errs.iter().map(|e| &e.code).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// E828 does NOT fire when no system persists (a fully non-persistable
+    /// composition is fine).
+    #[test]
+    fn test_e828_clean_when_none_persist() {
+        let source = r#"
+@@[main]
+@@system Parent {
+    interface:
+        go()
+    machine:
+        $P { go() { } }
+    domain:
+        child: Child = nil
+}
+
+@@system Child {
+    interface:
+        tick()
+    machine:
+        $C { tick() { } }
+}
+"#;
+        let result = validate_for_target(source, VTarget::Python3);
+        if let Err(errs) = &result {
+            assert!(
+                !errs.iter().any(|e| e.code == "E828"),
+                "no-persist composition must not be E828; got: {:?}",
                 errs.iter().map(|e| &e.code).collect::<Vec<_>>()
             );
         }
