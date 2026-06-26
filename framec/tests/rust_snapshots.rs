@@ -1178,3 +1178,66 @@ fn bug40_empty_state_name_no_variant_collision() {
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+/// Regression for issue #129 — a bare context-read used as the WHOLE
+/// return value must not emit redundant parens around the expanded
+/// `(match …)` rvalue.
+///
+/// `@@:(@@:data.k)` (and the sibling `@@:(@@:return)`) lower the inner
+/// read to a self-delimiting `(match …)` group; re-wrapping that in the
+/// `FrameReturn::Variant(…)` constructor without peeling the existing
+/// parens produced `Variant((match …))`, which rustc flags as
+/// `unused_parens` ("unnecessary parentheses around function argument").
+/// The fix peels one balanced outer layer in `build_return_val_expr`.
+#[test]
+fn bug129_bare_context_read_return_no_double_paren() {
+    // @@:data read as sole return value.
+    let data_src = r#"
+@@[target("rust")]
+@@system Q {
+    interface:
+        f(): String
+    machine:
+        $A {
+            f(): String {
+                @@:data.k = String::from("x")
+                @@:(@@:data.k)
+            }
+        }
+}
+"#;
+    let gen = compile_source(data_src, "rust");
+    let ret_line = gen
+        .lines()
+        .find(|l| l.contains("let __return_val ="))
+        .expect("generated return-val assignment");
+    assert!(
+        ret_line.contains("QFrameReturn::F(match "),
+        "expected a single-paren variant wrap, got: {ret_line}"
+    );
+    assert!(
+        !ret_line.contains("QFrameReturn::F((match "),
+        "redundant double paren regressed (#129): {ret_line}"
+    );
+
+    // Sibling spelling: @@:return read as sole return value.
+    let return_src = r#"
+@@[target("rust")]
+@@system Q {
+    interface:
+        f(): String
+    machine:
+        $A {
+            f(): String {
+                @@:return = String::from("x")
+                @@:(@@:return)
+            }
+        }
+}
+"#;
+    let gen = compile_source(return_src, "rust");
+    assert!(
+        !gen.contains("QFrameReturn::F((match "),
+        "redundant double paren regressed for @@:return (#129):\n{gen}"
+    );
+}

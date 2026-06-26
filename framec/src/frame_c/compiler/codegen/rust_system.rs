@@ -1403,11 +1403,54 @@ pub(crate) fn rust_expand_box_return_bare(
     )
 }
 
+/// If `expr` is a single, fully-balanced `(…)` group spanning the whole
+/// string, return its interior; otherwise return `expr` unchanged.
+///
+/// Self-delimiting context reads (`@@:data.k`, `@@:return`) lower to a
+/// parenthesized `(match … )` rvalue — the outer parens are required when
+/// the read is embedded in a larger expression (`a + (match …)`). But when
+/// the read is the ENTIRE return payload it's immediately re-wrapped in the
+/// `FrameReturn::Variant(…)` constructor, whose own parens already group it.
+/// The pre-existing `(…)` then becomes redundant (`Variant((match …))`),
+/// which rustc flags as `unnecessary parentheses around function argument`.
+/// Peeling exactly one balanced layer here removes the wart without touching
+/// the read-site emitters that legitimately need the parens for embedding.
+///
+/// Only peels when the OPENING paren matches the CLOSING one (a single
+/// group), so `(a) + (b)` and `(a)(b)` are left intact.
+fn strip_redundant_outer_parens(expr: &str) -> &str {
+    let trimmed = expr.trim();
+    let bytes = trimmed.as_bytes();
+    if bytes.len() < 2 || bytes[0] != b'(' || bytes[bytes.len() - 1] != b')' {
+        return expr;
+    }
+    let mut depth = 0i32;
+    for (i, &b) in bytes.iter().enumerate() {
+        match b {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                // The opening paren's match closes before the end → the
+                // string is not a single group (e.g. `(a) + (b)`).
+                if depth == 0 && i != bytes.len() - 1 {
+                    return expr;
+                }
+            }
+            _ => {}
+        }
+    }
+    &trimmed[1..trimmed.len() - 1]
+}
+
 /// Shared builder for the return-value construction expression.
 /// Interface handlers (event_name is a real method name) emit the
 /// typed variant; lifecycle handlers ($> / $<) fall back to the
 /// `_Lifecycle` escape-hatch variant carrying `Rc<dyn Any>`.
 fn build_return_val_expr(system_name: &str, event_name: &str, payload_expr: &str) -> String {
+    // The payload is about to be wrapped in `Variant(…)`/`_Lifecycle(…)`,
+    // which supplies its own grouping parens — drop a redundant outer pair
+    // so a self-delimiting `(match …)` read doesn't emit `Variant((match …))`.
+    let payload_expr = strip_redundant_outer_parens(payload_expr);
     if event_name == "$>" || event_name == "$<" {
         format!(
             "{}FrameReturn::_Lifecycle(alloc::rc::Rc::new({}))",
@@ -2165,4 +2208,42 @@ fn rewrite_arg_if_non_copy_field(arg: &str, non_copy_fields: &[String]) -> Strin
         }
     }
     arg.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strip_redundant_outer_parens;
+
+    #[test]
+    fn peels_single_balanced_group() {
+        // Bug #129: a self-delimiting `(match …)` read is the whole payload.
+        assert_eq!(
+            strip_redundant_outer_parens("(match x { _ => 0, })"),
+            "match x { _ => 0, }"
+        );
+        assert_eq!(strip_redundant_outer_parens("(a)"), "a");
+    }
+
+    #[test]
+    fn leaves_non_wrapped_unchanged() {
+        assert_eq!(strip_redundant_outer_parens("a + b"), "a + b");
+        assert_eq!(strip_redundant_outer_parens("x.clone()"), "x.clone()");
+        assert_eq!(strip_redundant_outer_parens("f(a, b)"), "f(a, b)");
+        assert_eq!(strip_redundant_outer_parens(""), "");
+        assert_eq!(strip_redundant_outer_parens("a"), "a");
+    }
+
+    #[test]
+    fn does_not_peel_multiple_top_level_groups() {
+        // The opening paren's match closes before the end → not a single
+        // group, so peeling would corrupt the expression.
+        assert_eq!(strip_redundant_outer_parens("(a) + (b)"), "(a) + (b)");
+        assert_eq!(strip_redundant_outer_parens("(a)(b)"), "(a)(b)");
+    }
+
+    #[test]
+    fn peels_only_outer_layer() {
+        assert_eq!(strip_redundant_outer_parens("((a))"), "(a)");
+        assert_eq!(strip_redundant_outer_parens("(f(a) + g(b))"), "f(a) + g(b)");
+    }
 }
