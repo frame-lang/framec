@@ -664,6 +664,17 @@ See [Self Reference](#self-reference) and [System Runtime](#system-runtime) for 
 
 **`@@:return(expr)`** is the recommended form when you want to set the return value and immediately exit. It replaces the common two-statement pattern `@@:(expr)` + `return`. The expression inside the parens is evaluated, stored in the context return slot, and a native `return` is emitted — all in one Frame statement.
 
+**Bare `@@:return` as a statement has no effect (W416).** `@@:return` is the *getter* — it reads the return slot. Reading it as a standalone statement (with the value discarded) compiles to a no-op and does **not** short-circuit the handler, so trailing code still runs:
+
+```frame
+f(): int {
+    @@:return       // W416 — reads the slot and throws the value away
+    self.x = 99     // still runs!
+}
+```
+
+This almost always means you intended one of `@@:return(expr)` (set + exit), `@@:return = expr` (set), or native `return` (exit). The warning fires **only** for the bare-statement case; `@@:return` read inside an expression (e.g. `y = @@:return + 1`, where the value is consumed) is a legitimate getter use and is not flagged.
+
 ---
 
 ## Hierarchical State Machines
@@ -1382,6 +1393,7 @@ and async C++ systems compile `-fno-exceptions` too.
 |------|------|-------------|
 | W414 | `unreachable-state` | State has no incoming transitions |
 | W415 | `handler-return-value-lost` | `return expr` in event handler; value not set on context stack |
+| W416 | `return-getter-no-effect` | bare `@@:return` used as a standalone statement; reads the return slot and discards it (no effect) |
 | W601 | `unused-self-call-return` | Return value not captured for method with return type |
 
 ---
