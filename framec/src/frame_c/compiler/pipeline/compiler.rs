@@ -468,7 +468,12 @@ struct ParsedModule {
 fn parse_module_segments(
     source_map: &segmenter::SourceMap,
     config: &PipelineConfig,
-    has_persist: bool,
+    // RFC-0052 §4: the legacy module-wide persist flag is no longer
+    // consulted to force-stamp every system — persist affinity is now
+    // resolved per-system from the `@@[persist]` / `@@[*persist]` pragmas
+    // walked below. Kept in the signature for call-site symmetry (the
+    // primary and imported parses both compute it).
+    _has_persist: bool,
 ) -> Result<ParsedModule, CompileResult> {
     // Pass 1: Parse all systems into ASTs.
     //
@@ -509,6 +514,33 @@ fn parse_module_segments(
         Vec::new();
     let mut pending_load_attrs: Vec<(Option<String>, crate::frame_c::compiler::frame_ast::Span)> =
         Vec::new();
+    // RFC-0052 §4: persist affinity.
+    //
+    // `pending_persist` holds a `@@[persist]` that attaches to the NEXT
+    // single `@@system` (the new default — consistent with `@@[main]` /
+    // `@@[async]` / `@@[create]`). It resets after attachment so it can't
+    // bleed onto a later sibling.
+    //
+    // The `broadcast_*` buffers hold `@@[*persist]` / `@@[*save]` /
+    // `@@[*load]` — they apply to EVERY system in the module and are
+    // never drained.
+    //
+    // The module-level `has_persist` flag (legacy module-wide stamp) is
+    // no longer consulted to force-stamp every system; it is kept only so
+    // the C++ `nlohmann::json` prolog hook keeps firing when any system
+    // persists (computed downstream from `persist_attr`, not from the
+    // pragma). Single-system files behave identically: the lone
+    // `@@[persist]` attaches to the lone system.
+    let mut pending_persist: bool = false;
+    let mut broadcast_persist: bool = false;
+    let mut broadcast_save_attrs: Vec<(Option<String>, crate::frame_c::compiler::frame_ast::Span)> =
+        Vec::new();
+    let mut broadcast_load_attrs: Vec<(Option<String>, crate::frame_c::compiler::frame_ast::Span)> =
+        Vec::new();
+    // RFC-0052 §4: E829 — a broadcast `*`-attribute is legal only at
+    // module position (before any `@@system`). Misplaced ones collect
+    // here and surface at the end of the pass.
+    let mut broadcast_position_errors: Vec<CompileError> = Vec::new();
     // Strip `(arg)` wrapper from the captured pragma value.
     // Returns None for absent / empty / whitespace-only args.
     fn strip_paren_arg(value: &Option<String>) -> Option<String> {
@@ -544,10 +576,29 @@ fn parse_module_segments(
             ));
             continue;
         }
+        // RFC-0052 §4: `@@[persist]` (next system) / `@@[*persist]`
+        // (whole module). Replaces the legacy module-wide stamp.
+        if let Segment::Pragma {
+            kind: crate::frame_c::compiler::segmenter::PragmaKind::Persist,
+            is_broadcast,
+            ..
+        } = segment
+        {
+            if *is_broadcast {
+                if !system_asts.is_empty() {
+                    broadcast_position_errors.push(broadcast_position_error("persist"));
+                }
+                broadcast_persist = true;
+            } else {
+                pending_persist = true;
+            }
+            continue;
+        }
         if let Segment::Pragma {
             kind: crate::frame_c::compiler::segmenter::PragmaKind::Create,
             span,
             value,
+            ..
         } = segment
         {
             pending_create_attrs.push((
@@ -560,30 +611,49 @@ fn parse_module_segments(
             kind: crate::frame_c::compiler::segmenter::PragmaKind::Save,
             span,
             value,
+            is_broadcast,
         } = segment
         {
-            pending_save_attrs.push((
+            let attr = (
                 strip_paren_arg(value),
                 crate::frame_c::compiler::frame_ast::Span::new(span.start, span.end),
-            ));
+            );
+            if *is_broadcast {
+                if !system_asts.is_empty() {
+                    broadcast_position_errors.push(broadcast_position_error("save"));
+                }
+                broadcast_save_attrs.push(attr);
+            } else {
+                pending_save_attrs.push(attr);
+            }
             continue;
         }
         if let Segment::Pragma {
             kind: crate::frame_c::compiler::segmenter::PragmaKind::Load,
             span,
             value,
+            is_broadcast,
         } = segment
         {
-            pending_load_attrs.push((
+            let attr = (
                 strip_paren_arg(value),
                 crate::frame_c::compiler::frame_ast::Span::new(span.start, span.end),
-            ));
+            );
+            if *is_broadcast {
+                if !system_asts.is_empty() {
+                    broadcast_position_errors.push(broadcast_position_error("load"));
+                }
+                broadcast_load_attrs.push(attr);
+            } else {
+                pending_load_attrs.push(attr);
+            }
             continue;
         }
         if let Segment::Pragma {
             kind: crate::frame_c::compiler::segmenter::PragmaKind::Import,
             span,
             value,
+            ..
         } = segment
         {
             // RFC-0022: `@@import "path"` — strip surrounding quotes,
@@ -751,7 +821,16 @@ fn parse_module_segments(
             }
             system_ast.visibility = visibility.clone();
 
-            if has_persist {
+            // RFC-0052 §4: persist now has next-system affinity. A
+            // `@@[persist]` (captured in `pending_persist`) stamps THIS
+            // system and then resets, so a sibling without its own
+            // `@@[persist]` is simply non-persistable — it is no longer
+            // force-stamped just because an earlier system persisted. A
+            // `@@[*persist]` (captured in `broadcast_persist`) stamps
+            // every system and stays set.
+            let persist_this_system = broadcast_persist || pending_persist;
+            pending_persist = false;
+            if persist_this_system {
                 system_ast.persist_attr = Some(crate::frame_c::compiler::frame_ast::PersistAttr {
                     save_name: None,
                     restore_name: None,
@@ -822,6 +901,30 @@ fn parse_module_segments(
                         span,
                     });
             }
+            // RFC-0052 §4: broadcast `@@[*save]` / `@@[*load]` attach to
+            // every system (cloned, not drained — they apply module-wide).
+            // They co-exist with a per-system `@@[save]`/`@@[load]`; E810
+            // / E818 then flag the duplicate, which is the correct
+            // diagnostic for a system that is both broadcast- and
+            // explicitly-named.
+            for (arg, span) in broadcast_save_attrs.iter().cloned() {
+                system_ast
+                    .attributes
+                    .push(crate::frame_c::compiler::frame_ast::Attribute {
+                        name: "save".to_string(),
+                        args: arg,
+                        span,
+                    });
+            }
+            for (arg, span) in broadcast_load_attrs.iter().cloned() {
+                system_ast
+                    .attributes
+                    .push(crate::frame_c::compiler::frame_ast::Attribute {
+                        name: "load".to_string(),
+                        args: arg,
+                        span,
+                    });
+            }
 
             // Enrich transition metadata (`exit_args`, `enter_args`,
             // `state_args`) from the V4 unified scanner. The pipeline
@@ -878,12 +981,43 @@ fn parse_module_segments(
         }
     }
 
+    // RFC-0052 §4: E829 — broadcast `*`-attributes are legal only at
+    // module position (before any `@@system`). A misplaced one is a
+    // hard error; surface every occurrence in one shot.
+    if !broadcast_position_errors.is_empty() {
+        return Err(CompileResult {
+            code: String::new(),
+            errors: broadcast_position_errors,
+            warnings: vec![],
+            source_map: None,
+        });
+    }
+
     Ok(ParsedModule {
         system_asts,
         module_imports,
         imported_new_contract_names,
         strict_import_errors,
     })
+}
+
+/// RFC-0052 §4: build the E829 "broadcast attribute not at module
+/// position" error for the given attribute name. A `@@[*name]` (the
+/// broadcast/spread form) declares module-wide affinity, so it must
+/// appear before any `@@system` — placing it before a specific system
+/// is ambiguous about whether "all" means the module or just that one.
+fn broadcast_position_error(attr: &str) -> CompileError {
+    CompileError::new(
+        "E829",
+        &format!(
+            "@@[*{0}] (broadcast form) is only valid at module position — before any \
+             `@@system` declaration, alongside `@@[target]`. A `*`-prefixed attribute \
+             placed before a specific system is ambiguous. Use `@@[{0}]` (no `*`) to apply \
+             it to the next single system, or move the `@@[*{0}]` to the top of the file to \
+             broadcast it to every system in the module.",
+            attr
+        ),
+    )
 }
 
 /// Pass 1 driver: parse the primary source, then (RFC-0040) resolve any
@@ -1311,6 +1445,26 @@ pub(crate) fn do_validate_codegen(c: &mut PipelineCtx) -> Option<CompileResult> 
     {
         let mut e721_validator = FrameValidator::new();
         if let Err(errs) = e721_validator.validate_module_e721_sync_composes_async(&system_asts) {
+            let errors = errs
+                .iter()
+                .map(|e| CompileError::new(&e.code, &e.message))
+                .collect();
+            return Some(CompileResult {
+                code: String::new(),
+                errors,
+                warnings: module_warnings,
+                source_map: None,
+            });
+        }
+    }
+
+    // RFC-0052 §4 E828 — cross-system persist composition. A persistable
+    // system that holds a non-persistable sibling as a domain field can't
+    // recurse its save/load. Runs with the full (unfiltered) system list
+    // for the same reason as E721.
+    {
+        let mut e828_validator = FrameValidator::new();
+        if let Err(errs) = e828_validator.validate_module_e828_persist_composition(&system_asts) {
             let errors = errs
                 .iter()
                 .map(|e| CompileError::new(&e.code, &e.message))

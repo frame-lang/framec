@@ -96,6 +96,19 @@ The legacy operation-attribute form (`operations: @@[save] foo()`)
 is rejected with **E819** at framec 4.1.0+; the codemod at
 `scripts/migrate_rfc0015.py` rewrites old fixtures.
 
+**Affinity (RFC-0052 §4).** `@@[persist]` applies to the **next single
+`@@system`** — exactly like `@@[main]` / `@@[async]` / `@@[create]`. A
+sibling system without its own `@@[persist]` is simply not persistable;
+it is no longer forced to declare save/load just because another system
+in the file persists. To persist **every** system in a multi-system
+file, use the broadcast prefix `@@[*persist(<blob>)]` (with `@@[*save]`
+/ `@@[*load]`) at module position (before any `@@system`, alongside
+`@@[target]`). A `*`-prefixed attribute placed before a specific system
+is rejected with **E829**. A persistable system that holds another
+`@@system` as a domain field requires that held system to be persistable
+too (so the parent's save/load can recurse) — otherwise **E828**;
+`@@[*persist]` is the one-liner for persisting the whole graph.
+
 Optional companion on domain fields:
 
 | Attribute        | Position     | Purpose                                       |
@@ -1353,6 +1366,15 @@ and async C++ systems compile `-fno-exceptions` too.
 | E613 | `field-shadows-param` | Domain field name shadows a system parameter |
 | E614 | `duplicate-field` | Duplicate domain field name |
 | E615 | `const-field-assign` | Assignment to `const` domain field in handler body |
+
+### Attribute Errors (E8xx)
+
+| Code | Name | Description |
+|------|------|-------------|
+| E814 | `bare-persist` | `@@[persist]` system without `@@[save]`/`@@[load]` |
+| E819 | `legacy-save-load` | Operation-attribute `@@[save]`/`@@[load]` form (RFC-0015 hard-cut) |
+| E828 | `persist-composition-gap` | Persistable system holds a non-persistable `@@system` as a domain field (RFC-0052 §4) |
+| E829 | `broadcast-not-module-position` | `@@[*persist]`/`@@[*save]`/`@@[*load]` (broadcast `*` prefix) not at module position (RFC-0052 §4) |
 
 ### Warnings (W4xx, W6xx)
 

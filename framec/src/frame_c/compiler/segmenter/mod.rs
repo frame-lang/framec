@@ -101,6 +101,13 @@ pub enum Segment {
         span: Span,
         /// Parsed pragma value (e.g., "python_3" for @@target)
         value: Option<String>,
+        /// RFC-0052 §4: `true` when the bracket form carried the
+        /// broadcast prefix `*` — `@@[*persist]` / `@@[*save]` /
+        /// `@@[*load]` — meaning the attribute applies to **all**
+        /// systems in the module rather than the next single
+        /// `@@system`. Always `false` for non-`*` pragmas and the
+        /// bare form.
+        is_broadcast: bool,
     },
     /// @@system block — contents will be lexed, parsed, and compiled
     System {
@@ -295,6 +302,14 @@ pub fn segment<S: SyntaxSkipper>(skipper: &S, source: &[u8]) -> Result<SourceMap
 
                 let pragma_start = i;
                 let (kind, pragma_value) = identify_pragma(source, i);
+                // RFC-0052 §4: detect the broadcast `*` prefix on the
+                // bracket form. The FSM consumes the `*` and exposes the
+                // flag; we carry it on the resulting `Segment::Pragma` so
+                // the pipeline can distinguish `@@[persist]` (next system)
+                // from `@@[*persist]` (whole module).
+                let is_broadcast =
+                    crate::frame_c::compiler::attribute_scanner::scan_attribute(source, i)
+                        .is_broadcast;
 
                 match kind {
                     PragmaKind::Target => {
@@ -318,6 +333,7 @@ pub fn segment<S: SyntaxSkipper>(skipper: &S, source: &[u8]) -> Result<SourceMap
                                 end: line_end,
                             },
                             value: pragma_value,
+                            is_broadcast: false,
                         });
                         i = line_end;
                         seg_start = i;
@@ -334,6 +350,7 @@ pub fn segment<S: SyntaxSkipper>(skipper: &S, source: &[u8]) -> Result<SourceMap
                                 end: block_end,
                             },
                             value: pragma_value,
+                            is_broadcast: false,
                         });
                         i = block_end;
                         seg_start = i;
@@ -359,6 +376,7 @@ pub fn segment<S: SyntaxSkipper>(skipper: &S, source: &[u8]) -> Result<SourceMap
                                 end,
                             },
                             value: pragma_value,
+                            is_broadcast,
                         });
                         i = end;
                         seg_start = i;
@@ -620,7 +638,12 @@ pub fn segment<S: SyntaxSkipper>(skipper: &S, source: &[u8]) -> Result<SourceMap
                         continue;
                     }
                     _ => {
-                        // Simple pragma (@@run-expect, @@skip-if, @@timeout, etc.)
+                        // Simple pragma (@@run-expect, @@skip-if, @@timeout,
+                        // and the module-level lifecycle attributes
+                        // @@[main]/@@[async]/@@[create]/@@[save]/@@[load]).
+                        // RFC-0052 §4: the broadcast `*` prefix is carried
+                        // through here so `@@[*save]` / `@@[*load]` reach
+                        // the pipeline as broadcast pragmas.
                         let line_end = find_line_end(source, pragma_start);
                         segments.push(Segment::Pragma {
                             kind,
@@ -629,6 +652,7 @@ pub fn segment<S: SyntaxSkipper>(skipper: &S, source: &[u8]) -> Result<SourceMap
                                 end: line_end,
                             },
                             value: pragma_value,
+                            is_broadcast,
                         });
                         i = line_end;
                         seg_start = i;

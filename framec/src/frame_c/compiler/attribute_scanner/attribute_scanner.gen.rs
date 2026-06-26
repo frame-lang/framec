@@ -176,6 +176,11 @@ mod _attribute_scanner_fsm_framec {
         pub pos: usize,
         // Surface form: true for `@@[name]`, false for bare `@@name`.
         pub is_bracket_form: bool,
+        // RFC-0052 §4 broadcast prefix: true when the bracket form had a
+        // leading `*` (`@@[*persist]`) — the attribute applies to ALL
+        // systems in the module, not just the next one. Always false for
+        // the bare form.
+        pub is_broadcast: bool,
         // Name span — always set after a successful scan.
         pub name_start: usize,
         pub name_end: usize,
@@ -204,6 +209,7 @@ mod _attribute_scanner_fsm_framec {
                 bytes: Vec::new(),
                 pos: 0,
                 is_bracket_form: false,
+                is_broadcast: false,
                 name_start: 0,
                 name_end: 0,
                 has_args: false,
@@ -337,6 +343,14 @@ mod _attribute_scanner_fsm_framec {
         // --- Bracket form: @@[name] / @@[name(args)] ----------------
         // Read the attribute name. Name chars: alphanumeric, `_`, `-`.
         // Stop at the first non-name char (`(`, `]`, ws).
+        //
+        // RFC-0052 §4: a leading `*` inside the brackets — `@@[*persist]` —
+        // is the *broadcast* prefix ("spread across all systems in the
+        // module"). It is consumed here (the name span excludes it) and
+        // recorded in `is_broadcast`; the wrapper maps the name normally
+        // and the pipeline reads the flag to decide single-vs-broadcast
+        // affinity. `*` is not a valid identifier start, so this is
+        // unambiguous and leaves every existing `@@[name]` form unchanged.
         fn _state_BracketName(&mut self, __e: &AttributeScannerFsmFrameEvent) {
             match __e {
                 AttributeScannerFsmFrameEvent::FrameEnter { .. } => { self._s_BracketName_hdl_frame_enter(__e); }
@@ -410,8 +424,12 @@ mod _attribute_scanner_fsm_framec {
         }
 
         fn _s_BracketName_hdl_frame_enter(&mut self, __e: &AttributeScannerFsmFrameEvent) {
-            self.name_start = self.pos;
             let n = self.bytes.len();
+            if self.pos < n && self.bytes[self.pos] == 0x2A {
+                self.is_broadcast = true;
+                self.pos = self.pos + 1;
+            }
+            self.name_start = self.pos;
             while self.pos < n && is_attr_name_char(self.bytes[self.pos]) {
                 self.pos = self.pos + 1;
             }

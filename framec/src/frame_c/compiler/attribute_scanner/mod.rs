@@ -56,6 +56,13 @@ pub struct AttributeSpan {
     /// for bare `@@name <value?>`.
     pub is_bracket_form: bool,
 
+    /// RFC-0052 §4 broadcast prefix: `true` when the bracket form
+    /// carried a leading `*` — `@@[*persist]` — meaning the attribute
+    /// applies to **every** system in the module rather than the next
+    /// single `@@system`. Always `false` for the bare form (the `*`
+    /// prefix is only meaningful in bracket form).
+    pub is_broadcast: bool,
+
     /// Name span (always set). Byte offsets into the original input;
     /// `bytes[name_start..name_end]` is the attribute identifier
     /// (e.g., `b"persist"`, `b"target"`, `b"save"`).
@@ -127,6 +134,7 @@ pub fn scan_attribute(bytes: &[u8], start: usize) -> AttributeSpan {
     fsm.scan(start);
     AttributeSpan {
         is_bracket_form: fsm.is_bracket_form,
+        is_broadcast: fsm.is_broadcast,
         name_start: fsm.name_start,
         name_end: fsm.name_end,
         args_span: if fsm.has_args {
@@ -227,6 +235,57 @@ mod tests {
         assert!(span.is_bracket_form);
         assert_eq!(span.name(src), b"main");
         assert!(span.args_span.is_none());
+    }
+
+    #[test]
+    fn non_broadcast_attributes_have_flag_false() {
+        // Every ordinary bracket / bare form must report is_broadcast = false.
+        for src in &[
+            b"@@[persist]\n".as_ref(),
+            b"@@[persist(String)]\n",
+            b"@@[save(snapshot)]\n",
+            b"@@[main]\n",
+            b"@@target python_3\n",
+        ] {
+            let span = scan_attribute(src, 0);
+            assert!(!span.is_broadcast, "unexpected broadcast for {:?}", src);
+        }
+    }
+
+    #[test]
+    fn rfc_0052_broadcast_prefix_persist() {
+        // `@@[*persist]` — the leading `*` is consumed; name is `persist`,
+        // is_broadcast is true, and the end position is just past `]`.
+        let src = b"@@[*persist]\n";
+        let span = scan_attribute(src, 0);
+        assert!(span.is_bracket_form);
+        assert!(span.is_broadcast);
+        assert_eq!(span.name(src), b"persist");
+        assert!(span.args_span.is_none());
+        assert_eq!(span.end_pos, 12); // just past `]`
+    }
+
+    #[test]
+    fn rfc_0052_broadcast_prefix_with_args() {
+        // `@@[*persist(String)]` — broadcast flag set, args still parse.
+        let src = b"@@[*persist(String)]\n";
+        let span = scan_attribute(src, 0);
+        assert!(span.is_broadcast);
+        assert_eq!(span.name(src), b"persist");
+        assert_eq!(span.args_inner(src), Some(b"String".as_ref()));
+    }
+
+    #[test]
+    fn rfc_0052_broadcast_prefix_save_load() {
+        for name in &[b"save".as_ref(), b"load"] {
+            let mut src = Vec::from(b"@@[*".as_ref());
+            src.extend_from_slice(name);
+            src.extend_from_slice(b"(snap)]\n");
+            let span = scan_attribute(&src, 0);
+            assert!(span.is_broadcast, "broadcast not set for {:?}", name);
+            assert_eq!(span.name(&src), *name);
+            assert_eq!(span.args_inner(&src), Some(b"snap".as_ref()));
+        }
     }
 
     #[test]
