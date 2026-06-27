@@ -17,7 +17,7 @@
 mod common;
 use common::compile_with_warnings;
 
-fn w416<'a>(warnings: &'a [String]) -> Vec<&'a String> {
+fn w416(warnings: &[String]) -> Vec<&String> {
     warnings.iter().filter(|w| w.contains("W416")).collect()
 }
 

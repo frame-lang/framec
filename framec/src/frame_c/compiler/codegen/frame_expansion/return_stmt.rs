@@ -177,7 +177,19 @@ pub(super) fn expand_return_call(
             // Leave `self.` intact so the body processor binds
             // it to the live data_gen — see the sibling fix in
             // `FrameSegmentKind::ContextReturn` above.
-            format!("__ReturnVal = {}", expanded_expr)
+            //
+            // Issue #132-F: `@@:return(expr)` is the SHORT-CIRCUITING
+            // return form (distinct segment kind `ReturnCall`, vs the
+            // non-short-circuiting `@@:return = e` / `@@:(e)`). In every
+            // imperative target the trailing native `return;` (emitted
+            // below) drops the rest of the clause. Erlang has no
+            // `return` statement, so we emit a sentinel the body
+            // processor recognizes to truncate the remaining top-level
+            // statements in the clause.
+            format!(
+                "__ReturnVal = {}\n{}__FRAME_RETURN_SHORTCIRCUIT__",
+                expanded_expr, indent_str
+            )
         }
         TargetLanguage::Graphviz => unreachable!(),
     };
@@ -188,6 +200,8 @@ pub(super) fn expand_return_call(
             format!("\n{}return", indent_str)
         }
         TargetLanguage::Lua => format!("\n{}return", indent_str),
+        // Erlang's short-circuit is carried by the sentinel emitted in
+        // `set_code` above; there is no native `return` keyword.
         TargetLanguage::Erlang => String::new(),
         _ => format!("\n{}return;", indent_str),
     };

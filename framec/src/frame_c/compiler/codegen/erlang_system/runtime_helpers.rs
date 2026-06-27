@@ -48,6 +48,13 @@ pub(super) fn emit_runtime_helpers(code: &mut String, system: &SystemAst) {
     code.push_str("frame_arg_at__(N, L) when length(L) >= N -> lists:nth(N, L);\n");
     code.push_str("frame_arg_at__(_, _) -> undefined.\n\n");
 
+    // Issue #132-E: call-scoped `@@:data.key` reader. The clause body
+    // threads a local `__DataMapN` map; a `@@:data.key` read lowers to
+    // `frame_data_get__(<<"key">>, __DataMapN)`. Returns `undefined`
+    // only when the key was never written by a `@@:data.key = …` in
+    // the current (call-scoped) handler activation.
+    code.push_str("frame_data_get__(Key, Map) -> maps:get(Key, Map, undefined).\n\n");
+
     // Frame transition helper — orchestrates exit → arg passing → gen_statem transition.
     // The trailing `ReplyVal` argument carries the @@:return value the
     // handler set BEFORE the transition; codegen passes either the
