@@ -80,8 +80,10 @@ nested({call, From}, __Event = leaf, Data) ->
     Data1 = Data#data{leaves = Data#data.leaves + 1},
     {keep_state, Data1, [{reply, From, ok}]};
 nested({call, From}, __Event = unnest, Data) ->
-    [{__PoppedState, __PoppedStateArgs, __PoppedEnterArgs} | __RestStack] = Data#data.frame_stack,
-    {next_state, __PoppedState, Data#data{frame_stack = __RestStack, frame_state_args = __PoppedStateArgs, frame_enter_args = __PoppedEnterArgs}, [{reply, From, ok}]}
+    __PopExitData0 = Data#data{frame_exit_args = []},
+    __PopExitData1 = frame_exit_dispatch__(__PopExitData0),
+    [{__PoppedState, __PoppedStateArgs, __PoppedEnterArgs} | __RestStack] = __PopExitData1#data.frame_stack,
+    {next_state, __PoppedState, __PopExitData1#data{frame_stack = __RestStack, frame_state_args = __PoppedStateArgs, frame_enter_args = __PoppedEnterArgs}, [{reply, From, ok}]}
 ;
 nested(state_timeout, {frame_enter_transition, Target}, Data) ->
     {next_state, Target, Data};
@@ -95,6 +97,8 @@ frame_arg_at__(N, _) when N < 1 -> undefined;
 frame_arg_at__(1, [H | _]) -> H;
 frame_arg_at__(N, L) when length(L) >= N -> lists:nth(N, L);
 frame_arg_at__(_, _) -> undefined.
+
+frame_data_get__(Key, Map) -> maps:get(Key, Map, undefined).
 
 frame_transition__(TargetState, Data, ExitArgs, EnterArgs, StateArgs, From, ReplyVal) ->
     Data1 = Data#data{frame_exit_args = ExitArgs},

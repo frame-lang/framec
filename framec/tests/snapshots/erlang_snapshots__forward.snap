@@ -99,6 +99,8 @@ frame_arg_at__(1, [H | _]) -> H;
 frame_arg_at__(N, L) when length(L) >= N -> lists:nth(N, L);
 frame_arg_at__(_, _) -> undefined.
 
+frame_data_get__(Key, Map) -> maps:get(Key, Map, undefined).
+
 frame_transition__(TargetState, Data, ExitArgs, EnterArgs, StateArgs, From, ReplyVal) ->
     Data1 = Data#data{frame_exit_args = ExitArgs},
     Data2 = frame_exit_dispatch__(Data1),

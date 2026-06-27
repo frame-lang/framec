@@ -815,6 +815,31 @@ pub(super) fn erlang_process_body_lines_full(
             continue;
         }
 
+        // Issue #132-F: short-circuit sentinel emitted by a
+        // `@@:return(expr)` (the short-circuiting return form). The
+        // preceding `__ReturnVal = expr` line has already been pushed
+        // to `result`; everything AFTER it in the same clause is dead.
+        //
+        // At top level (no open `case` arm) we stop processing the
+        // clause entirely: `data_var` / `result` / the `__ReturnVal`
+        // SSA pass all stay consistent, and the handler emitter's
+        // terminal reply tuple uses the value we just wrote.
+        //
+        // Inside a `case` arm, a flat-line truncation cannot express
+        // "return out of one arm only" — that needs RFC-0051's
+        // structural handler-body lowering. We drop the sentinel
+        // (so it never reaches Erlang) but do NOT truncate; the
+        // remaining statements still run. This is a known limitation,
+        // not a regression (the prior behavior never short-circuited
+        // at all).
+        if l == "__FRAME_RETURN_SHORTCIRCUIT__" {
+            if case_data_stack.is_empty() {
+                break;
+            }
+            // Inside a case arm — drop the marker, keep processing.
+            continue;
+        }
+
         // Capitalize params — but for self.field = expr, only capitalize the expr part
         let l = if param_names.is_empty() {
             l.to_string()
@@ -1596,6 +1621,81 @@ pub(super) fn erlang_process_body_lines_full(
                     data_var, expr
                 ));
             }
+        }
+    }
+
+    // Issue #132-E: lower call-scoped `@@:data` to a threaded local
+    // map. The frame-expansion arms emit two markers:
+    //
+    //   write: `__FRAME_DATAPUT__(<<"k">>, Expr)`
+    //   read:  `frame_data_get__(<<"k">>, __FRAME_DATAMAP__)`
+    //
+    // We seed a fresh `__DataMap0 = #{}` at the top of the clause body,
+    // rewrite each write into a `__DataMapN = maps:put(...)` SSA
+    // binding, and substitute every `__FRAME_DATAMAP__` placeholder
+    // with the live map variable so reads see writes that ran earlier
+    // in source order. Because the map is a clause-local Erlang
+    // variable, a reentrant `@@:self.m()` dispatch — which re-invokes
+    // the state function as a *new* activation — gets its own
+    // `__DataMap0 = #{}` and cannot clobber the caller's map. That is
+    // exactly the call-scoping `@@:data` requires.
+    {
+        let uses_data = result
+            .iter()
+            .any(|l| l.contains("__FRAME_DATAPUT__(") || l.contains("__FRAME_DATAMAP__"));
+        if uses_data {
+            let mut map_gen: usize = 0;
+            let mut map_var = "__DataMap0".to_string();
+            let mut lowered: Vec<String> = Vec::with_capacity(result.len() + 1);
+            // Seed the empty map once at the top of the body.
+            lowered.push("    __DataMap0 = #{}".to_string());
+            for line in result.drain(..) {
+                let trimmed = line.trim_start();
+                if let Some(rest) = trimmed.strip_prefix("__FRAME_DATAPUT__(") {
+                    // `__FRAME_DATAPUT__(<<"k">>, Expr)` → split the key
+                    // arg (up to the top-level comma) from the value.
+                    let inner = rest.strip_suffix(')').unwrap_or(rest);
+                    let bytes = inner.as_bytes();
+                    let mut depth = 0i32;
+                    let mut split = inner.len();
+                    for (i, &b) in bytes.iter().enumerate() {
+                        match b {
+                            b'(' | b'{' | b'[' => depth += 1,
+                            b')' | b'}' | b']' => depth -= 1,
+                            b',' if depth == 0 => {
+                                split = i;
+                                break;
+                            }
+                            _ => {}
+                        }
+                    }
+                    let key = inner[..split].trim();
+                    let value = if split < inner.len() {
+                        inner[split + 1..].trim()
+                    } else {
+                        "undefined"
+                    };
+                    // Resolve any `__FRAME_DATAMAP__` reads inside the
+                    // value against the CURRENT map (the value is
+                    // evaluated before this write takes effect).
+                    let value = value.replace("__FRAME_DATAMAP__", &map_var);
+                    map_gen += 1;
+                    let new_var = format!("__DataMap{}", map_gen);
+                    lowered.push(format!(
+                        "    {} = maps:put({}, {}, {})",
+                        new_var, key, value, map_var
+                    ));
+                    map_var = new_var;
+                } else {
+                    // Substitute reads against the live map variable.
+                    if line.contains("__FRAME_DATAMAP__") {
+                        lowered.push(line.replace("__FRAME_DATAMAP__", &map_var));
+                    } else {
+                        lowered.push(line);
+                    }
+                }
+            }
+            result = lowered;
         }
     }
 

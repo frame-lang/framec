@@ -193,6 +193,41 @@ pub(super) fn generate_pop_transition(
         TargetLanguage::Ruby => code.push_str(&format!("{}__saved = @_state_stack.pop\n", indent)),
         TargetLanguage::Lua => code.push_str(&format!("{}local __saved = table.remove(self._state_stack)\n", indent)),
         TargetLanguage::Erlang => {
+            // Issue #132-G: fire the CURRENT state's `<$` exit handler
+            // before restoring the popped compartment. A normal
+            // transition runs `frame_exit_dispatch__` (via
+            // `frame_transition__`); a `-> pop$` historically skipped
+            // it, so the popping state's exit handler never ran. We
+            // dispatch on `frame_current_state` (still the popping
+            // state at this point) exactly like `frame_transition__`,
+            // threading any decorated exit-args through
+            // `frame_exit_args` first so the handler can read them.
+            //
+            // Collect exit-arg VALUES (RFC-0008 `-> (a, b) pop$`) into
+            // an Erlang list; empty when undecorated.
+            let exit_vals: Vec<String> = exit_args
+                .as_ref()
+                .map(|s| {
+                    s.split(',')
+                        .map(|x| x.trim())
+                        .filter(|x| !x.is_empty())
+                        .map(|arg| {
+                            let raw =
+                                arg.find('=').map(|i| arg[i + 1..].trim()).unwrap_or(arg);
+                            expand_expression(raw, lang, ctx)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let exit_args_list = format!("[{}]", exit_vals.join(", "));
+            code.push_str(&format!(
+                "{}__PopExitData0 = Data#data{{frame_exit_args = {}}},\n",
+                indent, exit_args_list
+            ));
+            code.push_str(&format!(
+                "{}__PopExitData1 = frame_exit_dispatch__(__PopExitData0),\n",
+                indent
+            ));
             // Pop the saved compartment context: a 3-tuple of state
             // atom + frame_state_args + frame_enter_args (push side
             // emits the same shape). Restoring all three fields on
@@ -201,9 +236,9 @@ pub(super) fn generate_pop_transition(
             // back to a state with `(x: int)` left state_args at the
             // PUSHED state's value (or undefined), so subsequent
             // reads of `$.x` returned the wrong context.
-            code.push_str(&format!("{}[{{__PoppedState, __PoppedStateArgs, __PoppedEnterArgs}} | __RestStack] = Data#data.frame_stack,\n", indent));
+            code.push_str(&format!("{}[{{__PoppedState, __PoppedStateArgs, __PoppedEnterArgs}} | __RestStack] = __PopExitData1#data.frame_stack,\n", indent));
             code.push_str(&format!(
-                "{}{{next_state, __PoppedState, Data#data{{frame_stack = __RestStack, frame_state_args = __PoppedStateArgs, frame_enter_args = __PoppedEnterArgs}}, [{{reply, From, ok}}]}}",
+                "{}{{next_state, __PoppedState, __PopExitData1#data{{frame_stack = __RestStack, frame_state_args = __PoppedStateArgs, frame_enter_args = __PoppedEnterArgs}}, [{{reply, From, ok}}]}}",
                 indent
             ));
             return code;
