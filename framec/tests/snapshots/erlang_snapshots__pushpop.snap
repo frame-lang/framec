@@ -63,7 +63,7 @@ idle({call, From}, __Event = ping, Data) ->
     {keep_state, Data1, [{reply, From, ok}]};
 idle({call, From}, __Event = nest, Data) ->
     Data1 = Data#data{frame_stack = [{idle, Data#data.frame_state_args, Data#data.frame_enter_args} | Data#data.frame_stack]},
-    frame_transition__('nested', Data1, [], [], [], From, ok)
+    frame_push_transition__('nested', Data1, [], [], From, ok)
 ;
 idle(state_timeout, {frame_enter_transition, Target}, Data) ->
     {next_state, Target, Data};
@@ -83,7 +83,7 @@ nested({call, From}, __Event = unnest, Data) ->
     __PopExitData0 = Data#data{frame_exit_args = []},
     __PopExitData1 = frame_exit_dispatch__(__PopExitData0),
     [{__PoppedState, __PoppedStateArgs, __PoppedEnterArgs} | __RestStack] = __PopExitData1#data.frame_stack,
-    {next_state, __PoppedState, __PopExitData1#data{frame_stack = __RestStack, frame_state_args = __PoppedStateArgs, frame_enter_args = __PoppedEnterArgs}, [{reply, From, ok}]}
+    {next_state, __PoppedState, __PopExitData1#data{frame_stack = __RestStack, frame_state_args = __PoppedStateArgs, frame_enter_args = __PoppedEnterArgs, frame_current_state = __PoppedState}, [{reply, From, ok}]}
 ;
 nested(state_timeout, {frame_enter_transition, Target}, Data) ->
     {next_state, Target, Data};
@@ -105,6 +105,14 @@ frame_transition__(TargetState, Data, ExitArgs, EnterArgs, StateArgs, From, Repl
     Data2 = frame_exit_dispatch__(Data1),
     Data3 = Data2#data{frame_enter_args = EnterArgs, frame_state_args = StateArgs, frame_current_state = TargetState},
     {next_state, TargetState, Data3, [{reply, From, ReplyVal}]}.
+
+frame_push_transition__(TargetState, Data, EnterArgs, StateArgs, From, ReplyVal) ->
+    OldState = Data#data.frame_current_state,
+    Data1 = Data#data{frame_enter_args = EnterArgs, frame_state_args = StateArgs, frame_current_state = TargetState},
+    case OldState =:= TargetState of
+        true  -> {repeat_state, Data1, [{reply, From, ReplyVal}]};
+        false -> {next_state, TargetState, Data1, [{reply, From, ReplyVal}]}
+    end.
 
 frame_forward_transition__(TargetState, ForwardEvent, Data, ExitArgs, EnterArgs, StateArgs, From) ->
     Data1 = Data#data{frame_exit_args = ExitArgs},

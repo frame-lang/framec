@@ -70,6 +70,26 @@ pub(super) fn emit_runtime_helpers(code: &mut String, system: &SystemAst) {
     code.push_str("    Data3 = Data2#data{frame_enter_args = EnterArgs, frame_state_args = StateArgs, frame_current_state = TargetState},\n");
     code.push_str("    {next_state, TargetState, Data3, [{reply, From, ReplyVal}]}.\n\n");
 
+    // Push transition helper — `push$ -> $Target` SUSPENDS the current
+    // state and enters the target. Unlike `frame_transition__`, push must
+    // NOT fire the current state's `<$` exit handler (the suspended state
+    // is resumed later by `-> pop$`, which is what fires its exit). It DOES
+    // fire the target's `$>` enter handler — even when Target equals the
+    // current gen_statem state (a nested `push$ -> $Same`, e.g. $Paused ->
+    // $Paused). gen_statem normally skips the `enter` callback for a
+    // `{next_state, Same, …}`; `repeat_state` forces the enter callback to
+    // re-run for the same state, so the re-entered `$>` runs every push
+    // (#132G nested-modal-stack runtime bug). No exit dispatch here.
+    code.push_str(
+        "frame_push_transition__(TargetState, Data, EnterArgs, StateArgs, From, ReplyVal) ->\n",
+    );
+    code.push_str("    OldState = Data#data.frame_current_state,\n");
+    code.push_str("    Data1 = Data#data{frame_enter_args = EnterArgs, frame_state_args = StateArgs, frame_current_state = TargetState},\n");
+    code.push_str("    case OldState =:= TargetState of\n");
+    code.push_str("        true  -> {repeat_state, Data1, [{reply, From, ReplyVal}]};\n");
+    code.push_str("        false -> {next_state, TargetState, Data1, [{reply, From, ReplyVal}]}\n");
+    code.push_str("    end.\n\n");
+
     // Forward transition helper — same exit/enter cascade as
     // `frame_transition__`, plus a `next_event` action that
     // re-dispatches the originating event to the new leaf after

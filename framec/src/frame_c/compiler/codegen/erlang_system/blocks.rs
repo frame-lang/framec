@@ -25,7 +25,7 @@
 //!    `paren_balance_unclosed` / `ends_with_binary_op` from
 //!    `lexical` flag unfinished expressions).
 
-use super::lexical::{ends_with_binary_op, paren_balance_unclosed};
+use super::lexical::{ends_with_binary_op, paren_balance_unclosed, split_top_level_commas};
 
 /// Lowers native Erlang-style `if Cond -> Body ; true -> Body end` to
 /// Frame's C-style `if Cond { Body } else { Body }` so the existing
@@ -384,4 +384,109 @@ pub(super) fn erlang_smart_join(lines: &[String], code: &mut String) {
 
         code.push_str(line);
     }
+}
+
+/// Reroute the `frame_transition__` immediately following a `push$`
+/// (a `frame_stack = [...]` save) through `frame_push_transition__`.
+///
+/// `push$ -> $Target` lowers to a bare `push$` (the stack save) plus a
+/// normal `-> $Target` transition. The normal transition fires the
+/// current state's `<$` exit handler and skips the target's `$>` enter
+/// when Target equals the current gen_statem state. Neither is correct
+/// for a push: push *suspends* the current state (no exit — `-> pop$`
+/// fires it later) and always re-enters the target (so a nested
+/// `push$ -> $Same` re-runs the target's `$>`). `frame_push_transition__`
+/// has those semantics; this pass swaps the call and drops the now-unused
+/// `ExitArgs` positional argument.
+///
+/// Only the FIRST transition after a push is rewritten — a handler can
+/// `push$` then transition exactly once. The detection keys on the
+/// framec-emitted push shape (`frame_stack = [` … `| ` … `frame_stack]`),
+/// which user native code never produces verbatim.
+pub(super) fn erlang_rewrite_push_transitions(text: &str) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut out: Vec<String> = Vec::with_capacity(lines.len());
+    let mut pending_push = false;
+    for line in &lines {
+        let trimmed = line.trim();
+        // A framec push save: `…frame_stack = [{…} | …frame_stack]`.
+        let is_push_save = trimmed.contains("frame_stack = [")
+            && trimmed.contains("| ")
+            && trimmed.contains("frame_stack]");
+        if pending_push && trimmed.starts_with("frame_transition__(") {
+            // Parse `frame_transition__(T, Data, ExitArgs, EnterArgs, StateArgs, From, RV)`
+            // and re-emit as `frame_push_transition__(T, Data, EnterArgs, StateArgs, From, RV)`.
+            let indent_len = line.len() - line.trim_start().len();
+            let indent = &line[..indent_len];
+            let after_open = trimmed
+                .strip_prefix("frame_transition__(")
+                .expect("checked starts_with");
+            // Find the matching close paren for the call.
+            if let Some(close_rel) = find_matching_close(after_open) {
+                let inner = &after_open[..close_rel];
+                let trailer = &after_open[close_rel + 1..];
+                let parts = split_top_level_commas(inner);
+                if parts.len() == 7 {
+                    let t = parts[0].trim();
+                    let data = parts[1].trim();
+                    // parts[2] = ExitArgs (dropped for push)
+                    let enter = parts[3].trim();
+                    let state = parts[4].trim();
+                    let from = parts[5].trim();
+                    let rv = parts[6].trim();
+                    out.push(format!(
+                        "{}frame_push_transition__({}, {}, {}, {}, {}, {}){}",
+                        indent, t, data, enter, state, from, rv, trailer
+                    ));
+                    pending_push = false;
+                    continue;
+                }
+            }
+            // Couldn't parse defensively — leave the transition unchanged.
+            pending_push = false;
+            out.push((*line).to_string());
+            continue;
+        }
+        // The push transition must IMMEDIATELY follow the push save. A
+        // blank/comment line between them is tolerated; any other code
+        // line cancels the pending push (so a later, unrelated
+        // `frame_transition__` in the same handler is never rewritten).
+        if pending_push && !trimmed.is_empty() && !trimmed.starts_with('%') && !is_push_save {
+            pending_push = false;
+        }
+        if is_push_save {
+            pending_push = true;
+        }
+        out.push((*line).to_string());
+    }
+    out.join("\n")
+}
+
+/// Return the byte index of the `)` that closes the call whose `(` was
+/// already consumed (so depth starts at 1 on the first char). Returns
+/// `None` if unbalanced. String-literal aware so a `)` inside a `"…"`
+/// is not mistaken for the closer.
+fn find_matching_close(s: &str) -> Option<usize> {
+    let mut depth = 1i32;
+    let mut in_string = false;
+    let mut escape = false;
+    for (i, c) in s.char_indices() {
+        if escape {
+            escape = false;
+            continue;
+        }
+        match c {
+            '\\' if in_string => escape = true,
+            '"' => in_string = !in_string,
+            '(' | '[' | '{' if !in_string => depth += 1,
+            ')' | ']' | '}' if !in_string => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }

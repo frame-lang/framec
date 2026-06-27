@@ -521,8 +521,60 @@ pub(super) fn emit_actions_and_operations(
                 };
                 processed_lines.push(format!("    {}", l));
             }
+            // A non-static operation whose body is a control-flow
+            // `case … of … end` (lowered from a Frame brace-`if`) returns
+            // its value from the case arms directly (e.g. `clamp` -> `Hi`/`V`).
+            // But callers expect a `{Data, Value}` tuple (the dispatcher does
+            // `{NewData, __Result} = clamp(...)`). Joining the raw case here
+            // would emit a bare `case … end` and the caller's tuple match
+            // would `badmatch` the scalar arm value (#132D runtime bug). Bind
+            // the case result to a variable, then return the tuple. Each arm
+            // already evaluates to the `@@:()` value, so the bound result is
+            // exactly the operation's return value.
+            let body_is_case_expr = {
+                // Skip comment-only lines: a `%% …` leader (preserved from the
+                // Frame source) must not hide the `case` head from detection.
+                let is_meaningful = |t: &str| !t.is_empty() && !t.starts_with('%');
+                let first = processed_lines
+                    .iter()
+                    .map(|l| l.trim())
+                    .find(|t| is_meaningful(t));
+                let last = processed_lines
+                    .iter()
+                    .map(|l| l.trim())
+                    .rev()
+                    .find(|t| is_meaningful(t));
+                matches!(first, Some(f) if f.starts_with("case ") || f.starts_with("case("))
+                    && matches!(last, Some(l) if l == "end" || l.starts_with("end.") || l.starts_with("end;") || l == "end,")
+            };
             if processed_lines.is_empty() {
                 code.push_str("    ok");
+            } else if !op.is_static && body_is_case_expr {
+                // Bind the whole case to `__OpResult`, then return `{Data, __OpResult}`.
+                // The case has no Data mutations (those would have taken the
+                // DataN-rebind path and not be a pure case expression), so Data
+                // passes through unchanged.
+                let final_data = if data_bind_counter > 0 {
+                    format!("Data{}", data_bind_counter)
+                } else {
+                    "Data".to_string()
+                };
+                // Normalize: drop a trailing `.`/`;`/`,` after the closing `end`
+                // so we can append our own tuple continuation.
+                let mut case_lines = processed_lines.clone();
+                if let Some(last) = case_lines.last_mut() {
+                    let t = last.trim_end();
+                    let stripped = t.trim_end_matches(['.', ';', ',']).trim_end();
+                    let indent_len = last.len() - last.trim_start().len();
+                    *last = format!("{}{}", &" ".repeat(indent_len), stripped);
+                }
+                let mut case_buf = String::new();
+                erlang_smart_join(&case_lines, &mut case_buf);
+                // Prefix the bound assignment, stripping the first line's
+                // leading indent so `__OpResult = case …` reads cleanly.
+                code.push_str("    __OpResult = ");
+                code.push_str(case_buf.trim_start());
+                code.push_str(&format!(",\n    {{{}, __OpResult}}", final_data));
             } else if !op.is_static && data_bind_counter > 0 {
                 // Non-static op that mutated Data (`self.x = ...` emitted
                 // record updates into Data1, Data2, ...). Callers expect
