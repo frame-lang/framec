@@ -237,8 +237,18 @@ pub(super) fn generate_pop_transition(
             // PUSHED state's value (or undefined), so subsequent
             // reads of `$.x` returned the wrong context.
             code.push_str(&format!("{}[{{__PoppedState, __PoppedStateArgs, __PoppedEnterArgs}} | __RestStack] = __PopExitData1#data.frame_stack,\n", indent));
+            // Restore the popped compartment and update `frame_current_state`
+            // to the popped state so a LATER exit dispatch targets the right
+            // state (without this, after a `pop$` the Frame-level current
+            // state still pointed at the popping state, and a subsequent
+            // transition would fire the wrong `<$`). We do NOT set
+            // `frame_skip_enter__`: a nested `pop$` to the SAME state is a
+            // gen_statem same-state `{next_state, …}`, which already skips
+            // the `enter` callback (so the resumed state's `$>` does not
+            // re-run); setting the flag here would linger when gen_statem
+            // skips enter and could later wrongly suppress a genuine enter.
             code.push_str(&format!(
-                "{}{{next_state, __PoppedState, __PopExitData1#data{{frame_stack = __RestStack, frame_state_args = __PoppedStateArgs, frame_enter_args = __PoppedEnterArgs}}, [{{reply, From, ok}}]}}",
+                "{}{{next_state, __PoppedState, __PopExitData1#data{{frame_stack = __RestStack, frame_state_args = __PoppedStateArgs, frame_enter_args = __PoppedEnterArgs, frame_current_state = __PoppedState}}, [{{reply, From, ok}}]}}",
                 indent
             ));
             return code;

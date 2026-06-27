@@ -42,6 +42,7 @@
 //!   user's `domain:` initializer text) populate them.
 
 use super::super::codegen_utils::to_snake_case;
+use super::lexical::erlang_record_field;
 use super::ERLANG_COMPARTMENT_CONTEXT_FIELDS;
 use crate::frame_c::compiler::frame_ast::SystemAst;
 
@@ -104,7 +105,13 @@ pub(super) fn emit_persistence_methods(code: &mut String, system: &SystemAst) {
             }
             None => None,
         };
-        domain_fields.push((var.name.clone(), child_module));
+        // Use the canonical Erlang record-field atom — NOT the raw Frame
+        // name. The map key, the `Data#data.<field>` accessor, and the
+        // record definition must all spell the field identically. An
+        // uppercase const like `LIMIT` would otherwise leak an unbound
+        // Erlang variable into the save map key (`LIMIT => …`) and a
+        // mismatched accessor (#132B persist site).
+        domain_fields.push((erlang_record_field(&var.name), child_module));
     }
 
     // The full field list for non-domain serialization: per-state

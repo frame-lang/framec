@@ -95,6 +95,14 @@ frame_transition__(TargetState, Data, ExitArgs, EnterArgs, StateArgs, From, Repl
     Data3 = Data2#data{frame_enter_args = EnterArgs, frame_state_args = StateArgs, frame_current_state = TargetState},
     {next_state, TargetState, Data3, [{reply, From, ReplyVal}]}.
 
+frame_push_transition__(TargetState, Data, EnterArgs, StateArgs, From, ReplyVal) ->
+    OldState = Data#data.frame_current_state,
+    Data1 = Data#data{frame_enter_args = EnterArgs, frame_state_args = StateArgs, frame_current_state = TargetState},
+    case OldState =:= TargetState of
+        true  -> {repeat_state, Data1, [{reply, From, ReplyVal}]};
+        false -> {next_state, TargetState, Data1, [{reply, From, ReplyVal}]}
+    end.
+
 frame_forward_transition__(TargetState, ForwardEvent, Data, ExitArgs, EnterArgs, StateArgs, From) ->
     Data1 = Data#data{frame_exit_args = ExitArgs},
     Data2 = frame_exit_dispatch__(Data1),

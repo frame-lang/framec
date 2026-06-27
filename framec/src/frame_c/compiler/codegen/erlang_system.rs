@@ -34,7 +34,10 @@ mod persist;
 mod runtime_helpers;
 mod self_call_guards;
 
-use blocks::{erlang_lower_native_if, erlang_smart_join, erlang_transform_blocks};
+use blocks::{
+    erlang_lower_native_if, erlang_rewrite_push_transitions, erlang_smart_join,
+    erlang_transform_blocks,
+};
 use body_processor::{
     erlang_capitalize_params, erlang_process_body_lines, erlang_process_body_lines_full,
     erlang_process_body_lines_with_params,
@@ -1983,6 +1986,14 @@ pub(crate) fn generate_erlang_system(
         }
         code = out;
     }
+
+    // Push-transition rewrite (issue #132G). A `push$ -> $Target` lowers to
+    // a `frame_stack` save followed by a normal `frame_transition__`. Run
+    // this AFTER all per-handler terminal/case analysis (which keys on the
+    // `frame_transition__` name) so renaming the push sites to
+    // `frame_push_transition__` — which suspends without firing `<$` and
+    // always re-enters the target's `$>` — does not disturb that analysis.
+    code = erlang_rewrite_push_transitions(&code);
 
     // Domain-field case normalization (issue #132B). The record def and
     // ctor overrides are emitted canonical at source; this normalizes the

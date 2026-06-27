@@ -81,12 +81,63 @@ pub(crate) fn erlang_state_atom(name: &str) -> String {
 /// `Data#data.Field` read route through this helper so the field name is
 /// spelled identically at every site.
 pub(crate) fn erlang_record_field(name: &str) -> String {
-    let snake = to_snake_case(name);
+    let snake = erlang_field_snake(name);
     if is_erlang_reserved(&snake) {
         format!("'{}'", snake)
     } else {
         snake
     }
+}
+
+/// Snake-case a Frame domain-field name for use as an Erlang record-field
+/// atom, correctly collapsing all-caps / acronym runs.
+///
+/// The shared `to_snake_case` FSM treats EVERY uppercase letter as the
+/// start of a new word, so an all-caps const like `LIMIT` becomes
+/// `l_i_m_i_t` and `MAX_VAL` becomes `m_a_x__v_a_l` — invalid, surprising
+/// field names that also break the persist map keys derived from them
+/// (#132B). This boundary applies standard acronym handling instead:
+///   - a run of ≥2 uppercase letters is one word (`LIMIT` → `limit`)
+///   - the last uppercase of a run that precedes a lowercase starts a new
+///     word (`HTTPServer` → `http_server`)
+///   - an uppercase following a lowercase/digit starts a new word
+///     (`maxVal` → `max_val`)
+///   - existing underscores are preserved as word separators, never doubled
+///     (`MAX_VAL` → `max_val`)
+fn erlang_field_snake(name: &str) -> String {
+    let chars: Vec<char> = name.chars().collect();
+    let mut out = String::with_capacity(name.len() + 4);
+    for (i, &c) in chars.iter().enumerate() {
+        if c == '_' {
+            // Preserve a single separator; never emit a doubled `__`.
+            if !out.ends_with('_') && !out.is_empty() {
+                out.push('_');
+            }
+            continue;
+        }
+        if c.is_ascii_uppercase() {
+            let prev = if i > 0 { Some(chars[i - 1]) } else { None };
+            let next = chars.get(i + 1).copied();
+            let boundary = match (prev, next) {
+                // start of string: no leading separator
+                (None, _) => false,
+                // lower/digit -> Upper : new word (`maxVal`)
+                (Some(p), _) if p.is_ascii_lowercase() || p.is_ascii_digit() => true,
+                // Upper -> Upper followed by lower : last cap of an acronym
+                // begins a new word (`HTTPServer` -> `http_server`)
+                (Some(p), Some(n)) if p.is_ascii_uppercase() && n.is_ascii_lowercase() => true,
+                _ => false,
+            };
+            if boundary && !out.ends_with('_') && !out.is_empty() {
+                out.push('_');
+            }
+            out.push(c.to_ascii_lowercase());
+        } else {
+            out.push(c);
+        }
+    }
+    // Trim any leading separator that a leading underscore may have left.
+    out.trim_start_matches('_').to_string()
 }
 
 /// Word-boundary string substitution. Replaces `needle` with `replacement`
