@@ -799,14 +799,15 @@ Each interface call pushes its own context. Nested calls are isolated — inner 
 
 ## Self Reference
 
-`@@:self` is a syntactic prefix used to dispatch through the system's own interface. It is **not** a first-class value — bare `@@:self` is a transpile error (E603). The only valid form is `@@:self.method(args)`.
+`@@:self` is a syntactic prefix for calling the system's own methods portably. It is **not** a first-class value — bare `@@:self` is a transpile error (E603). The only valid form is `@@:self.<name>(args)`, where `<name>` is an **interface method** (dispatched through the kernel — see below) or an **action/operation** (lowered to a direct native call). It is one portable spelling that the transpiler translates to each target's call syntax.
 
 ### Self Accessors
 
 | Syntax | Meaning |
 |--------|---------|
-| `@@:self.method(args)` | Reentrant interface call |
-| `@@:self` (bare) | **Error — E603.** Requires `.method(args)`. |
+| `@@:self.method(args)` | Reentrant **interface** call (full kernel dispatch) |
+| `@@:self.action(args)` | Direct call to an **action/operation** (no kernel dispatch) |
+| `@@:self` (bare) | **Error — E603.** Requires `.name(args)`. |
 
 ### Self Interface Call — `@@:self.method(args)`
 
@@ -839,9 +840,15 @@ $Active {
 - **Return value.** The return value is available to the caller as a native expression, just like any function call.
 - **State sensitivity.** If a transition occurred before the self-call, the call dispatches to a handler in the new state.
 
+#### Calling actions, operations, and child systems
+
+Only **interface methods** dispatch through the kernel. Two other call kinds are *native*: the transpiler lowers the Frame **reference** but passes the **call syntax through unchanged** (Oceans Model) — it does **not** rewrite `.`/`:` or the receiver spelling.
+
+- **Actions and operations** have two correct spellings: the portable `@@:self.<action>(args)` (lowered to a direct native call — `self:note()` on Lua, `note(self, …)` on C) **or** native syntax written directly in your target's idiom. A bare `self.note()` is the *native* form; on Lua you must write `self:note()` (colon) so `self` binds — the transpiler will not "fix" a `.` into a `:`.
+- **Child-system calls.** Composing another system (a `@@<Other>()` instance held in a state variable or domain field) is native code: the transpiler lowers the `$.sensor` / `self.sensor` **reference** and the `@@Sensor()` **construction**, but the **method call is user-authored** — write `$.sensor:bump()` on Lua, `$.sensor.bump()` on Python. The codegen does not alloc, free, or call the child for you; that is your code.
+
 #### Restrictions
 
-- Only interface methods can be called via `@@:self.method()`. Actions and operations are called directly using native syntax.
 - `@@:self.method()` does not support calling constructors.
 
 #### Self-Call Validation
