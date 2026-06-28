@@ -9,7 +9,7 @@ use super::super::super::codegen_utils::{
     HandlerContext,
 };
 use super::super::super::frame_expansion::{
-    emit_handler_body_via_statements, normalize_indentation,
+    emit_handler_body_via_statements, lua_fixup_method_calls, normalize_indentation,
 };
 use super::super::{emit_handler_return_init, handler_method_name};
 use crate::frame_c::compiler::arcanum::HandlerEntry;
@@ -112,7 +112,14 @@ pub(crate) fn generate_lua_handler_method(
     }
 
     let body_src = emit_handler_body_via_statements(&handler.body_span, source, lang, &ctx);
-    body.push_str(&body_src);
+    // #134: Lua method calls in native passthrough must use colon syntax when
+    // the callee is colon-defined — an action (`self.note(…)` → `self:note(…)`)
+    // or an embedded-system method reached through a state-var subscript
+    // (`…state_vars["sensor"].bump()` → `…:bump()`). Run on the fully assembled
+    // body so the receiver subscript (emitted as Frame-segment expansion) and
+    // the trailing `.method(` (native passthrough) are visible in one string.
+    // Only the CALL form changes; value reads such as `self.trace` are untouched.
+    body.push_str(&lua_fixup_method_calls(&body_src, &ctx));
 
     CodegenNode::Method {
         name: method_name,

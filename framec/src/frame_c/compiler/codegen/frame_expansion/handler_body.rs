@@ -794,6 +794,14 @@ fn lower_self_in_code(body_bytes: &[u8], lang: TargetLanguage, ctx: &HandlerCont
             code.replace_range(start..end, &exp);
         }
     }
+    // #134: action/operation bodies are native passthrough too — apply the Lua
+    // dot→colon call fixup so an action that calls another action (or an
+    // embedded-system method) uses the colon form its definition requires.
+    // The `@@:self.*` expansions spliced above already emit colon and are
+    // idempotent under this pass (no bare `.method(` remains for them).
+    if matches!(lang, TargetLanguage::Lua) {
+        code = lua_fixup_method_calls(&code, ctx);
+    }
     code
 }
 
@@ -813,6 +821,159 @@ fn lower_self_in_fragment(fragment: &str, lang: TargetLanguage, ctx: &HandlerCon
         .map(|s| s.strip_suffix('}').unwrap_or(s))
         .unwrap_or(&lowered);
     inner.to_string()
+}
+
+/// Lua call-form fixup (#134): rewrite a native-passthrough method CALL from
+/// dot to colon when the callee is a method defined with implicit `self`.
+///
+/// Lua's `function T:m(p)` desugars `m`'s first parameter to `self`. The
+/// matching call must therefore be `t:m(arg)` — `t.m(arg)` binds `self=arg`
+/// and shifts every real argument by one. framec emits two families of such
+/// definitions with colon syntax:
+///
+///   1. Actions (`actions: note(s) {…}` → `function S:note(s)`). A handler
+///      that invokes one as native Lua (`self.note("hi;")`) must become
+///      `self:note("hi;")`.
+///   2. Embedded-system methods reached through a state-var holding another
+///      `@@system` (`$.sensor.bump()` lowers to
+///      `…state_vars["sensor"].bump()`; the embedded system's `bump` is a
+///      `function Sensor:bump(...)`), which must become `…:bump(...)`.
+///
+/// Only the CALL form (`recv.name(`) is touched — a value read such as
+/// `self.trace` or a field index has no following `(` and is left verbatim,
+/// preserving the type-ignorant passthrough contract. The blessed
+/// `@@:self.method()` path already lowers to colon and arrives as expansion
+/// text (not native passthrough), so it is unaffected. String and comment
+/// regions are skipped so a literal `"self.note("` is never rewritten.
+///
+/// `recv` is the receiver expression immediately preceding the `.`:
+///   - `self` for action calls (gated on `ctx.actions`);
+///   - any `state_vars["<field>"]` subscript whose `<field>` is an embedded
+///     system (gated on `ctx.domain_field_types[field] ∈ ctx.defined_systems`).
+pub(crate) fn lua_fixup_method_calls(text: &str, ctx: &HandlerContext) -> String {
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0usize;
+    // None outside strings; Some(delim) while inside a "…" or '…' literal.
+    let mut string_delim: Option<u8> = None;
+
+    while i < bytes.len() {
+        let b = bytes[i];
+
+        // ── String-literal tracking ──────────────────────────────────────
+        if let Some(d) = string_delim {
+            // A backslash escapes the next byte (so `\"` does not close).
+            if b == b'\\' && i + 1 < bytes.len() {
+                out.push(b as char);
+                out.push(bytes[i + 1] as char);
+                i += 2;
+                continue;
+            }
+            if b == d {
+                string_delim = None;
+            }
+            out.push(b as char);
+            i += 1;
+            continue;
+        }
+        if b == b'"' || b == b'\'' {
+            string_delim = Some(b);
+            out.push(b as char);
+            i += 1;
+            continue;
+        }
+        // Lua line comment `-- …` (also covers the `--[[ ]]` opener prefix):
+        // copy to end of line verbatim so `-- self.note(` is never rewritten.
+        if b == b'-' && i + 1 < bytes.len() && bytes[i + 1] == b'-' {
+            while i < bytes.len() && bytes[i] != b'\n' {
+                out.push(bytes[i] as char);
+                i += 1;
+            }
+            continue;
+        }
+
+        // ── Dot that may begin a method call `.<name>(` ──────────────────
+        if b == b'.' {
+            // Parse the identifier after the dot.
+            let id_start = i + 1;
+            let mut j = id_start;
+            while j < bytes.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') {
+                j += 1;
+            }
+            if j > id_start {
+                let name = &text[id_start..j];
+                // Look ahead past horizontal whitespace for an opening paren —
+                // only a call (`(`) is a colon candidate; `.field` reads are not.
+                let mut k = j;
+                while k < bytes.len() && (bytes[k] == b' ' || bytes[k] == b'\t') {
+                    k += 1;
+                }
+                let is_call = k < bytes.len() && bytes[k] == b'(';
+                if is_call && lua_call_receiver_is_colon(&out, name, ctx) {
+                    out.push(':');
+                    out.push_str(name);
+                    i = j;
+                    continue;
+                }
+            }
+        }
+
+        out.push(b as char);
+        i += 1;
+    }
+    out
+}
+
+/// Decide whether the method named `name`, called on the receiver that ends
+/// the already-emitted prefix `before`, must use Lua colon syntax (#134).
+///
+/// Two recognised receivers:
+///   - `self` immediately precedes the `.`, and `name` is a declared action;
+///   - `state_vars["<field>"]` (any subscript spelling) precedes the `.`, and
+///     `<field>` names a domain field whose declared type is a defined system
+///     (an embedded system → its methods are colon-defined).
+fn lua_call_receiver_is_colon(before: &str, name: &str, ctx: &HandlerContext) -> bool {
+    // Action call on `self`. Byte-compare the receiver suffix so no string
+    // slicing on a non-char-boundary can panic on exotic native input.
+    if ctx.actions.contains(name) {
+        let pre = before.as_bytes();
+        let n = pre.len();
+        if n >= 4 && &pre[n - 4..] == b"self" {
+            // Ensure `self` is a standalone token, not a suffix like `myself`.
+            let preceding_ok = n == 4 || {
+                let c = pre[n - 5];
+                !(c.is_ascii_alphanumeric() || c == b'_')
+            };
+            if preceding_ok {
+                return true;
+            }
+        }
+    }
+
+    // Cross-system call on an embedded-system state-var: the receiver ends with
+    // `state_vars["<field>"]` (or `['<field>']`). Extract the field and check
+    // its declared type against the set of defined systems.
+    if before.ends_with(']') {
+        if let Some(open) = before.rfind('[') {
+            let key = before[open + 1..before.len() - 1].trim();
+            // Strip the surrounding quotes the codegen emitted for the key.
+            let field = key
+                .strip_prefix('"')
+                .and_then(|s| s.strip_suffix('"'))
+                .or_else(|| key.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
+                .unwrap_or(key);
+            // Only treat it as a state-var subscript, not an arbitrary index.
+            if before[..open].ends_with("state_vars") {
+                if let Some(ty) = ctx.domain_field_types.get(field) {
+                    if ctx.defined_systems.contains(ty.trim()) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+
+    false
 }
 
 #[cfg(test)]
