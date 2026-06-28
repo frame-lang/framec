@@ -257,9 +257,13 @@ func (s *Embedding) Notify() {
 }
 ```
 
-Calls to `self.counter.bump(n)` lower to `s.counter.Bump(n)` —
-note the capitalization on the called method (it's an exported
-interface method on the embedded system, so it's capitalized).
+The portable `@@:self.counter.bump(n)` form lowers to
+`s.counter.Bump(n)` — note the capitalization on the called method
+(it's an exported interface method on the embedded system, so it's
+capitalized). A bare native call on the field is the user's own
+code: framec lowers the `counter` reference and the `@@Counter()`
+construction but passes the call through unchanged, so if you write
+the native call you must capitalize the exported method yourself.
 
 This was a framec codegen fix in the Phase 7 multi-system round
 (see `memory/phase7_multisys_2026_04_27.md`); the Go cross-system

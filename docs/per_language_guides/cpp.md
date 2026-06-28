@@ -200,9 +200,12 @@ public:
 };
 ```
 
-Calls to `self.counter.bump(n)` lower to `counter->bump(n)` —
-shared_ptr's overloaded `->` operator gives you direct access to
-the underlying object's methods.
+The portable `@@:self.counter.bump(n)` form lowers to
+`counter->bump(n)` — shared_ptr's overloaded `->` operator gives you
+direct access to the underlying object's methods. A bare native call
+on the field is the user's own code: framec lowers the `counter`
+reference and the `@@Counter()` construction, but passes the method
+call through unchanged (Oceans Model).
 
 The `shared_ptr<T>` shape:
 

@@ -290,7 +290,10 @@ public class Embedding {
 }
 ```
 
-Calls to `self.counter.bump(n)` lower to `this.counter.bump(n)`.
+The portable `@@:self.counter.bump(n)` form lowers to
+`this.counter.bump(n)`. A bare native call on the field is the
+user's own code — framec lowers the `counter` reference and the
+`@@Counter()` construction but passes the call through unchanged.
 Lifecycle is the JVM garbage collector's responsibility.
 
 Cross-system embedding requires the `Counter.java` file to live

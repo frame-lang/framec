@@ -205,10 +205,13 @@ class Embedding {
 }
 ```
 
-Calls to `self.counter.bump(n)` lower to `counter.bump(n)`. Swift
-class instances are reference-typed, so the `var counter` property
-holds a reference and mutations on the embedded counter are
-visible across the same instance.
+The portable `@@:self.counter.bump(n)` form lowers to
+`counter.bump(n)`. A bare native call on the field is the user's own
+code — framec lowers the `counter` reference and the `@@Counter()`
+construction but passes the call through unchanged. Swift class
+instances are reference-typed, so the `var counter` property holds a
+reference and mutations on the embedded counter are visible across
+the same instance.
 
 ---
 

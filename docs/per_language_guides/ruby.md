@@ -136,7 +136,10 @@ end
 ```
 
 Note the `.new` constructor call — Ruby's class instantiation
-idiom. Calls to `self.counter.bump(n)` lower to `@counter.bump(n)`.
+idiom. The portable `@@:self.counter.bump(n)` form lowers to
+`@counter.bump(n)`; a bare native call on the field is the user's
+own code — framec lowers the `counter` reference and the
+`@@Counter()` construction but passes the call through unchanged.
 
 ---
 

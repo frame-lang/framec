@@ -236,7 +236,11 @@ impl FrameSystem {
 }
 ```
 
-Calls to `self.counter.bump()` lower to `self.counter.borrow_mut().bump()`.
+The portable `@@:self.counter.bump()` form lowers to
+`self.counter.borrow_mut().bump()`. A bare native call on the field
+is the user's own code — framec lowers the `counter` reference and
+the `@@Counter()` construction but passes the call through unchanged
+(so a hand-written native call must do its own `borrow_mut()`).
 This is the Rust-idiomatic shape for "object-style composition with
 shared, mutable interior" — single-threaded by default. If you need
 `Send + Sync`, swap `Rc<RefCell<...>>` for `Arc<Mutex<...>>` in a

@@ -245,14 +245,17 @@ drivers and supervisors that pattern-match on the OTP convention
 keep working — only the embedded reference is unwrapped to a bare
 PID.
 
-**Cross-system call rewrite.** Frame's idiomatic `self.inner.bump()`
-(read: "send the `bump` event to the embedded `inner` system") on
-other targets becomes a dot-call. On Erlang, the existing
-`self.X` → `Data#data.X` substitution is already in place, but the
-result `Data#data.inner.bump()` is not valid Erlang (parameterized
-modules were removed years ago). Framec's Erlang codegen runs a
-post-pass that walks `system.domain` for cross-system fields
-(initializers starting with `@@<Name>(`) and rewrites every
+**Cross-system call rewrite (Erlang-specific).** Generally, a
+child-system method call is user-authored native code — framec
+lowers the `self.inner` *reference* and the `@@Inner()` *construction*
+but passes the *call* through unchanged (see the language reference,
+"Calling actions, operations, and child systems"). Erlang is the one
+target where that passthrough cannot stand: the result of the
+`self.X` → `Data#data.X` reference substitution, `Data#data.inner.bump(args)`,
+is not valid Erlang (parameterized modules were removed years ago).
+To keep the source portable, framec's Erlang codegen runs a post-pass
+that walks `system.domain` for cross-system fields (initializers
+starting with `@@<Name>(`) and rewrites every
 `Data#data.<field>.<method>(args)` call to:
 
 ```erlang
@@ -261,11 +264,9 @@ post-pass that walks `system.domain` for cross-system fields
 
 This produces module-qualified calls into the embedded system's API
 exports. Manual paren-depth tracking on the args ensures nested
-calls and commas don't break the rewrite.
-
-**You do not need to do anything special** in your Frame source —
-`self.inner.bump()` works on Erlang exactly as it does on every
-other target. The lowering is invisible.
+calls and commas don't break the rewrite. This rewrite is unique to
+Erlang — every other backend leaves the child-system call exactly as
+you wrote it.
 
 ---
 
