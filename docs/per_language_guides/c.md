@@ -353,9 +353,14 @@ Embedding* Embedding_new(...) {
 }
 ```
 
-Calls to `self.counter.bump(n)` lower to `Counter_bump(self->counter, n)` —
-the embedded system's own free-standing function family, called
-through the pointer. Lifecycle (free/destroy) is the user's
+The **portable** form `@@:self.counter.bump(n)` lowers to
+`Counter_bump(self->counter, n)` — the embedded system's own
+free-standing function family, called through the pointer. C has no
+`self` and no method-call syntax, so a *bare native* `self.counter.bump(n)`
+is **not** rewritten: it passes through verbatim (Oceans Model) and
+will not compile. On C, either use the `@@:self.<field>.<method>()`
+form or hand-write the native call `Counter_bump(self->counter, n)`
+yourself. Lifecycle (free/destroy) is likewise the user's
 responsibility; framec emits `_new` constructors but does not
 auto-emit `_destroy` for cross-system pointers.
 

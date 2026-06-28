@@ -75,25 +75,20 @@ differently:
 - `instance:method(args)` — calls `method` with `self =
   instance` automatically prepended.
 
-Frame's source uses dot syntax (`self.bump(n)`) but framec
-generates **colon syntax** in the output for method calls on
-`self` and on cross-system fields:
-
-```lua
-self:bump(n)             -- generated
-self.counter:bump(n)     -- generated for cross-system embedding
-```
-
-This is the framec codegen handling — you do *not* write `:` in
-Frame source. The native passthrough rule still requires colon
-syntax for any handwritten Lua method calls inside handler
-bodies, though:
+framec generates the *method definitions* with colon syntax
+(`function Counter:bump(...)`, see above), so `self` is auto-passed
+when a caller writes `instance:bump(...)`. But framec does **not**
+rewrite call sites: native call syntax passes through unchanged
+(Oceans Model). When you call an action or a child system's method
+in a handler body, you write the Lua-native colon form yourself —
+framec will not turn a `.` into a `:`:
 
 ```frame
 $Active {
     log() {
-        // Native Lua passthrough — must use : for self method calls.
-        self:print_log()
+        // Native Lua — you write the colon. framec does not "fix" a dot.
+        self:print_log()          // an action on this system
+        self.counter:bump(n)      // a method on a child-system field
     }
 }
 ```
@@ -283,11 +278,11 @@ function Embedding.new()
 end
 ```
 
-Calls to `self.counter.bump(n)` lower to `self.counter:bump(n)` —
-the colon-call shape for method dispatch on the embedded
-instance. This was a framec codegen fix — see
-`memory/phase7_multisys_2026_04_27.md` for the round in which Lua's
-chained-call colon emit landed.
+framec lowers the **reference** (`self.counter`) and the
+`@@Counter()` **construction**, but the **method call on the child is
+your code** — you write `self.counter:bump(n)` with Lua's colon so
+`self` binds on the embedded instance. framec does not rewrite the
+call, nor does it allocate, free, or invoke the child for you.
 
 ---
 
@@ -323,9 +318,11 @@ corresponding generated declaration.
 
 **Use `:` for method calls, `.` for field access.** Lua
 distinguishes between the two — `instance.method(args)` does *not*
-pass `self`. Frame source uses dot syntax which framec lowers to
-colon, but native passthrough inside handler bodies must use
-colon explicitly.
+pass `self`. framec generates colon syntax in the method
+*definitions*, but it does not rewrite call sites: when you call an
+action (`self:note()`) or a child-system method (`$.sensor:bump()`)
+in a handler body, you write Lua's colon yourself — framec passes
+the call through unchanged and will not turn a `.` into a `:`.
 
 **`local` declarations do not survive into Frame domain.** Frame's
 domain block declares fields on the instance (`self.field`).
@@ -496,5 +493,5 @@ snapshot. See
   process Lua test dispatcher used by the matrix harness;
   captures `print()` output for assertion checking.
 - `framec/src/frame_c/compiler/codegen/backends/lua.rs` — Lua
-  backend codegen, including the colon-call rewrite for
-  cross-system method dispatch.
+  backend codegen (colon-form method *definitions*; call sites in
+  handler bodies pass through unchanged).

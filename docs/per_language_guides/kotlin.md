@@ -240,9 +240,12 @@ class Embedding {
 }
 ```
 
-Calls to `self.counter.bump(n)` lower to `counter.bump(n)`. The
-Phase 7 multi-system fuzz fix landed the Kotlin codegen for
-this case (no-`new` in `expand_tagged_in_domain`); see
+The portable `@@:self.counter.bump(n)` form lowers to
+`counter.bump(n)`. A bare native call on the field is the user's own
+code — framec lowers the `counter` reference and the `@@Counter()`
+construction but passes the call through unchanged. The Phase 7
+multi-system fuzz fix landed the Kotlin codegen for the construction
+case (no-`new` in `expand_tagged_in_domain`); see
 `memory/phase7_multisys_2026_04_27.md`.
 
 ---

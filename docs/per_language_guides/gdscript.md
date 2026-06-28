@@ -353,9 +353,11 @@ per file may occupy the script-level slot.
 
 `var counter: Counter = @@Counter()` lowers to
 `self.counter = FrameCounter.new()` — direct construction, no
-indirection. Calls to `self.counter.bump()` lower to
-`self.counter.bump()` in the generated script. GDScript's dynamic
-dispatch makes this trivial.
+indirection. The portable `@@:self.counter.bump()` form lowers to
+`self.counter.bump()` in the generated script; a bare native call on
+the field passes through unchanged (framec lowers only the reference
+and the construction). GDScript's dynamic dispatch makes this
+trivial.
 
 ---
 
