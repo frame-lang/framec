@@ -260,4 +260,93 @@ mod tests {
         let out = transform_blocks("while a < b {\n    a = a + 1\n}", Lua);
         assert_eq!(out, "while a < b do\n    a = a + 1\nend");
     }
+
+    // Every control-flow block must be balanced: count openers vs `end`.
+    // (Table braces are not control flow, so they don't enter this tally.)
+    fn lua_balanced(s: &str) -> bool {
+        let openers = s
+            .lines()
+            .map(|l| {
+                let t = l.trim();
+                let mut o = 0;
+                // `if ... then` and `while ... do` open a new block; `elseif`
+                // continues the same block, so its `then` does NOT count.
+                if (t.ends_with(" then") || t == "then") && !t.starts_with("elseif") {
+                    o += 1;
+                }
+                if t.ends_with(" do") || t == "do" {
+                    o += 1;
+                }
+                o
+            })
+            .sum::<usize>();
+        let ends = s.lines().filter(|l| l.trim() == "end").count();
+        openers == ends
+    }
+
+    // #135: a nested `if` placed directly inside an `else { }` block must lower
+    // like any other block-nested `if`. The old parser collapsed `} else { if`
+    // into `elseif`, which is only valid for an `else if` LADDER (the inner `if`
+    // is the sole content with no `else` of its own). When the inner `if` itself
+    // has an `else`, that collapse drops a block level and leaks a stray brace.
+    #[test]
+    fn nested_if_in_else_block_lowers() {
+        let out = transform_blocks(
+            "if n < 0 {\n    neg()\n} else {\n    if n == 0 {\n        zero()\n    } else {\n        pos()\n    }\n}",
+            Lua,
+        );
+        // No Frame braces survive.
+        assert!(!out.contains('{'), "stray open brace:\n{out}");
+        assert!(!out.contains('}'), "stray close brace:\n{out}");
+        // All four branch bodies present.
+        assert!(out.contains("neg()"), "{out}");
+        assert!(out.contains("zero()"), "{out}");
+        assert!(out.contains("pos()"), "{out}");
+        // Two nested ifs → `if ... then`, an inner `if ... then`, and matching ends.
+        assert!(out.contains("if n < 0 then"), "{out}");
+        assert!(out.contains("if n == 0 then"), "{out}");
+        assert!(lua_balanced(&out), "unbalanced then/do vs end:\n{out}");
+    }
+
+    // Deeper nesting: else { if { } else { if { } else { } } }.
+    #[test]
+    fn deeper_nested_if_in_else_lowers() {
+        let out = transform_blocks(
+            "if a {\n    A()\n} else {\n    if b {\n        B()\n    } else {\n        if c {\n            C()\n        } else {\n            D()\n        }\n    }\n}",
+            Lua,
+        );
+        assert!(!out.contains('{'), "stray open brace:\n{out}");
+        assert!(!out.contains('}'), "stray close brace:\n{out}");
+        for body in ["A()", "B()", "C()", "D()"] {
+            assert!(out.contains(body), "missing {body}:\n{out}");
+        }
+        assert!(lua_balanced(&out), "unbalanced:\n{out}");
+    }
+
+    // The genuine `else if` ladder (inner `if` is the sole content, no inner
+    // `else`) must STILL collapse to `elseif` — no regression.
+    #[test]
+    fn else_if_ladder_still_collapses() {
+        let out = transform_blocks("if a {\n    A()\n} else { if b {\n    B()\n} }", Lua);
+        assert!(out.contains("if a then"), "{out}");
+        assert!(out.contains("elseif b then"), "{out}");
+        assert!(!out.contains('{'), "stray open brace:\n{out}");
+        assert!(!out.contains('}'), "stray close brace:\n{out}");
+        assert!(lua_balanced(&out), "unbalanced:\n{out}");
+    }
+
+    // if-body nesting (nested `if` inside the THEN block) must keep working.
+    #[test]
+    fn nested_if_in_then_body_lowers() {
+        let out = transform_blocks(
+            "if c {\n    if d {\n        X()\n    } else {\n        Y()\n    }\n} else {\n    Z()\n}",
+            Lua,
+        );
+        assert!(!out.contains('{'), "stray open brace:\n{out}");
+        assert!(!out.contains('}'), "stray close brace:\n{out}");
+        for body in ["X()", "Y()", "Z()"] {
+            assert!(out.contains(body), "missing {body}:\n{out}");
+        }
+        assert!(lua_balanced(&out), "unbalanced:\n{out}");
+    }
 }

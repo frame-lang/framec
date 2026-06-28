@@ -33,12 +33,28 @@
                 let mut block_depth: i32 = 0;
                 let mut table_depth: i32 = 0;
                 let mut after_return = false;
+                // RBRACE token indices to swallow silently. When an `else if`
+                // ladder is collapsed (`} else { if c { ... } }` → `elseif`),
+                // the `else` block and the inner `if` are merged into ONE block,
+                // so the inner `if`'s `}` becomes the single `end` and the `else`
+                // block's own trailing `}` is redundant — record it here and drop
+                // it without touching `block_depth`.
+                let mut swallow_close: Vec<usize> = Vec::new();
 
                 while ti < n {
                     let kind = self.token_kinds[ti];
                     let start = self.token_starts[ti];
                     let end = self.token_ends[ti];
                     let text = String::from_utf8_lossy(&bytes[start..end]).to_string();
+
+                    // ---- Swallow a collapsed `else` block's redundant `}` ----
+                    // When an `else if` ladder was collapsed, the `else` block's
+                    // own closing brace was recorded; drop it here without
+                    // emitting anything or perturbing the depth counters.
+                    if kind == 7 && swallow_close.contains(&ti) {
+                        ti += 1;
+                        continue;
+                    }
 
                     // ---- Table-constructor / expression braces (#122) ----
                     // Brace matching is a pushdown problem, but it collapses to
@@ -126,7 +142,16 @@
                                 }
 
                                 if scan < n && self.token_kinds[scan] == 1 {
-                                    // RBRACE ELSE LBRACE IF ... LBRACE → elseif
+                                    // RBRACE ELSE LBRACE IF ... LBRACE — candidate
+                                    // `else if` ladder. Collapsing `} else { if c {`
+                                    // into `elseif c then` is ONLY valid when the
+                                    // inner `if` is the SOLE content of the `else`
+                                    // block: its closing `}` must be the `}` that
+                                    // closes the `else` block, with no inner `else`
+                                    // and no trailing statements. Otherwise (#135)
+                                    // the inner `if` is a genuine nested conditional
+                                    // and must lower as a normal block — collapsing
+                                    // it drops a block level and leaks a brace.
                                     let if_ti = scan;
                                     // Collect condition tokens until next LBRACE
                                     scan += 1;
@@ -138,15 +163,55 @@
                                         scan += 1;
                                     }
                                     if scan < n && self.token_kinds[scan] == 6 {
-                                        // Found the full elseif pattern
-                                        if self.mode == 1 {
-                                            self.result.push_str("elseif");
-                                            self.result.push_str(cond.trim_end());
-                                            self.result.push_str(" then");
+                                        // `scan` is the inner `if`'s LBRACE. Walk
+                                        // forward, matching braces, to find the
+                                        // brace that closes the inner `if`'s block.
+                                        let mut depth: i32 = 1;
+                                        let mut walk = scan + 1;
+                                        while walk < n && depth > 0 {
+                                            let wk = self.token_kinds[walk];
+                                            if wk == 6 { depth += 1; }
+                                            else if wk == 7 { depth -= 1; }
+                                            if depth == 0 { break; }
+                                            walk += 1;
                                         }
-                                        ti = scan + 1;
-                                        after_return = false;
-                                        continue;
+                                        // `walk` now points at the inner `if`'s
+                                        // closing RBRACE (or off the end). Skip
+                                        // whitespace/newlines after it and inspect
+                                        // the next significant token.
+                                        let mut after = walk + 1;
+                                        while after < n && (self.token_kinds[after] == 10 || self.token_kinds[after] == 11) {
+                                            let st = &bytes[self.token_starts[after]..self.token_ends[after]];
+                                            if st.iter().all(|&b| b == b' ' || b == b'\t' || b == b'\n') { after += 1; } else { break; }
+                                        }
+                                        // Sole-content iff the inner `if` block is
+                                        // immediately followed by the `else` block's
+                                        // own RBRACE (kind 7). An `else`/`elseif`
+                                        // (kind 3 / 2) belonging to the inner `if`,
+                                        // or any trailing content, blocks the
+                                        // collapse.
+                                        let sole_content = walk < n
+                                            && self.token_kinds[walk] == 7
+                                            && after < n
+                                            && self.token_kinds[after] == 7;
+                                        if sole_content {
+                                            // Found a true `else if` ladder. The
+                                            // inner `if` body will emit the single
+                                            // `end`; swallow the `else` block's own
+                                            // redundant closing `}` (`after`).
+                                            swallow_close.push(after);
+                                            if self.mode == 1 {
+                                                self.result.push_str("elseif");
+                                                self.result.push_str(cond.trim_end());
+                                                self.result.push_str(" then");
+                                            }
+                                            ti = scan + 1;
+                                            after_return = false;
+                                            continue;
+                                        }
+                                        // Not a ladder — fall through to the plain
+                                        // `else` path so the nested `if` lowers as
+                                        // an ordinary block.
                                     }
                                 }
 
