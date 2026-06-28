@@ -32,7 +32,8 @@ use utility::{
 };
 
 pub(crate) use handler_body::{
-    emit_handler_body_via_statements, expand_self_in_body, resolve_state_arg_key,
+    emit_handler_body_via_statements, expand_self_in_body, lua_fixup_method_calls,
+    resolve_state_arg_key,
 };
 pub(crate) use no_init::generate_no_initialization;
 pub(crate) use scanner_dispatch::{
