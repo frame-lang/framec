@@ -245,28 +245,29 @@ drivers and supervisors that pattern-match on the OTP convention
 keep working — only the embedded reference is unwrapped to a bare
 PID.
 
-**Cross-system call rewrite (Erlang-specific).** Generally, a
-child-system method call is user-authored native code — framec
-lowers the `self.inner` *reference* and the `@@Inner()` *construction*
-but passes the *call* through unchanged (see the language reference,
-"Calling actions, operations, and child systems"). Erlang is the one
-target where that passthrough cannot stand: the result of the
-`self.X` → `Data#data.X` reference substitution, `Data#data.inner.bump(args)`,
-is not valid Erlang (parameterized modules were removed years ago).
-To keep the source portable, framec's Erlang codegen runs a post-pass
-that walks `system.domain` for cross-system fields (initializers
-starting with `@@<Name>(`) and rewrites every
-`Data#data.<field>.<method>(args)` call to:
+**Self-calls and child-system calls on Erlang.** Erlang has no `self`
+object — a system is a `gen_statem` process whose state lives in a
+`Data` record threaded through the handler functions. So framec
+translates only the Frame-supported forms and leaves native syntax
+verbatim, exactly like every other target:
 
-```erlang
-<sys_module>:<method>(Data#data.<field>, args)
-```
+- **Your own actions / operations / interface methods:** use
+  `@@:self.X()`. It is the portable self-call and, on Erlang, the
+  *only* form — for an action/operation it lowers to `X(Data, args)`
+  (threading the internal `Data` record you have no manual handle to);
+  for an interface method it goes through the kernel
+  `frame_dispatch__` (with the transition guard). A **bare native
+  `self.X()` is not rewritten** — it passes through to a `self.X(...)`
+  that `erlc` rejects on its own line (there is no `self` in Erlang).
+  Write `@@:self.X()`.
 
-This produces module-qualified calls into the embedded system's API
-exports. Manual paren-depth tracking on the args ensures nested
-calls and commas don't break the rewrite. This rewrite is unique to
-Erlang — every other backend leaves the child-system call exactly as
-you wrote it.
+- **Child-system calls:** user-authored native Erlang. framec lowers
+  the `$.sensor` / `self.sensor` *reference* (→ `Data#data.sensor`, the
+  child's Pid) and the `@@Sensor()` *construction*, but **you write the
+  call** — `sensor_module:bump($.sensor, args)`, a module-qualified
+  call into the embedded system's exported API, the same
+  `Module:Fn(Pid, Args)` shape any Erlang programmer writes. framec
+  does not rewrite it.
 
 ---
 
