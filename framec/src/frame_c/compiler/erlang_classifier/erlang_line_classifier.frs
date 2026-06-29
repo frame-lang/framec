@@ -70,12 +70,38 @@
                     interfaces_csv.split(',').collect()
                 };
 
+                // Lower `self.<field>` accesses to `<DataVar>#data.<field>`,
+                // leaving a bare `self.<name>(` *call shape* verbatim. Shared
+                // Rust helper (single source of truth, also used by the
+                // operation-body emitter) — see its doc for the full rationale.
+                fn lower_self_fields(line: &str, data_var: &str) -> String {
+                    crate::frame_c::compiler::codegen::codegen_utils::erlang_lower_self_field_access(
+                        line, data_var,
+                    )
+                }
+
                 fn classify_one(l: &str, action_names: &[&str], interface_names: &[&str], data_var: &str) -> String {
-                    // `self.<field> = self.<iface>(args)` — domain write whose
+                    // Core Frame rule: only a *Frame-derived* self-call is
+                    // translatable. `frame_expansion`'s Erlang `@@:self`
+                    // expander emits the marker-bearing form
+                    // `@@:self.<name>(...)`; a *bare* native `self.<name>(...)`
+                    // arrives without the marker and must pass through verbatim
+                    // (Erlang has no `self` value, so `erlc` rejects it on its
+                    // own line — the correct contextual native error). So every
+                    // call-classification branch below matches the marker form
+                    // `@@:self.<name>(` and strips the `@@:self.` marker when it
+                    // rewrites; bare `self.<name>(` falls through untouched.
+                    //
+                    // `@@:self.<field>` *field* accesses were already lowered to
+                    // bare `self.<field>` upstream (erlang_strip_at_self_field),
+                    // so the field/record-update branches keep matching `self.`.
+                    let self_call_marker = "@@:self.";
+
+                    // `self.<field> = @@:self.<iface>(args)` — domain write whose
                     // RHS is an interface call. Must be checked before the
                     // bare InterfaceCall branch.
                     for iface in interface_names {
-                        let call_pat = format!("self.{}(", iface);
+                        let call_pat = format!("{}{}(", self_call_marker, iface);
                         if l.starts_with("self.") && l.contains(" = ") && l.contains(&call_pat) {
                             if let Some(eq_pos) = l.find(" = ") {
                                 let lhs = l[..eq_pos].trim();
@@ -98,11 +124,11 @@
                         }
                     }
 
-                    // self.method(args) → interface dispatch. Pick the
+                    // @@:self.method(args) → interface dispatch. Pick the
                     // OUTERMOST interface call when multiple are present.
                     let mut best: Option<(&str, usize)> = None;
                     for iface in interface_names {
-                        let pattern = format!("self.{}(", iface);
+                        let pattern = format!("{}{}(", self_call_marker, iface);
                         if let Some(pos) = l.find(&pattern) {
                             match best {
                                 None => best = Some((iface, pos)),
@@ -112,7 +138,7 @@
                         }
                     }
                     if let Some((iface, open_pos)) = best {
-                        let pattern = format!("self.{}(", iface);
+                        let pattern = format!("{}{}(", self_call_marker, iface);
                         let call_start = open_pos + pattern.len();
                         let open_paren_idx = call_start - 1;
                         let bytes = l.as_bytes();
@@ -148,10 +174,10 @@
                         );
                     }
 
-                    // self.field = self.method(args) — record-update whose
+                    // self.field = @@:self.method(args) — record-update whose
                     // RHS is an action/op call.
                     for action in action_names {
-                        let call_pattern = format!("self.{}(", action);
+                        let call_pattern = format!("{}{}(", self_call_marker, action);
                         if l.starts_with("self.") && l.contains('=') && l.contains(&call_pattern) {
                             if let Some(eq_pos) = l[5..].find('=') {
                                 let field = l[5..5 + eq_pos].trim().to_string();
@@ -173,9 +199,9 @@
                         }
                     }
 
-                    // self.method(args) → action call that modifies Data.
+                    // @@:self.method(args) → action call that modifies Data.
                     for action in action_names {
-                        let pattern = format!("self.{}(", action);
+                        let pattern = format!("{}{}(", self_call_marker, action);
                         if l.contains(&pattern) {
                             let action_lc = crate::frame_c::compiler::codegen::erlang_system::lexical::erlang_op_name(action);
                             let replaced = l.replace(&pattern, &format!("{}({}, ", action_lc, data_var));
@@ -189,28 +215,27 @@
                     }
 
                     // self.field = expr → record update. String-aware on RHS.
+                    // A `self.<name>(` call shape on the LHS is not a field, so
+                    // `lhs_is_field` guards the branch; a bare-call RHS is left
+                    // verbatim by `lower_self_fields`.
                     if l.starts_with("self.") && l.contains('=') {
                         let rest = &l[5..];
                         if let Some(eq_pos) = rest.find('=') {
-                            let field = rest[..eq_pos].trim().to_string();
-                            let rhs = rest[eq_pos + 1..].trim().trim_end_matches(';').trim();
-                            let replacement = format!("{}#data.", data_var);
-                            let value = crate::frame_c::compiler::codegen::codegen_utils::replace_outside_strings_and_comments(
-                                rhs,
-                                crate::frame_c::visitors::TargetLanguage::Erlang,
-                                &[("self.", replacement.as_str())],
-                            );
-                            return format!("RecordUpdate|field={}|value={}", field, value);
+                            let field_raw = rest[..eq_pos].trim();
+                            let lhs_is_field = !field_raw.contains('(');
+                            if lhs_is_field {
+                                let field = field_raw.to_string();
+                                let rhs = rest[eq_pos + 1..].trim().trim_end_matches(';').trim();
+                                let value = lower_self_fields(rhs, data_var);
+                                return format!("RecordUpdate|field={}|value={}", field, value);
+                            }
                         }
                     }
 
-                    // self.field → DataVar#data.field (access). String-aware.
-                    let replacement = format!("{}#data.", data_var);
-                    let plain = crate::frame_c::compiler::codegen::codegen_utils::replace_outside_strings_and_comments(
-                        l,
-                        crate::frame_c::visitors::TargetLanguage::Erlang,
-                        &[("self.", replacement.as_str())],
-                    );
+                    // self.field → DataVar#data.field (access). A bare
+                    // `self.<name>(` call shape is left verbatim (see
+                    // `lower_self_fields`) so `erlc` rejects it.
+                    let plain = lower_self_fields(l, data_var);
                     format!("Plain|{}", plain)
                 }
 

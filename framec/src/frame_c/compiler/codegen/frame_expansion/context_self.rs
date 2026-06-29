@@ -305,18 +305,25 @@ pub(super) fn expand_context_self_call(
         TargetLanguage::Ruby => format!("self.{}{}", method_name, args_with_parens),
         TargetLanguage::Lua => format!("self:{}{}", method_name, args_with_parens),
         TargetLanguage::Erlang => {
-            // Emit bare `self.method(args)` and let the Erlang
-            // handler post-pass (erlang_system.rs::
-            // erlang_rewrite_native_classified_full) recognize the
-            // pattern as an `InterfaceCall` and rewrite it to
+            // Emit the `@@:self.method(args)` form *with the marker
+            // preserved* and let the Erlang handler post-pass
+            // (erlang_system.rs::erlang_rewrite_native_classified_full)
+            // recognize the marked pattern as an `ActionCall` /
+            // `InterfaceCall` and rewrite it to `action(Data, args)` /
             // `{DataN, Result} = frame_dispatch__(method, [args],
-            // DataPrev)`. That pass threads NewData forward
-            // through the rest of the handler body via
-            // `data_gen`/`data_var` — so `self.field` reads and
-            // `-> $State` transitions after a @@:self call
-            // correctly see the state changes the called
+            // DataPrev)`. That pass threads NewData forward through the
+            // rest of the handler body via `data_gen`/`data_var` — so
+            // `self.field` reads and `-> $State` transitions after a
+            // @@:self call correctly see the state changes the called
             // handler made.
-            format!("self.{}{}", method_name, args_with_parens)
+            //
+            // Core Frame rule: framec translates only Frame syntax. The
+            // `@@:self.` marker is what makes this call *Frame-derived*
+            // and therefore translatable. A *bare* native `self.X(...)`
+            // carries no marker, so the classifier leaves it verbatim
+            // and `erlc` rejects it on its own line (Erlang has no
+            // `self` value) — the correct, contextual native behavior.
+            format!("@@:self.{}{}", method_name, args_with_parens)
         }
         TargetLanguage::Graphviz => unreachable!(),
     };
