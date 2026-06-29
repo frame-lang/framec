@@ -371,20 +371,28 @@ pub(super) fn emit_actions_and_operations(
                 // Strip a trailing `;` so the last-expression emitter
                 // can wrap the value cleanly (e.g., `42` not `42;`).
                 let l = l.trim_end_matches(';').trim().to_string();
+                // RFC-0046 / core Frame rule: lower a `@@:self.<field>` access
+                // to bare `self.<field>` (so the blanket `self. → Data#data.`
+                // below picks it up), while leaving a `@@:self.<method>(` call
+                // marker intact for the dispatch branches that follow. A *bare*
+                // native `self.<name>(` carries no marker and is left verbatim
+                // (Erlang has no `self` value → `erlc` rejects it, the correct
+                // contextual native error).
+                let l = super::body_processor::erlang_strip_at_self_field(&l);
                 // `@@:self.method(args)` inside a non-static operation body
-                // expands (in frame_expansion.rs) to bare `self.method(args)`.
-                // Catch that shape BEFORE the blanket `self. → Data#data.`
-                // substitution below — otherwise `self.method(args)` would
-                // collapse to `Data#data.method(args)` (record-field access)
-                // and lose the dispatch. Routes through `frame_dispatch__`
-                // with Data-threading, matching the handler-level semantics.
-                // Static operations have no Data parameter and therefore
-                // no `@@:self` semantics — this branch only fires when
-                // `op.is_static == false`.
+                // expands (in frame_expansion.rs) to the marked form
+                // `@@:self.method(args)`. Catch that shape BEFORE the blanket
+                // `self. → Data#data.` substitution below — otherwise the call
+                // would collapse to `Data#data.method(args)` (record-field
+                // access) and lose the dispatch. Routes through
+                // `frame_dispatch__` with Data-threading, matching the
+                // handler-level semantics. Static operations have no Data
+                // parameter and therefore no `@@:self` semantics — this branch
+                // only fires when `op.is_static == false`.
                 let l = if !op.is_static {
                     let mut out = None;
                     for iface in interface_names {
-                        let pattern = format!("self.{}(", iface);
+                        let pattern = format!("@@:self.{}(", iface);
                         if l.contains(&pattern) {
                             data_bind_counter += 1;
                             let prev = if data_bind_counter == 1 {
@@ -436,14 +444,16 @@ pub(super) fn emit_actions_and_operations(
                 // Non-static ops only — static ops have no Data.
                 let l = if !op.is_static {
                     // String/comment-safe action-call Data threading
-                    // (`self.<action>(` → `<action>(Data, `): a literal like
+                    // (`@@:self.<action>(` → `<action>(Data, `): a literal like
                     // `"calls self.foo()"` must be left intact. The `(Data, )`
                     // → `(Data)` collapse acts only on the framec-emitted form.
+                    // Only the Frame-derived marker form is threaded; a bare
+                    // native `self.<action>(` is left verbatim for `erlc`.
                     let action_subs: Vec<(String, String)> = action_names
                         .iter()
                         .map(|a| {
                             (
-                                format!("self.{}(", a),
+                                format!("@@:self.{}(", a),
                                 format!("{}(Data, ", erlang_op_name(a.as_str())),
                             )
                         })
@@ -469,11 +479,12 @@ pub(super) fn emit_actions_and_operations(
                 } else {
                     l
                 };
-                let l = replace_outside_strings_and_comments(
-                    &l,
-                    TargetLanguage::Erlang,
-                    &[("self.", "Data#data.")],
-                );
+                // Lower `self.<field>` accesses to `Data#data.<field>`, but
+                // leave a bare native `self.<name>(` call shape verbatim so
+                // `erlc` rejects it (core Frame rule: only Frame-derived calls,
+                // which arrived marked as `@@:self.<name>(` and were already
+                // rewritten above, are translated).
+                let l = super::super::codegen_utils::erlang_lower_self_field_access(&l, "Data");
                 // Detect domain field assignment: Data#data.field = value
                 // Rewrite to Erlang record update with sequential bindings:
                 //   Data1 = Data#data{field = Value}

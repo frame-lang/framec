@@ -260,7 +260,7 @@ struct CaseFrame {
 /// `replace_outside_strings_and_comments` uses), so a `"@@:self.x"` inside a
 /// string or `%` comment passes through untouched. A plain substring scan
 /// can't be used here because the rewrite is conditional (field vs call).
-fn erlang_strip_at_self_field(line: &str) -> String {
+pub(super) fn erlang_strip_at_self_field(line: &str) -> String {
     const MARKER: &[u8] = b"@@:self.";
     let skipper = crate::frame_c::compiler::native_region_scanner::create_skipper(
         crate::frame_c::visitors::TargetLanguage::Erlang,
@@ -671,7 +671,11 @@ pub(super) fn erlang_process_body_lines_full(
                             false
                         } else {
                             interface_names.iter().any(|iface| {
-                                let pat = format!("self.{}(", iface);
+                                // Frame-derived self-call marker form. A bare
+                                // native `self.<iface>(` carries no marker and
+                                // is NOT a Frame call, so it is left for the
+                                // classifier to pass through verbatim.
+                                let pat = format!("@@:self.{}(", iface);
                                 if !rhs.starts_with(&pat) {
                                     return false;
                                 }
@@ -719,10 +723,10 @@ pub(super) fn erlang_process_body_lines_full(
                 };
                 let rhs_start = eq_pos + 1;
 
-                // Find leftmost `self.<iface>(` in RHS.
+                // Find leftmost `@@:self.<iface>(` (Frame-derived) in RHS.
                 let mut earliest: Option<(usize, usize)> = None;
                 for iface in interface_names {
-                    let pat = format!("self.{}(", iface);
+                    let pat = format!("@@:self.{}(", iface);
                     if let Some(rel) = analyze[rhs_start..].find(&pat) {
                         let abs = rhs_start + rel;
                         if earliest.map_or(true, |(prev, _)| abs < prev) {
@@ -1100,14 +1104,19 @@ pub(super) fn erlang_process_body_lines_full(
                 }
             }
 
-            // Rewrite self.action() calls and self.field access in structural lines
+            // Rewrite `@@:self.action()` (Frame-derived) calls and self.field
+            // access in structural lines. A bare native `self.<action>(`
+            // carries no marker and is left verbatim (the blanket
+            // `self.` → `Data#data.` below skips call shapes via the
+            // classifier; in a structural line a bare self-call cannot
+            // legitimately appear).
             let mut rewritten = l.clone();
             let mut action_extracted = false;
             for action in action_names {
-                let pattern = format!("self.{}(", action);
+                let pattern = format!("@@:self.{}(", action);
                 if rewritten.contains(&pattern) {
                     // Check if this is a case header with an action call in the condition
-                    // e.g., "case (self.validate(self.item)) of" → extract action call
+                    // e.g., "case (@@:self.validate(self.item)) of" → extract action call
                     if rewritten.starts_with("case ") && rewritten.ends_with(" of") {
                         let call_replaced =
                             rewritten.replace(&pattern, &format!("{}({}, ", action, data_var));
@@ -1147,15 +1156,16 @@ pub(super) fn erlang_process_body_lines_full(
                     }
                 }
             }
-            // Hoist `self.<iface>(...)` calls embedded inside
-            // `frame_transition__(...)` / `frame_forward_transition__(...)`
-            // arg lists into preceding `frame_dispatch__` binds so the
-            // call result reaches the transition as a bound variable
-            // instead of falling through to the blanket `self.` →
-            // `Data#data.` substitution (which would emit invalid
-            // record-field-call syntax `Data#data.method()`). Innermost
-            // calls are hoisted first via `rfind`; the loop iterates
-            // until no `self.<iface>(` remains.
+            // Hoist `@@:self.<iface>(...)` (Frame-derived) calls embedded
+            // inside `frame_transition__(...)` /
+            // `frame_forward_transition__(...)` arg lists into preceding
+            // `frame_dispatch__` binds so the call result reaches the
+            // transition as a bound variable instead of falling through to
+            // the blanket `self.` → `Data#data.` substitution (which would
+            // emit invalid record-field-call syntax `Data#data.method()`).
+            // Innermost calls are hoisted first via `rfind`; the loop
+            // iterates until no marked call remains. A bare native
+            // `self.<iface>(` carries no marker and is left verbatim.
             if !interface_names.is_empty()
                 && (rewritten.starts_with("frame_transition__(")
                     || rewritten.starts_with("frame_forward_transition__("))
@@ -1165,7 +1175,7 @@ pub(super) fn erlang_process_body_lines_full(
                     iter_guard += 1;
                     let mut matched: Option<(String, usize, usize, String)> = None;
                     for iface in interface_names {
-                        let pat = format!("self.{}(", iface);
+                        let pat = format!("@@:self.{}(", iface);
                         if let Some(start) = rewritten.rfind(&pat) {
                             let open = start + pat.len() - 1;
                             let bytes = rewritten.as_bytes();
@@ -1398,15 +1408,16 @@ pub(super) fn erlang_process_body_lines_full(
                 while iter_guard < 16 {
                     iter_guard += 1;
                     // Process INNERMOST call first: use rfind to
-                    // pick the LAST `self.<iface>(` occurrence in
-                    // the string. In `self.a(self.b(self.c(X)))`
-                    // that's `self.c(X)` — its args have no further
-                    // `self.` patterns, so the emitted bind is clean.
-                    // Repeat until no `self.<iface>(` remains.
+                    // pick the LAST `@@:self.<iface>(` marker occurrence
+                    // in the string. In `@@:self.a(@@:self.b(@@:self.c(X)))`
+                    // that's `@@:self.c(X)` — its args have no further
+                    // marker patterns, so the emitted bind is clean.
+                    // Repeat until no marked call remains. A bare native
+                    // `self.<iface>(` carries no marker and is left verbatim.
                     let mut matched = None;
                     let mut best_pos = 0usize;
                     for iface in interface_names {
-                        let pat = format!("self.{}(", iface);
+                        let pat = format!("@@:self.{}(", iface);
                         if let Some(start) = args_rewritten.rfind(&pat) {
                             if matched.is_none() || start >= best_pos {
                                 let open = start + pat.len() - 1;
@@ -1508,15 +1519,18 @@ pub(super) fn erlang_process_body_lines_full(
                 while iter_guard < 16 {
                     iter_guard += 1;
                     // Process INNERMOST call first via rfind — in
-                    // `self.a(self.b(self.c(X)))` the last-starting
-                    // `self.` pattern is `self.c(X)`, whose args have
+                    // `@@:self.a(@@:self.b(@@:self.c(X)))` the last-starting
+                    // marker pattern is `@@:self.c(X)`, whose args have
                     // no further nested calls. Emitting the innermost
                     // bind FIRST avoids leaving unresolved nested
                     // patterns inside an already-emitted bind's args.
+                    // Match the marker form so a bare native `self.<iface>(`
+                    // is left verbatim (and the whole `@@:self.…` span,
+                    // marker included, is replaced by the result var).
                     let mut matched = None;
                     let mut best_pos = 0usize;
                     for iface in interface_names {
-                        let pat = format!("self.{}(", iface);
+                        let pat = format!("@@:self.{}(", iface);
                         if let Some(start) = args_rewritten.rfind(&pat) {
                             if matched.is_none() || start >= best_pos {
                                 let open = start + pat.len() - 1;

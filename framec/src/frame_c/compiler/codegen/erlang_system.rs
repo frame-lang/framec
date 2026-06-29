@@ -91,38 +91,6 @@ use crate::frame_c::visitors::TargetLanguage;
 pub(crate) const ERLANG_COMPARTMENT_CONTEXT_FIELDS: &[&str] =
     &["frame_state_args", "frame_enter_args"];
 
-/// Simple rewrite for contexts where Data threading isn't needed (expressions only)
-fn erlang_rewrite_expr(line: &str, action_names: &[String]) -> String {
-    let l = line.trim();
-    // Action calls `self.<action>(` → `<action>(Data, ` (Data threading),
-    // collapsing the zero-arg form. String/comment-safe (a literal like
-    // `"calls self.foo()"` must be left intact) — the same primitive the field
-    // branch below uses, applied to all actions at once so a line with two
-    // action calls rewrites both.
-    let action_subs: Vec<(String, String)> = action_names
-        .iter()
-        .map(|a| (format!("self.{}(", a), format!("{}(Data, ", a)))
-        .collect();
-    if !action_subs.is_empty() {
-        let refs: Vec<(&str, &str)> = action_subs
-            .iter()
-            .map(|(a, b)| (a.as_str(), b.as_str()))
-            .collect();
-        let replaced = replace_outside_strings_and_comments(l, TargetLanguage::Erlang, &refs);
-        if replaced != l {
-            return replaced.replace("(Data, )", "(Data)");
-        }
-    }
-    // RFC-0046: `@@:self.field` behaves like native `self.field` on Erlang —
-    // both lower to the `#data` record access. Map the `@@:self.` form first
-    // (longer match) so the bare `self.` rule doesn't leave the `@@:` prefix.
-    replace_outside_strings_and_comments(
-        l,
-        TargetLanguage::Erlang,
-        &[("@@:self.", "Data#data."), ("self.", "Data#data.")],
-    )
-}
-
 // ============================================================================
 
 pub(crate) fn generate_erlang_system(

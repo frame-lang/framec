@@ -204,8 +204,19 @@ mod tests {
 
     #[test]
     fn action_call_threads_data() {
-        let r = erlang_rewrite_native_classified("self.tick(5)", &["tick".to_string()], "Data");
+        // Only the Frame-derived marker form `@@:self.tick(...)` is translated.
+        let r = erlang_rewrite_native_classified("@@:self.tick(5)", &["tick".to_string()], "Data");
         match_action_call(r, "tick(Data, 5)");
+    }
+
+    #[test]
+    fn bare_self_call_passes_through_verbatim() {
+        // A bare native `self.tick(...)` carries no marker — it is NOT a Frame
+        // call and must pass through untouched so `erlc` rejects it (Erlang has
+        // no `self` value). The call shape is left verbatim (not lowered to a
+        // `Data#data.tick(...)` record-field access).
+        let r = erlang_rewrite_native_classified("self.tick(5)", &["tick".to_string()], "Data");
+        match_plain(r, "self.tick(5)");
     }
 
     #[test]
@@ -222,7 +233,7 @@ mod tests {
     #[test]
     fn interface_call_emits_variant() {
         let r = erlang_rewrite_native_classified_full(
-            "self.echo(X)",
+            "@@:self.echo(X)",
             &[],
             &["echo".to_string()],
             "Data",
