@@ -779,17 +779,25 @@ impl SwiftBackend {
     }
 
     /// Emit a single Swift class-property declaration line:
-    ///   `<indent>[<vis> ][let|var ]<name>: <type>[ = <init>]\n`
+    ///   `<indent>[<vis> ]var <name>: <type>[ = <init>]\n`
     ///
-    /// `let` is emitted when `field.is_const`, `var` otherwise. The
-    /// type is run through `map_type`, which passes user-written Swift
-    /// names through verbatim and resolves only machinery shapes. Visibility
-    /// `internal` (Frame's `Protected`) becomes Swift's default and
-    /// is OMITTED rather than emitted explicitly — matches the
-    /// `emit_visibility_swift` empty-string convention used elsewhere.
+    /// Stored properties are always emitted `var`, never `let` — even for
+    /// Frame `const` domain fields. A persisted `const` (e.g.
+    /// `const threshold: int = threshold`, seeded from a system param)
+    /// carries a per-instance value that lives only in the persist blob, so
+    /// `restore_state` must be able to reassign it outside `init` — a Swift
+    /// `let` would make that a compile error. Frame-level const-immutability
+    /// is already enforced by the validator (E814+), so the Swift `let` is
+    /// redundant — and using `var` is what keeps const-from-param values
+    /// round-tripping through save/restore. The type is run through
+    /// `map_type`, which passes user-written Swift names through verbatim and
+    /// resolves only machinery shapes. Visibility `internal` (Frame's
+    /// `Protected`) becomes Swift's default and is OMITTED rather than
+    /// emitted explicitly — matches the `emit_visibility_swift` empty-string
+    /// convention used elsewhere.
     fn emit_field(&self, field: &Field, ctx: &mut EmitContext) -> String {
         let vis = self.emit_visibility_swift(field.visibility);
-        let var_kw = if field.is_const { "let " } else { "var " };
+        let var_kw = "var ";
         let type_str = match &field.type_annotation {
             Some(t) => self.map_type(t),
             None => "Any?".to_string(),

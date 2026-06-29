@@ -867,7 +867,17 @@ impl KotlinBackend {
     }
 
     /// Emit a single Kotlin class-property declaration line:
-    ///   `<indent>[<vis> ][val|var ]<name>[: <type>][ = <init>]\n`
+    ///   `<indent>[<vis> ]var <name>[: <type>][ = <init>]\n`
+    ///
+    /// Properties are always emitted `var`, never `val` — even for Frame
+    /// `const` domain fields. A persisted `const` (e.g.
+    /// `const threshold: int = threshold`, seeded from a system param)
+    /// carries a per-instance value that lives only in the persist blob, so
+    /// `restore_state` must be able to reassign it — a Kotlin `val` would
+    /// make that a compile error (val cannot be reassigned). Frame-level
+    /// const-immutability is already enforced by the validator (E814+), so
+    /// the Kotlin `val` is redundant — and using `var` is what keeps
+    /// const-from-param values round-tripping through save/restore.
     ///
     /// Type slot:
     /// - present → emit `: <type>` (after `map_type`)
@@ -885,7 +895,7 @@ impl KotlinBackend {
     /// Visibility `Public` is Kotlin's default and is OMITTED.
     fn emit_field(&self, field: &Field, ctx: &mut EmitContext) -> String {
         let vis = self.emit_visibility_kotlin(field.visibility);
-        let var_kw = if field.is_const { "val " } else { "var " };
+        let var_kw = "var ";
         let type_str_opt = field.type_annotation.as_ref().map(|t| self.map_type(t));
         let type_suffix = match &type_str_opt {
             Some(t) => format!(": {}", t),
