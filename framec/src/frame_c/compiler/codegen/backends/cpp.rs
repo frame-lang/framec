@@ -1009,9 +1009,21 @@ impl CppBackend {
     }
 
     /// Emit a single C++ field declaration line:
-    ///   `<indent>[const ]<type> <name>[ = <init>];\n`
+    ///   `<indent><type> <name>[ = <init>];\n`
+    ///
+    /// Frame `const` domain fields are NOT emitted `const`. A persisted
+    /// `const` (e.g. `const threshold: int = threshold`, seeded from a
+    /// system param) carries a per-instance value that lives only in the
+    /// persist blob, so `restore_state` must be able to reassign it — a C++
+    /// `const` data member would make that assignment ill-formed. Dropping
+    /// the keyword (rather than making it a `const` reference, which would
+    /// then need member-init-list initialization) leaves a plain mutable
+    /// member. Frame-level const-immutability is already enforced by the
+    /// validator (E814+), so the C++ `const` is redundant — and dropping it
+    /// is what keeps const-from-param values round-tripping through
+    /// save/restore.
     fn emit_field(&self, field: &Field, ctx: &mut EmitContext) -> String {
-        let const_kw = if field.is_const { "const " } else { "" };
+        let const_kw = "";
         let raw_type = field
             .type_annotation
             .as_ref()

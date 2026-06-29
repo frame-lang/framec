@@ -822,19 +822,19 @@ impl JavaBackend {
     }
 
     /// Emit a single Java field declaration line:
-    ///   `<indent><vis> [final ]<type> <name>[ = <init>];\n`
+    ///   `<indent><vis> <type> <name>[ = <init>];\n`
     ///
-    /// `final` is emitted only when the field has an initializer at
-    /// declaration scope. When the init was stripped (because it
-    /// references a constructor param), the constructor body assigns
-    /// the field — incompatible with `final`.
+    /// Frame `const` domain fields are NOT emitted `final`. A persisted
+    /// `const` (e.g. `const threshold: int = threshold`, seeded from a
+    /// system param) carries a per-instance value that lives only in the
+    /// persist blob, so `restore_state` must be able to reassign it. A
+    /// Java `final` modifier would make that assignment a compile error.
+    /// Frame-level const-immutability is already enforced by the validator
+    /// (E814+), so the Java modifier is redundant — and dropping it is what
+    /// keeps const-from-param values round-tripping through save/restore.
     fn emit_field(&self, field: &Field, ctx: &mut EmitContext) -> String {
         let vis = self.emit_visibility(field.visibility);
-        let final_kw = if field.is_const && field.initializer.is_some() {
-            "final "
-        } else {
-            ""
-        };
+        let final_kw = "";
         // Route raw Frame type keywords through `map_type` so portable
         // names like `str` / `bool` become native `String` / `boolean`
         // in the emitted Java code, matching Rust / Go / C# / Dart

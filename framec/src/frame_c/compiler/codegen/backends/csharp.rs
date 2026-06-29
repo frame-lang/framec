@@ -743,20 +743,20 @@ impl CSharpBackend {
     }
 
     /// Emit a single C# field declaration line:
-    ///   `<indent><vis> [readonly ]<type> <name>[ = <init>];\n`
+    ///   `<indent><vis> <type> <name>[ = <init>];\n`
     ///
-    /// `readonly` is emitted only when the field has an initializer at
-    /// declaration scope. C# does allow constructor-body assignment of
-    /// `readonly` fields, but we preserve the existing conservative
-    /// policy from `synthesize_field_raw` (no `readonly` when init was
-    /// stripped) for byte-identical migration.
+    /// Frame `const` domain fields are NOT emitted `readonly`. A persisted
+    /// `const` (e.g. `const threshold: int = threshold`, seeded from a
+    /// system param) carries a per-instance value that lives only in the
+    /// persist blob, so `restore_state` must be able to reassign it outside
+    /// the constructor — a C# `readonly` modifier would make that a compile
+    /// error (CS0191). Frame-level const-immutability is already enforced by
+    /// the validator (E814+), so the C# modifier is redundant — and dropping
+    /// it is what keeps const-from-param values round-tripping through
+    /// save/restore.
     fn emit_field(&self, field: &Field, ctx: &mut EmitContext) -> String {
         let vis = self.emit_visibility(field.visibility);
-        let readonly_kw = if field.is_const && field.initializer.is_some() {
-            "readonly "
-        } else {
-            ""
-        };
+        let readonly_kw = "";
         // Route raw Frame type keywords through `map_type` so portable
         // names like `str` / `bool` become native `string` / `bool` in
         // the emitted C# code, matching what Rust / Go / Dart / etc.
