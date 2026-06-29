@@ -58,6 +58,8 @@ impl FrameValidator {
         // rejecting with E601.
         let actions: std::collections::HashSet<String> =
             system.actions.iter().map(|a| a.name.clone()).collect();
+        let operations: std::collections::HashSet<String> =
+            system.operations.iter().map(|o| o.name.clone()).collect();
 
         // Validate handler bodies using the scanner (handles comments, strings correctly)
         if let Some(machine) = &system.machine {
@@ -73,6 +75,7 @@ impl FrameValidator {
                         &interface_methods,
                         &domain_fields,
                         &actions,
+                        &operations,
                         &state.name,
                         &handler.event,
                         target,
@@ -93,6 +96,7 @@ impl FrameValidator {
                 &interface_methods,
                 &domain_fields,
                 &actions,
+                &operations,
                 "(action)",
                 &action.name,
                 target,
@@ -322,6 +326,7 @@ impl FrameValidator {
         interface_methods: &HashMap<String, &InterfaceMethod>,
         domain_fields: &std::collections::HashSet<String>,
         actions: &std::collections::HashSet<String>,
+        operations: &std::collections::HashSet<String>,
         scope_outer: &str,
         scope_inner: &str,
         target: crate::frame_c::visitors::TargetLanguage,
@@ -397,13 +402,18 @@ impl FrameValidator {
                                         )
                                     ));
                                 }
-                            } else if !actions.contains(method.as_str()) {
-                                // Not an interface method and not an action (RFC-0046:
-                                // `@@:self.<action>(args)` is a valid direct call).
+                            } else if !actions.contains(method.as_str())
+                                && !operations.contains(method.as_str())
+                            {
+                                // Not an interface method, action, or operation.
+                                // `@@:self.<action|operation>(args)` is a valid direct
+                                // call (RFC-0046) — the portable spelling that, on
+                                // targets without a native `self` (Erlang/C), is the
+                                // only way to call your own action/operation.
                                 self.errors.push(ValidationError::new(
                                     "E601",
                                     format!(
-                                        "@@:self.{}() in {}/{} — '{}' is not an interface method or action",
+                                        "@@:self.{}() in {}/{} — '{}' is not an interface method, action, or operation",
                                         method, scope_outer, scope_inner, method
                                     )
                                 ));
