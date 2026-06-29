@@ -1703,11 +1703,13 @@ mod tests {
         let empty_methods = std::collections::HashMap::new();
         let empty_fields = std::collections::HashSet::new();
         let empty_actions = std::collections::HashSet::new();
+        let empty_operations = std::collections::HashSet::new();
         v.validate_frame_segments_in_body(
             &wrapped,
             &empty_methods,
             &empty_fields,
             &empty_actions,
+            &empty_operations,
             "TestState",
             "test_evt",
             crate::frame_c::visitors::TargetLanguage::Python3,

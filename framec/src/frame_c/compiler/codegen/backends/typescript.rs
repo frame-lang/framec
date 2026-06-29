@@ -820,7 +820,16 @@ impl TypeScriptBackend {
             Visibility::Public | Visibility::Private => "private",
         };
         let static_kw = if field.is_static { "static " } else { "" };
-        let readonly_kw = if field.is_const { "readonly " } else { "" };
+        // Frame `const` domain fields are NOT emitted `readonly`. A
+        // persisted `const` (e.g. `const threshold: int = threshold`,
+        // seeded from a system param) carries a per-instance value that
+        // lives only in the persist blob, so `restore_state` must be able
+        // to reassign it. A TS `readonly` modifier would make that
+        // assignment a TS2540 error. Frame-level const-immutability is
+        // already enforced by the validator (E814+), so the TS modifier
+        // is redundant — and dropping it is what keeps const-from-param
+        // values round-tripping through save/restore.
+        let readonly_kw = "";
         let type_ann = field
             .type_annotation
             .as_ref()
