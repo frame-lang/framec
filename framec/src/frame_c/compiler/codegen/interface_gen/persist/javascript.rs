@@ -150,9 +150,14 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
             system.name
         ));
     }
+    // The system's `__compartment` field is non-null typed, but
+    // `deserializeComp` returns `…Compartment | null`. A persisted
+    // system always has a live compartment, so under TS we assert
+    // non-null (`!`) to satisfy `--strict` (TS2322). JS is untyped.
+    let nonnull = if is_ts { "!" } else { "" };
     restore_body.push_str(&format!(
-        "{}.__compartment = deserializeComp(_parsed._compartment);\n",
-        target
+        "{}.__compartment = deserializeComp(_parsed._compartment){};\n",
+        target, nonnull
     ));
     restore_body.push_str(&format!("{}.__next_compartment = null;\n", target));
     if is_ts {

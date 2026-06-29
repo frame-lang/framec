@@ -237,7 +237,7 @@ export class Counter {
             return comp;
         };
         const _parsed = JSON.parse(json);
-        this.__compartment = deserializeComp(_parsed._compartment);
+        this.__compartment = deserializeComp(_parsed._compartment)!;
         this.__next_compartment = null;
         this._state_stack = (_parsed._state_stack || []).map((c: any) => deserializeComp(c));
         this._context_stack = [];
