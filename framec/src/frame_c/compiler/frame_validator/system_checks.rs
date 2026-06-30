@@ -570,26 +570,38 @@ impl FrameValidator {
                         ..
                     } = r
                     {
-                        // Three syntactic shapes all write to `_return`:
+                        // Three syntactic shapes write to `_return`:
                         //   1. `@@:(expr)` — concise (ContextReturnExpr)
-                        //   2. `@@:return(expr)` — call form (ReturnCall)
+                        //   2. `@@:return(expr)` — call form (ReturnCall),
+                        //      but ONLY when it carries an expression. The
+                        //      void form `@@:return()` (#141) is a pure early
+                        //      exit that leaves the slot untouched, so it is
+                        //      legal in a void handler and must NOT trigger
+                        //      E606 (it has no value to land in a missing enum
+                        //      variant).
                         //   3. `@@:return = expr;` — assignment form
                         //      (ContextReturn with assign_expr = Some)
-                        // All three need E606 on Rust when the interface
-                        // method is void — the per-event return enum has
-                        // no variant to write into.
-                        let assigns_return = matches!(
-                            k,
-                            FrameSegmentKind::ContextReturnExpr | FrameSegmentKind::ReturnCall
-                        ) || matches!(
+                        // These need E606 on Rust when the interface method is
+                        // void — the per-event return enum has no variant to
+                        // write into.
+                        let return_call_with_value = matches!(
                             (k, m),
                             (
-                                FrameSegmentKind::ContextReturn,
-                                SegmentMetadata::ContextReturn {
-                                    assign_expr: Some(_)
-                                }
-                            )
+                                FrameSegmentKind::ReturnCall,
+                                SegmentMetadata::ReturnCall { expr }
+                            ) if !expr.trim().is_empty()
                         );
+                        let assigns_return = matches!(k, FrameSegmentKind::ContextReturnExpr)
+                            || return_call_with_value
+                            || matches!(
+                                (k, m),
+                                (
+                                    FrameSegmentKind::ContextReturn,
+                                    SegmentMetadata::ContextReturn {
+                                        assign_expr: Some(_)
+                                    }
+                                )
+                            );
                         if assigns_return {
                             self.errors.push(ValidationError::new(
                                 "E606",

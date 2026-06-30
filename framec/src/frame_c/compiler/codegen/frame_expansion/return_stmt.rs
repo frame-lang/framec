@@ -90,6 +90,31 @@ pub(super) fn expand_return_call(
         };
         &expr_owned
     };
+
+    // #141: Void form `@@:return()` — no argument. This means "exit the
+    // handler now, leaving the return slot at its current/default value."
+    // It is the early-return form WITHOUT a write to `_return`. Emitting a
+    // `_return = ` assignment with an empty RHS produces invalid target code
+    // (the silent exit-0 defect). So when the expression is empty we skip the
+    // `set_code` branch entirely and emit only the target's native return.
+    if expr.trim().is_empty() {
+        return match lang {
+            TargetLanguage::Python3
+            | TargetLanguage::GDScript
+            | TargetLanguage::Ruby
+            | TargetLanguage::Lua => format!("{}return", indent_str),
+            // Erlang has no early-return keyword: the handler body's last
+            // expression IS the return value, and `__ReturnVal` is bound at
+            // entry to the default. A bare `@@:return()` is a no-op exit.
+            // Emit the unit atom `ok` rather than an empty string: a `case`
+            // (or function) clause body in Erlang must contain at least one
+            // expression, so an empty body is a syntax error. `ok` is the
+            // conventional no-op value and leaves `__ReturnVal` untouched.
+            TargetLanguage::Erlang => "ok".to_string(),
+            _ => format!("{}return;", indent_str),
+        };
+    }
+
     let expanded_expr = paren_wrap_if_multiline(&expand_expression(expr, lang, ctx));
     // #77 (reopen): coerce to the DECLARED return type before the value
     // enters the erased `_return` slot — this early-return form was the one

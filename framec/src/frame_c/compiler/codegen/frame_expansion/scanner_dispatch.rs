@@ -105,6 +105,74 @@ pub(crate) fn expand_system_state_in_code(code: &str, lang: TargetLanguage) -> S
         result = result.replace("@@:system.state.name", &expand_system_state(lang));
     }
 
+    // #141: Expand @@:return(expr) → return expr  and  @@:return() → return.
+    //
+    // Action and operation bodies are plain native methods (no context stack),
+    // lowered through this textual pass rather than the handler-body segment
+    // scanner. The `@@:return(...)` call form was never handled here, so the
+    // literal sigil leaked into the target output (the silent exit-0 defect).
+    // The sibling `@@:(expr)` form below IS lowered, which is why a `@@:(0)` in
+    // the same body works while `@@:return(1)` did not. In a method with a real
+    // return slot the set-and-exit semantics collapse to a native `return`:
+    //   @@:return(expr) → `return expr`   (set the return value and exit)
+    //   @@:return()     → `return`        (exit, leaving the default value)
+    // Processed BEFORE the `@@:(` loop: `@@:return(` does not start with the
+    // literal `@@:(`, so the two scans are disjoint and order is not load-
+    // bearing, but doing this first keeps the intent obvious.
+    while let Some(start) = result.find("@@:return(") {
+        let after = start + "@@:return(".len(); // position after the '('
+        let bytes = result.as_bytes();
+        let mut depth = 1i32;
+        let mut j = after;
+        while j < bytes.len() && depth > 0 {
+            match bytes[j] {
+                b'(' => depth += 1,
+                b')' => depth -= 1,
+                _ => {}
+            }
+            if depth > 0 {
+                j += 1;
+            }
+        }
+        if depth == 0 {
+            let expr = result[after..j].trim();
+            let expansion = if expr.is_empty() {
+                // Void form: bare exit. Erlang has no return keyword (the last
+                // expression is the value); emit the unit atom `ok` so the
+                // enclosing clause body is never empty (an empty Erlang clause
+                // body is a syntax error). Other targets emit a native return,
+                // matching the per-language semicolon convention used by the
+                // value form below.
+                match lang {
+                    TargetLanguage::Erlang => "ok".to_string(),
+                    TargetLanguage::Python3
+                    | TargetLanguage::GDScript
+                    | TargetLanguage::Ruby
+                    | TargetLanguage::Kotlin
+                    | TargetLanguage::Swift
+                    | TargetLanguage::Lua
+                    | TargetLanguage::Go => "return".to_string(),
+                    _ => "return;".to_string(),
+                }
+            } else {
+                match lang {
+                    TargetLanguage::Erlang => expr.to_string(),
+                    TargetLanguage::Python3
+                    | TargetLanguage::GDScript
+                    | TargetLanguage::Ruby
+                    | TargetLanguage::Kotlin
+                    | TargetLanguage::Swift
+                    | TargetLanguage::Lua
+                    | TargetLanguage::Go => format!("return {}", expr),
+                    _ => format!("return {};", expr),
+                }
+            };
+            result = format!("{}{}{}", &result[..start], expansion, &result[j + 1..]);
+        } else {
+            break; // unmatched paren — bail
+        }
+    }
+
     // Expand @@:(expr) → return expr
     // In operation bodies, @@:(expr) means "return this value" (no context stack).
     // This handles patterns like @@:(@@:system.state) where the inner was already expanded.
@@ -146,4 +214,71 @@ pub(crate) fn expand_system_state_in_code(code: &str, lang: TargetLanguage) -> S
     }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // #141: `@@:return(expr)` in an action/operation body must lower to a
+    // native `return expr` on native-passthrough targets — previously the
+    // literal sigil leaked through verbatim.
+    #[test]
+    fn return_call_in_action_body_lowers() {
+        assert_eq!(
+            expand_system_state_in_code("@@:return(1)", TargetLanguage::Python3),
+            "return 1"
+        );
+        assert_eq!(
+            expand_system_state_in_code("@@:return(1)", TargetLanguage::Ruby),
+            "return 1"
+        );
+        assert_eq!(
+            expand_system_state_in_code("@@:return(1)", TargetLanguage::TypeScript),
+            "return 1;"
+        );
+        // Erlang: the last expression is the value, so just the expr.
+        assert_eq!(
+            expand_system_state_in_code("@@:return(1)", TargetLanguage::Erlang),
+            "1"
+        );
+    }
+
+    // #141: void `@@:return()` in an action body → bare exit (no empty
+    // assignment, no leaked sigil). `ok` on Erlang (empty clause body is a
+    // syntax error there).
+    #[test]
+    fn void_return_call_in_action_body_lowers() {
+        assert_eq!(
+            expand_system_state_in_code("@@:return()", TargetLanguage::Python3),
+            "return"
+        );
+        assert_eq!(
+            expand_system_state_in_code("@@:return()", TargetLanguage::TypeScript),
+            "return;"
+        );
+        assert_eq!(
+            expand_system_state_in_code("@@:return()", TargetLanguage::Erlang),
+            "ok"
+        );
+    }
+
+    // Balanced-paren extraction: a nested call inside `@@:return(...)` must
+    // not be truncated at the inner `)`.
+    #[test]
+    fn return_call_preserves_nested_parens() {
+        assert_eq!(
+            expand_system_state_in_code("@@:return(self.f(1, 2))", TargetLanguage::Python3),
+            "return self.f(1, 2)"
+        );
+    }
+
+    // The sibling `@@:(expr)` form is unaffected by the new pass.
+    #[test]
+    fn context_return_expr_still_lowers() {
+        assert_eq!(
+            expand_system_state_in_code("@@:(0)", TargetLanguage::Python3),
+            "return 0"
+        );
+    }
 }
