@@ -135,4 +135,57 @@ mod tests {
             "field after a quoted comment was swallowed:\n{out2}"
         );
     }
+
+    #[test]
+    fn apostrophe_in_own_line_comment_does_not_drop_following_fields() {
+        // #113 (own-line form): a `#` comment on its own line *before* fields,
+        // containing a lone apostrophe (`don't`), must be consumed as a comment.
+        // The apostrophe must NOT open a string scan that swallows the lines
+        // below it, dropping the subsequent domain fields.
+        let out = py("        # don't drop the fields below this comment\n        x: int = 1\n        y: int = 2");
+        assert!(out.contains("class Repro"), "did not compile:\n{out}");
+        assert!(
+            out.contains("self.x = 1"),
+            "field x after an own-line apostrophe-comment was dropped:\n{out}"
+        );
+        assert!(
+            out.contains("self.y = 2"),
+            "field y after an own-line apostrophe-comment was dropped:\n{out}"
+        );
+    }
+
+    #[test]
+    fn double_quote_in_own_line_comment_does_not_drop_following_fields() {
+        // Guard: a lone double-quote in an own-line comment must not open a
+        // string scan either.
+        let out = py("        # he said \"go\n        x: int = 1\n        y: int = 2");
+        assert!(out.contains("class Repro"), "did not compile:\n{out}");
+        assert!(out.contains("self.x = 1"), "field x dropped:\n{out}");
+        assert!(out.contains("self.y = 2"), "field y dropped:\n{out}");
+    }
+
+    #[test]
+    fn apostrophe_in_trailing_comment_on_typed_no_init_field_is_safe() {
+        // A typed field with no `= init` but a trailing apostrophe comment: the
+        // type/line scan must consume to the newline, not open a string.
+        let out = py("        x: int   # the system's counter\n        y: int = 2");
+        assert!(out.contains("class Repro"), "did not compile:\n{out}");
+        assert!(out.contains("self.y = 2"), "field y was dropped:\n{out}");
+    }
+
+    #[test]
+    fn real_string_initializer_with_apostrophe_preserved() {
+        // Guard: a genuine string initializer containing an apostrophe must
+        // still be captured verbatim, and the following field must survive.
+        let out = py("        s: str = \"it's a string\"\n        n: int = 5");
+        assert!(out.contains("class Repro"), "did not compile:\n{out}");
+        assert!(
+            out.contains("\"it's a string\""),
+            "real string initializer lost:\n{out}"
+        );
+        assert!(
+            out.contains("self.n = 5"),
+            "field after string dropped:\n{out}"
+        );
+    }
 }

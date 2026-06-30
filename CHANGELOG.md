@@ -79,7 +79,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
   generated constructor instead of being transpiled (a silent miscompile;
   `framec` exited 0). The scanner now stops an unterminated string at the
   depth-0 newline in single-line mode. Pre-backend, so all targets benefit; a
-  balanced `"…"` in a comment was never affected.
+  balanced `"…"` in a comment was never affected. The companion *own-line* form
+  — a `#` comment with a prose apostrophe on its own line *before* a field
+  (`# don't drop the fields below` followed by `x: int = 1`) — is handled by the
+  `domain:` line scanner's comment-trivia path, which consumes the whole line to
+  the newline and never opens a string; regression coverage now pins both the
+  own-line and trailing forms (apostrophe and double-quote), the typed no-init
+  trailing-comment case, and a genuine apostrophe-bearing string initializer.
 
 ## [4.6.0] - 2026-06-19
 
