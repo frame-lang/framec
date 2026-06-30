@@ -427,4 +427,85 @@ mod tests {
             result
         );
     }
+
+    // =========================================================
+    // #141 — void `@@:return()` in a handler: early exit with
+    // NO write to the `_return` slot (no empty assignment leak).
+    // =========================================================
+
+    #[test]
+    fn void_return_call_python_no_assignment() {
+        let ctx = make_ctx(vec![]);
+        let result = expand(
+            FrameSegmentKind::ReturnCall,
+            "@@:return()",
+            TargetLanguage::Python3,
+            &ctx,
+        );
+        assert_eq!(result, "return");
+        assert!(
+            !result.contains("_return ="),
+            "void @@:return() must not emit an empty `_return =` assignment, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn void_return_call_typescript_no_assignment() {
+        let ctx = make_ctx(vec![]);
+        let result = expand(
+            FrameSegmentKind::ReturnCall,
+            "@@:return()",
+            TargetLanguage::TypeScript,
+            &ctx,
+        );
+        assert_eq!(result, "return;");
+        assert!(
+            !result.contains("_return ="),
+            "void @@:return() must not emit an empty `_return =` assignment, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn void_return_call_ruby_no_assignment() {
+        let ctx = make_ctx(vec![]);
+        let result = expand(
+            FrameSegmentKind::ReturnCall,
+            "@@:return()",
+            TargetLanguage::Ruby,
+            &ctx,
+        );
+        assert_eq!(result, "return");
+    }
+
+    #[test]
+    fn void_return_call_erlang_emits_ok() {
+        // Erlang clause bodies cannot be empty — a void exit becomes `ok`.
+        let ctx = make_ctx(vec![]);
+        let result = expand(
+            FrameSegmentKind::ReturnCall,
+            "@@:return()",
+            TargetLanguage::Erlang,
+            &ctx,
+        );
+        assert_eq!(result, "ok");
+    }
+
+    #[test]
+    fn nonvoid_return_call_still_assigns() {
+        // Guard: the value-carrying form keeps writing the slot + returns.
+        let ctx = make_ctx(vec![]);
+        let result = expand(
+            FrameSegmentKind::ReturnCall,
+            "@@:return(1)",
+            TargetLanguage::Python3,
+            &ctx,
+        );
+        assert!(
+            result.contains("_return = 1") && result.contains("return"),
+            "value @@:return(1) must set the slot and return, got: {:?}",
+            result
+        );
+    }
 }
