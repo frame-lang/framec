@@ -683,9 +683,12 @@ impl LanguageBackend for KotlinBackend {
                 format!("{{ {} -> {} }}", params_str, self.emit(body, ctx))
             }
 
-            // Kotlin: "expr as Type" for cast
+            // Kotlin: "(expr as Type)" for cast — parenthesized so a following
+            // operator binds correctly. Without the parens, `x as Int < n`
+            // parses as a generic type-argument list (`Int<n>`) and fails to
+            // compile (e.g. a state-var read in a relational comparison).
             CodegenNode::Cast { expr, target_type } => {
-                format!("{} as {}", self.emit(expr, ctx), target_type)
+                format!("({} as {})", self.emit(expr, ctx), target_type)
             }
 
             // Kotlin: no "new" keyword

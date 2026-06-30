@@ -182,17 +182,19 @@ pub(super) fn expand_state_var(
                 .get(var_name.as_str())
                 .map(|t| kotlin_map_type(t))
                 .unwrap_or_else(|| "Int".to_string());
-            let cast = if kt_type == "Any?" {
-                String::new()
-            } else {
-                format!(" as {}", kt_type)
-            };
-            if ctx.per_handler {
-                format!("compartment.state_vars[{}{}{}]{}", q, var_name, q, cast)
+            let access = if ctx.per_handler {
+                format!("compartment.state_vars[{}{}{}]", q, var_name, q)
             } else if ctx.use_sv_comp {
-                format!("__sv_comp.state_vars[{}{}{}]{}", q, var_name, q, cast)
+                format!("__sv_comp.state_vars[{}{}{}]", q, var_name, q)
             } else {
-                format!("__compartment.state_vars[{}{}{}]{}", q, var_name, q, cast)
+                format!("__compartment.state_vars[{}{}{}]", q, var_name, q)
+            };
+            // Parenthesize the cast so a following operator binds correctly:
+            // a bare `x as Int < n` parses as a generic (`Int<n>`) and fails.
+            if kt_type == "Any?" {
+                access
+            } else {
+                format!("({} as {})", access, kt_type)
             }
         }
         TargetLanguage::Swift => {
