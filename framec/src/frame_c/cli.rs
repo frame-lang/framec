@@ -5,6 +5,73 @@ use std::collections::BTreeMap;
 use std::convert::TryFrom;
 use std::path::{Path, PathBuf};
 
+/// Scan generated source for the real `public class <Name>` declaration and
+/// return `<Name>`, used to name the output file (e.g. Java requires the
+/// public class to live in `<Name>.java`).
+///
+/// FRAMEC #142: a naive `code.find("public class ")` matches the token
+/// anywhere, including inside a native-code comment (`// one public class per
+/// file`) or a string literal, mis-naming the file and breaking `javac`. This
+/// scan delegates string- and comment-skipping to the language's
+/// `SyntaxSkipper` (the same dogfooded primitive the codegen rewriters use),
+/// so only a `public class` that is real code is matched.
+fn find_public_class_name(code: &str, lang: TargetLanguage) -> Option<String> {
+    const NEEDLE: &[u8] = b"public class ";
+    let skipper = crate::frame_c::compiler::native_region_scanner::create_skipper(lang);
+    let bytes = code.as_bytes();
+    let end = bytes.len();
+    let mut i = 0;
+    while i < end {
+        // Never match inside a string literal or comment.
+        if let Some(next) = skipper.skip_string(bytes, i, end) {
+            i = next;
+            continue;
+        }
+        if let Some(next) = skipper.skip_comment(bytes, i, end) {
+            i = next;
+            continue;
+        }
+        if i + NEEDLE.len() <= end && &bytes[i..i + NEEDLE.len()] == NEEDLE {
+            // `public class ` must begin at a word boundary so we don't match
+            // e.g. a `_public class ` identifier prefix in native code.
+            let at_boundary = i == 0 || !is_ident_byte(bytes[i - 1]);
+            if at_boundary {
+                let name_start = i + NEEDLE.len();
+                let mut j = name_start;
+                while j < end && is_ident_byte(bytes[j]) {
+                    j += 1;
+                }
+                if j > name_start {
+                    return Some(code[name_start..j].to_string());
+                }
+            }
+        }
+        // Advance one full UTF-8 char so a multibyte sequence isn't split.
+        i += utf8_char_len(bytes[i]);
+    }
+    None
+}
+
+/// ASCII identifier byte: alphanumeric or underscore.
+fn is_ident_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
+}
+
+/// Width in bytes of the UTF-8 sequence beginning with `b`.
+fn utf8_char_len(b: u8) -> usize {
+    if b < 0x80 {
+        1
+    } else if b >> 5 == 0b110 {
+        2
+    } else if b >> 4 == 0b1110 {
+        3
+    } else if b >> 3 == 0b11110 {
+        4
+    } else {
+        1
+    }
+}
+
 /// Recursively copy a directory tree. Used by the project-build /
 /// compile-project paths to materialise `frame_runtime_py` and
 /// `frame_runtime_ts` into the output tree alongside generated code.
@@ -853,15 +920,8 @@ fn handle_compile_project(
 
                 // Java requires filename to match the public class name
                 if matches!(lang, TargetLanguage::Java) {
-                    if let Some(cap) = code.find("public class ") {
-                        let after = &code[cap + 13..];
-                        let end = after
-                            .find(|c: char| !c.is_alphanumeric() && c != '_')
-                            .unwrap_or(after.len());
-                        let class_name = &after[..end];
-                        if !class_name.is_empty() {
-                            outp.set_file_name(format!("{}.java", class_name));
-                        }
+                    if let Some(class_name) = find_public_class_name(&code, lang) {
+                        outp.set_file_name(format!("{}.java", class_name));
                     }
                 }
                 if let Some(parent) = outp.parent() {
@@ -1110,15 +1170,8 @@ fn handle_compile(args: &Cli, language: String, file: PathBuf, format: Option<St
                     .to_string();
                 // Java requires filename to match the public class name
                 if matches!(lang, TargetLanguage::Java) {
-                    if let Some(cap) = code.find("public class ") {
-                        let after = &code[cap + 13..];
-                        let end = after
-                            .find(|c: char| !c.is_alphanumeric() && c != '_')
-                            .unwrap_or(after.len());
-                        let class_name = &after[..end];
-                        if !class_name.is_empty() {
-                            stem = class_name.to_string();
-                        }
+                    if let Some(class_name) = find_public_class_name(&code, lang) {
+                        stem = class_name;
                     }
                 }
                 let out_path = dir.join(format!("{}{}", stem, ext));
@@ -1142,5 +1195,76 @@ fn handle_compile(args: &Cli, language: String, file: PathBuf, format: Option<St
             }
             std::process::exit(exitcode::DATAERR);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::frame_c::driver::TargetLanguage;
+
+    // FRAMEC #142: the output-filename picker must derive the Java public
+    // class name from real code only — never from a `public class ` token that
+    // appears inside a comment or string literal.
+
+    #[test]
+    fn public_class_name_from_real_declaration() {
+        let code = "package x;\npublic class Job {\n}\n";
+        assert_eq!(
+            find_public_class_name(code, TargetLanguage::Java).as_deref(),
+            Some("Job")
+        );
+    }
+
+    #[test]
+    fn public_class_name_skips_line_comment() {
+        // The `// ... public class per file` comment must NOT win; the real
+        // `public class Job` further down must be the match (issue #142 repro).
+        let code = "// NB: Java requires one public class per file\n\
+                    class JobFrameEvent {}\n\
+                    public class Job {\n}\n";
+        assert_eq!(
+            find_public_class_name(code, TargetLanguage::Java).as_deref(),
+            Some("Job")
+        );
+    }
+
+    #[test]
+    fn public_class_name_skips_block_comment() {
+        let code = "/* public class Foo is what we want, but commented */\n\
+                    public class Job {}\n";
+        assert_eq!(
+            find_public_class_name(code, TargetLanguage::Java).as_deref(),
+            Some("Job")
+        );
+    }
+
+    #[test]
+    fn public_class_name_skips_string_literal() {
+        let code = "public class Job {\n\
+                    \x20 String s = \"public class Foo\";\n\
+                    }\n";
+        assert_eq!(
+            find_public_class_name(code, TargetLanguage::Java).as_deref(),
+            Some("Job")
+        );
+    }
+
+    #[test]
+    fn public_class_name_ignores_non_boundary_prefix() {
+        // `notpublic class X` shares the `public class ` tail but is not a
+        // real declaration — the word-boundary check must skip it and match
+        // the genuine `public class Real` instead.
+        let code = "int notpublic class Fake;\npublic class Real {}\n";
+        assert_eq!(
+            find_public_class_name(code, TargetLanguage::Java).as_deref(),
+            Some("Real")
+        );
+    }
+
+    #[test]
+    fn public_class_name_none_when_absent() {
+        let code = "class Internal {}\n// public class NotReal\n";
+        assert_eq!(find_public_class_name(code, TargetLanguage::Java), None);
     }
 }
