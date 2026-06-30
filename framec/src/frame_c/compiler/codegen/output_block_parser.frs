@@ -132,6 +132,44 @@
                                 if st.iter().all(|&b| b == b' ' || b == b'\t' || b == b'\n') { scan += 1; } else { break; }
                             }
 
+                            if scan < n && self.token_kinds[scan] == 1 {
+                                // RBRACE ELSE IF ... LBRACE — direct `else if`
+                                // chain (the `if` keyword follows `else` with no
+                                // intervening `{`, distinct from the `else { if }`
+                                // form handled below). The closing `}` would have
+                                // become `end`, but here it is collapsed with the
+                                // `else if` into Lua's single `elseif` keyword.
+                                // No `end` is emitted and no new block is opened
+                                // (the `if`'s `{` reuses the same level), so
+                                // `block_depth` is unchanged — exactly mirroring
+                                // the one-word ELSEIF arm above. This generalises
+                                // to N-arm chains: each `} else if c {` link is an
+                                // independent RBRACE-ELSE-IF match, and the final
+                                // arm's `}` lowers to the lone `end`.
+                                let if_ti = scan;
+                                scan += 1;
+                                let mut cond = String::new();
+                                while scan < n && self.token_kinds[scan] != 6 && self.token_kinds[scan] != 10 {
+                                    let s = self.token_starts[scan];
+                                    let e = self.token_ends[scan];
+                                    cond.push_str(&String::from_utf8_lossy(&bytes[s..e]));
+                                    scan += 1;
+                                }
+                                if scan < n && self.token_kinds[scan] == 6 {
+                                    if self.mode == 1 {
+                                        self.result.push_str("elseif");
+                                        self.result.push_str(cond.trim_end());
+                                        self.result.push_str(" then");
+                                    }
+                                    ti = scan + 1;
+                                    after_return = false;
+                                    continue;
+                                }
+                                // No LBRACE after `else if <cond>` — not our
+                                // pattern; fall through to the plain-`else` /
+                                // plain-RBRACE handling below.
+                            }
+
                             if scan < n && self.token_kinds[scan] == 6 {
                                 let lbrace_ti = scan;
                                 // Check for IF after LBRACE (elseif pattern)
