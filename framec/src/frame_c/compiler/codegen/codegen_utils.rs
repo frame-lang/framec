@@ -514,6 +514,41 @@ pub fn replace_outside_strings_and_comments(
     out
 }
 
+/// Find the first occurrence of `needle` in `code` that lies **outside** string
+/// literals and comments, per the language's `SyntaxSkipper`. Returns its byte
+/// offset, or `None`. The string/comment-safe counterpart of `str::find` — use
+/// it before scanning a sigil (`@@:return(`, `@@:(`, …) in a native body so a
+/// sigil embedded in a literal or comment is not treated as real syntax.
+pub fn find_outside_strings_and_comments(
+    code: &str,
+    lang: crate::frame_c::visitors::TargetLanguage,
+    needle: &str,
+) -> Option<usize> {
+    let nb = needle.as_bytes();
+    if nb.is_empty() {
+        return None;
+    }
+    let skipper = crate::frame_c::compiler::native_region_scanner::create_skipper(lang);
+    let bytes = code.as_bytes();
+    let end = bytes.len();
+    let mut i = 0usize;
+    while i < end {
+        if let Some(next) = skipper.skip_string(bytes, i, end) {
+            i = next;
+            continue;
+        }
+        if let Some(next) = skipper.skip_comment(bytes, i, end) {
+            i = next;
+            continue;
+        }
+        if bytes[i..].starts_with(nb) {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
+}
+
 /// Like [`replace_outside_strings_and_comments`], but a replacement only fires
 /// when its needle sits at a **left word boundary** — the byte immediately
 /// before it is not a word character (alphanumeric or `_`). This is the safe

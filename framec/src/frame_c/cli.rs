@@ -464,8 +464,16 @@ fn handle_default_pathway(args: Cli) {
             std::process::exit(exitcode::USAGE);
         });
         if let Ok(content) = std::fs::read_to_string(&path) {
-            // Module file validation (@target present)
-            let is_module = content.contains("@target ");
+            // Module file validation: a `@target` pragma *line* (#155). Line-based
+            // and boundary-checked — matches the sibling `detect_target` logic —
+            // so a `@target` inside a comment or native string, or a `@targeting`
+            // identifier, no longer flips `is_module` the way `.contains("@target ")`
+            // did.
+            let is_module = content.lines().any(|l| {
+                l.trim_start()
+                    .strip_prefix("@target")
+                    .is_some_and(|r| r.is_empty() || r.starts_with(char::is_whitespace))
+            });
             if is_module {
                 // Same precedence as the compile pathway (FRAMEC_BUGS #36):
                 // -l > pragma > FRAMEC_DEFAULT_TARGET > python_3. Previously

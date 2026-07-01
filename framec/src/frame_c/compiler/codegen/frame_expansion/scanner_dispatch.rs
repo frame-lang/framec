@@ -101,8 +101,16 @@ pub(crate) fn expand_system_state_in_code(code: &str, lang: TargetLanguage) -> S
     // Expand @@:system.state.name → compartment accessor (the state-name
     // string). Bare `@@:system.state` is reserved (RFC-0045) and rejected by
     // E608 during validation, so only the `.name` form reaches codegen.
-    if result.contains("@@:system.state.name") {
-        result = result.replace("@@:system.state.name", &expand_system_state(lang));
+    // String/comment-safe (#155): a sigil inside a native literal or comment is
+    // not a real reference and must not be rewritten.
+    {
+        let ssn = expand_system_state(lang);
+        result =
+            crate::frame_c::compiler::codegen::codegen_utils::replace_outside_strings_and_comments(
+                &result,
+                lang,
+                &[("@@:system.state.name", ssn.as_str())],
+            );
     }
 
     // #141: Expand @@:return(expr) → return expr  and  @@:return() → return.
@@ -119,7 +127,13 @@ pub(crate) fn expand_system_state_in_code(code: &str, lang: TargetLanguage) -> S
     // Processed BEFORE the `@@:(` loop: `@@:return(` does not start with the
     // literal `@@:(`, so the two scans are disjoint and order is not load-
     // bearing, but doing this first keeps the intent obvious.
-    while let Some(start) = result.find("@@:return(") {
+    while let Some(start) =
+        crate::frame_c::compiler::codegen::codegen_utils::find_outside_strings_and_comments(
+            &result,
+            lang,
+            "@@:return(",
+        )
+    {
         let after = start + "@@:return(".len(); // position after the '('
         let bytes = result.as_bytes();
         let mut depth = 1i32;
@@ -176,7 +190,11 @@ pub(crate) fn expand_system_state_in_code(code: &str, lang: TargetLanguage) -> S
     // Expand @@:(expr) → return expr
     // In operation bodies, @@:(expr) means "return this value" (no context stack).
     // This handles patterns like @@:(@@:system.state) where the inner was already expanded.
-    while let Some(start) = result.find("@@:(") {
+    while let Some(start) =
+        crate::frame_c::compiler::codegen::codegen_utils::find_outside_strings_and_comments(
+            &result, lang, "@@:(",
+        )
+    {
         let after = start + 4; // position after "@@:("
         let bytes = result.as_bytes();
         let mut depth = 1i32;
