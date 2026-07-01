@@ -36,12 +36,11 @@ fn csharp_strip_param_lists(text: &str, param_names: &[&str]) -> String {
             }
             if depth == 0 {
                 let inner = &text[args_start..j];
-                let parts: Vec<&str> = inner
-                    .split(',')
-                    .map(|p| p.trim())
-                    .filter(|p| !p.is_empty())
-                    .collect();
-                if !parts.is_empty() && parts.iter().all(|p| param_names.contains(p)) {
+                let parts = crate::frame_c::compiler::codegen::codegen_utils::split_top_level_args(
+                    &inner,
+                    crate::frame_c::visitors::TargetLanguage::CSharp,
+                );
+                if !parts.is_empty() && parts.iter().all(|p| param_names.contains(&p.as_str())) {
                     result.push_str("new List<object>()");
                     i = j + 1;
                     continue;
