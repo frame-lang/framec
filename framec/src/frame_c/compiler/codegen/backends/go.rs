@@ -721,24 +721,17 @@ impl GoBackend {
 /// (e.g. `s.__compartment = s.__prepareEnter(...)`,
 /// `s._context_stack = append(s._context_stack, __ctx)`). When moved
 /// into the package-level `CreateFoo` factory, every `s.` prefix
-/// must become `c.`. Word-boundary aware so identifiers ending in
-/// `s.` (rare) aren't touched.
+/// must become `c.`.
+///
+/// Routed through the dogfooded native-region scanner (#151): the rewrite is
+/// string/comment-safe AND left-word-boundary aware, so a `s.` inside a Go
+/// string/comment, or the tail of a longer identifier (`sensors.`), is left
+/// untouched. This replaced a raw byte scan that was neither string/comment-safe
+/// nor UTF-8-safe (`bytes[i] as char`).
 fn rewrite_go_member_refs_for_factory(line: &str) -> String {
-    let bytes = line.as_bytes();
-    let mut result = String::with_capacity(line.len() + 16);
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b's'
-            && i + 1 < bytes.len()
-            && bytes[i + 1] == b'.'
-            && (i == 0 || !(bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_'))
-        {
-            result.push_str("c.");
-            i += 2;
-            continue;
-        }
-        result.push(bytes[i] as char);
-        i += 1;
-    }
-    result
+    crate::frame_c::compiler::codegen::codegen_utils::replace_word_start_outside_strings_and_comments(
+        line,
+        crate::frame_c::visitors::TargetLanguage::Go,
+        &[("s.", "c.")],
+    )
 }

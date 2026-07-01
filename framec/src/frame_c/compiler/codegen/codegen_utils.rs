@@ -514,6 +514,61 @@ pub fn replace_outside_strings_and_comments(
     out
 }
 
+/// Like [`replace_outside_strings_and_comments`], but a replacement only fires
+/// when its needle sits at a **left word boundary** — the byte immediately
+/// before it is not a word character (alphanumeric or `_`). This is the safe
+/// primitive for rewriting a *receiver prefix* on already-emitted code — e.g.
+/// `s.` → `c.` (Go) or `self.` → `c.` (Rust) when relocating a bare-constructor
+/// body into the factory — without touching a longer identifier that merely ends
+/// in the receiver (`sensors.`, `myself.`) or the token inside a string/comment.
+///
+/// Prefer this over a raw `str::replace` or a hand-rolled byte scan for any
+/// receiver/identifier-prefix rewrite of emitted native code.
+pub fn replace_word_start_outside_strings_and_comments(
+    code: &str,
+    lang: crate::frame_c::visitors::TargetLanguage,
+    replacements: &[(&str, &str)],
+) -> String {
+    let skipper = crate::frame_c::compiler::native_region_scanner::create_skipper(lang);
+    let bytes = code.as_bytes();
+    let end = bytes.len();
+    let mut out = String::with_capacity(code.len());
+    let mut i = 0;
+    while i < end {
+        if let Some(next) = skipper.skip_string(bytes, i, end) {
+            out.push_str(&code[i..next]);
+            i = next;
+            continue;
+        }
+        if let Some(next) = skipper.skip_comment(bytes, i, end) {
+            out.push_str(&code[i..next]);
+            i = next;
+            continue;
+        }
+        let prev_is_word = i > 0 && (bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_');
+        if !prev_is_word {
+            let mut replaced = false;
+            for (needle, replacement) in replacements {
+                let nb = needle.as_bytes();
+                if i + nb.len() <= end && &bytes[i..i + nb.len()] == nb {
+                    out.push_str(replacement);
+                    i += nb.len();
+                    replaced = true;
+                    break;
+                }
+            }
+            if replaced {
+                continue;
+            }
+        }
+        let width = utf8_char_len(bytes[i]);
+        let next = (i + width).min(end);
+        out.push_str(&code[i..next]);
+        i = next;
+    }
+    out
+}
+
 /// Erlang: lower `self.<field>` accesses to `<data_var>#data.<field>`, while
 /// leaving a `self.<name>(` *call shape* verbatim.
 ///
@@ -755,5 +810,46 @@ mod tests {
             &[("self.", "Data#data.")],
         );
         assert_eq!(out, "X = Data#data.a, % self.in_comment\nY = Data#data.b.");
+    }
+
+    #[test]
+    fn word_start_replace_is_boundary_and_string_safe() {
+        use crate::frame_c::visitors::TargetLanguage;
+        // receiver at a left word boundary -> rewritten
+        assert_eq!(
+            replace_word_start_outside_strings_and_comments(
+                "s.__compartment = s.__prepareEnter(a)",
+                TargetLanguage::Go,
+                &[("s.", "c.")]
+            ),
+            "c.__compartment = c.__prepareEnter(a)"
+        );
+        // tail of a longer identifier -> NOT rewritten
+        assert_eq!(
+            replace_word_start_outside_strings_and_comments(
+                "x := sensors.value + s.n",
+                TargetLanguage::Go,
+                &[("s.", "c.")]
+            ),
+            "x := sensors.value + c.n"
+        );
+        // inside a string literal -> NOT rewritten
+        assert_eq!(
+            replace_word_start_outside_strings_and_comments(
+                "s.msg = \"logs. done\"",
+                TargetLanguage::Go,
+                &[("s.", "c.")]
+            ),
+            "c.msg = \"logs. done\""
+        );
+        // inside a comment -> NOT rewritten
+        assert_eq!(
+            replace_word_start_outside_strings_and_comments(
+                "c.x = 1 // reset s.state",
+                TargetLanguage::Go,
+                &[("s.", "c.")]
+            ),
+            "c.x = 1 // reset s.state"
+        );
     }
 }
