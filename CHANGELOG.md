@@ -100,6 +100,74 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
   the newline and never opens a string; regression coverage now pins both the
   own-line and trailing forms (apostrophe and double-quote), the typed no-init
   trailing-comment case, and a genuine apostrophe-bearing string initializer.
+- **`@@:return` — void form and action/operation-body form now lower on every
+  backend (#141).** A void `@@:return()` emits a native early-return with no
+  spurious `_return =` assignment, and `@@:return(expr)` is now lowered inside
+  action and operation bodies (not just event handlers) via a balanced-paren
+  scan. A false-positive Rust E606 on the void form was exempted. All 17 targets.
+- **`@@:self.<operation>()` is accepted by the validator (E601).** Operations are
+  callable via the portable `@@:self` form, not only interface methods; the
+  validator no longer rejects the operation case.
+- **Erlang: only `@@:self`-marked calls lower — bare native `self.X()` passes
+  through unchanged.** Aligns Erlang with the Oceans call model: framec stops
+  rewriting native call syntax and lowers only explicit `@@:self` references
+  (marker-based). Native child/self calls are the author's, per target idiom.
+- **Erlang: `@@[persist]` affinity, `@@[*persist]` broadcast, `@@:data`
+  call-scoping, `@@:return(e)` short-circuit, `pop$` exit dispatch, and
+  operation-body conditionals are runtime-correct (#127, #132).** A sweep that
+  moved Erlang from "compiles clean" to "behaves correctly": per-system persist
+  affinity with a `@@[*persist]` broadcast opt-in (#127); reserved-word state
+  quoting, lowercased domain fields, enter state-arg binding (#132 A–D); and
+  `@@:data` scoping, `@@:return` short-circuit, and `pop$`-driven exit dispatch
+  (#132 E–G). Nested control-flow arms now return valid `gen_statem` tuples
+  (#119, partial — the else-if-without-trailing-else case closes its outer case).
+- **Erlang: non-terminal `if` threads `Data` through the `case` to trailing code
+  (#125).** A no-else/else-if `if` that merely mutates and falls through no longer
+  drops its trailing statements or wraps them in a spurious `__ReturnVal = case`;
+  a `body_is_terminal` check gates the early-exit deferral so trailing code runs
+  unconditionally after the `end`. Discriminated by the `@@:return` short-circuit
+  sentinel vs the `@@:` fall-through setter — no `gen_statem` IR (#119) needed.
+- **Erlang: machine-less systems run via a synthetic `init_state/3` (#121).** A
+  system with no `machine:` section previously produced no start state; framec now
+  synthesizes one so the system initializes.
+- **Lua: `else if` chains lower to `elseif`, nested `if` inside `else {}` keeps
+  its brace, table constructors survive, cross-system calls pass `self`, and the
+  module exports its systems (#120, #122, #124, #134, #135).** A cluster of Lua
+  block-lowering fixes: a direct `} else if c {` link now lowers to `elseif …
+  then` instead of the invalid `end else if … then` (#124); a nested `if` inside
+  an `else { … }` no longer leaks a brace (#135); `table.insert(t, {…})` literals
+  inside handler bodies keep their `{}` (#122); bare action and cross-system calls
+  emit the colon form so `self` is passed (#134), and the generated module now
+  actually exports its systems (#120).
+- **Persist: const domain fields are emitted mutable on typed backends so restore
+  can reassign them (#138, #139).** A persisted `const` field must round-trip
+  through `restore`, which reassigns it — so it can no longer carry an immutable
+  modifier (`final`/`readonly`/`val`/`let`/`const`) on the 6 affected typed
+  backends (#139); TypeScript persist output additionally now type-checks under
+  `tsc --strict` (#138). Frame-level `const` stays enforced by the validator.
+- **Transitions: a forward `-> => $S(args)` carries its argument decorations with
+  no false `W414` (#128); Rust drops redundant parens on a bare context-read
+  return (#129).** Forward (re-dispatch) transitions now propagate state/enter-arg
+  decorations correctly and no longer trip a spurious unreachable-state warning
+  (#128); a Rust bare `@@:(ctx.field)` return no longer wraps in redundant parens
+  (#129).
+- **Validator: a bare `@@:return` used as a no-op statement warns (W416) (#130).**
+- **Kotlin: state-variable read casts are parenthesized so a following operator
+  binds correctly.** `$.i` read as `(state_vars["i"] as Int)` rather than the
+  unparenthesized form, which mis-parsed in `while ($.i < n)` and similar.
+- **CLI: the output-filename picker is comment/string-aware (#142).** The scan for
+  the public class name that names the output file (`javac` requires
+  `<Name>.java`) delegated to a naive `find("public class ")`, which matched the
+  token inside a native comment or string literal and misnamed the file. It now
+  walks the source via the language's `SyntaxSkipper` (the dogfooded native-region
+  primitive) and requires a word boundary.
+- **Parity: empty / machine-less systems compile on Swift, Rust, and Kotlin.** A
+  system with no states or an empty `machine:` now emits a valid, constructible
+  class on these targets (Swift additionally seeds `__compartment`), matching the
+  dynamic backends.
+- **Robustness: the per-backend text rewriters are string/comment-safe.** A
+  post-audit sweep hardened the backend body/call rewriters (including Erlang) so
+  they never corrupt content inside string literals or comments.
 
 ## [4.6.0] - 2026-06-19
 
