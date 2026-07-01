@@ -898,37 +898,52 @@ impl KotlinBackend {
     /// Visibility `Public` is Kotlin's default and is OMITTED.
     fn emit_field(&self, field: &Field, ctx: &mut EmitContext) -> String {
         let vis = self.emit_visibility_kotlin(field.visibility);
-        let var_kw = "var ";
         let type_str_opt = field.type_annotation.as_ref().map(|t| self.map_type(t));
         let type_suffix = match &type_str_opt {
             Some(t) => format!(": {}", t),
             None => String::new(),
         };
+        // `lateinit ` modifier for a deferred non-null reference field (#147):
+        // its real value is assigned in `__frame_init` (RFC-0017, the init
+        // references a system param), so the placeholder path below would emit
+        // `= null` — invalid for a non-null Kotlin type. `lateinit var` needs no
+        // placeholder and preserves the non-null contract.
+        let mut lateinit = "";
         let init_suffix = match (&field.initializer, field.visibility, &type_str_opt) {
             (Some(init), _, _) => format!(" = {}", self.emit(init, ctx)),
             (None, Visibility::Public, Some(t)) => {
-                format!(" = {}", self.kotlin_default_for_type(t))
+                let default = self.kotlin_default_for_type(t);
+                // A `null` default on a NON-nullable reference type is illegal
+                // ("null cannot be a value of a non-null type"). Primitives
+                // (`Int`→`0`, `String`→`""`, …) and already-nullable types
+                // (`Dep?`) keep the placeholder.
+                if default == "null" && !t.ends_with('?') {
+                    lateinit = "lateinit ";
+                    String::new()
+                } else {
+                    format!(" = {}", default)
+                }
             }
             (None, _, _) => String::new(),
         };
         let comments = field.format_leading_comments(&ctx.get_indent());
         if vis.is_empty() {
             format!(
-                "{}{}{}{}{}{}\n",
+                "{}{}{}var {}{}{}\n",
                 comments,
                 ctx.get_indent(),
-                var_kw,
+                lateinit,
                 field.name,
                 type_suffix,
                 init_suffix
             )
         } else {
             format!(
-                "{}{}{} {}{}{}{}\n",
+                "{}{}{} {}var {}{}{}\n",
                 comments,
                 ctx.get_indent(),
                 vis,
-                var_kw,
+                lateinit,
                 field.name,
                 type_suffix,
                 init_suffix
