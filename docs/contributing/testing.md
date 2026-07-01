@@ -176,6 +176,58 @@ framec compile -l python_3 -o /tmp/out /tests/common/positive/primary/01_interfa
 python3 /tmp/out/01_interface_return.py
 ```
 
+## Debugging a Matrix Failure
+
+The container shell above is the authoritative repro, but the fastest loop is
+to transpile with your **local release binary** and run on the **host
+toolchain** — no image rebuild. This is the loop to reach for first.
+
+```bash
+FB=../framec/target/release/framec           # your framec checkout (sibling dir)
+$FB compile -l <lang> tests/common/positive/<cat>/<name>.f<ext> -o /tmp/out
+# then run with the host tool, e.g.:
+#   python3 /tmp/out/<name>.py
+#   ruby /tmp/out/<name>.rb ;  php /tmp/out/<name>.php
+#   swiftc -Onone /tmp/out/*.swift -o /tmp/run && /tmp/run
+```
+
+Per-language quirks when running a single file by hand (the matrix handles
+these for you, so they only bite in manual repros):
+
+- **Erlang**: `erlc` requires the file name to match the `-module(Name)`. framec
+  names the module after the *system*, not the file — so
+  `cp out/<file>.erl /tmp/<module>.erl && erlc -o /tmp /tmp/<module>.erl`
+  (grep `^-module(` for the name). A bare wrong-name `erlc` prints a
+  "Module name does not match" *warning* but still emits the beam.
+- **Rust**: needs a Cargo project, not bare `rustc` — the generated code uses
+  `serde`, `serde_json`, and (for `@@[async]` fixtures) `futures`/`tokio`. Drop
+  the `.rs` into `src/bin/` of a project whose `Cargo.toml` lists those deps.
+- **C / C++**: link the generated runtime; see the container runner for flags.
+
+### Is it a regression *I* introduced?
+
+Before fixing a matrix red, decide whether your branch caused it. A/B the
+**generated output** against the base commit — codegen is deterministic, so
+byte-identical output means your change is not responsible:
+
+```bash
+git worktree add /tmp/base <base-sha> && (cd /tmp/base && cargo build --release)
+diff <($FB compile -l <lang> <fixture> -o /dev/stdout 2>/dev/null) \
+     <(/tmp/base/target/release/framec compile -l <lang> <fixture> -o /dev/stdout 2>/dev/null)
+```
+
+(For a compile/erlc hard-fail, run the host tool at *both* builds and compare
+pass/fail instead of diffing.) Identical output → the failure is pre-existing or
+environmental (toolchain version, harness, a fixture that needs a newer framec).
+Differs → the diff *is* the regression; bisect it. This A/B is how #125's
+Erlang `case`-threading regression was isolated (pre-fix: erlc-clean; at HEAD:
+`variable unsafe in 'case'`).
+
+Remember the matrix runs `test-env`'s checkout against **your framec source**
+(`FRAMEPILER_SRC`), while the nightly runs `test-env` *main* against framec
+*main*. A fixture that exercises an unreleased feature will be red in the
+nightly until the release merges — that is main-lag, not a new regression.
+
 ## Harness Caveats
 
 - **Static-state leakage.** JVM/.NET/Python/Ruby/PHP/Lua dispatchers
@@ -193,3 +245,31 @@ python3 /tmp/out/01_interface_return.py
   intercepts `process.exit()` so a failing test can't take down the
   node harness. If you see tests silently disappearing mid-run, check
   that intercept is still wired up.
+- **Rust batch = one Cargo project.** The rust runner transpiles every
+  `.frs` into `src/bin/tNNN_<name>.rs` of a *single* Cargo project and does
+  one `cargo build --release`; failures are attributed back to bins by
+  scraping `src/bin/<name>.rs` out of the error lines. Consequences: (a) all
+  bins share one `Cargo.toml`, so Cargo **feature unification** across the
+  heterogeneous set can make a fixture that builds standalone fail in the
+  batch (or vice-versa) — always reproduce the *batch*, not just the one bin;
+  (b) the container uses `rust:latest`, which may be a different `rustc` than
+  your local — a version-specific lint-as-error shows up only in the matrix.
+  When a rust fixture is `# cargo build failed` but builds clean locally,
+  suspect these two before suspecting codegen.
+
+## Fixture Conventions
+
+- One fixture file **per language per test**, extension `.f<lang>`:
+  `.fpy .fts .fjs .frs .fc .fcpp .fcs .fjava .fkt .fswift .fdart .fgo .fphp
+  .frb .flua .ferl .fgd`. Each carries `@@[target("<lang>")]` and a native
+  driver that prints TAP.
+- A fixture can be **skipped** on a language by adding a sibling
+  `<name>.f<lang>.skip.md` explaining why (a framec gap or a language
+  exclusion). The runner counts it as a skip, not a failure.
+- **Maximal-coverage fixtures** (`tests/common/positive/max_coverage/
+  max_<lang>.f<lang>`, RFC-0052) are one runnable, self-asserting file per
+  backend that exercises every construct the backend supports — the
+  strongest per-language regression net. Model a new one on
+  `max_csharp.fcs`; run-validate on the host toolchain (all TAP `ok`) before
+  the matrix. Async-layered backends include an `@@[async]` system; non-async
+  backends (Go, C, Erlang, Lua, PHP, Ruby) omit it.
