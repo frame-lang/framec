@@ -255,20 +255,43 @@ pub(super) fn expand_context_self_call(
             format!("this.{}{}", method_name, args_with_parens)
         }
         TargetLanguage::Rust => {
-            // Rust's borrow checker rejects `self.foo(self.bar(x))`
-            // because both calls take `&mut self` at the same time.
-            // When the already-expanded args contain another
-            // `self.<method>(` pattern, hoist the inner call into
-            // a let-binding inside a block expression:
-            //   { let __rs_tmpN = self.bar(x); self.foo(__rs_tmpN) }
-            // Sequential `let` bindings in a block are two
-            // separate borrows — not simultaneous — so the
-            // checker accepts.
-            if args_with_parens.contains("self.") {
-                let inner = strip_outer_parens(args_with_parens);
+            // Rust's borrow checker rejects `self.foo(self.bar(x))` because both
+            // calls take `&mut self` at once. Hoist EACH nested self-call arg
+            // into its own sequential `let` (two separate borrows, not
+            // simultaneous), then call with the temps:
+            //   { let __rs_tmp_arg0 = self.bar(x); let __rs_tmp_arg1 = self.baz(y);
+            //     self.foo(__rs_tmp_arg0, __rs_tmp_arg1) }
+            //
+            // #150: string/comment- and depth-aware. The old form wrapped the
+            // *whole* arg string in one binding, so two self-call args produced
+            // `let t = self.a(x), self.b(y);` (invalid Rust), and a `self.`
+            // inside a string-literal arg triggered a spurious hoist.
+            // `contains_receiver_call` ignores literals/comments and bare field
+            // accesses; `split_top_level_args` splits only at depth-0 commas.
+            use crate::frame_c::compiler::codegen::codegen_utils::{
+                contains_receiver_call, split_top_level_args,
+            };
+            let inner = strip_outer_parens(args_with_parens);
+            if !inner.trim().is_empty()
+                && contains_receiver_call(inner, TargetLanguage::Rust, "self")
+            {
+                let args = split_top_level_args(inner, TargetLanguage::Rust);
+                let mut prelude = String::new();
+                let mut call_args = Vec::with_capacity(args.len());
+                for (n, arg) in args.iter().enumerate() {
+                    if contains_receiver_call(arg, TargetLanguage::Rust, "self") {
+                        let tmp = format!("__rs_tmp_arg{n}");
+                        prelude.push_str(&format!("let {tmp} = {arg}; "));
+                        call_args.push(tmp);
+                    } else {
+                        call_args.push(arg.clone());
+                    }
+                }
                 format!(
-                    "{{ let __rs_tmp_arg = {}; self.{}(__rs_tmp_arg) }}",
-                    inner, method_name
+                    "{{ {}self.{}({}) }}",
+                    prelude,
+                    method_name,
+                    call_args.join(", ")
                 )
             } else {
                 format!("self.{}{}", method_name, args_with_parens)

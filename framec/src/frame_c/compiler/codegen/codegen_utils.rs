@@ -569,6 +569,95 @@ pub fn replace_word_start_outside_strings_and_comments(
     out
 }
 
+/// Split a comma-separated argument list at **top-level commas only** — a comma
+/// nested inside `()`/`[]`/`{}`, or inside a string literal / comment, is not a
+/// split point. String/comment skipping is delegated to the language's
+/// `SyntaxSkipper`. Each returned arg is trimmed; empty/whitespace input → `[]`.
+///
+/// This is the correct primitive for any codegen operating per-argument on an
+/// emitted or captured arg blob (transition args #148, nested self-call hoisting
+/// #150), replacing a naive `str::split(',')` that breaks on `f(a, b)` or a
+/// comma inside a `"a,b"` literal.
+pub fn split_top_level_args(
+    args: &str,
+    lang: crate::frame_c::visitors::TargetLanguage,
+) -> Vec<String> {
+    if args.trim().is_empty() {
+        return Vec::new();
+    }
+    let skipper = crate::frame_c::compiler::native_region_scanner::create_skipper(lang);
+    let bytes = args.as_bytes();
+    let end = bytes.len();
+    let mut out = Vec::new();
+    let mut depth: i32 = 0;
+    let mut start = 0usize;
+    let mut i = 0usize;
+    while i < end {
+        if let Some(next) = skipper.skip_string(bytes, i, end) {
+            i = next;
+            continue;
+        }
+        if let Some(next) = skipper.skip_comment(bytes, i, end) {
+            i = next;
+            continue;
+        }
+        match bytes[i] {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            b',' if depth == 0 => {
+                out.push(args[start..i].trim().to_string());
+                start = i + 1;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    out.push(args[start..end].trim().to_string());
+    out
+}
+
+/// True iff `expr` contains a `<recv>.<ident>(` *method-call* shape at an
+/// identifier boundary, outside string literals and comments — e.g. a
+/// `self.foo(` call (as opposed to a bare field access `self.foo` or the token
+/// inside a `"self.foo("` literal). Used to decide whether an argument borrows
+/// the receiver and must be hoisted (#150).
+pub fn contains_receiver_call(
+    expr: &str,
+    lang: crate::frame_c::visitors::TargetLanguage,
+    receiver: &str,
+) -> bool {
+    let needle = format!("{receiver}.");
+    let nb = needle.as_bytes();
+    let skipper = crate::frame_c::compiler::native_region_scanner::create_skipper(lang);
+    let bytes = expr.as_bytes();
+    let end = bytes.len();
+    let mut i = 0usize;
+    while i < end {
+        if let Some(next) = skipper.skip_string(bytes, i, end) {
+            i = next;
+            continue;
+        }
+        if let Some(next) = skipper.skip_comment(bytes, i, end) {
+            i = next;
+            continue;
+        }
+        let boundary = i == 0 || !(bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_');
+        if boundary && bytes[i..].starts_with(nb) {
+            // Walk the identifier after `<recv>.`; a `(` right after it is a call.
+            let mut j = i + nb.len();
+            let id_start = j;
+            while j < end && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') {
+                j += 1;
+            }
+            if j > id_start && j < end && bytes[j] == b'(' {
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
 /// Erlang: lower `self.<field>` accesses to `<data_var>#data.<field>`, while
 /// leaving a `self.<name>(` *call shape* verbatim.
 ///
@@ -851,5 +940,30 @@ mod tests {
             ),
             "c.x = 1 // reset s.state"
         );
+    }
+
+    #[test]
+    fn split_and_receiver_call_helpers() {
+        use crate::frame_c::visitors::TargetLanguage::Rust;
+        // depth-aware split: commas inside nested calls / brackets are not splits
+        assert_eq!(
+            split_top_level_args("self.a(x), self.b(y, z)", Rust),
+            vec!["self.a(x)".to_string(), "self.b(y, z)".to_string()]
+        );
+        assert_eq!(
+            split_top_level_args("f(a, b)", Rust),
+            vec!["f(a, b)".to_string()]
+        );
+        assert_eq!(split_top_level_args("", Rust), Vec::<String>::new());
+        // comma inside a string literal is not a split point
+        assert_eq!(
+            split_top_level_args("\"a,b\", c", Rust),
+            vec!["\"a,b\"".to_string(), "c".to_string()]
+        );
+        // receiver-call detection: call vs field vs string vs boundary
+        assert!(contains_receiver_call("self.bar(x)", Rust, "self"));
+        assert!(!contains_receiver_call("self.field", Rust, "self")); // field, no call
+        assert!(!contains_receiver_call("\"self.bar(x)\"", Rust, "self")); // inside string
+        assert!(!contains_receiver_call("myself.bar(x)", Rust, "self")); // boundary
     }
 }
