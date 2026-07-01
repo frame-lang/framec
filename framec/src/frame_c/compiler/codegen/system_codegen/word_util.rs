@@ -98,24 +98,62 @@ pub(crate) fn init_references_param(init_text: &str, params: &[String]) -> bool 
 /// function/method call, or a `@@<System>()` instantiation are all rejected at
 /// parse time ("New expressions are not supported in this context"). We treat
 /// the init as non-constant — needing the constructor — when its text contains
-/// a `@@` tag, the `new` keyword, or a call paren `(`. A whole-string string
-/// literal is always constant even if it embeds those characters, so it stays
-/// a property default. This is deliberately conservative: a constant expression
-/// we can't prove (e.g. parenthesised arithmetic) is still safe to assign in the
+/// a `@@` tag, the `new` keyword, or a call paren `(`. A *single* string literal
+/// is always constant even if it embeds those characters, so it stays a property
+/// default. This is deliberately conservative: a constant expression we can't
+/// prove (e.g. parenthesised arithmetic) is still safe to assign in the
 /// constructor, just slightly less idiomatic.
+///
+/// NOTE: this is a substring heuristic, not a real constant-expression
+/// classifier — see the pre-release hack/heuristic audit. The proper technique
+/// is a token-based `is-constant-expression` predicate over the initializer,
+/// shared across the backends that each answer "may this init be a field
+/// default?" (Go/C strip unconditionally, OO on param-collision, C++ member-init
+/// list, PHP here). Tracked for conversion.
 pub(crate) fn php_init_needs_constructor(init_text: &str) -> bool {
     let t = init_text.trim();
     if t.is_empty() {
         return false;
     }
-    // A whole-string string literal is a constant expression regardless of
-    // what it embeds.
-    let is_string_literal = t.len() >= 2
-        && ((t.starts_with('"') && t.ends_with('"')) || (t.starts_with('\'') && t.ends_with('\'')));
-    if is_string_literal {
+    // A *single* string literal is a constant expression regardless of what it
+    // embeds. Crucially this must be ONE literal, not a quote-spanning
+    // concatenation like `"x" . new Y() . "z"` — which also starts and ends with
+    // a quote but is NOT constant. `is_single_string_literal` rejects an interior
+    // (unescaped) closing quote so such a concat falls through to the checks
+    // below and is correctly assigned in the constructor.
+    if is_single_string_literal(t) {
         return false;
     }
     t.contains("@@") || t.contains("new ") || t.contains('(')
+}
+
+/// True iff `t` is exactly one string literal (`"…"` or `'…'`) with no interior
+/// unescaped quote of the same kind — i.e. the opening quote's match is the
+/// final character. Distinguishes a constant literal (`"foo(bar)"`) from a
+/// concatenation that merely starts and ends with a quote (`"x" . f() . "y"`).
+fn is_single_string_literal(t: &str) -> bool {
+    let b = t.as_bytes();
+    if b.len() < 2 {
+        return false;
+    }
+    let q = b[0];
+    if (q != b'"' && q != b'\'') || b[b.len() - 1] != q {
+        return false;
+    }
+    // Walk the interior; the same-kind quote must not appear unescaped before
+    // the final character (that would mean the literal closed early → concat).
+    let mut i = 1;
+    while i < b.len() - 1 {
+        if b[i] == b'\\' {
+            i += 2; // skip the escaped byte
+            continue;
+        }
+        if b[i] == q {
+            return false; // interior close → not a single literal
+        }
+        i += 1;
+    }
+    true
 }
 
 /// Prefix `$` to identifiers in `text` that match system param names.
@@ -196,5 +234,23 @@ mod php_const_tests {
     fn empty_init_is_not_deferred() {
         assert!(!php_init_needs_constructor(""));
         assert!(!php_init_needs_constructor("   "));
+    }
+
+    #[test]
+    fn quote_spanning_concat_is_not_a_constant_literal() {
+        // Audit regression: a concat that merely starts+ends with a quote but
+        // hides a `new`/call in the middle must go to the constructor, not stay
+        // a property default (which would emit un-compilable PHP).
+        assert!(php_init_needs_constructor("\"x\" . new Y() . \"z\""));
+        assert!(php_init_needs_constructor("'a' . foo() . 'b'"));
+        assert!(php_init_needs_constructor("\"pre\" . @@Sensor()"));
+    }
+
+    #[test]
+    fn single_literal_with_embedded_specials_stays_constant() {
+        assert!(!php_init_needs_constructor("\"foo(bar)\""));
+        assert!(!php_init_needs_constructor("\"has new inside\""));
+        assert!(!php_init_needs_constructor("'@@notatag'"));
+        assert!(!php_init_needs_constructor("\"escaped \\\" quote (ok)\""));
     }
 }
