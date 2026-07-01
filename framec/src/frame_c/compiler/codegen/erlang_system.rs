@@ -1237,6 +1237,7 @@ pub(crate) fn generate_erlang_system(
                         let has_case_return_val = processed
                             .iter()
                             .any(|l| l.trim().starts_with("__ReturnVal = "));
+                        let has_return_val = has_top_return_val || has_case_return_val;
                         let has_transition = processed
                             .iter()
                             .any(|l| l.trim().starts_with("frame_transition__("));
@@ -1344,26 +1345,15 @@ pub(crate) fn generate_erlang_system(
                             erlang_smart_join(&rewritten, &mut code);
                             // The case expression is the handler return — just terminate the clause
                             code.push_str(";\n");
-                        } else if has_case_return_val && has_case {
-                            // Case block whose ARMS produce the return value (each
-                            // arm ends in an in-arm `@@:return` → `__ReturnVal = X`)
-                            // but no transitions — hoist the case as a
-                            // value-producing expression. Per-arm rule: the arm's
-                            // last expression IS the arm's value, so the
+                        } else if has_return_val && has_case {
+                            // Case block with __ReturnVal but no transitions — hoist
+                            // the case as a value-producing expression. Per-arm rule:
+                            // the arm's last expression IS the arm's value, so the
                             // `__ReturnVal = X` line must be the LAST statement in
                             // each arm. Other statements (e.g., `Data1 = Data` that
                             // the body processor injects to balance variable bindings
                             // across arms) must come BEFORE it. We buffer arm bodies,
                             // strip the assignment, and emit the RHS last.
-                            //
-                            // Issue #125: gated on `has_case_return_val`, NOT the
-                            // broader `has_return_val`. When the return is purely
-                            // top-level (a `@@:return` AFTER a non-terminal case,
-                            // already SSA-renamed to `__ReturnVal_K`), the case is
-                            // intermediate logic — wrapping it in `__ReturnVal =
-                            // case …` binds an unused value and is misleading. Such
-                            // bodies fall to the linear `else` branch, which emits
-                            // the case verbatim then a single trailing reply tuple.
                             let arm_boundary = |t: &str| -> bool {
                                 t.ends_with("->")
                                     && (t == "true ->" || t.starts_with("; ") || t == "_ ->")

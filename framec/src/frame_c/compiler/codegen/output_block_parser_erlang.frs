@@ -115,83 +115,6 @@
                     found
                 };
 
-                // Issue #125: the early-exit deferral above is only sound when the
-                // no-else `if` body actually TERMINATES the clause — i.e. its last
-                // statement transitions (or returns). For `if c { -> $T } rest`
-                // the `true` arm returns, so `rest` legitimately runs only on the
-                // false path (C-family early-exit). But for `if c { self.x = … }
-                // rest` the body just MUTATES state and falls through: `rest` must
-                // run UNCONDITIONALLY on both paths. Folding `rest` into the false
-                // arm (the early-exit shape) drops it on the true path and leaves
-                // `rest`'s reads of the if-body's `DataN` stale on the false path.
-                //
-                // We distinguish the two at the brace level by inspecting the
-                // body's last meaningful line: a terminal body begins that line
-                // with a transition/return marker present in the spliced text at
-                // this stage (`frame_transition__(`, `frame_forward_transition__(`,
-                // `frame_push_transition__(`, a `{next_state,`/`{stop,` reply tuple
-                // from `-> pop$`, the `__FRAME_RETURN_SHORTCIRCUIT__` sentinel that
-                // `@@:return(expr)` emits to drop the rest of the clause, or a
-                // native `return`). `ci` is the closing `}`.
-                //
-                // Note the asymmetry between Frame's two return forms: the
-                // SHORT-CIRCUITING `@@:return(expr)` emits the sentinel and IS
-                // terminal; the value-SETTER `@@:(expr)` / `@@:return = expr` does
-                // NOT short-circuit (no sentinel) and falls through — so an `if`
-                // body ending in `@@:(expr)` is correctly NON-terminal, and its
-                // trailing code runs unconditionally (the #125 case).
-                let body_is_terminal = |ci: usize| -> bool {
-                    // Walk back to the last meaningful token before the `}`.
-                    let mut k = ci;
-                    let mut last = ci;
-                    let mut found = false;
-                    while k > 0 && !found {
-                        k -= 1;
-                        if kinds[k] == 10 || hws(k) {
-                            // skip blank space / newlines
-                        } else {
-                            last = k;
-                            found = true;
-                        }
-                    }
-                    if !found {
-                        return false;
-                    }
-                    // A native `return` token (kind 8) at line start is terminal.
-                    if kinds[last] == 8 {
-                        return true;
-                    }
-                    // Find that token's line-start token, then read the line's
-                    // leading meaningful text to match transition/reply markers.
-                    let ls = {
-                        let mut j = last;
-                        let mut done = false;
-                        while j > 0 && !done {
-                            if kinds[j - 1] == 10 {
-                                done = true;
-                            } else {
-                                j -= 1;
-                            }
-                        }
-                        // Skip leading whitespace tokens on the line.
-                        while j <= last && hws(j) {
-                            j += 1;
-                        }
-                        j
-                    };
-                    let le = line_end(ls);
-                    let text = String::from_utf8_lossy(&bytes[starts[ls]..ends[last_on_line(ls, le)]]);
-                    let t = text.trim_start();
-                    t.starts_with("frame_transition__(")
-                        || t.starts_with("frame_forward_transition__(")
-                        || t.starts_with("frame_push_transition__(")
-                        || t.starts_with("{next_state,")
-                        || t.starts_with("{stop,")
-                        || t.starts_with("__FRAME_RETURN_SHORTCIRCUIT__")
-                        || t.starts_with("return ")
-                        || t == "return"
-                };
-
                 // Stack of open cases: (kind, has_else, saved_owed). kind 0 =
                 // `if`, 1 = `elif`. `saved_owed` restores `owed` when this case
                 // closes; `owed` = deferred early-exit `end`s in the current arm.
@@ -255,18 +178,10 @@
                         } else if a >= le {
                             // `}` alone on its line → close the case (+ elifs).
                             let (ctx, has_else, saved) = stack.pop().unwrap();
-                            // Early exit: a no-else `if` whose body TERMINATES
-                            // (transitions/returns), followed by trailing code —
-                            // emit `; false ->` and defer this case's `end` to the
-                            // enclosing close (the trailing IS the false arm).
-                            //
-                            // Issue #125: gate the deferral on `body_is_terminal`.
-                            // A non-terminal no-else `if` (`if c { self.x = … }`)
-                            // falls through to the `; false -> ok` + immediate
-                            // `end` branch below, so its trailing code runs
-                            // UNCONDITIONALLY after the case on both paths —
-                            // instead of being wrongly folded into the false arm.
-                            if ctx == 0 && !has_else && has_trailing(ti) && body_is_terminal(ti) {
+                            // Early exit: a no-else `if` followed by trailing code
+                            // — emit `; false ->` and defer this case's `end` to
+                            // the enclosing close (the trailing IS the false arm).
+                            if ctx == 0 && !has_else && has_trailing(ti) {
                                 self.result.push_str("    ; false ->\n");
                                 owed = saved + 1;
                                 ti += 1;

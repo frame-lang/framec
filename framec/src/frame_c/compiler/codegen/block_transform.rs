@@ -144,55 +144,24 @@ mod erlang_tests {
         opens == ends
     }
 
-    // #123 + #125: a no-else `if` whose body TERMINATES (transitions/returns)
-    // followed by trailing code is an early exit — the trailing code lands in
-    // the `case`'s false arm, with the `end` after it. The body here is a
-    // `frame_transition__(...)` call (terminal), so the deferral applies.
+    // #123: a no-else `if` followed by trailing code is an early exit — the
+    // trailing code lands in the `case`'s false arm, with the `end` after it.
     #[test]
-    fn early_exit_terminal_body_trailing_in_false_arm() {
-        let out = erlang_blocks_to_case(
-            "if c == 1 {\nframe_transition__('t', Data, [], [], [], From, ok)\n}\nX\n",
-        );
+    fn early_exit_trailing_in_false_arm() {
+        let out = erlang_blocks_to_case("if c == 1 {\nT\n}\nX\n");
         assert!(balanced(&out), "unbalanced:\n{out}");
-        // structure: case … true -> <transition> ; false -> X end (no `; false -> ok`)
+        // structure: case … true -> T ; false -> X end  (no `; false -> ok`)
         assert!(out.contains("case (c == 1) of"), "{out}");
         assert!(out.contains("; false ->"), "{out}");
         assert!(
             !out.contains("; false -> ok"),
-            "terminal-body early-exit: trailing must be the false arm:\n{out}"
+            "trailing must be the false arm:\n{out}"
         );
         let f = out.find("; false ->").unwrap();
         let e = out.rfind("end").unwrap();
         assert!(
             out[f..e].contains('X'),
             "trailing X not in false arm:\n{out}"
-        );
-    }
-
-    // #125: a no-else `if` whose body does NOT terminate (just mutates state)
-    // followed by trailing code is NOT an early exit. The trailing code must
-    // run UNCONDITIONALLY *after* the case (both paths), so the case closes
-    // with `; false -> ok` + immediate `end` and `X` follows the `end`.
-    #[test]
-    fn nonterminal_body_trailing_after_case() {
-        let out = erlang_blocks_to_case("if c == 1 {\nT\n}\nX\n");
-        assert!(balanced(&out), "unbalanced:\n{out}");
-        assert!(out.contains("case (c == 1) of"), "{out}");
-        // The case gets an `ok` false arm and closes immediately.
-        assert!(
-            out.contains("; false -> ok"),
-            "non-terminal no-else `if` must close with an `ok` false arm:\n{out}"
-        );
-        // `X` must appear AFTER the case's `end`, not inside the false arm.
-        let e = out.find("\nend").expect("case must close with `end`");
-        assert!(
-            out[e..].contains('X'),
-            "trailing X must run after the case end (both paths):\n{out}"
-        );
-        let f = out.find("; false ->").unwrap();
-        assert!(
-            !out[f..e].contains('X'),
-            "trailing X must NOT be folded into the false arm:\n{out}"
         );
     }
 
@@ -204,14 +173,11 @@ mod erlang_tests {
         assert!(out.contains("; false -> ok"), "{out}");
     }
 
-    // Nested early exit with TERMINAL bodies: outer trailing lands in the
-    // OUTER false arm, not the inner case (the bug `nest_early_exits` shipped).
-    // Both inner and outer `if` bodies end in a transition, so both defer.
+    // Nested early exit: outer trailing lands in the OUTER false arm, not the
+    // inner case (the bug `nest_early_exits` shipped).
     #[test]
     fn nested_early_exit_outer_trailing_outer_arm() {
-        let out = erlang_blocks_to_case(
-            "if a == 1 {\nif b == 1 {\nframe_transition__('i', Data, [], [], [], From, ok)\n}\nframe_transition__('m', Data, [], [], [], From, ok)\n}\nOUTER\n",
-        );
+        let out = erlang_blocks_to_case("if a == 1 {\nif b == 1 {\nT\n}\nINNER\n}\nOUTER\n");
         assert!(balanced(&out), "unbalanced:\n{out}");
         // exactly two cases, two ends, two `; false ->` (one per case)
         assert_eq!(out.matches("case (").count(), 2, "{out}");

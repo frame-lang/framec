@@ -121,12 +121,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
   `@@:data` scoping, `@@:return` short-circuit, and `pop$`-driven exit dispatch
   (#132 E–G). Nested control-flow arms now return valid `gen_statem` tuples
   (#119, partial — the else-if-without-trailing-else case closes its outer case).
-- **Erlang: non-terminal `if` threads `Data` through the `case` to trailing code
-  (#125).** A no-else/else-if `if` that merely mutates and falls through no longer
-  drops its trailing statements or wraps them in a spurious `__ReturnVal = case`;
-  a `body_is_terminal` check gates the early-exit deferral so trailing code runs
-  unconditionally after the `end`. Discriminated by the `@@:return` short-circuit
-  sentinel vs the `@@:` fall-through setter — no `gen_statem` IR (#119) needed.
 - **Erlang: machine-less systems run via a synthetic `init_state/3` (#121).** A
   system with no `machine:` section previously produced no start state; framec now
   synthesizes one so the system initializes.
