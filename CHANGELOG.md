@@ -10,6 +10,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **PHP: a non-constant domain-field initializer is lowered into the
+  constructor (#144).** PHP class-property defaults admit only *constant
+  expressions*, so `public $inner = new Counter();` — or any call /
+  `@@<System>()` instantiation — is rejected by the PHP parser ("New
+  expressions are not supported in this context") while framec exits 0. The
+  field-emission path stripped only `@@`-tagged instantiations, so a native
+  `new X()` / `foo()` slipped through as an invalid property default. framec now
+  applies one predicate — `php_init_needs_constructor` — symmetrically to the
+  property-strip decision and the constructor-body emission: any non-constant
+  initializer is declared without a default and assigned in `__construct`
+  (before the compartment setup, so enter handlers see it), while constant
+  scalars / strings / arrays stay inline. This matches how every other OO
+  backend already lowers such initializers. Validated with `php -l` and a
+  runtime round-trip on PHP 8.5.
 - **Semicolon targets: Frame call statements are terminated by a forward,
   provably-closed rule (#116, #117).** A Frame call segment (`@@:self.method()`
   or `@@:self.field.method()`) needs a trailing `;` on semicolon targets when —

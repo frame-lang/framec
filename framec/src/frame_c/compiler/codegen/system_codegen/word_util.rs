@@ -91,6 +91,33 @@ pub(crate) fn init_references_param(init_text: &str, params: &[String]) -> bool 
     false
 }
 
+/// True iff a PHP class-property default CANNOT legally hold this domain
+/// initializer, so it must be assigned in the constructor body instead (#144).
+///
+/// PHP property defaults admit only *constant expressions*; `new X(...)`, a
+/// function/method call, or a `@@<System>()` instantiation are all rejected at
+/// parse time ("New expressions are not supported in this context"). We treat
+/// the init as non-constant — needing the constructor — when its text contains
+/// a `@@` tag, the `new` keyword, or a call paren `(`. A whole-string string
+/// literal is always constant even if it embeds those characters, so it stays
+/// a property default. This is deliberately conservative: a constant expression
+/// we can't prove (e.g. parenthesised arithmetic) is still safe to assign in the
+/// constructor, just slightly less idiomatic.
+pub(crate) fn php_init_needs_constructor(init_text: &str) -> bool {
+    let t = init_text.trim();
+    if t.is_empty() {
+        return false;
+    }
+    // A whole-string string literal is a constant expression regardless of
+    // what it embeds.
+    let is_string_literal = t.len() >= 2
+        && ((t.starts_with('"') && t.ends_with('"')) || (t.starts_with('\'') && t.ends_with('\'')));
+    if is_string_literal {
+        return false;
+    }
+    t.contains("@@") || t.contains("new ") || t.contains('(')
+}
+
 /// Prefix `$` to identifiers in `text` that match system param names.
 /// Used for PHP domain initializer expressions (e.g.
 /// `initial_balance` → `$initial_balance`).
@@ -125,4 +152,49 @@ pub(super) fn prefix_php_vars(text: &str, params: &[String]) -> String {
         result = new_result;
     }
     result
+}
+
+#[cfg(test)]
+mod php_const_tests {
+    use super::php_init_needs_constructor;
+
+    #[test]
+    fn constants_stay_property_defaults() {
+        for c in [
+            "5",
+            "-3",
+            "3.14",
+            "true",
+            "false",
+            "null",
+            "[]",
+            "[1, 2, 3]",
+        ] {
+            assert!(
+                !php_init_needs_constructor(c),
+                "constant `{c}` should stay a property default"
+            );
+        }
+    }
+
+    #[test]
+    fn string_literals_are_constant_even_with_parens_or_new() {
+        assert!(!php_init_needs_constructor("\"foo(bar)\""));
+        assert!(!php_init_needs_constructor("'has new inside'"));
+        assert!(!php_init_needs_constructor("\"@@notatag\""));
+    }
+
+    #[test]
+    fn new_calls_and_tags_need_the_constructor() {
+        assert!(php_init_needs_constructor("new Pt(3)"));
+        assert!(php_init_needs_constructor("@@Sensor()"));
+        assert!(php_init_needs_constructor("make_thing()"));
+        assert!(php_init_needs_constructor("Vec2(640, 480)"));
+    }
+
+    #[test]
+    fn empty_init_is_not_deferred() {
+        assert!(!php_init_needs_constructor(""));
+        assert!(!php_init_needs_constructor("   "));
+    }
 }

@@ -32,8 +32,11 @@
 //!   stays enforced via validator E814+. C++ is the exception — its
 //!   member-initializer list seeds the const, so `const T` stays.
 //! - **PHP non-const expression**: `public $inner = new Counter();` is
-//!   a parse error in PHP. Tagged-system-instantiation defaults
-//!   (detected by `@@` in init text) get stripped on PHP only.
+//!   a parse error in PHP (property defaults admit only constant
+//!   expressions). Any non-constant initializer — `new X()`, a call, or a
+//!   `@@<System>()` instantiation — is stripped on PHP only and assigned in
+//!   the constructor instead; constant scalars/strings/arrays stay inline.
+//!   See `word_util::php_init_needs_constructor` (#144).
 //!
 //! Rust gets one extra emission: state-arg / enter-arg params on the
 //! system header materialize as `__sys_<name>` typed fields. This is
@@ -199,14 +202,14 @@ pub(crate) fn generate_fields(
             field.is_const = false;
         }
         // PHP rejects non-const expressions in class-field defaults:
-        // `public $inner = new Counter();` is a parse error
-        // ("New expressions are not supported in this context"). Strip
-        // any tagged-system-instantiation default and let the
-        // constructor body initialize it instead. Detected by the
-        // presence of `@@` in the initializer text — only sibling-
-        // system instantiations use that token in domain init exprs.
-        let strip_php_non_const =
-            matches!(syntax.language, TargetLanguage::Php) && init_text_str.contains("@@");
+        // `public $inner = new Counter();` (and any call / `@@<System>()`
+        // instantiation) is a parse error ("New expressions are not
+        // supported in this context"). Strip such a default and let the
+        // constructor body initialize it instead — see
+        // `php_init_needs_constructor`. Constant scalars/strings/arrays stay
+        // as property defaults. (#144)
+        let strip_php_non_const = matches!(syntax.language, TargetLanguage::Php)
+            && super::word_util::php_init_needs_constructor(init_text_str);
         if !(strip_unconditionally || strip_collision || strip_php_non_const) {
             if let Some(ref init_text) = &domain_var.initializer_text {
                 let expanded_init =

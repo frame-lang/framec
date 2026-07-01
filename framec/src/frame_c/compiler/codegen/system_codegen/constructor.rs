@@ -114,9 +114,12 @@ fn init_collection_stack(
 ///   init is available (C/Go) or none is generated (dynamic langs go
 ///   straight to the constructor body).
 /// - **Emit only on collision** (Cpp, Java, Swift, C#, Dart, GDScript,
-///   TS, JS, PHP): the field has a literal init at declaration scope,
+///   TS, JS): the field has a literal init at declaration scope,
 ///   except when that init references a system param — then the init
 ///   moves into the constructor body to avoid the name-collision.
+/// - **PHP**: like the collision group, plus any *non-constant* initializer
+///   (`new`, a call, `@@<System>()`) moves to the constructor body because
+///   PHP property defaults admit only constant expressions (#144).
 /// - **Kotlin**: same as the OO group. (Const fields whose init refers
 ///   to a system param are emitted as `var` at the Kotlin level so the
 ///   constructor-body assignment compiles — see `build_system_fields`.)
@@ -125,16 +128,16 @@ fn should_emit_constructor_body_init(
     lang: TargetLanguage,
     _is_const: bool,
     init_refs_param: bool,
-    init_has_tagged: bool,
+    init_php_non_const: bool,
 ) -> bool {
     use TargetLanguage::*;
     match lang {
         C | Go | Python3 | Ruby | Lua | Rust => true,
-        // PHP rejects non-const class-field defaults at parse time, so
-        // any `@@<System>()` initializer has to move to the constructor
-        // body — same flag the field-emission path uses to strip the
-        // inline init.
-        Php => init_refs_param || init_has_tagged,
+        // PHP rejects non-const class-field defaults at parse time, so any
+        // `new`/call/`@@<System>()` initializer has to move to the constructor
+        // body — same predicate the field-emission path uses to strip the
+        // inline init (#144).
+        Php => init_refs_param || init_php_non_const,
         Cpp | Java | Swift | CSharp | Dart | GDScript | TypeScript | JavaScript | Kotlin => {
             init_refs_param
         }
@@ -306,13 +309,16 @@ pub(crate) fn generate_constructor(system: &SystemAst, syntax: &ClassSyntax) -> 
         };
         let init_refs_param =
             super::word_util::init_references_param(init_text, &sys_param_names_for_init);
-        let init_has_tagged = init_text.contains("@@");
+        // For PHP this must mirror the field-emission strip decision exactly
+        // (#144): any initializer stripped from the property default has to be
+        // assigned here in the constructor body.
+        let init_php_non_const = super::word_util::php_init_needs_constructor(init_text);
 
         if !should_emit_constructor_body_init(
             syntax.language,
             domain_var.is_const,
             init_refs_param,
-            init_has_tagged,
+            init_php_non_const,
         ) {
             continue;
         }
