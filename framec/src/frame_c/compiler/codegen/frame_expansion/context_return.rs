@@ -37,8 +37,16 @@ pub(super) fn expand_context_return(
     let is_assignment = if let SegmentMetadata::ContextReturn { assign_expr } = metadata {
         assign_expr.is_some()
     } else {
-        let t = segment_text.trim();
-        t.contains('=') && !t.contains("==")
+        // Text fallback (#155): an assignment is `@@:return = expr`. Test whether
+        // the text AFTER `@@:return` begins with a lone `=` (not `==`), rather
+        // than `contains('=') && !contains("==")` — which misclassified
+        // `@@:return = (x == y)` (an assignment of a comparison) as a read.
+        let rest = segment_text
+            .trim()
+            .strip_prefix("@@:return")
+            .map(|r| r.trim_start())
+            .unwrap_or("");
+        rest.starts_with('=') && !rest.starts_with("==")
     };
     let trimmed = segment_text.trim();
     if is_assignment {

@@ -1046,9 +1046,17 @@ impl CppBackend {
             Some(init) => {
                 let mut init_src = self.emit(init, ctx);
                 if is_system_ref {
+                    // String/comment-safe (#155): rewrite the sibling-system
+                    // construction `new T(` -> `std::make_shared<T>(` only in code
+                    // regions, not inside a native string literal or comment.
                     let needle = format!("new {}(", raw_type);
                     let replacement = format!("std::make_shared<{}>(", raw_type);
-                    init_src = init_src.replace(&needle, &replacement);
+                    init_src =
+                        crate::frame_c::compiler::codegen::codegen_utils::replace_outside_strings_and_comments(
+                            &init_src,
+                            crate::frame_c::visitors::TargetLanguage::Cpp,
+                            &[(needle.as_str(), replacement.as_str())],
+                        );
                 }
                 format!(" = {}", init_src)
             }
