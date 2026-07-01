@@ -184,18 +184,8 @@ pub(super) fn expand_transition(
 
                 // Build state_args list literal.
                 let state_args_list = if let Some(ref state) = state_str {
-                    let vals: Vec<&str> = state
-                        .split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
-                        .map(|arg| {
-                            if let Some(eq_pos) = arg.find('=') {
-                                arg[eq_pos + 1..].trim()
-                            } else {
-                                arg
-                            }
-                        })
-                        .collect();
+                    let vals =
+                        crate::frame_c::compiler::codegen::codegen_utils::arg_values(state, lang);
                     format!("[{}]", vals.join(", "))
                 } else {
                     "[]".to_string()
@@ -203,18 +193,8 @@ pub(super) fn expand_transition(
 
                 // Build enter_args list literal.
                 let enter_args_list = if let Some(ref enter) = enter_str {
-                    let vals: Vec<&str> = enter
-                        .split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
-                        .map(|arg| {
-                            if let Some(eq_pos) = arg.find('=') {
-                                arg[eq_pos + 1..].trim()
-                            } else {
-                                arg
-                            }
-                        })
-                        .collect();
+                    let vals =
+                        crate::frame_c::compiler::codegen::codegen_utils::arg_values(enter, lang);
                     format!("[{}]", vals.join(", "))
                 } else {
                     "[]".to_string()
@@ -223,11 +203,10 @@ pub(super) fn expand_transition(
                 // Populate exit_args on the source chain (omitted
                 // when there are no exit_args).
                 if let Some(ref exit) = exit_str {
-                    let vals: Vec<&str> = exit
-                        .split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
-                        .collect();
+                    let vals =
+                        crate::frame_c::compiler::codegen::codegen_utils::split_top_level_args(
+                            exit, lang,
+                        );
                     if !vals.is_empty() {
                         code.push_str(&format!(
                             "{}self.__prepareExit([{}])\n",
@@ -260,46 +239,25 @@ pub(super) fn expand_transition(
                 let mut code = String::new();
 
                 let state_args_list = if let Some(ref state) = state_str {
-                    let vals: Vec<&str> = state
-                        .split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
-                        .map(|arg| {
-                            if let Some(eq_pos) = arg.find('=') {
-                                arg[eq_pos + 1..].trim()
-                            } else {
-                                arg
-                            }
-                        })
-                        .collect();
+                    let vals =
+                        crate::frame_c::compiler::codegen::codegen_utils::arg_values(state, lang);
                     format!("[{}]", vals.join(", "))
                 } else {
                     "[]".to_string()
                 };
                 let enter_args_list = if let Some(ref enter) = enter_str {
-                    let vals: Vec<&str> = enter
-                        .split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
-                        .map(|arg| {
-                            if let Some(eq_pos) = arg.find('=') {
-                                arg[eq_pos + 1..].trim()
-                            } else {
-                                arg
-                            }
-                        })
-                        .collect();
+                    let vals =
+                        crate::frame_c::compiler::codegen::codegen_utils::arg_values(enter, lang);
                     format!("[{}]", vals.join(", "))
                 } else {
                     "[]".to_string()
                 };
 
                 if let Some(ref exit) = exit_str {
-                    let vals: Vec<&str> = exit
-                        .split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
-                        .collect();
+                    let vals =
+                        crate::frame_c::compiler::codegen::codegen_utils::split_top_level_args(
+                            exit, lang,
+                        );
                     if !vals.is_empty() {
                         code.push_str(&format!(
                             "{}self.__prepareExit([{}])\n",
@@ -329,46 +287,25 @@ pub(super) fn expand_transition(
                 let mut code = String::new();
 
                 let state_args_list = if let Some(ref state) = state_str {
-                    let vals: Vec<&str> = state
-                        .split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
-                        .map(|arg| {
-                            if let Some(eq_pos) = arg.find('=') {
-                                arg[eq_pos + 1..].trim()
-                            } else {
-                                arg
-                            }
-                        })
-                        .collect();
+                    let vals =
+                        crate::frame_c::compiler::codegen::codegen_utils::arg_values(state, lang);
                     format!("[{}]", vals.join(", "))
                 } else {
                     "[]".to_string()
                 };
                 let enter_args_list = if let Some(ref enter) = enter_str {
-                    let vals: Vec<&str> = enter
-                        .split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
-                        .map(|arg| {
-                            if let Some(eq_pos) = arg.find('=') {
-                                arg[eq_pos + 1..].trim()
-                            } else {
-                                arg
-                            }
-                        })
-                        .collect();
+                    let vals =
+                        crate::frame_c::compiler::codegen::codegen_utils::arg_values(enter, lang);
                     format!("[{}]", vals.join(", "))
                 } else {
                     "[]".to_string()
                 };
 
                 if let Some(ref exit) = exit_str {
-                    let vals: Vec<&str> = exit
-                        .split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
-                        .collect();
+                    let vals =
+                        crate::frame_c::compiler::codegen::codegen_utils::split_top_level_args(
+                            exit, lang,
+                        );
                     if !vals.is_empty() {
                         code.push_str(&format!(
                             "{}this.__prepareExit([{}]);\n",
@@ -398,46 +335,25 @@ pub(super) fn expand_transition(
                 let mut code = String::new();
 
                 let state_args_list = if let Some(ref state) = state_str {
-                    let vals: Vec<&str> = state
-                        .split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
-                        .map(|arg| {
-                            if let Some(eq_pos) = arg.find('=') {
-                                arg[eq_pos + 1..].trim()
-                            } else {
-                                arg
-                            }
-                        })
-                        .collect();
+                    let vals =
+                        crate::frame_c::compiler::codegen::codegen_utils::arg_values(state, lang);
                     format!("[{}]", vals.join(", "))
                 } else {
                     "[]".to_string()
                 };
                 let enter_args_list = if let Some(ref enter) = enter_str {
-                    let vals: Vec<&str> = enter
-                        .split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
-                        .map(|arg| {
-                            if let Some(eq_pos) = arg.find('=') {
-                                arg[eq_pos + 1..].trim()
-                            } else {
-                                arg
-                            }
-                        })
-                        .collect();
+                    let vals =
+                        crate::frame_c::compiler::codegen::codegen_utils::arg_values(enter, lang);
                     format!("[{}]", vals.join(", "))
                 } else {
                     "[]".to_string()
                 };
 
                 if let Some(ref exit) = exit_str {
-                    let vals: Vec<&str> = exit
-                        .split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
-                        .collect();
+                    let vals =
+                        crate::frame_c::compiler::codegen::codegen_utils::split_top_level_args(
+                            exit, lang,
+                        );
                     if !vals.is_empty() {
                         code.push_str(&format!(
                             "{}this.__prepareExit([{}]);\n",
@@ -510,11 +426,10 @@ pub(super) fn expand_transition(
                 // exit_args via __prepareExit if any provided. Declared
                 // types come from the SOURCE state's `<$` params.
                 if let Some(ref exit) = exit_str {
-                    let vals: Vec<&str> = exit
-                        .split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
-                        .collect();
+                    let vals =
+                        crate::frame_c::compiler::codegen::codegen_utils::split_top_level_args(
+                            exit, lang,
+                        );
                     if !vals.is_empty() {
                         let exit_names: Vec<String> = ctx
                             .state_exit_param_names
@@ -548,28 +463,28 @@ pub(super) fn expand_transition(
 
                 // Build state_args / enter_args FrameVecs, call __prepareEnter.
                 let state_vals: Vec<String> = if let Some(ref state) = state_str {
-                    state
-                        .split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
-                        .map(|arg| {
-                            if let Some(eq_pos) = arg.find('=') {
-                                arg[eq_pos + 1..].trim().to_string()
-                            } else {
-                                arg.to_string()
-                            }
-                        })
-                        .collect()
+                    crate::frame_c::compiler::codegen::codegen_utils::split_top_level_args(
+                        state, lang,
+                    )
+                    .into_iter()
+                    .map(|arg| {
+                        if let Some(eq_pos) = arg.find('=') {
+                            arg[eq_pos + 1..].trim().to_string()
+                        } else {
+                            arg.to_string()
+                        }
+                    })
+                    .collect()
                 } else {
                     Vec::new()
                 };
                 let enter_vals: Vec<String> = if let Some(ref enter) = enter_str {
-                    enter
-                        .split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
-                        .map(|s| s.to_string())
-                        .collect()
+                    crate::frame_c::compiler::codegen::codegen_utils::split_top_level_args(
+                        enter, lang,
+                    )
+                    .into_iter()
+                    .map(|s| s.to_string())
+                    .collect()
                 } else {
                     Vec::new()
                 };
@@ -676,17 +591,17 @@ pub(super) fn expand_transition(
                 let mut code = String::new();
 
                 let state_args_list = if let Some(ref state) = state_str {
-                    let vals: Vec<String> = state
-                        .split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
+                    let vals: Vec<String> =
+                        crate::frame_c::compiler::codegen::codegen_utils::split_top_level_args(
+                            state, lang,
+                        )
+                        .into_iter()
                         .map(|arg| {
-                            let raw = if let Some(eq_pos) = arg.find('=') {
-                                arg[eq_pos + 1..].trim()
-                            } else {
-                                arg
-                            };
-                            format!("std::any({})", cpp_wrap_any_arg(raw))
+                            let raw =
+                                crate::frame_c::compiler::codegen::codegen_utils::strip_named_arg(
+                                    &arg,
+                                );
+                            format!("std::any({})", cpp_wrap_any_arg(&raw))
                         })
                         .collect();
                     format!("std::vector<std::any>{{{}}}", vals.join(", "))
@@ -694,11 +609,12 @@ pub(super) fn expand_transition(
                     "std::vector<std::any>{}".to_string()
                 };
                 let enter_args_list = if let Some(ref enter) = enter_str {
-                    let vals: Vec<String> = enter
-                        .split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
-                        .map(|a| format!("std::any({})", cpp_wrap_any_arg(a)))
+                    let vals: Vec<String> =
+                        crate::frame_c::compiler::codegen::codegen_utils::split_top_level_args(
+                            enter, lang,
+                        )
+                        .into_iter()
+                        .map(|a| format!("std::any({})", cpp_wrap_any_arg(&a)))
                         .collect();
                     format!("std::vector<std::any>{{{}}}", vals.join(", "))
                 } else {
@@ -706,11 +622,12 @@ pub(super) fn expand_transition(
                 };
 
                 if let Some(ref exit) = exit_str {
-                    let vals: Vec<String> = exit
-                        .split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
-                        .map(|a| format!("std::any({})", cpp_wrap_any_arg(a)))
+                    let vals: Vec<String> =
+                        crate::frame_c::compiler::codegen::codegen_utils::split_top_level_args(
+                            exit, lang,
+                        )
+                        .into_iter()
+                        .map(|a| format!("std::any({})", cpp_wrap_any_arg(&a)))
                         .collect();
                     if !vals.is_empty() {
                         code.push_str(&format!(
@@ -741,18 +658,8 @@ pub(super) fn expand_transition(
                 let mut code = String::new();
 
                 let state_args_list = if let Some(ref state) = state_str {
-                    let vals: Vec<&str> = state
-                        .split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
-                        .map(|arg| {
-                            if let Some(eq_pos) = arg.find('=') {
-                                arg[eq_pos + 1..].trim()
-                            } else {
-                                arg
-                            }
-                        })
-                        .collect();
+                    let vals =
+                        crate::frame_c::compiler::codegen::codegen_utils::arg_values(state, lang);
                     if vals.is_empty() {
                         "new java.util.ArrayList<>()".to_string()
                     } else {
@@ -765,11 +672,10 @@ pub(super) fn expand_transition(
                     "new java.util.ArrayList<>()".to_string()
                 };
                 let enter_args_list = if let Some(ref enter) = enter_str {
-                    let vals: Vec<&str> = enter
-                        .split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
-                        .collect();
+                    let vals =
+                        crate::frame_c::compiler::codegen::codegen_utils::split_top_level_args(
+                            enter, lang,
+                        );
                     if vals.is_empty() {
                         "new java.util.ArrayList<>()".to_string()
                     } else {
@@ -783,11 +689,10 @@ pub(super) fn expand_transition(
                 };
 
                 if let Some(ref exit) = exit_str {
-                    let vals: Vec<&str> = exit
-                        .split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
-                        .collect();
+                    let vals =
+                        crate::frame_c::compiler::codegen::codegen_utils::split_top_level_args(
+                            exit, lang,
+                        );
                     if !vals.is_empty() {
                         code.push_str(&format!(
                                     "{}__prepareExit(new java.util.ArrayList<>(java.util.Arrays.asList({})));\n",
@@ -817,18 +722,8 @@ pub(super) fn expand_transition(
                 let mut code = String::new();
 
                 let state_args_list = if let Some(ref state) = state_str {
-                    let vals: Vec<&str> = state
-                        .split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
-                        .map(|arg| {
-                            if let Some(eq_pos) = arg.find('=') {
-                                arg[eq_pos + 1..].trim()
-                            } else {
-                                arg
-                            }
-                        })
-                        .collect();
+                    let vals =
+                        crate::frame_c::compiler::codegen::codegen_utils::arg_values(state, lang);
                     if vals.is_empty() {
                         "mutableListOf<Any?>()".to_string()
                     } else {
@@ -838,11 +733,10 @@ pub(super) fn expand_transition(
                     "mutableListOf<Any?>()".to_string()
                 };
                 let enter_args_list = if let Some(ref enter) = enter_str {
-                    let vals: Vec<&str> = enter
-                        .split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
-                        .collect();
+                    let vals =
+                        crate::frame_c::compiler::codegen::codegen_utils::split_top_level_args(
+                            enter, lang,
+                        );
                     if vals.is_empty() {
                         "mutableListOf<Any?>()".to_string()
                     } else {
@@ -853,11 +747,10 @@ pub(super) fn expand_transition(
                 };
 
                 if let Some(ref exit) = exit_str {
-                    let vals: Vec<&str> = exit
-                        .split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
-                        .collect();
+                    let vals =
+                        crate::frame_c::compiler::codegen::codegen_utils::split_top_level_args(
+                            exit, lang,
+                        );
                     if !vals.is_empty() {
                         code.push_str(&format!(
                             "{}__prepareExit(mutableListOf<Any?>({}))\n",
@@ -887,39 +780,27 @@ pub(super) fn expand_transition(
                 let mut code = String::new();
 
                 let state_args_list = if let Some(ref state) = state_str {
-                    let vals: Vec<&str> = state
-                        .split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
-                        .map(|arg| {
-                            if let Some(eq_pos) = arg.find('=') {
-                                arg[eq_pos + 1..].trim()
-                            } else {
-                                arg
-                            }
-                        })
-                        .collect();
+                    let vals =
+                        crate::frame_c::compiler::codegen::codegen_utils::arg_values(state, lang);
                     format!("[{}]", vals.join(", "))
                 } else {
                     "[]".to_string()
                 };
                 let enter_args_list = if let Some(ref enter) = enter_str {
-                    let vals: Vec<&str> = enter
-                        .split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
-                        .collect();
+                    let vals =
+                        crate::frame_c::compiler::codegen::codegen_utils::split_top_level_args(
+                            enter, lang,
+                        );
                     format!("[{}]", vals.join(", "))
                 } else {
                     "[]".to_string()
                 };
 
                 if let Some(ref exit) = exit_str {
-                    let vals: Vec<&str> = exit
-                        .split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
-                        .collect();
+                    let vals =
+                        crate::frame_c::compiler::codegen::codegen_utils::split_top_level_args(
+                            exit, lang,
+                        );
                     if !vals.is_empty() {
                         code.push_str(&format!(
                             "{}__prepareExit([{}])\n",
@@ -954,18 +835,8 @@ pub(super) fn expand_transition(
                 let mut code = String::new();
 
                 let state_args_list = if let Some(ref state) = state_str {
-                    let vals: Vec<&str> = state
-                        .split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
-                        .map(|arg| {
-                            if let Some(eq_pos) = arg.find('=') {
-                                arg[eq_pos + 1..].trim()
-                            } else {
-                                arg
-                            }
-                        })
-                        .collect();
+                    let vals =
+                        crate::frame_c::compiler::codegen::codegen_utils::arg_values(state, lang);
                     if vals.is_empty() {
                         "new List<object>()".to_string()
                     } else {
@@ -975,11 +846,10 @@ pub(super) fn expand_transition(
                     "new List<object>()".to_string()
                 };
                 let enter_args_list = if let Some(ref enter) = enter_str {
-                    let vals: Vec<&str> = enter
-                        .split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
-                        .collect();
+                    let vals =
+                        crate::frame_c::compiler::codegen::codegen_utils::split_top_level_args(
+                            enter, lang,
+                        );
                     if vals.is_empty() {
                         "new List<object>()".to_string()
                     } else {
@@ -990,11 +860,10 @@ pub(super) fn expand_transition(
                 };
 
                 if let Some(ref exit) = exit_str {
-                    let vals: Vec<&str> = exit
-                        .split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
-                        .collect();
+                    let vals =
+                        crate::frame_c::compiler::codegen::codegen_utils::split_top_level_args(
+                            exit, lang,
+                        );
                     if !vals.is_empty() {
                         code.push_str(&format!(
                             "{}__prepareExit(new List<object> {{ {} }});\n",
@@ -1028,39 +897,27 @@ pub(super) fn expand_transition(
                 let mut code = String::new();
 
                 let state_args_list = if let Some(ref state) = state_str {
-                    let vals: Vec<&str> = state
-                        .split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
-                        .map(|arg| {
-                            if let Some(eq_pos) = arg.find('=') {
-                                arg[eq_pos + 1..].trim()
-                            } else {
-                                arg
-                            }
-                        })
-                        .collect();
+                    let vals =
+                        crate::frame_c::compiler::codegen::codegen_utils::arg_values(state, lang);
                     format!("[]any{{{}}}", vals.join(", "))
                 } else {
                     "[]any{}".to_string()
                 };
                 let enter_args_list = if let Some(ref enter) = enter_str {
-                    let vals: Vec<&str> = enter
-                        .split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
-                        .collect();
+                    let vals =
+                        crate::frame_c::compiler::codegen::codegen_utils::split_top_level_args(
+                            enter, lang,
+                        );
                     format!("[]any{{{}}}", vals.join(", "))
                 } else {
                     "[]any{}".to_string()
                 };
 
                 if let Some(ref exit) = exit_str {
-                    let vals: Vec<&str> = exit
-                        .split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
-                        .collect();
+                    let vals =
+                        crate::frame_c::compiler::codegen::codegen_utils::split_top_level_args(
+                            exit, lang,
+                        );
                     if !vals.is_empty() {
                         code.push_str(&format!(
                             "{}s.__prepareExit([]any{{{}}})\n",
@@ -1096,17 +953,17 @@ pub(super) fn expand_transition(
                 let php_fix = |expr: &str| php_prefix_params(expr, &current_params);
 
                 let state_args_list = if let Some(ref state) = state_str {
-                    let vals: Vec<String> = state
-                        .split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
+                    let vals: Vec<String> =
+                        crate::frame_c::compiler::codegen::codegen_utils::split_top_level_args(
+                            state, lang,
+                        )
+                        .into_iter()
                         .map(|arg| {
-                            let raw = if let Some(eq_pos) = arg.find('=') {
-                                arg[eq_pos + 1..].trim()
-                            } else {
-                                arg
-                            };
-                            php_fix(raw)
+                            let raw =
+                                crate::frame_c::compiler::codegen::codegen_utils::strip_named_arg(
+                                    &arg,
+                                );
+                            php_fix(&raw)
                         })
                         .collect();
                     format!("[{}]", vals.join(", "))
@@ -1114,17 +971,17 @@ pub(super) fn expand_transition(
                     "[]".to_string()
                 };
                 let enter_args_list = if let Some(ref enter) = enter_str {
-                    let vals: Vec<String> = enter
-                        .split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
+                    let vals: Vec<String> =
+                        crate::frame_c::compiler::codegen::codegen_utils::split_top_level_args(
+                            enter, lang,
+                        )
+                        .into_iter()
                         .map(|arg| {
-                            let raw = if let Some(eq_pos) = arg.find('=') {
-                                arg[eq_pos + 1..].trim()
-                            } else {
-                                arg
-                            };
-                            php_fix(raw)
+                            let raw =
+                                crate::frame_c::compiler::codegen::codegen_utils::strip_named_arg(
+                                    &arg,
+                                );
+                            php_fix(&raw)
                         })
                         .collect();
                     format!("[{}]", vals.join(", "))
@@ -1133,11 +990,12 @@ pub(super) fn expand_transition(
                 };
 
                 if let Some(ref exit) = exit_str {
-                    let vals: Vec<String> = exit
-                        .split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
-                        .map(|a| php_fix(a))
+                    let vals: Vec<String> =
+                        crate::frame_c::compiler::codegen::codegen_utils::split_top_level_args(
+                            exit, lang,
+                        )
+                        .into_iter()
+                        .map(|a| php_fix(&a))
                         .collect();
                     if !vals.is_empty() {
                         code.push_str(&format!(
@@ -1168,46 +1026,25 @@ pub(super) fn expand_transition(
                 let mut code = String::new();
 
                 let state_args_list = if let Some(ref state) = state_str {
-                    let vals: Vec<&str> = state
-                        .split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
-                        .map(|arg| {
-                            if let Some(eq_pos) = arg.find('=') {
-                                arg[eq_pos + 1..].trim()
-                            } else {
-                                arg
-                            }
-                        })
-                        .collect();
+                    let vals =
+                        crate::frame_c::compiler::codegen::codegen_utils::arg_values(state, lang);
                     format!("[{}]", vals.join(", "))
                 } else {
                     "[]".to_string()
                 };
                 let enter_args_list = if let Some(ref enter) = enter_str {
-                    let vals: Vec<&str> = enter
-                        .split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
-                        .map(|arg| {
-                            if let Some(eq_pos) = arg.find('=') {
-                                arg[eq_pos + 1..].trim()
-                            } else {
-                                arg
-                            }
-                        })
-                        .collect();
+                    let vals =
+                        crate::frame_c::compiler::codegen::codegen_utils::arg_values(enter, lang);
                     format!("[{}]", vals.join(", "))
                 } else {
                     "[]".to_string()
                 };
 
                 if let Some(ref exit) = exit_str {
-                    let vals: Vec<&str> = exit
-                        .split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
-                        .collect();
+                    let vals =
+                        crate::frame_c::compiler::codegen::codegen_utils::split_top_level_args(
+                            exit, lang,
+                        );
                     if !vals.is_empty() {
                         code.push_str(&format!(
                             "{}__prepareExit([{}])\n",
@@ -1243,18 +1080,8 @@ pub(super) fn expand_transition(
 
                 // state_args
                 let state_arg = if let Some(ref state) = state_str {
-                    let vals: Vec<&str> = state
-                        .split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
-                        .map(|arg| {
-                            if let Some(eq_pos) = arg.find('=') {
-                                arg[eq_pos + 1..].trim()
-                            } else {
-                                arg
-                            }
-                        })
-                        .collect();
+                    let vals =
+                        crate::frame_c::compiler::codegen::codegen_utils::arg_values(state, lang);
                     if vals.is_empty() {
                         "nil".to_string()
                     } else {
@@ -1266,18 +1093,8 @@ pub(super) fn expand_transition(
 
                 // enter_args
                 let enter_arg = if let Some(ref enter) = enter_str {
-                    let vals: Vec<&str> = enter
-                        .split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
-                        .map(|arg| {
-                            if let Some(eq_pos) = arg.find('=') {
-                                arg[eq_pos + 1..].trim()
-                            } else {
-                                arg
-                            }
-                        })
-                        .collect();
+                    let vals =
+                        crate::frame_c::compiler::codegen::codegen_utils::arg_values(enter, lang);
                     if vals.is_empty() {
                         "nil".to_string()
                     } else {
@@ -1289,11 +1106,10 @@ pub(super) fn expand_transition(
 
                 // exit_args (only emitted when present)
                 if let Some(ref exit) = exit_str {
-                    let vals: Vec<&str> = exit
-                        .split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
-                        .collect();
+                    let vals =
+                        crate::frame_c::compiler::codegen::codegen_utils::split_top_level_args(
+                            exit, lang,
+                        );
                     if !vals.is_empty() {
                         code.push_str(&format!(
                             "{}self:__prepareExit(table.pack({}))\n",
@@ -1331,18 +1147,9 @@ pub(super) fn expand_transition(
                 let to_list_lit = |s: &Option<String>| -> String {
                     match s {
                         Some(joined) => {
-                            let vals: Vec<&str> = joined
-                                .split(',')
-                                .map(|x| x.trim())
-                                .filter(|x| !x.is_empty())
-                                .map(|arg| {
-                                    if let Some(eq_pos) = arg.find('=') {
-                                        arg[eq_pos + 1..].trim()
-                                    } else {
-                                        arg
-                                    }
-                                })
-                                .collect();
+                            let vals = crate::frame_c::compiler::codegen::codegen_utils::arg_values(
+                                joined, lang,
+                            );
                             format!("[{}]", vals.join(", "))
                         }
                         None => "[]".to_string(),

@@ -118,16 +118,9 @@ fn coerce_ctx_field_value(v: &str) -> String {
 /// just the value expressions, in declaration order. Mirrors the `'='`
 /// split the state-args path already uses for the optional `name=` form.
 fn split_transition_arg_values(s: &str) -> Vec<String> {
-    s.split(',')
-        .map(|x| x.trim())
-        .filter(|x| !x.is_empty())
-        .map(|arg| {
-            arg.find('=')
-                .map(|p| arg[p + 1..].trim())
-                .unwrap_or(arg)
-                .to_string()
-        })
-        .collect()
+    // #148: depth-aware split (a comma inside `f(a, b)` is not a separator) +
+    // depth-aware `name=` strip, via the shared scanner-backed primitive.
+    super::codegen_utils::arg_values(s, TargetLanguage::Rust)
 }
 
 /// Generate the complete Rust system from a Frame AST.
@@ -1185,22 +1178,20 @@ pub(crate) fn rust_expand_transition(
         // Collect args as (leaf-param-name, value) pairs. The leaf
         // names drive the leaf write; ancestor writes use the
         // ancestor's own param names at the same positional index.
-        let arg_values: Vec<(String, String)> = state
-            .split(',')
-            .map(|x| x.trim())
-            .filter(|x| !x.is_empty())
-            .enumerate()
-            .map(|(i, arg)| {
-                if let Some(eq_pos) = arg.find('=') {
-                    (
-                        arg[..eq_pos].trim().to_string(),
-                        arg[eq_pos + 1..].trim().to_string(),
-                    )
-                } else {
-                    (resolve_state_arg_key(i, target, ctx), arg.to_string())
-                }
-            })
-            .collect();
+        // #148: depth-aware split + `name=value` detection via the shared
+        // scanner-backed primitives — a comma or `=` nested inside a value
+        // (`$S(makeList(a, b))`, `$S(x = point(1, 2))`) is no longer a separator.
+        let arg_values: Vec<(String, String)> =
+            super::codegen_utils::split_top_level_args(state, TargetLanguage::Rust)
+                .into_iter()
+                .enumerate()
+                .map(
+                    |(i, arg)| match super::codegen_utils::split_named_arg(&arg) {
+                        Some((name, value)) => (name, value),
+                        None => (resolve_state_arg_key(i, target, ctx), arg),
+                    },
+                )
+                .collect();
 
         if !arg_values.is_empty() {
             // Compute the destination chain (leaf → root).

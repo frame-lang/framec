@@ -651,6 +651,63 @@ pub fn split_top_level_args(
     out
 }
 
+/// Split a transition argument blob into the list of argument **values**, with
+/// any `name = ` prefix stripped from a named argument. Splitting is at
+/// top-level commas only (via [`split_top_level_args`]) and the `name =` strip
+/// is depth-aware and ignores `==`/`<=`/… so a comparison or a nested `=` is not
+/// mistaken for a separator. #148: replaces the old
+/// `blob.split(',').map(..).map(|a| a.find('='))` which broke on a comma or `=`
+/// nested inside a value (`$S(makeList(a, b))`, `$S(x = point(1, 2))`).
+pub fn arg_values(blob: &str, lang: crate::frame_c::visitors::TargetLanguage) -> Vec<String> {
+    split_top_level_args(blob, lang)
+        .iter()
+        .map(|a| strip_named_arg(a))
+        .collect()
+}
+
+/// If a single argument is a `name = value` form, return `Some((name, value))`;
+/// otherwise `None`. The separator is the first top-level `=` whose LHS is a
+/// bare identifier and which is not part of `==`/`!=`/`<=`/`>=` — so a
+/// comparison, a nested `f(a=b)`, or a string value is not mistaken for a
+/// named-arg separator.
+pub(crate) fn split_named_arg(arg: &str) -> Option<(String, String)> {
+    let t = arg.trim();
+    let bytes = t.as_bytes();
+    let mut depth = 0i32;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            b'=' if depth == 0 => {
+                let next_eq = i + 1 < bytes.len() && bytes[i + 1] == b'=';
+                let prev_op = i > 0 && matches!(bytes[i - 1], b'=' | b'!' | b'<' | b'>');
+                if !next_eq && !prev_op {
+                    let lhs = t[..i].trim();
+                    if !lhs.is_empty()
+                        && lhs.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+                    {
+                        return Some((lhs.to_string(), t[i + 1..].trim().to_string()));
+                    }
+                    return None;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// From a single argument `name = value` (or bare `value`), return `value`
+/// (the `name =` prefix stripped). See [`split_named_arg`].
+pub(crate) fn strip_named_arg(arg: &str) -> String {
+    match split_named_arg(arg) {
+        Some((_, value)) => value,
+        None => arg.trim().to_string(),
+    }
+}
+
 /// True iff `expr` contains a `<recv>.<ident>(` *method-call* shape at an
 /// identifier boundary, outside string literals and comments — e.g. a
 /// `self.foo(` call (as opposed to a bare field access `self.foo` or the token
@@ -1000,5 +1057,28 @@ mod tests {
         assert!(!contains_receiver_call("self.field", Rust, "self")); // field, no call
         assert!(!contains_receiver_call("\"self.bar(x)\"", Rust, "self")); // inside string
         assert!(!contains_receiver_call("myself.bar(x)", Rust, "self")); // boundary
+    }
+
+    #[test]
+    fn arg_values_and_named_split() {
+        use crate::frame_c::visitors::TargetLanguage::Rust;
+        // nested-comma value kept whole; named-arg value stripped
+        assert_eq!(
+            arg_values("clamp(1, 2), 9", Rust),
+            vec!["clamp(1, 2)".to_string(), "9".to_string()]
+        );
+        assert_eq!(
+            arg_values("pt = point(1, 2), hi = 9", Rust),
+            vec!["point(1, 2)".to_string(), "9".to_string()]
+        );
+        // a `==` comparison value is NOT treated as a named-arg separator
+        assert_eq!(arg_values("a == b", Rust), vec!["a == b".to_string()]);
+        // split_named_arg pairs
+        assert_eq!(
+            split_named_arg("x = f(1, 2)"),
+            Some(("x".to_string(), "f(1, 2)".to_string()))
+        );
+        assert_eq!(split_named_arg("f(a=b)"), None); // nested `=`, not named
+        assert_eq!(split_named_arg("plain"), None);
     }
 }

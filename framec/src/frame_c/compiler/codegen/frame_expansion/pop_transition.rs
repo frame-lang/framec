@@ -52,13 +52,9 @@ pub(super) fn generate_pop_transition(
         let expand_vals = |args: &Option<String>| -> Vec<String> {
             args.as_ref()
                 .map(|s| {
-                    s.split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
-                        .map(|arg| {
-                            let raw = arg.find('=').map(|i| arg[i + 1..].trim()).unwrap_or(arg);
-                            expand_expression(raw, lang, ctx)
-                        })
+                    super::super::codegen_utils::arg_values(s, lang)
+                        .iter()
+                        .map(|arg| expand_expression(arg, lang, ctx))
                         .collect()
                 })
                 .unwrap_or_default()
@@ -76,12 +72,8 @@ pub(super) fn generate_pop_transition(
 
     // Helper: emit exit_args writes on current compartment (positional append)
     if let Some(ref exit) = exit_args {
-        for arg in exit.split(',').map(|x| x.trim()).filter(|x| !x.is_empty()) {
-            let value = if let Some(eq_pos) = arg.find('=') {
-                arg[eq_pos + 1..].trim()
-            } else {
-                arg
-            };
+        for arg in super::super::codegen_utils::arg_values(exit, lang) {
+            let value = arg.as_str();
             match lang {
                 TargetLanguage::Python3 | TargetLanguage::GDScript => {
                     code.push_str(&format!(
@@ -208,14 +200,9 @@ pub(super) fn generate_pop_transition(
             let exit_vals: Vec<String> = exit_args
                 .as_ref()
                 .map(|s| {
-                    s.split(',')
-                        .map(|x| x.trim())
-                        .filter(|x| !x.is_empty())
-                        .map(|arg| {
-                            let raw =
-                                arg.find('=').map(|i| arg[i + 1..].trim()).unwrap_or(arg);
-                            expand_expression(raw, lang, ctx)
-                        })
+                    super::super::codegen_utils::arg_values(s, lang)
+                        .iter()
+                        .map(|arg| expand_expression(arg, lang, ctx))
                         .collect()
                 })
                 .unwrap_or_default();
@@ -264,13 +251,8 @@ pub(super) fn generate_pop_transition(
     // this expansion pop-args like `-> ($.items) pop$` would emit the raw
     // sigil into native code and blow up at parse time.
     if let Some(ref enter) = enter_args {
-        for arg in enter.split(',').map(|x| x.trim()).filter(|x| !x.is_empty()) {
-            let raw_value = if let Some(eq_pos) = arg.find('=') {
-                arg[eq_pos + 1..].trim()
-            } else {
-                arg
-            };
-            let value_owned = expand_expression(raw_value, lang, ctx);
+        for arg in super::super::codegen_utils::arg_values(enter, lang) {
+            let value_owned = expand_expression(&arg, lang, ctx);
             let value = value_owned.as_str();
             match lang {
                 TargetLanguage::Python3 | TargetLanguage::GDScript => {
