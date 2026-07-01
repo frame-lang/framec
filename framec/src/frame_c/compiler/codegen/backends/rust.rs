@@ -343,7 +343,15 @@ impl LanguageBackend for RustBackend {
                 }
                 for stmt in &cascade_stmts {
                     let stmt_str = self.emit(stmt, ctx);
-                    let rewritten = stmt_str.replace("self.", "c.");
+                    // Receiver rebind for the factory body — string/comment- and
+                    // word-boundary-safe (#151/#155): a raw `.replace("self.","c.")`
+                    // corrupts `myself.` and `self.` inside a string literal.
+                    let rewritten =
+                        crate::frame_c::compiler::codegen::codegen_utils::replace_word_start_outside_strings_and_comments(
+                            &stmt_str,
+                            crate::frame_c::visitors::TargetLanguage::Rust,
+                            &[("self.", "c.")],
+                        );
                     result.push_str(&rewritten);
                     if self.needs_semicolon(stmt) {
                         result.push_str(";\n");
