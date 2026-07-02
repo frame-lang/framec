@@ -1563,14 +1563,36 @@ impl Parser {
 /// Parse a system body from source bytes.
 /// `name` is the system name, `body_span` is the span inside the system braces.
 /// Strip @@:() wrapper from return init expression.
-/// "@@:(42)" → "42", "@@:(foo(bar(1)))" → "foo(bar(1))", "42" → "42"
+/// "@@:(42)" → "42", "@@:(foo(bar(1)))" → "foo(bar(1))", "42" → "42".
+///
+/// #154: uses a balanced-paren scan rather than `ends_with(')')`, which
+/// mis-sliced `@@:(x) + f(y)` (starts with `@@:(`, ends with `)`) into
+/// `x) + f(y`. The wrapper is stripped only when the `)` matching the opening
+/// `@@:(` is the final character — i.e. the wrapper spans the whole expression.
 fn strip_context_return_wrapper(text: &str) -> String {
     let trimmed = text.trim();
-    if trimmed.starts_with("@@:(") && trimmed.ends_with(')') {
-        trimmed[4..trimmed.len() - 1].trim().to_string()
-    } else {
-        trimmed.to_string()
+    if let Some(inner) = trimmed.strip_prefix("@@:(") {
+        let bytes = inner.as_bytes();
+        let mut depth = 1i32;
+        let mut i = 0usize;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'(' => depth += 1,
+                b')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        if depth == 0 && i == bytes.len() - 1 {
+            return inner[..i].trim().to_string();
+        }
     }
+    trimmed.to_string()
 }
 
 // RFC-0039 Stage 0/1: the system-section loop is a dogfooded Frame backbone.
@@ -1911,6 +1933,27 @@ fn parse_typed_param_body(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn strip_context_return_wrapper_balanced() {
+        // full-expression wrappers are stripped
+        assert_eq!(super::strip_context_return_wrapper("@@:(42)"), "42");
+        assert_eq!(
+            super::strip_context_return_wrapper("@@:(foo(bar(1)))"),
+            "foo(bar(1))"
+        );
+        assert_eq!(super::strip_context_return_wrapper("42"), "42");
+        // #154: a wrapper that spans only a leading sub-term must NOT be sliced
+        assert_eq!(
+            super::strip_context_return_wrapper("@@:(x) + f(y)"),
+            "@@:(x) + f(y)"
+        );
+        assert_eq!(
+            super::strip_context_return_wrapper("@@:(a) * @@:(b)"),
+            "@@:(a) * @@:(b)"
+        );
+    }
+
     use super::*;
 
     fn parse_py(src: &str) -> SystemAst {
