@@ -797,10 +797,18 @@ impl SwiftBackend {
     fn emit_field(&self, field: &Field, ctx: &mut EmitContext) -> String {
         let vis = self.emit_visibility_swift(field.visibility);
         let var_kw = "var ";
-        let type_str = match &field.type_annotation {
+        let mut type_str = match &field.type_annotation {
             Some(t) => self.map_type(t),
             None => "Any?".to_string(),
         };
+        // A reference/protocol-typed field deferred to `__frame_init` has no
+        // zero value and no initializer here — an uninitialized non-optional
+        // stored property fails Swift's definite-initialization rule (#156, the
+        // same family as #147's Kotlin `lateinit`). Such a field becomes an
+        // implicitly-unwrapped optional (`Dep!`) below — the standard two-phase
+        // init idiom; `__frame_init` assigns the real value via `__create`
+        // before any use, so the IUO never traps.
+        let mut make_iuo = false;
         let init_suffix = match &field.initializer {
             Some(init) => format!(" = {}", self.emit(init, ctx)),
             // Swift requires every stored property to be initialized by
@@ -808,8 +816,8 @@ impl SwiftBackend {
             // initializer was stripped (because it references a system
             // param — the assignment moves to `__frame_init`) reaches
             // here with no initializer, so seed it with the type's zero
-            // value; `__frame_init` then overwrites it. Custom types
-            // have no zero value, so leave those to `init()`.
+            // value; `__frame_init` then overwrites it. Reference/protocol
+            // types have no zero value → emit an IUO (see above).
             None => match type_str.as_str() {
                 "Int" => " = 0".to_string(),
                 "Double" => " = 0.0".to_string(),
@@ -818,9 +826,19 @@ impl SwiftBackend {
                 t if t.ends_with('?') => " = nil".to_string(),
                 t if t.starts_with('[') && t.contains(':') => " = [:]".to_string(),
                 t if t.starts_with('[') => " = []".to_string(),
-                _ => String::new(),
+                _ => {
+                    // Only a PUBLIC (domain) field is deferred to `__frame_init`
+                    // and so needs the IUO. Private framework fields
+                    // (`__compartment`, …) are assigned in `init()` and stay
+                    // non-optional — matching #147's `Visibility::Public` scope.
+                    make_iuo = matches!(field.visibility, Visibility::Public);
+                    String::new()
+                }
             },
         };
+        if make_iuo {
+            type_str.push('!');
+        }
         let comments = field.format_leading_comments(&ctx.get_indent());
         if vis.is_empty() {
             format!(
