@@ -418,12 +418,6 @@ Actions* Actions_new(void) {
     Actions_FrameVec* __ea = NULL;
     self->__compartment = Actions_prepareEnter(self, "Counting", __sa, __ea);
     self->__next_compartment = NULL;
-    Actions_FrameEvent* __e = Actions_FrameEvent_new("$>", self->__compartment->enter_args, 0);
-    Actions_FrameContext* __ctx = Actions_FrameContext_new(__e, NULL);
-    Actions_FrameVec_push(self->_context_stack, __ctx);
-    Actions_FrameContext* __init_ctx = (Actions_FrameContext*)Actions_FrameVec_pop(self->_context_stack);
-    Actions_FrameContext_destroy(__init_ctx);
-    Actions_FrameEvent_destroy(__e);
     return self;
 }
 

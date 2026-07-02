@@ -505,12 +505,6 @@ Counter* Counter_new(void) {
     Counter_FrameVec* __ea = NULL;
     self->__compartment = Counter_prepareEnter(self, "Counting", __sa, __ea);
     self->__next_compartment = NULL;
-    Counter_FrameEvent* __e = Counter_FrameEvent_new("$>", self->__compartment->enter_args, 0);
-    Counter_FrameContext* __ctx = Counter_FrameContext_new(__e, NULL);
-    Counter_FrameVec_push(self->_context_stack, __ctx);
-    Counter_FrameContext* __init_ctx = (Counter_FrameContext*)Counter_FrameVec_pop(self->_context_stack);
-    Counter_FrameContext_destroy(__init_ctx);
-    Counter_FrameEvent_destroy(__e);
     return self;
 }
 

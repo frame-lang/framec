@@ -756,24 +756,23 @@ fn lower_self_in_code(body_bytes: &[u8], lang: TargetLanguage, ctx: &HandlerCont
                     let seg = String::from_utf8_lossy(&body_bytes[start..end]).to_string();
                     if let Some(open) = seg.find("@@:(") {
                         let inner_start = open + "@@:(".len();
-                        let b = seg.as_bytes();
-                        let mut depth = 1i32;
-                        let mut j = inner_start;
-                        while j < b.len() && depth > 0 {
-                            match b[j] {
-                                b'(' => depth += 1,
-                                b')' => depth -= 1,
-                                _ => {}
+                        // Matching close via the shared string-aware primitive
+                        // (#123) — the old hand depth walk was string-blind and
+                        // panicked on unbalanced input (`seg[j + 1..]`).
+                        if let Some(j) =
+                            crate::frame_c::compiler::codegen::codegen_utils::matching_close_paren(
+                                &seg,
+                                lang,
+                                inner_start,
+                            )
+                        {
+                            if seg[inner_start..j].contains("@@:self") {
+                                let lowered =
+                                    lower_self_in_fragment(&seg[inner_start..j], lang, ctx);
+                                let rebuilt =
+                                    format!("{}@@:({}){}", &seg[..open], lowered, &seg[j + 1..]);
+                                edits.push((start, end, rebuilt));
                             }
-                            if depth > 0 {
-                                j += 1;
-                            }
-                        }
-                        if j <= b.len() && seg[inner_start..j].contains("@@:self") {
-                            let lowered = lower_self_in_fragment(&seg[inner_start..j], lang, ctx);
-                            let rebuilt =
-                                format!("{}@@:({}){}", &seg[..open], lowered, &seg[j + 1..]);
-                            edits.push((start, end, rebuilt));
                         }
                     }
                 }

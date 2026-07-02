@@ -314,13 +314,21 @@ impl LanguageBackend for CBackend {
 
                 // Render body to text WITH function-body indent + semicolons
                 // applied (matching the original Constructor arm's logic).
+                // `bare_text` additionally excludes the start-state `$>`
+                // kernel-dispatch statement — classified STRUCTURALLY by the
+                // `FrameInitBlock` marker node (#152/#123), not by scanning
+                // rendered lines for `_kernel(`. This also drops that block's
+                // sibling event/context lines from the bare allocator, where
+                // they were dead weight (an event created, a context
+                // pushed/popped/destroyed, no dispatch).
                 ctx.push_indent();
                 let body_indent = ctx.get_indent();
                 let mut body_text = String::new();
+                let mut bare_text = String::new();
                 for stmt in body {
                     let s = self.emit(stmt, ctx);
                     let trimmed = s.trim();
-                    body_text.push_str(&s);
+                    let mut rendered = s.clone();
                     if !trimmed.is_empty()
                         && !trimmed.ends_with('}')
                         && !trimmed.ends_with(';')
@@ -332,21 +340,17 @@ impl LanguageBackend for CBackend {
                                 | CodegenNode::Empty
                         )
                     {
-                        body_text.push_str(";\n");
+                        rendered.push_str(";\n");
                     } else if !trimmed.is_empty() && !s.ends_with('\n') {
-                        body_text.push('\n');
+                        rendered.push('\n');
+                    }
+                    body_text.push_str(&rendered);
+                    if !matches!(stmt, CodegenNode::FrameInitBlock { .. }) {
+                        bare_text.push_str(&rendered);
                     }
                 }
                 ctx.pop_indent();
 
-                let is_cascade_line = |line: &str| {
-                    line.contains("_fire_enter_cascade")
-                        || line.contains("_fire_exit_cascade")
-                        // RFC-0020: the start-state `$>` is dispatched
-                        // via `<sys>_kernel(self, __e)`; the bare
-                        // allocator must not run it.
-                        || line.contains("_kernel(")
-                };
                 let mentions_param = |line: &str| {
                     param_names.iter().any(|p| {
                         line.split(|c: char| !c.is_alphanumeric() && c != '_')
@@ -354,9 +358,9 @@ impl LanguageBackend for CBackend {
                     })
                 };
 
-                let bare_body: String = body_text
+                let bare_body: String = bare_text
                     .lines()
-                    .filter(|l| !is_cascade_line(l) && !mentions_param(l))
+                    .filter(|l| !mentions_param(l))
                     .map(|l| format!("{}\n", l))
                     .collect();
 
@@ -501,10 +505,20 @@ impl LanguageBackend for CBackend {
             }
 
             CodegenNode::Match { scrutinee, arms } => {
-                // For string comparison, use if-else chain instead of switch
+                // For string comparison, use if-else chain instead of switch.
+                // Classified STRUCTURALLY by the arm patterns (#123): a
+                // string-literal pattern needs `strcmp`, not `switch` — the
+                // old check scanned the rendered scrutinee text for
+                // `_message`/`state` substrings.
                 let scrutinee_str = self.emit(scrutinee, ctx);
-                let is_string_match =
-                    scrutinee_str.contains("_message") || scrutinee_str.contains("state");
+                let is_string_match = arms.iter().any(|arm| {
+                    matches!(
+                        arm.pattern.as_ref(),
+                        CodegenNode::Literal(
+                            crate::frame_c::compiler::codegen::ast::Literal::String(_)
+                        )
+                    )
+                });
 
                 if is_string_match {
                     let mut result = String::new();

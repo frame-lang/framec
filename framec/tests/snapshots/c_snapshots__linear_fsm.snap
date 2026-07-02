@@ -421,12 +421,6 @@ LinearFsm* LinearFsm_new(void) {
     LinearFsm_FrameVec* __ea = NULL;
     self->__compartment = LinearFsm_prepareEnter(self, "Idle", __sa, __ea);
     self->__next_compartment = NULL;
-    LinearFsm_FrameEvent* __e = LinearFsm_FrameEvent_new("$>", self->__compartment->enter_args, 0);
-    LinearFsm_FrameContext* __ctx = LinearFsm_FrameContext_new(__e, NULL);
-    LinearFsm_FrameVec_push(self->_context_stack, __ctx);
-    LinearFsm_FrameContext* __init_ctx = (LinearFsm_FrameContext*)LinearFsm_FrameVec_pop(self->_context_stack);
-    LinearFsm_FrameContext_destroy(__init_ctx);
-    LinearFsm_FrameEvent_destroy(__e);
     return self;
 }
 

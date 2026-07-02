@@ -734,6 +734,43 @@ pub fn split_top_level_args(
     out
 }
 
+/// Byte index of the depth-0 `)` that closes an open paren whose contents
+/// start at `from` (i.e. `from` is the byte just past the `(`). String- and
+/// comment-aware via the language skipper, and bracket-depth-aware for all of
+/// `()[]{}` — a `)` inside a string literal or a nested pair does not close.
+/// Returns `None` if the parens are unbalanced (no depth-0 `)` before `end`).
+/// #123/#154: the single matching-close primitive for codegen — replaces
+/// hand-rolled, string-blind depth walks.
+pub(crate) fn matching_close_paren(
+    code: &str,
+    lang: crate::frame_c::visitors::TargetLanguage,
+    from: usize,
+) -> Option<usize> {
+    let skipper = crate::frame_c::compiler::native_region_scanner::create_skipper(lang);
+    let bytes = code.as_bytes();
+    let end = bytes.len();
+    let mut depth: i32 = 0;
+    let mut i = from;
+    while i < end {
+        if let Some(next) = skipper.skip_string(bytes, i, end) {
+            i = next;
+            continue;
+        }
+        if let Some(next) = skipper.skip_comment(bytes, i, end) {
+            i = next;
+            continue;
+        }
+        match bytes[i] {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' if depth == 0 => return Some(i),
+            b')' | b']' | b'}' => depth -= 1,
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
 /// Split a transition argument blob into the list of argument **values**, with
 /// any `name = ` prefix stripped from a named argument. Splitting is at
 /// top-level commas only (via [`split_top_level_args`]) and the `name =` strip
@@ -917,6 +954,19 @@ pub(crate) fn utf8_char_len(first_byte: u8) -> usize {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn matching_close_paren_string_and_depth_aware() {
+        use crate::frame_c::visitors::TargetLanguage as L;
+        // plain nesting
+        assert_eq!(matching_close_paren("(a + (b))", L::Kotlin, 1), Some(8));
+        // a `)` inside a string does not close
+        let s = r#"(f(")") + 1)"#;
+        assert_eq!(matching_close_paren(s, L::Kotlin, 1), Some(s.len() - 1));
+        // unbalanced → None
+        assert_eq!(matching_close_paren("(a + (b)", L::Kotlin, 1), None);
+    }
+
     use super::*;
     use crate::frame_c::compiler::frame_ast::{Expression, Literal, Type};
     use crate::frame_c::visitors::TargetLanguage;

@@ -413,12 +413,6 @@ ReturnExplicit* ReturnExplicit_new(void) {
     ReturnExplicit_FrameVec* __ea = NULL;
     self->__compartment = ReturnExplicit_prepareEnter(self, "Judging", __sa, __ea);
     self->__next_compartment = NULL;
-    ReturnExplicit_FrameEvent* __e = ReturnExplicit_FrameEvent_new("$>", self->__compartment->enter_args, 0);
-    ReturnExplicit_FrameContext* __ctx = ReturnExplicit_FrameContext_new(__e, NULL);
-    ReturnExplicit_FrameVec_push(self->_context_stack, __ctx);
-    ReturnExplicit_FrameContext* __init_ctx = (ReturnExplicit_FrameContext*)ReturnExplicit_FrameVec_pop(self->_context_stack);
-    ReturnExplicit_FrameContext_destroy(__init_ctx);
-    ReturnExplicit_FrameEvent_destroy(__e);
     return self;
 }
 

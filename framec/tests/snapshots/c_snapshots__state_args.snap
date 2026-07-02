@@ -418,12 +418,6 @@ StateArgs* StateArgs_new(void) {
     StateArgs_FrameVec* __ea = NULL;
     self->__compartment = StateArgs_prepareEnter(self, "Idle", __sa, __ea);
     self->__next_compartment = NULL;
-    StateArgs_FrameEvent* __e = StateArgs_FrameEvent_new("$>", self->__compartment->enter_args, 0);
-    StateArgs_FrameContext* __ctx = StateArgs_FrameContext_new(__e, NULL);
-    StateArgs_FrameVec_push(self->_context_stack, __ctx);
-    StateArgs_FrameContext* __init_ctx = (StateArgs_FrameContext*)StateArgs_FrameVec_pop(self->_context_stack);
-    StateArgs_FrameContext_destroy(__init_ctx);
-    StateArgs_FrameEvent_destroy(__e);
     return self;
 }
 

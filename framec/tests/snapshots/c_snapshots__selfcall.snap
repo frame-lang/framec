@@ -417,12 +417,6 @@ SelfCall* SelfCall_new(void) {
     SelfCall_FrameVec* __ea = NULL;
     self->__compartment = SelfCall_prepareEnter(self, "Active", __sa, __ea);
     self->__next_compartment = NULL;
-    SelfCall_FrameEvent* __e = SelfCall_FrameEvent_new("$>", self->__compartment->enter_args, 0);
-    SelfCall_FrameContext* __ctx = SelfCall_FrameContext_new(__e, NULL);
-    SelfCall_FrameVec_push(self->_context_stack, __ctx);
-    SelfCall_FrameContext* __init_ctx = (SelfCall_FrameContext*)SelfCall_FrameVec_pop(self->_context_stack);
-    SelfCall_FrameContext_destroy(__init_ctx);
-    SelfCall_FrameEvent_destroy(__e);
     return self;
 }
 

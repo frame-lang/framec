@@ -430,12 +430,6 @@ MiniHsm* MiniHsm_new(void) {
     MiniHsm_FrameVec* __ea = NULL;
     self->__compartment = MiniHsm_prepareEnter(self, "Live", __sa, __ea);
     self->__next_compartment = NULL;
-    MiniHsm_FrameEvent* __e = MiniHsm_FrameEvent_new("$>", self->__compartment->enter_args, 0);
-    MiniHsm_FrameContext* __ctx = MiniHsm_FrameContext_new(__e, NULL);
-    MiniHsm_FrameVec_push(self->_context_stack, __ctx);
-    MiniHsm_FrameContext* __init_ctx = (MiniHsm_FrameContext*)MiniHsm_FrameVec_pop(self->_context_stack);
-    MiniHsm_FrameContext_destroy(__init_ctx);
-    MiniHsm_FrameEvent_destroy(__e);
     return self;
 }
 

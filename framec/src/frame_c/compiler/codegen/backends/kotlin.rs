@@ -14,44 +14,38 @@ pub struct KotlinBackend;
 /// the bare `init {}` body — those are re-supplied by `__frame_init`.
 fn strip_kotlin_param_lists(text: &str, param_names: &[&str]) -> String {
     // The pattern emitted by system_codegen.rs for Kotlin is
-    // `mutableListOf<Any?>(seed)` or `mutableListOf<Any?>()`. We match the
-    // call-args parens between `mutableListOf<Any?>` and the closing `)`.
+    // `mutableListOf<Any?>(seed)` or `mutableListOf<Any?>()`. The matching
+    // close paren comes from the shared string/comment-aware
+    // `matching_close_paren` primitive (#123 — the old hand depth walk was
+    // string-blind, so a `)` inside a string seed mis-sliced), and the byte
+    // copy is a slice append (the old `bytes[i] as char` corrupted UTF-8).
+    use crate::frame_c::compiler::codegen::codegen_utils::{
+        matching_close_paren, split_top_level_args,
+    };
+    let needle = "mutableListOf<Any?>(";
+    let lang = crate::frame_c::visitors::TargetLanguage::Kotlin;
     let mut result = String::with_capacity(text.len());
-    let bytes = text.as_bytes();
-    let needle = b"mutableListOf<Any?>(";
     let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i..].starts_with(needle) {
-            let args_start = i + needle.len();
-            let mut depth = 1;
-            let mut j = args_start;
-            while j < bytes.len() && depth > 0 {
-                match bytes[j] {
-                    b'(' => depth += 1,
-                    b')' => depth -= 1,
-                    _ => {}
-                }
-                if depth == 0 {
-                    break;
-                }
-                j += 1;
-            }
-            if depth == 0 {
-                let inner = &text[args_start..j];
-                let parts = crate::frame_c::compiler::codegen::codegen_utils::split_top_level_args(
-                    &inner,
-                    crate::frame_c::visitors::TargetLanguage::Kotlin,
-                );
+    while let Some(off) = text[i..].find(needle) {
+        let hit = i + off;
+        let args_start = hit + needle.len();
+        match matching_close_paren(text, lang, args_start) {
+            Some(close) => {
+                let inner = &text[args_start..close];
+                let parts = split_top_level_args(inner, lang);
                 if !parts.is_empty() && parts.iter().all(|p| param_names.contains(&p.as_str())) {
+                    result.push_str(&text[i..hit]);
                     result.push_str("mutableListOf<Any?>()");
-                    i = j + 1;
-                    continue;
+                    i = close + 1;
+                } else {
+                    result.push_str(&text[i..close]);
+                    i = close;
                 }
             }
+            None => break, // unbalanced — emit the rest verbatim below
         }
-        result.push(bytes[i] as char);
-        i += 1;
     }
+    result.push_str(&text[i..]);
     result
 }
 

@@ -424,12 +424,6 @@ PushPop* PushPop_new(void) {
     PushPop_FrameVec* __ea = NULL;
     self->__compartment = PushPop_prepareEnter(self, "Idle", __sa, __ea);
     self->__next_compartment = NULL;
-    PushPop_FrameEvent* __e = PushPop_FrameEvent_new("$>", self->__compartment->enter_args, 0);
-    PushPop_FrameContext* __ctx = PushPop_FrameContext_new(__e, NULL);
-    PushPop_FrameVec_push(self->_context_stack, __ctx);
-    PushPop_FrameContext* __init_ctx = (PushPop_FrameContext*)PushPop_FrameVec_pop(self->_context_stack);
-    PushPop_FrameContext_destroy(__init_ctx);
-    PushPop_FrameEvent_destroy(__e);
     return self;
 }
 
