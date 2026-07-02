@@ -8,6 +8,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [4.6.1] - 2026-06-20
 
+### Deprecated
+
+- **The Erlang target is deprecated (not removed).** Generated Erlang keeps
+  working and the target still ships, but its handler-body lowering
+  reconstructs control-flow structure from framec's own emitted text
+  (~3,800 lines of string processing) and is slated for a ground-up redesign
+  (#119, #125 — one known-broken shape: a mixed-terminal `else if` chain with
+  trailing statements silently emits invalid Erlang). Compiling with
+  `-l erlang` now emits **W901**. Prefer another target for new work until the
+  redesign lands; existing Erlang systems are unaffected.
+
 ### Fixed
 
 - **PHP: a non-constant domain-field initializer is lowered into the

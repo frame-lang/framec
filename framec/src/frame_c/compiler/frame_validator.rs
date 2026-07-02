@@ -433,6 +433,30 @@ impl FrameValidator {
 
     /// Validate a system
     fn validate_system(&mut self, system: &SystemAst) {
+        // W901: the Erlang target is deprecated (not removed) as of 4.6.1.
+        // The handler-body lowering reconstructs structure from emitted text
+        // and is slated for redesign (#119/#125); generated Erlang keeps
+        // working, but the target should not be relied on for new work until
+        // the redesign lands.
+        if matches!(
+            self.target,
+            crate::frame_c::visitors::TargetLanguage::Erlang
+        ) {
+            self.warnings.push(
+                ValidationError::new(
+                    "W901",
+                    format!(
+                        "the Erlang target is deprecated as of 4.6.1 (system '{}'). It remains \
+                         functional and is NOT removed, but its handler-body lowering is slated \
+                         for redesign (frame-lang/framec#119) — prefer another target for new \
+                         work until that lands.",
+                        system.name
+                    ),
+                )
+                .with_span(system.span.clone()),
+            );
+        }
+
         // Phase 1: Structural validation
         self.validate_section_order(system);
         self.validate_duplicate_sections(system);

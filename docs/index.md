@@ -12,8 +12,8 @@ the `@@system` blocks passes through unchanged — native code, no runtime
 dependency, drop-in ready.
 
 One specification transpiles to **17 target languages** — Python, TypeScript,
-JavaScript, Rust, C, C++, Java, C#, Go, PHP, Kotlin, Swift, Ruby, Erlang, Lua,
-Dart, GDScript — plus **Graphviz** for state-diagram visualization.
+JavaScript, Rust, C, C++, Java, C#, Go, PHP, Kotlin, Swift, Ruby, Lua,
+Dart, GDScript — and Erlang (deprecated as of 4.6.1, see W901) — plus **Graphviz** for state-diagram visualization.
 
 ## Quick install
 

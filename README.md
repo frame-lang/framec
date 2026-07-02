@@ -78,7 +78,13 @@ See [`framec-wasm/`](framec-wasm/) for the crate and build details.
 
 ### Experimental
 
-Kotlin, Swift, PHP, Ruby, Lua, Erlang, Dart, GDScript
+Kotlin, Swift, PHP, Ruby, Lua, Dart, GDScript
+
+### Deprecated
+
+Erlang — still ships and works, but its handler-body lowering is slated for
+redesign ([#119](https://github.com/frame-lang/framec/issues/119)); compiling
+with `-l erlang` emits `W901`. Prefer another target for new work.
 
 ### Visualization
 
