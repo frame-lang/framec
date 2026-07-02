@@ -206,7 +206,7 @@ class Counter {
     }
 
     companion object {
-        @JvmStatic fun __create(): Counter {
+        fun __create(): Counter {
             val c = Counter()
             c.__frame_init()
             return c

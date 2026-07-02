@@ -178,7 +178,7 @@ class Consts {
     }
 
     companion object {
-        @JvmStatic fun __create(step: Int, limit: Int): Consts {
+        fun __create(step: Int, limit: Int): Consts {
             val c = Consts()
             c.__frame_init(step, limit)
             return c

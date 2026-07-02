@@ -204,7 +204,7 @@ class Forward {
     }
 
     companion object {
-        @JvmStatic fun __create(): Forward {
+        fun __create(): Forward {
             val c = Forward()
             c.__frame_init()
             return c

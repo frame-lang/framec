@@ -248,7 +248,7 @@ class MiniHsm {
     }
 
     companion object {
-        @JvmStatic fun __create(): MiniHsm {
+        fun __create(): MiniHsm {
             val c = MiniHsm()
             c.__frame_init()
             return c

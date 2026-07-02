@@ -176,7 +176,7 @@ class Actions {
     }
 
     companion object {
-        @JvmStatic fun __create(): Actions {
+        fun __create(): Actions {
             val c = Actions()
             c.__frame_init()
             return c

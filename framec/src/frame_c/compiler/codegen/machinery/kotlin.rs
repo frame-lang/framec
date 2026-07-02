@@ -4,15 +4,15 @@
 //! plan §7.1.P3). Kotlin's emission is closest to Java's but with two
 //! differences worth flagging:
 //!
-//! - Kotlin's `@JvmStatic fun __create(...)` factory is emitted **here**
-//!   as a prelude NativeBlock (not from `backends/kotlin.rs`'s
-//!   Constructor arm, the way Java / Swift / C# do). Kotlin requires
-//!   `__create` to live inside a `companion object`, and the
-//!   class-body emitter in `backends/kotlin.rs` partitions companion
-//!   members by the heuristic "NativeBlock whose text opens with
-//!   `@JvmStatic`". Emitting `__create` as a sibling NativeBlock keeps
-//!   that partitioning intact; emitting it inline from Constructor
-//!   codegen would land it outside the companion object.
+//! - Kotlin's `fun __create(...)` factory is emitted **here** as a prelude
+//!   NativeBlock (not from `backends/kotlin.rs`'s Constructor arm, the way
+//!   Java / Swift / C# do). Kotlin requires `__create` to live inside a
+//!   `companion object`, and the class-body emitter in `backends/kotlin.rs`
+//!   partitions companion members by the generated `fun __create` name.
+//!   Emitting `__create` as a sibling NativeBlock keeps that partitioning
+//!   intact; emitting it inline from Constructor codegen would land it
+//!   outside the companion object. (No `@JvmStatic`: it is JVM-only and
+//!   breaks Kotlin/JS, Native, and wasm — #157.)
 //! - `__route_to_state` uses a cascading `if (state_name == "...")`
 //!   chain (Kotlin's `when (state_name)` would also work but the legacy
 //!   fn used if-chain — preserved verbatim for byte-canonical parity).
@@ -44,8 +44,15 @@ impl MachineryGenerator for KotlinMachinery {
             })
             .collect();
         let arg_pass: Vec<String> = system.params.iter().map(|p| p.name.clone()).collect();
+        // NOTE: no `@JvmStatic` — it is a JVM-only annotation and breaks
+        // Kotlin/JS, Kotlin/Native, and Kotlin/wasm ("Unresolved reference
+        // 'JvmStatic'"; issue #157). A companion function is callable as
+        // `Sys.__create(...)` on every target without it; the annotation only
+        // affects Java-interop bytecode shape. The companion-placement
+        // partitioner in `backends/kotlin.rs` keys off the generated
+        // `fun __create` name instead.
         let create_body = format!(
-            "@JvmStatic fun __create({params}): {sys} {{\n    val c = {sys}()\n    c.__frame_init({args})\n    return c\n}}",
+            "fun __create({params}): {sys} {{\n    val c = {sys}()\n    c.__frame_init({args})\n    return c\n}}",
             sys = system.name,
             params = create_params.join(", "),
             args = arg_pass.join(", "),

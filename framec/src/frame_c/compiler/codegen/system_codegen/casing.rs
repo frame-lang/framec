@@ -1352,8 +1352,9 @@ fn generate_casing_factory(system: &SystemAst, lang: TargetLanguage) -> Option<C
                 })
                 .collect();
             let arg_pass: Vec<String> = system.params.iter().map(|p| p.name.clone()).collect();
+            // No `@JvmStatic` — JVM-only, breaks Kotlin/JS/Native/wasm (#157).
             let body = format!(
-                "@JvmStatic fun __create({params}): {sys} {{\n    val c = {sys}()\n    c.__frame_init({args})\n    return c\n}}",
+                "fun __create({params}): {sys} {{\n    val c = {sys}()\n    c.__frame_init({args})\n    return c\n}}",
                 sys = system.name,
                 params = create_params.join(", "),
                 args = arg_pass.join(", "),

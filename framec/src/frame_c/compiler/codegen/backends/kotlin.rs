@@ -208,11 +208,13 @@ impl LanguageBackend for KotlinBackend {
                 // the same block.
                 let is_companion_native = |n: &CodegenNode| -> bool {
                     if let CodegenNode::NativeBlock { code, .. } = n {
-                        // Heuristic: any NativeBlock whose text opens with
-                        // `@JvmStatic` is meant for the companion object.
-                        // Other NativeBlocks (e.g. Frame-expanded code) stay
-                        // at their original position in the class body.
-                        code.trim_start().starts_with("@JvmStatic")
+                        // The generated `fun __create(...)` factory must live in
+                        // the companion object. Key off its (compiler-generated)
+                        // name — not `@JvmStatic`, which was dropped because it
+                        // is JVM-only and breaks Kotlin/JS, Native, and wasm
+                        // (#157). Other NativeBlocks (e.g. Frame-expanded code)
+                        // stay at their original position in the class body.
+                        code.trim_start().starts_with("fun __create")
                     } else {
                         false
                     }

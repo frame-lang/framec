@@ -206,7 +206,7 @@ class StateArgs {
     }
 
     companion object {
-        @JvmStatic fun __create(): StateArgs {
+        fun __create(): StateArgs {
             val c = StateArgs()
             c.__frame_init()
             return c

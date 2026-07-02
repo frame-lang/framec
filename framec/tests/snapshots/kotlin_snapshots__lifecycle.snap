@@ -201,7 +201,7 @@ class Lifecycle {
     }
 
     companion object {
-        @JvmStatic fun __create(): Lifecycle {
+        fun __create(): Lifecycle {
             val c = Lifecycle()
             c.__frame_init()
             return c

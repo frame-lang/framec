@@ -155,7 +155,7 @@ class ReturnExplicit {
     }
 
     companion object {
-        @JvmStatic fun __create(): ReturnExplicit {
+        fun __create(): ReturnExplicit {
             val c = ReturnExplicit()
             c.__frame_init()
             return c

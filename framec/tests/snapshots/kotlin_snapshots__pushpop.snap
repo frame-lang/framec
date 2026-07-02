@@ -223,7 +223,7 @@ class PushPop {
     }
 
     companion object {
-        @JvmStatic fun __create(): PushPop {
+        fun __create(): PushPop {
             val c = PushPop()
             c.__frame_init()
             return c

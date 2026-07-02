@@ -173,7 +173,7 @@ class SelfCall {
     }
 
     companion object {
-        @JvmStatic fun __create(): SelfCall {
+        fun __create(): SelfCall {
             val c = SelfCall()
             c.__frame_init()
             return c

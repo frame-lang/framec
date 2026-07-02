@@ -218,7 +218,7 @@ class LifecycleArgs {
     }
 
     companion object {
-        @JvmStatic fun __create(): LifecycleArgs {
+        fun __create(): LifecycleArgs {
             val c = LifecycleArgs()
             c.__frame_init()
             return c

@@ -64,7 +64,7 @@ class AsyncFetcher {
     }
 
     companion object {
-        @JvmStatic fun __create(): AsyncFetcher {
+        fun __create(): AsyncFetcher {
             val c = AsyncFetcher()
             c.__frame_init()
             return c
@@ -197,7 +197,7 @@ class _AsyncFetcherMachine {
     }
 
     companion object {
-        @JvmStatic fun __create(): AsyncFetcher {
+        fun __create(): AsyncFetcher {
             val c = AsyncFetcher()
             c.__frame_init()
             return c

@@ -208,7 +208,7 @@ class LinearFsm {
     }
 
     companion object {
-        @JvmStatic fun __create(): LinearFsm {
+        fun __create(): LinearFsm {
             val c = LinearFsm()
             c.__frame_init()
             return c

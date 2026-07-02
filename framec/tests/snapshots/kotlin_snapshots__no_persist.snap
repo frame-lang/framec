@@ -251,7 +251,7 @@ class NoPersist {
     }
 
     companion object {
-        @JvmStatic fun __create(): NoPersist {
+        fun __create(): NoPersist {
             val c = NoPersist()
             c.__frame_init()
             return c
