@@ -307,9 +307,6 @@ fn issue83_pop_float_args_runs_wasm32() {
     );
 }
 
-/// RFC-0043 `@@[async]` — golden coverage of the casing/machine layering (issue
-/// #111 R1). Previously the async emission core had zero snapshot coverage.
-#[test]
-fn async_attribute() {
-    insta::assert_snapshot!(compile_fixture("14_async_attribute", "c"));
-}
+// Note: C has no `async_attribute` snapshot — `@@[async]` on C is rejected at
+// validation by E722 (no async runtime; #111 R4), so there is no casing/machine
+// output to snapshot. That rejection is covered by `c_async_rejected_722.rs`.

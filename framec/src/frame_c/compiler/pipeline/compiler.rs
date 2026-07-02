@@ -1484,7 +1484,10 @@ pub(crate) fn do_validate_codegen(c: &mut PipelineCtx) -> Option<CompileResult> 
         // errors (E800/E801/E802) surface even on items that the
         // per-target filter would later prune.
         let frame_ast = FrameAst::System(system_ast.clone());
-        let mut validator = FrameValidator::new();
+        // Target-aware: E722 (async-on-C) and the string/comment-safe scans
+        // (E608/E421/E615/E418) pick their skipper from the real target. This
+        // is the main compile path; the Graphviz path sets it separately.
+        let mut validator = FrameValidator::new().with_target(config.target);
         if let Err(errs) = validator.validate_with_arcanum(&frame_ast, &arcanum) {
             let errors = errs
                 .iter()
@@ -1537,14 +1540,9 @@ pub(crate) fn do_validate_codegen(c: &mut PipelineCtx) -> Option<CompileResult> 
         // validators so attribute-shape errors fire first.
         filter_by_target_attribute(system_ast, config.target);
 
-        // Warn if async is used with C target (no native async support).
-        // Reads the RFC-0043 `is_async_layered` flag set during the
-        // attribute-attach pass; equivalent post-validation to scanning
-        // members for `is_async` because E720 makes async members
-        // without `@@[async]` impossible past the validator.
-        if system_ast.is_async_layered && matches!(config.target, TargetLanguage::C) {
-            eprintln!("Warning: async is not supported for C — async keyword ignored");
-        }
+        // (async-on-C is now rejected at validation by E722 — the C target has
+        // no async runtime to enforce RFC-0043's single-driver gate, so it fails
+        // loudly instead of silently downgrading. #111 R4.)
 
         // Build per-system generated code: runtime classes + system class
         let mut system_code = String::new();

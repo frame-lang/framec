@@ -351,6 +351,32 @@ impl FrameValidator {
                 .with_span(system.span.clone()),
             );
         }
+
+        // E722: the C target has no async runtime, so `@@[async]` (or an async
+        // member) can't realize RFC-0043's single-driver gate — the system would
+        // silently downgrade to a sync, ungated implementation, dropping the
+        // contract. Fail loudly rather than emit a warning that's easy to miss
+        // (#111 R4). Fires on either the attribute or a bare async member so the
+        // dropped contract is caught regardless of E720.
+        if (has_async_attr || has_async_member)
+            && matches!(self.target, crate::frame_c::visitors::TargetLanguage::C)
+        {
+            self.errors.push(
+                ValidationError::new(
+                    "E722",
+                    format!(
+                        "@@system '{}' is async (`@@[async]` / async member) but the C target \
+                         has no async runtime to enforce RFC-0043's single-driver gate. \
+                         Emitting C would silently drop the async contract and produce a sync, \
+                         ungated system. Remove the async surface for C, or target a backend \
+                         with async support (Python/TypeScript/Rust/Java/Kotlin/Swift/Dart/C#/\
+                         C++/GDScript).",
+                        system.name
+                    ),
+                )
+                .with_span(system.span.clone()),
+            );
+        }
     }
 
     /// **E721 — sync system composes async system as domain field**
