@@ -613,6 +613,76 @@ pub fn replace_word_start_outside_strings_and_comments(
 /// emitted or captured arg blob (transition args #148, nested self-call hoisting
 /// #150), replacing a naive `str::split(',')` that breaks on `f(a, b)` or a
 /// comma inside a `"a,b"` literal.
+/// True iff a domain-field initializer is a **runtime expression** — one that
+/// evaluates by constructing an object, calling a function/method, or
+/// instantiating a sibling system — as opposed to a compile-time *constant
+/// expression* (literal, arithmetic/array/dict of constants, a constant/enum
+/// reference). A runtime expression cannot be a static field default in most
+/// targets and must be assigned in the constructor/init path.
+///
+/// This is the token-based classifier that replaces the `.contains("@@") ||
+/// .contains("new ") || .contains('(')` substring heuristic (#153 → #144). It
+/// walks the init text via the language `SyntaxSkipper` and reports runtime iff,
+/// **outside string literals and comments**, it finds any of:
+///   - `@@` — a `@@<System>()` instantiation;
+///   - the `new` keyword at an identifier boundary;
+///   - an identifier immediately (modulo spaces) followed by `(` — a call.
+///
+/// So `(1 + 2)` (parenthesised constant) is NOT runtime — fixing the old
+/// heuristic's `contains('(')` false-positive — while `f(1, 2)`, `new X()`,
+/// `Vec2(1,2)`, and `"a" . new Y()` (concat) are. A `(` or `new`/`@@` inside a
+/// string literal is ignored, so no whole-string-literal special case is needed.
+pub fn init_is_runtime_expression(
+    init_text: &str,
+    lang: crate::frame_c::visitors::TargetLanguage,
+) -> bool {
+    let t = init_text.trim();
+    if t.is_empty() {
+        return false;
+    }
+    let skipper = crate::frame_c::compiler::native_region_scanner::create_skipper(lang);
+    let bytes = t.as_bytes();
+    let end = bytes.len();
+    let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let mut i = 0usize;
+    while i < end {
+        if let Some(next) = skipper.skip_string(bytes, i, end) {
+            i = next;
+            continue;
+        }
+        if let Some(next) = skipper.skip_comment(bytes, i, end) {
+            i = next;
+            continue;
+        }
+        // `@@<System>()` instantiation.
+        if bytes[i..].starts_with(b"@@") {
+            return true;
+        }
+        // `new` keyword at an identifier boundary.
+        if bytes[i..].starts_with(b"new") {
+            let before_ok = i == 0 || !is_word(bytes[i - 1]);
+            let after = i + 3;
+            let after_ok = after >= end || !is_word(bytes[after]);
+            if before_ok && after_ok {
+                return true;
+            }
+        }
+        // An identifier immediately (skipping spaces) before a `(` is a call.
+        if bytes[i] == b'(' {
+            let mut k = i;
+            while k > 0 && (bytes[k - 1] == b' ' || bytes[k - 1] == b'\t') {
+                k -= 1;
+            }
+            if k > 0 && is_word(bytes[k - 1]) {
+                return true;
+            }
+        }
+        let w = utf8_char_len(bytes[i]).max(1);
+        i += w;
+    }
+    false
+}
+
 pub fn split_top_level_args(
     args: &str,
     lang: crate::frame_c::visitors::TargetLanguage,
@@ -1080,5 +1150,40 @@ mod tests {
         );
         assert_eq!(split_named_arg("f(a=b)"), None); // nested `=`, not named
         assert_eq!(split_named_arg("plain"), None);
+    }
+
+    #[test]
+    fn init_runtime_expression_classifier() {
+        use crate::frame_c::visitors::TargetLanguage::Php;
+        // constants -> not runtime
+        for c in [
+            "5",
+            "-3",
+            "(1 + 2)",
+            "[1, 2, 3]",
+            "MAX_SIZE",
+            "Foo::BAR",
+            "\"foo(bar)\"",
+            "'has new inside'",
+        ] {
+            assert!(
+                !init_is_runtime_expression(c, Php),
+                "`{c}` should be constant"
+            );
+        }
+        // runtime -> needs constructor
+        for r in [
+            "new X()",
+            "@@Sensor()",
+            "make_thing()",
+            "Vec2(640, 480)",
+            "\"a\" . new Y() . \"b\"",
+            "foo() + 1",
+        ] {
+            assert!(
+                init_is_runtime_expression(r, Php),
+                "`{r}` should be runtime"
+            );
+        }
     }
 }
