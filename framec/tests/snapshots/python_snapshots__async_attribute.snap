@@ -1,0 +1,162 @@
+---
+source: framec/tests/python_snapshots.rs
+expression: "compile_fixture(\"14_async_attribute\", \"python_3\")"
+---
+from typing import Any, Optional, List, Dict, Callable
+
+class AsyncFetcherFrameEvent:
+    def __init__(self, message: str, parameters):
+        self._message = message
+        self._parameters = parameters
+
+
+class AsyncFetcherFrameContext:
+    def __init__(self, event: AsyncFetcherFrameEvent, default_return):
+        self.event = event
+        self._return = default_return
+        self._data = {}
+        self._transitioned = False
+
+
+class AsyncFetcherCompartment:
+    def __init__(self, state: str, parent_compartment = None):
+        self.state = state
+        self.state_args = []
+        self.state_vars = {}
+        self.enter_args = []
+        self.exit_args = []
+        self.forward_event = None
+        self.parent_compartment = parent_compartment
+
+    def copy(self) -> 'AsyncFetcherCompartment':
+        c = AsyncFetcherCompartment(self.state, self.parent_compartment)
+        c.state_args = self.state_args.copy()
+        c.state_vars = self.state_vars.copy()
+        c.enter_args = self.enter_args.copy()
+        c.exit_args = self.exit_args.copy()
+        c.forward_event = self.forward_event
+        return c
+
+
+class AsyncFetcher:
+    def __init__(self):
+        self._machine = _AsyncFetcherMachine()
+        self._busy = False
+        self._in_flight = None
+
+    @classmethod
+    def _create(cls):
+        c = cls()
+        return c
+
+    async def fetch(self, key):
+        if self._busy:
+            raise RuntimeError(
+                f"E703: system busy: cannot enter 'fetch' while "
+                f"'{self._in_flight}' is in flight"
+            )
+        self._busy = True
+        self._in_flight = "fetch"
+        try:
+            return await self._machine.fetch(key)
+        finally:
+            self._in_flight = None
+            self._busy = False
+
+    async def init(self):
+        await self._machine.init()
+
+
+class _AsyncFetcherMachine:
+    def __init__(self):
+        self._state_stack = []
+        self._context_stack = []
+        self.cache = nil
+        self.__compartment = self.__prepareEnter("Ready", [], [])
+        self.__next_compartment = None
+
+    @classmethod
+    def _create(cls):
+        c = cls()
+        return c
+
+    _HSM_CHAIN = {
+        "Ready": ["Ready"],
+    }
+    def __prepareEnter(self, leaf, state_args, enter_args):
+        comp = None
+        for name in self._HSM_CHAIN[leaf]:
+            new_comp = AsyncFetcherCompartment(name)
+            new_comp.state_args = list(state_args)
+            new_comp.enter_args = list(enter_args)
+            new_comp.parent_compartment = comp
+            comp = new_comp
+        return comp
+
+    def __prepareExit(self, exit_args):
+        comp = self.__compartment
+        while comp is not None:
+            comp.exit_args = list(exit_args)
+            comp = comp.parent_compartment
+
+    async def __kernel(self, __e):
+        # Route event to current state
+        await self.__router(__e)
+        # Drain any transitions queued by the handler
+        while self.__next_compartment is not None:
+            next_compartment = self.__next_compartment
+            self.__next_compartment = None
+            # Exit the current (leaf) state
+            await self.__router(AsyncFetcherFrameEvent("<$", self.__compartment.exit_args))
+            # Switch to the new compartment
+            self.__compartment = next_compartment
+            if next_compartment.forward_event is None:
+                # No forwarded event — synthesize a fresh $>
+                await self.__router(AsyncFetcherFrameEvent("$>", self.__compartment.enter_args))
+            else:
+                if next_compartment.forward_event._message == "$>":
+                    # Forwarded event IS $> — dispatch directly so the
+                    # destination's $> receives the caller's payload
+                    await self.__router(next_compartment.forward_event)
+                else:
+                    # Forwarded event is not $> — initialize the destination
+                    # with a fresh $>, then dispatch the forward to it
+                    await self.__router(AsyncFetcherFrameEvent("$>", self.__compartment.enter_args))
+                    await self.__router(next_compartment.forward_event)
+            next_compartment.forward_event = None
+            # Mark all stacked contexts as transitioned
+            for ctx in self._context_stack:
+                ctx._transitioned = True
+
+    async def __router(self, __e):
+        if self.__compartment.state == "Ready":
+            await self._state_Ready(__e, self.__compartment)
+
+    def __transition(self, next_compartment):
+        self.__next_compartment = next_compartment
+
+    async def fetch(self, key: str) -> str:
+        __e = AsyncFetcherFrameEvent("fetch", [key])
+        __ctx = AsyncFetcherFrameContext(__e, None)
+        self._context_stack.append(__ctx)
+        try:
+            await self.__kernel(__e)
+        finally:
+            __frame_ctx = self._context_stack.pop()
+        return __frame_ctx._return
+
+    async def _state_Ready(self, __e, compartment):
+        if __e._message == "fetch":
+            await self._s_Ready_hdl_user_fetch(__e, compartment)
+            return
+
+    async def _s_Ready_hdl_user_fetch(self, __e, compartment):
+        key = __e._parameters[0]
+        self._context_stack[-1]._return = self.cache.get(key)
+
+    async def init(self):
+        __e = AsyncFetcherFrameEvent("$>", None)
+        __ctx = AsyncFetcherFrameContext(__e, None)
+        self._context_stack.append(__ctx)
+        await self.__kernel(__e)
+        self._context_stack.pop()

@@ -1,0 +1,232 @@
+---
+source: framec/tests/java_snapshots.rs
+expression: "compile_fixture(\"14_async_attribute\", \"java\")"
+---
+class AsyncFetcherFrameEvent {
+    String _message;
+    java.util.ArrayList<Object> _parameters;
+
+    AsyncFetcherFrameEvent(String message) {
+        this._message = message;
+        this._parameters = new java.util.ArrayList<>();
+    }
+
+    AsyncFetcherFrameEvent(String message, java.util.ArrayList<Object> parameters) {
+        this._message = message;
+        this._parameters = parameters;
+    }
+}
+
+class AsyncFetcherFrameContext {
+    AsyncFetcherFrameEvent _event;
+    Object _return;
+    java.util.HashMap<String, Object> _data;
+    boolean _transitioned = false;
+
+    AsyncFetcherFrameContext(AsyncFetcherFrameEvent event, Object defaultReturn) {
+        this._event = event;
+        this._return = defaultReturn;
+        this._data = new java.util.HashMap<>();
+        this._transitioned = false;
+    }
+}
+
+class AsyncFetcherCompartment {
+    String state;
+    java.util.ArrayList<Object> state_args;
+    java.util.HashMap<String, Object> state_vars;
+    java.util.ArrayList<Object> enter_args;
+    java.util.ArrayList<Object> exit_args;
+    AsyncFetcherFrameEvent forward_event;
+    AsyncFetcherCompartment parent_compartment;
+
+    AsyncFetcherCompartment(String state) {
+        this.state = state;
+        this.state_args = new java.util.ArrayList<>();
+        this.state_vars = new java.util.HashMap<>();
+        this.enter_args = new java.util.ArrayList<>();
+        this.exit_args = new java.util.ArrayList<>();
+        this.forward_event = null;
+        this.parent_compartment = null;
+    }
+
+    AsyncFetcherCompartment copy() {
+        AsyncFetcherCompartment c = new AsyncFetcherCompartment(this.state);
+        c.state_args = new java.util.ArrayList<>(this.state_args);
+        c.state_vars = new java.util.HashMap<>(this.state_vars);
+        c.enter_args = new java.util.ArrayList<>(this.enter_args);
+        c.exit_args = new java.util.ArrayList<>(this.exit_args);
+        c.forward_event = this.forward_event;
+        c.parent_compartment = this.parent_compartment;
+        return c;
+    }
+}
+
+public class AsyncFetcher {
+    private _AsyncFetcherMachine machine;
+    private boolean busy;
+    private String in_flight;
+
+    public AsyncFetcher() {
+        this.machine = _AsyncFetcherMachine.__create();
+        this.busy = false;
+        this.in_flight = null;
+    }
+
+    public static AsyncFetcher __create() {
+        AsyncFetcher c = new AsyncFetcher();
+        return c;
+    }
+
+    public java.util.concurrent.CompletableFuture<String> fetch(String key) {
+        if (this.busy) {
+            return java.util.concurrent.CompletableFuture.failedFuture(
+                new RuntimeException(
+                    "E703: system busy: cannot enter 'fetch' while '" + this.in_flight + "' is in flight"
+                )
+            );
+        }
+        this.busy = true;
+        this.in_flight = "fetch";
+        try {
+            return this.machine.fetch(key);
+        } catch (RuntimeException __e) {
+            return java.util.concurrent.CompletableFuture.failedFuture(__e);
+        } finally {
+            this.in_flight = null;
+            this.busy = false;
+        }
+    }
+
+    public java.util.concurrent.CompletableFuture<Void> init() {
+        return this.machine.init();
+    }
+}
+
+
+class _AsyncFetcherMachine {
+    private java.util.ArrayList<AsyncFetcherCompartment> _state_stack;
+    private AsyncFetcherCompartment __compartment;
+    private AsyncFetcherCompartment __next_compartment;
+    private java.util.ArrayList<AsyncFetcherFrameContext> _context_stack;
+    public Cache cache = nil;
+
+    public _AsyncFetcherMachine() {
+        _state_stack = new java.util.ArrayList<>();
+        _context_stack = new java.util.ArrayList<>();
+        this.__compartment = __prepareEnter("Ready", new java.util.ArrayList<>(), new java.util.ArrayList<>());
+        this.__next_compartment = null;
+    }
+
+    public static _AsyncFetcherMachine __create() {
+        _AsyncFetcherMachine c = new _AsyncFetcherMachine();
+        AsyncFetcherFrameEvent __e = new AsyncFetcherFrameEvent("$>", c.__compartment.enter_args);
+        AsyncFetcherFrameContext __ctx = new AsyncFetcherFrameContext(__e, null);
+        c._context_stack.add(__ctx);
+        c.__kernel(__e);
+        c._context_stack.remove(c._context_stack.size() - 1);
+        return c;
+    }
+
+    private java.util.HashMap<String, java.util.ArrayList<String>> hsm_chain() {
+        java.util.HashMap<String, java.util.ArrayList<String>> m = new java.util.HashMap<>();
+        m.put("Ready", new java.util.ArrayList<>(java.util.Arrays.asList("Ready")));
+        return m;
+    }
+    private AsyncFetcherCompartment __prepareEnter(String leaf, java.util.ArrayList<Object> state_args, java.util.ArrayList<Object> enter_args) {
+        AsyncFetcherCompartment comp = null;
+        for (String name : hsm_chain().get(leaf)) {
+            AsyncFetcherCompartment new_comp = new AsyncFetcherCompartment(name);
+            new_comp.state_args = new java.util.ArrayList<>(state_args);
+            new_comp.enter_args = new java.util.ArrayList<>(enter_args);
+            new_comp.parent_compartment = comp;
+            comp = new_comp;
+        }
+        return comp;
+    }
+
+    private void __prepareExit(java.util.ArrayList<Object> exit_args) {
+        AsyncFetcherCompartment comp = __compartment;
+        while (comp != null) {
+            comp.exit_args = new java.util.ArrayList<>(exit_args);
+            comp = comp.parent_compartment;
+        }
+    }
+
+    private void __kernel(AsyncFetcherFrameEvent __e) {
+        // Route event to current state.
+        __router(__e);
+        // Drain any transitions queued by the handler.
+        while (__next_compartment != null) {
+            AsyncFetcherCompartment next_compartment = __next_compartment;
+            __next_compartment = null;
+            // Exit the current (leaf) state.
+            AsyncFetcherFrameEvent exit_event = new AsyncFetcherFrameEvent("<$", __compartment.exit_args);
+            __router(exit_event);
+            // Switch to the new compartment.
+            __compartment = next_compartment;
+            // Three-branch forward-event handling.
+            AsyncFetcherFrameEvent forward_event = next_compartment.forward_event;
+            next_compartment.forward_event = null;
+            if (forward_event == null) {
+                // No forwarded event — synthesize a fresh $>.
+                AsyncFetcherFrameEvent enter_event = new AsyncFetcherFrameEvent("$>", __compartment.enter_args);
+                __router(enter_event);
+            } else if (forward_event._message.equals("$>")) {
+                // Forwarded event IS $> — dispatch directly so the
+                // destination's $> handler receives the caller's payload.
+                __router(forward_event);
+            } else {
+                // Forwarded event is not $> — initialize the destination
+                // with a fresh $>, then dispatch the forward.
+                AsyncFetcherFrameEvent enter_event = new AsyncFetcherFrameEvent("$>", __compartment.enter_args);
+                __router(enter_event);
+                __router(forward_event);
+            }
+            for (AsyncFetcherFrameContext ctx : _context_stack) {
+                ctx._transitioned = true;
+            }
+        }
+    }
+
+    private void __router(AsyncFetcherFrameEvent __e) {
+        if (__compartment.state.equals("Ready")) {
+            _state_Ready(__e, __compartment);
+        }
+    }
+
+    private void __transition(AsyncFetcherCompartment next) {
+        __next_compartment = next;
+    }
+
+    public java.util.concurrent.CompletableFuture<String> fetch(String key) {
+        AsyncFetcherFrameEvent __e = new AsyncFetcherFrameEvent("fetch", new java.util.ArrayList<>(java.util.Arrays.asList(key)));
+        AsyncFetcherFrameContext __ctx = new AsyncFetcherFrameContext(__e, null);
+        _context_stack.add(__ctx);
+        try {
+            __kernel(_context_stack.get(_context_stack.size() - 1)._event);
+            String __result = (String) _context_stack.get(_context_stack.size() - 1)._return;
+            _context_stack.remove(_context_stack.size() - 1);
+            return java.util.concurrent.CompletableFuture.completedFuture(__result);
+        } catch (RuntimeException __frame_err) {
+            _context_stack.remove(_context_stack.size() - 1);
+            throw __frame_err;
+        }
+    }
+
+    private void _state_Ready(AsyncFetcherFrameEvent __e, AsyncFetcherCompartment compartment) {
+        if (__e._message.equals("fetch")) {
+            this._s_Ready_hdl_user_fetch(__e, compartment);
+            return;
+        }
+    }
+
+    private void _s_Ready_hdl_user_fetch(AsyncFetcherFrameEvent __e, AsyncFetcherCompartment compartment) {
+        String key = (String) __e._parameters.get(0);
+        _context_stack.get(_context_stack.size() - 1)._return = this.cache.get(key);
+    }
+
+    public java.util.concurrent.CompletableFuture<Void> init() {
+        return java.util.concurrent.CompletableFuture.completedFuture(null);
+    }
+}

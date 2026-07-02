@@ -1,0 +1,239 @@
+---
+source: framec/tests/csharp_snapshots.rs
+expression: "compile_fixture(\"14_async_attribute\", \"csharp\")"
+---
+using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+
+class AsyncFetcherFrameEvent {
+    public string _message;
+    public List<object> _parameters;
+
+    public AsyncFetcherFrameEvent(string message) {
+        this._message = message;
+        this._parameters = new List<object>();
+    }
+
+    public AsyncFetcherFrameEvent(string message, List<object> parameters) {
+        this._message = message;
+        this._parameters = parameters;
+    }
+}
+
+class AsyncFetcherFrameContext {
+    public AsyncFetcherFrameEvent _event;
+    public object? _return;
+    public Dictionary<string, object> _data;
+    public bool _transitioned = false;
+
+    public AsyncFetcherFrameContext(AsyncFetcherFrameEvent ev, object? defaultReturn = null) {
+        this._event = ev;
+        this._return = defaultReturn;
+        this._data = new Dictionary<string, object>();
+        this._transitioned = false;
+    }
+}
+
+class AsyncFetcherCompartment {
+    public string state;
+    public List<object> state_args;
+    public Dictionary<string, object> state_vars;
+    public List<object> enter_args;
+    public List<object> exit_args;
+    public AsyncFetcherFrameEvent? forward_event;
+    public AsyncFetcherCompartment? parent_compartment;
+
+    public AsyncFetcherCompartment(string state) {
+        this.state = state;
+        this.state_args = new List<object>();
+        this.state_vars = new Dictionary<string, object>();
+        this.enter_args = new List<object>();
+        this.exit_args = new List<object>();
+        this.forward_event = null;
+        this.parent_compartment = null;
+    }
+
+    public AsyncFetcherCompartment Copy() {
+        AsyncFetcherCompartment c = new AsyncFetcherCompartment(this.state);
+        c.state_args = new List<object>(this.state_args);
+        c.state_vars = new Dictionary<string, object>(this.state_vars);
+        c.enter_args = new List<object>(this.enter_args);
+        c.exit_args = new List<object>(this.exit_args);
+        c.forward_event = this.forward_event;
+        c.parent_compartment = this.parent_compartment;
+        return c;
+    }
+}
+
+public class AsyncFetcher {
+    private _AsyncFetcherMachine machine;
+    private bool busy;
+    private string? in_flight;
+
+    public AsyncFetcher() {
+        this.machine = new _AsyncFetcherMachine();
+        this.busy = false;
+        this.in_flight = null;
+    }
+
+    public void __frame_init() {
+    }
+
+    public static AsyncFetcher __create() {
+        AsyncFetcher c = new AsyncFetcher();
+        c.__frame_init();
+        return c;
+    }
+
+    public async Task<string> fetch(string key) {
+        if (this.busy) {
+            throw new System.InvalidOperationException(
+                $"E703: system busy: cannot enter 'fetch' while '{this.in_flight}' is in flight"
+            );
+        }
+        this.busy = true;
+        this.in_flight = "fetch";
+        try {
+            return await this.machine.fetch(key);
+        } finally {
+            this.in_flight = null;
+            this.busy = false;
+        }
+    }
+
+    public async Task init() {
+        await this.machine.init();
+    }
+}
+
+
+class _AsyncFetcherMachine {
+    private List<AsyncFetcherCompartment> _state_stack;
+    private AsyncFetcherCompartment __compartment;
+    private AsyncFetcherCompartment? __next_compartment;
+    private List<AsyncFetcherFrameContext> _context_stack;
+    public Cache cache = nil;
+
+    public _AsyncFetcherMachine() {
+        _state_stack = new List<AsyncFetcherCompartment>();
+        _context_stack = new List<AsyncFetcherFrameContext>();
+        this.__compartment = __prepareEnter("Ready", new List<object>(), new List<object>());
+        this.__next_compartment = null;
+    }
+
+    public void __frame_init() {
+    }
+
+    public static _AsyncFetcherMachine __create() {
+        _AsyncFetcherMachine c = new _AsyncFetcherMachine();
+        c.__frame_init();
+        return c;
+    }
+
+    private Dictionary<string, List<string>> hsm_chain() {
+        return new Dictionary<string, List<string>> {
+            { "Ready", new List<string> { "Ready" } },
+        };
+    }
+    private AsyncFetcherCompartment __prepareEnter(string leaf, List<object> state_args, List<object> enter_args) {
+        AsyncFetcherCompartment? comp = null;
+        foreach (string name in hsm_chain()[leaf]) {
+            AsyncFetcherCompartment new_comp = new AsyncFetcherCompartment(name);
+            new_comp.state_args = new List<object>(state_args);
+            new_comp.enter_args = new List<object>(enter_args);
+            new_comp.parent_compartment = comp;
+            comp = new_comp;
+        }
+        return comp!;
+    }
+
+    private void __prepareExit(List<object> exit_args) {
+        AsyncFetcherCompartment? comp = __compartment;
+        while (comp != null) {
+            comp.exit_args = new List<object>(exit_args);
+            comp = comp.parent_compartment;
+        }
+    }
+
+    private async Task __kernel(AsyncFetcherFrameEvent __e) {
+        // Route event to current state.
+        await __router(__e);
+        // Drain any transitions queued by the handler.
+        while (__next_compartment != null) {
+            AsyncFetcherCompartment next_compartment = __next_compartment!;
+            __next_compartment = null;
+            // Exit the current (leaf) state.
+            AsyncFetcherFrameEvent exit_event = new AsyncFetcherFrameEvent("<$", __compartment.exit_args);
+            await __router(exit_event);
+            // Switch to the new compartment.
+            __compartment = next_compartment;
+            // Three-branch forward-event handling.
+            AsyncFetcherFrameEvent? forward_event = next_compartment.forward_event;
+            next_compartment.forward_event = null;
+            if (forward_event == null) {
+                // No forwarded event — synthesize a fresh $>.
+                AsyncFetcherFrameEvent enter_event = new AsyncFetcherFrameEvent("$>", __compartment.enter_args);
+                await __router(enter_event);
+            } else if (forward_event._message == "$>") {
+                // Forwarded event IS $> — dispatch directly so the
+                // destination's $> handler receives the caller's payload.
+                await __router(forward_event);
+            } else {
+                // Forwarded event is not $> — initialize the destination
+                // with a fresh $>, then dispatch the forward.
+                AsyncFetcherFrameEvent enter_event = new AsyncFetcherFrameEvent("$>", __compartment.enter_args);
+                await __router(enter_event);
+                await __router(forward_event);
+            }
+            foreach (var ctx in _context_stack) {
+                ctx._transitioned = true;
+            }
+        }
+    }
+
+    private async Task __router(AsyncFetcherFrameEvent __e) {
+        if (__compartment.state == "Ready") {
+            await _state_Ready(__e, __compartment);
+        }
+    }
+
+    private void __transition(AsyncFetcherCompartment next) {
+        __next_compartment = next;
+    }
+
+    public async Task<string> fetch(string key) {
+        AsyncFetcherFrameEvent __e = new AsyncFetcherFrameEvent("fetch", new List<object> { key });
+        AsyncFetcherFrameContext __ctx = new AsyncFetcherFrameContext(__e, null);
+        _context_stack.Add(__ctx);
+        try {
+            await __kernel(_context_stack[_context_stack.Count - 1]._event);
+            var __result = (string) _context_stack[_context_stack.Count - 1]._return;
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+            return __result;
+        } catch {
+            _context_stack.RemoveAt(_context_stack.Count - 1);
+            throw;
+        }
+    }
+
+    private async Task _state_Ready(AsyncFetcherFrameEvent __e, AsyncFetcherCompartment compartment) {
+        if (__e._message == "fetch") {
+            await this._s_Ready_hdl_user_fetch(__e, compartment);
+            return;
+        }
+    }
+
+    private async Task _s_Ready_hdl_user_fetch(AsyncFetcherFrameEvent __e, AsyncFetcherCompartment compartment) {
+        string key = (string) __e._parameters[0];
+        _context_stack[_context_stack.Count - 1]._return = this.cache.get(key);
+    }
+
+    public async Task init() {
+        var __e = new AsyncFetcherFrameEvent("$>", new List<object>());
+        var __ctx = new AsyncFetcherFrameContext(__e, null);
+        _context_stack.Add(__ctx);
+        await __kernel(__e);
+        _context_stack.RemoveAt(_context_stack.Count - 1);
+    }
+}

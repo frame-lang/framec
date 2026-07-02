@@ -405,3 +405,10 @@ fn issue94_persist_emits_nlohmann_include() {
          but the output references it.\n--- generated source ---\n{plain}"
     );
 }
+
+/// RFC-0043 `@@[async]` — golden coverage of the casing/machine layering (issue
+/// #111 R1). Previously the async emission core had zero snapshot coverage.
+#[test]
+fn async_attribute() {
+    insta::assert_snapshot!(compile_fixture("14_async_attribute", "cpp"));
+}

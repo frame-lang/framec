@@ -1,0 +1,230 @@
+---
+source: framec/tests/typescript_snapshots.rs
+expression: "compile_fixture(\"14_async_attribute\", \"typescript\")"
+---
+class AsyncFetcherFrameEvent {
+    public _message: string;
+    public _parameters: any[];
+
+    constructor(message: string, parameters: any[]) {
+        this._message = message;
+        this._parameters = parameters;
+    }
+}
+
+
+class AsyncFetcherFrameContext {
+    public event: AsyncFetcherFrameEvent;
+    public _return: any;
+    public _data: Record<string, any>;
+    public _transitioned: boolean;
+
+    constructor(event: AsyncFetcherFrameEvent, default_return: any) {
+        this.event = event;
+        this._return = default_return;
+        this._data = {  };
+        this._transitioned = false;
+    }
+}
+
+
+class AsyncFetcherCompartment {
+    public state: string;
+    public state_args: any[];
+    public state_vars: Record<string, any>;
+    public enter_args: any[];
+    public exit_args: any[];
+    public forward_event: any;
+    public parent_compartment: AsyncFetcherCompartment | null;
+
+    constructor(state: string, parent_compartment: AsyncFetcherCompartment | null = null) {
+        this.state = state;
+        this.state_args = [];
+        this.state_vars = {  };
+        this.enter_args = [];
+        this.exit_args = [];
+        this.forward_event = null;
+        this.parent_compartment = parent_compartment;
+    }
+
+    public copy(): AsyncFetcherCompartment {
+        const c = new AsyncFetcherCompartment(this.state, this.parent_compartment);
+        c.state_args = {...this.state_args};
+        c.state_vars = {...this.state_vars};
+        c.enter_args = {...this.enter_args};
+        c.exit_args = {...this.exit_args};
+        c.forward_event = this.forward_event;
+        return c;
+    }
+}
+
+
+export class AsyncFetcher {
+    private machine: _AsyncFetcherMachine;
+    private busy: boolean;
+    private in_flight: string | null;
+
+    constructor() {
+        this.machine = new _AsyncFetcherMachine();
+        this.busy = false;
+        this.in_flight = null;
+    }
+
+    _frame_init(): void {
+    }
+
+    static _create(): AsyncFetcher {
+        const c = new AsyncFetcher();
+        c._frame_init();
+        return c;
+    }
+
+    public async fetch(key: string): Promise<string> {
+        if (this.busy) {
+            throw new Error(
+                `E703: system busy: cannot enter 'fetch' while '${this.in_flight}' is in flight`
+            );
+        }
+        this.busy = true;
+        this.in_flight = "fetch";
+        try {
+            return await this.machine.fetch(key);
+        } finally {
+            this.in_flight = null;
+            this.busy = false;
+        }
+    }
+
+    public async init(): Promise<void> {
+        await this.machine.init();
+    }
+}
+
+
+class _AsyncFetcherMachine {
+    private _state_stack: Array<any>;
+    private __compartment: AsyncFetcherCompartment;
+    private __next_compartment: AsyncFetcherCompartment | null;
+    private _context_stack: Array<any>;
+    private cache: Cache = nil;
+
+    constructor() {
+        this._state_stack = [];
+        this._context_stack = [];
+        this.__compartment = this.__prepareEnter("Ready", [], []);
+        this.__next_compartment = null;
+    }
+
+    _frame_init(): void {
+    }
+
+    static _create(): _AsyncFetcherMachine {
+        const c = new _AsyncFetcherMachine();
+        c._frame_init();
+        return c;
+    }
+
+    static readonly _HSM_CHAIN: Record<string, string[]> = {
+        "Ready": ["Ready"],
+    };
+    private __prepareEnter(leaf: string, state_args: any[], enter_args: any[]): AsyncFetcherCompartment {
+        let comp: AsyncFetcherCompartment | null = null;
+        for (const name of _AsyncFetcherMachine._HSM_CHAIN[leaf]) {
+            const new_comp = new AsyncFetcherCompartment(name);
+            new_comp.state_args = [...state_args];
+            new_comp.enter_args = [...enter_args];
+            new_comp.parent_compartment = comp;
+            comp = new_comp;
+        }
+        return comp!;
+    }
+
+    private __prepareExit(exit_args: any[]) {
+        let comp: AsyncFetcherCompartment | null = this.__compartment;
+        while (comp !== null) {
+            comp.exit_args = [...exit_args];
+            comp = comp.parent_compartment;
+        }
+    }
+
+    private async __kernel(__e: AsyncFetcherFrameEvent): Promise<void> {
+        // Route event to current state.
+        await this.__router(__e);
+        // Drain any transitions queued by the handler.
+        while (this.__next_compartment !== null) {
+            const next_compartment = this.__next_compartment;
+            this.__next_compartment = null;
+            // Exit the current (leaf) state.
+            const exit_event = new AsyncFetcherFrameEvent("<$", this.__compartment.exit_args);
+            await this.__router(exit_event);
+            // Switch to the new compartment.
+            this.__compartment = next_compartment;
+            // Three-branch forward-event handling.
+            const forward_event = next_compartment.forward_event;
+            next_compartment.forward_event = null;
+            if (forward_event === null) {
+                // No forwarded event — synthesize a fresh $>.
+                const enter_event = new AsyncFetcherFrameEvent("$>", this.__compartment.enter_args);
+                await this.__router(enter_event);
+            } else if (forward_event._message === "$>") {
+                // Forwarded event IS $> — dispatch directly so the
+                // destination's $> handler receives the caller's payload.
+                await this.__router(forward_event);
+            } else {
+                // Forwarded event is not $> — initialize the destination
+                // with a fresh $>, then dispatch the forward.
+                const enter_event = new AsyncFetcherFrameEvent("$>", this.__compartment.enter_args);
+                await this.__router(enter_event);
+                await this.__router(forward_event);
+            }
+            for (const ctx of this._context_stack) {
+                ctx._transitioned = true;
+            }
+        }
+    }
+
+    private async __router(__e: AsyncFetcherFrameEvent): Promise<void> {
+        const handler_name = `_state_${this.__compartment.state}`;
+        const handler = (this as any)[handler_name];
+        if (handler) {
+            await handler.call(this, __e, this.__compartment);
+        }
+    }
+
+    private __transition(next_compartment: AsyncFetcherCompartment) {
+        this.__next_compartment = next_compartment;
+    }
+
+    public async fetch(key: string): Promise<string> {
+        const __e = new AsyncFetcherFrameEvent("fetch", [key]);
+        const __ctx = new AsyncFetcherFrameContext(__e, null);
+        this._context_stack.push(__ctx);
+        try {
+            await this.__kernel(__e);
+            return this._context_stack.pop()!._return;
+        } catch (__frame_err) {
+            this._context_stack.pop();
+            throw __frame_err;
+        }
+    }
+
+    private async _state_Ready(__e: AsyncFetcherFrameEvent, compartment: AsyncFetcherCompartment): Promise<void> {
+        if (__e._message === "fetch") {
+            await this._s_Ready_hdl_user_fetch(__e, compartment);
+            return;
+        }
+    }
+
+    private async _s_Ready_hdl_user_fetch(__e: AsyncFetcherFrameEvent, compartment: AsyncFetcherCompartment): Promise<void> {
+        const key = __e._parameters[0];
+        this._context_stack[this._context_stack.length - 1]._return = this.cache.get(key);
+    }
+
+    public async init(): Promise<void> {
+        const __e = new AsyncFetcherFrameEvent("$>", []);
+        const __ctx = new AsyncFetcherFrameContext(__e, null);
+        this._context_stack.push(__ctx);
+        await this.__kernel(__e);
+        this._context_stack.pop();
+    }
+}

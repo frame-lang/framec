@@ -1,0 +1,330 @@
+---
+source: framec/tests/cpp_snapshots.rs
+expression: "compile_fixture(\"14_async_attribute\", \"cpp\")"
+---
+#include <string>
+#include <unordered_map>
+#include <vector>
+#include <any>
+#include <memory>
+#include <functional>
+#include <stdexcept>
+#include <cstdlib>
+#include <cstdio>
+
+class AsyncFetcherFrameEvent {
+public:
+    std::string _message;
+    std::vector<std::any> _parameters;
+
+    AsyncFetcherFrameEvent(const std::string& message, std::vector<std::any> params = {})
+        : _message(message), _parameters(std::move(params)) {}
+};
+
+class AsyncFetcherFrameContext {
+public:
+    AsyncFetcherFrameEvent _event;
+    std::any _return;
+    std::unordered_map<std::string, std::any> _data;
+    bool _transitioned = false;
+
+    AsyncFetcherFrameContext(AsyncFetcherFrameEvent event, std::any default_return = {})
+        : _event(std::move(event)), _return(std::move(default_return)) {}
+};
+
+class AsyncFetcherCompartment {
+public:
+    std::string state;
+    std::vector<std::any> state_args;
+    std::unordered_map<std::string, std::any> state_vars;
+    std::vector<std::any> enter_args;
+    std::vector<std::any> exit_args;
+    std::unique_ptr<AsyncFetcherFrameEvent> forward_event;
+    std::shared_ptr<AsyncFetcherCompartment> parent_compartment;
+
+    explicit AsyncFetcherCompartment(const std::string& state) : state(state) {}
+};
+
+#ifndef FRAME_TASK_H
+#define FRAME_TASK_H
+#include <coroutine>
+#include <exception>
+#include <utility>
+
+template <typename T>
+struct FrameTask {
+    struct promise_type {
+        T value_{};
+        std::exception_ptr err_;
+        FrameTask get_return_object() noexcept { return FrameTask{std::coroutine_handle<promise_type>::from_promise(*this)}; }
+        std::suspend_never initial_suspend() noexcept { return {}; }
+        std::suspend_always final_suspend() noexcept { return {}; }
+        template <typename U> void return_value(U&& v) { value_ = std::forward<U>(v); }
+        void unhandled_exception() noexcept { err_ = std::current_exception(); }
+    };
+    std::coroutine_handle<promise_type> h_;
+    explicit FrameTask(std::coroutine_handle<promise_type> h) noexcept : h_(h) {}
+    FrameTask(const FrameTask&) = delete;
+    FrameTask& operator=(const FrameTask&) = delete;
+    FrameTask(FrameTask&& o) noexcept : h_(std::exchange(o.h_, {})) {}
+    FrameTask& operator=(FrameTask&& o) noexcept { if (this != &o) { if (h_) h_.destroy(); h_ = std::exchange(o.h_, {}); } return *this; }
+    ~FrameTask() { if (h_) h_.destroy(); }
+    bool await_ready() const noexcept { return h_.done(); }
+    void await_suspend(std::coroutine_handle<>) const noexcept {}
+    T await_resume() { if (h_.promise().err_) std::rethrow_exception(h_.promise().err_); return std::move(h_.promise().value_); }
+    T get() { if (h_.promise().err_) std::rethrow_exception(h_.promise().err_); return std::move(h_.promise().value_); }
+};
+
+template <>
+struct FrameTask<void> {
+    struct promise_type {
+        std::exception_ptr err_;
+        FrameTask get_return_object() noexcept { return FrameTask{std::coroutine_handle<promise_type>::from_promise(*this)}; }
+        std::suspend_never initial_suspend() noexcept { return {}; }
+        std::suspend_always final_suspend() noexcept { return {}; }
+        void return_void() noexcept {}
+        void unhandled_exception() noexcept { err_ = std::current_exception(); }
+    };
+    std::coroutine_handle<promise_type> h_;
+    explicit FrameTask(std::coroutine_handle<promise_type> h) noexcept : h_(h) {}
+    FrameTask(const FrameTask&) = delete;
+    FrameTask& operator=(const FrameTask&) = delete;
+    FrameTask(FrameTask&& o) noexcept : h_(std::exchange(o.h_, {})) {}
+    FrameTask& operator=(FrameTask&& o) noexcept { if (this != &o) { if (h_) h_.destroy(); h_ = std::exchange(o.h_, {}); } return *this; }
+    ~FrameTask() { if (h_) h_.destroy(); }
+    bool await_ready() const noexcept { return h_.done(); }
+    void await_suspend(std::coroutine_handle<>) const noexcept {}
+    void await_resume() { if (h_.promise().err_) std::rethrow_exception(h_.promise().err_); }
+    void get() { if (h_.promise().err_) std::rethrow_exception(h_.promise().err_); }
+};
+#endif // FRAME_TASK_H
+
+class _AsyncFetcherMachine {
+private:
+    std::vector<std::shared_ptr<AsyncFetcherCompartment>> _state_stack;
+    std::shared_ptr<AsyncFetcherCompartment> __compartment;
+    std::shared_ptr<AsyncFetcherCompartment> __next_compartment;
+    std::vector<AsyncFetcherFrameContext> _context_stack;
+
+    std::shared_ptr<AsyncFetcherCompartment> __prepareEnter(const std::string& leaf, std::vector<std::any> state_args, std::vector<std::any> enter_args) {
+        std::shared_ptr<AsyncFetcherCompartment> comp = nullptr;
+        auto chain_table = hsm_chain();
+        for (const auto& name : chain_table[leaf]) {
+            auto new_comp = std::make_shared<AsyncFetcherCompartment>(name);
+            new_comp->state_args = state_args;
+            new_comp->enter_args = enter_args;
+            new_comp->parent_compartment = comp;
+            comp = new_comp;
+        }
+        return comp;
+
+    }
+
+    void __prepareExit(std::vector<std::any> exit_args) {
+        std::shared_ptr<AsyncFetcherCompartment> comp = __compartment;
+        while (comp) {
+            comp->exit_args = exit_args;
+            comp = comp->parent_compartment;
+        }
+
+    }
+
+    FrameTask<void> __kernel(AsyncFetcherFrameEvent& __e) {
+        // Route event to current state.
+        co_await __router(__e);
+        // Drain any transitions queued by the handler.
+        while (__next_compartment) {
+            auto next_compartment = std::move(__next_compartment);
+            // Exit the current (leaf) state.
+            AsyncFetcherFrameEvent __exit_event("<$", __compartment->exit_args);
+            co_await __router(__exit_event);
+            // Switch to the new compartment.
+            __compartment = std::move(next_compartment);
+            // Three-branch forward-event handling.
+            if (!__compartment->forward_event) {
+                // No forwarded event — synthesize a fresh $>.
+                AsyncFetcherFrameEvent __enter_event("$>", __compartment->enter_args);
+                co_await __router(__enter_event);
+            } else if (__compartment->forward_event->_message == "$>") {
+                // Forwarded event IS $> — dispatch directly so the
+                // destination's $> handler receives the caller's payload.
+                auto forward_event = std::move(__compartment->forward_event);
+                co_await __router(*forward_event);
+            } else {
+                // Forwarded event is not $> — initialize the destination
+                // with a fresh $>, then dispatch the forward.
+                auto forward_event = std::move(__compartment->forward_event);
+                AsyncFetcherFrameEvent __enter_event("$>", __compartment->enter_args);
+                co_await __router(__enter_event);
+                co_await __router(*forward_event);
+            }
+            for (auto& ctx : _context_stack) {
+                ctx._transitioned = true;
+            }
+        }
+
+    }
+
+    FrameTask<void> __router(AsyncFetcherFrameEvent& __e) {
+        if (__compartment->state == "Ready") {
+            co_await _state_Ready(__e, __compartment);
+        }
+
+    }
+
+    void __transition(std::shared_ptr<AsyncFetcherCompartment> next) {
+        __next_compartment = next;
+
+    }
+
+    FrameTask<void> _state_Ready(AsyncFetcherFrameEvent& __e, std::shared_ptr<AsyncFetcherCompartment> compartment) {
+        if (__e._message == "fetch") {
+            co_await this->_s_Ready_hdl_user_fetch(__e, compartment);
+            co_return;
+        }
+
+    }
+
+    FrameTask<void> _s_Ready_hdl_user_fetch(AsyncFetcherFrameEvent& __e, std::shared_ptr<AsyncFetcherCompartment> compartment) {
+        auto key = std::any_cast<std::string>(__e._parameters[0]);
+        _context_stack.back()._return = std::any(this->cache.get(key));
+        co_return;
+
+    }
+
+public:
+    Cache cache = nil;
+
+    _AsyncFetcherMachine() {
+        __compartment = __prepareEnter("Ready", std::vector<std::any>{}, std::vector<std::any>{});
+    }
+
+    static _AsyncFetcherMachine __create() {
+        _AsyncFetcherMachine c;
+        return c;
+    }
+
+    std::unordered_map<std::string, std::vector<std::string>> hsm_chain() {
+        return {
+            {"Ready", {"Ready"} },
+        };
+    }
+
+    FrameTask<std::string> fetch(std::string key) {
+        AsyncFetcherFrameEvent __e("fetch", std::vector<std::any>{key});
+        AsyncFetcherFrameContext __ctx(std::move(__e), std::any(std::string()));
+        _context_stack.push_back(std::move(__ctx));
+        struct __CtxGuard { decltype(_context_stack)& s; ~__CtxGuard() { s.pop_back(); } } __ctx_guard{_context_stack};
+        co_await __kernel(_context_stack.back()._event);
+        auto __result = std::any_cast<std::string>(std::move(_context_stack.back()._return));
+        co_return __result;
+
+    }
+
+    FrameTask<void> init() {
+        AsyncFetcherFrameEvent __e("$>");
+        AsyncFetcherFrameContext __ctx(std::move(__e));
+        _context_stack.push_back(std::move(__ctx));
+        co_await __kernel(_context_stack.back()._event);
+        _context_stack.pop_back();
+        co_return;
+
+    }
+};
+
+
+#ifndef FRAME_TASK_H
+#define FRAME_TASK_H
+#include <coroutine>
+#include <exception>
+#include <utility>
+
+template <typename T>
+struct FrameTask {
+    struct promise_type {
+        T value_{};
+        std::exception_ptr err_;
+        FrameTask get_return_object() noexcept { return FrameTask{std::coroutine_handle<promise_type>::from_promise(*this)}; }
+        std::suspend_never initial_suspend() noexcept { return {}; }
+        std::suspend_always final_suspend() noexcept { return {}; }
+        template <typename U> void return_value(U&& v) { value_ = std::forward<U>(v); }
+        void unhandled_exception() noexcept { err_ = std::current_exception(); }
+    };
+    std::coroutine_handle<promise_type> h_;
+    explicit FrameTask(std::coroutine_handle<promise_type> h) noexcept : h_(h) {}
+    FrameTask(const FrameTask&) = delete;
+    FrameTask& operator=(const FrameTask&) = delete;
+    FrameTask(FrameTask&& o) noexcept : h_(std::exchange(o.h_, {})) {}
+    FrameTask& operator=(FrameTask&& o) noexcept { if (this != &o) { if (h_) h_.destroy(); h_ = std::exchange(o.h_, {}); } return *this; }
+    ~FrameTask() { if (h_) h_.destroy(); }
+    bool await_ready() const noexcept { return h_.done(); }
+    void await_suspend(std::coroutine_handle<>) const noexcept {}
+    T await_resume() { if (h_.promise().err_) std::rethrow_exception(h_.promise().err_); return std::move(h_.promise().value_); }
+    T get() { if (h_.promise().err_) std::rethrow_exception(h_.promise().err_); return std::move(h_.promise().value_); }
+};
+
+template <>
+struct FrameTask<void> {
+    struct promise_type {
+        std::exception_ptr err_;
+        FrameTask get_return_object() noexcept { return FrameTask{std::coroutine_handle<promise_type>::from_promise(*this)}; }
+        std::suspend_never initial_suspend() noexcept { return {}; }
+        std::suspend_always final_suspend() noexcept { return {}; }
+        void return_void() noexcept {}
+        void unhandled_exception() noexcept { err_ = std::current_exception(); }
+    };
+    std::coroutine_handle<promise_type> h_;
+    explicit FrameTask(std::coroutine_handle<promise_type> h) noexcept : h_(h) {}
+    FrameTask(const FrameTask&) = delete;
+    FrameTask& operator=(const FrameTask&) = delete;
+    FrameTask(FrameTask&& o) noexcept : h_(std::exchange(o.h_, {})) {}
+    FrameTask& operator=(FrameTask&& o) noexcept { if (this != &o) { if (h_) h_.destroy(); h_ = std::exchange(o.h_, {}); } return *this; }
+    ~FrameTask() { if (h_) h_.destroy(); }
+    bool await_ready() const noexcept { return h_.done(); }
+    void await_suspend(std::coroutine_handle<>) const noexcept {}
+    void await_resume() { if (h_.promise().err_) std::rethrow_exception(h_.promise().err_); }
+    void get() { if (h_.promise().err_) std::rethrow_exception(h_.promise().err_); }
+};
+#endif // FRAME_TASK_H
+
+class AsyncFetcher {
+private:
+    _AsyncFetcherMachine machine;
+    bool busy;
+    std::string in_flight;
+
+public:
+    AsyncFetcher() {
+        this->busy = false;
+    }
+
+    static AsyncFetcher __create() {
+        AsyncFetcher c;
+        return c;
+    }
+
+    FrameTask<std::string> fetch(std::string key) {
+        if (this->busy) {
+        #if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
+            throw std::runtime_error(
+                "E703: system busy: cannot enter 'fetch' while '" + this->in_flight + "' is in flight"
+            );
+        #else
+            std::fprintf(stderr, "E703: system busy: cannot enter 'fetch' while '%s' is in flight\n", this->in_flight.c_str());
+            std::abort();
+        #endif
+        }
+        this->busy = true;
+        this->in_flight = "fetch";
+        struct __E703Guard { bool* __b; std::string* __f; ~__E703Guard() { __f->clear(); *__b = false; } } __e703_guard{&this->busy, &this->in_flight};
+        auto __result = co_await this->machine.fetch(key);
+        co_return __result;
+
+    }
+
+    FrameTask<void> init() {
+        co_await this->machine.init();
+        co_return;
+
+    }
+};

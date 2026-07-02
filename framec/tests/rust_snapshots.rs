@@ -1241,3 +1241,10 @@ fn bug129_bare_context_read_return_no_double_paren() {
         "redundant double paren regressed for @@:return (#129):\n{gen}"
     );
 }
+
+/// RFC-0043 `@@[async]` — golden coverage of the casing/machine layering (issue
+/// #111 R1). Previously the async emission core had zero snapshot coverage.
+#[test]
+fn async_attribute() {
+    insta::assert_snapshot!(compile_fixture("14_async_attribute", "rust"));
+}

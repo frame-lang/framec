@@ -22,7 +22,9 @@ const SRC: &str = r#"
 /// the next occurrence of `boundary` (or end) — a crude "method body" slice good
 /// enough to check kernel placement without a full parser.
 fn slice_between<'a>(code: &'a str, marker: &str, boundary: &str) -> &'a str {
-    let start = code.find(marker).unwrap_or_else(|| panic!("no `{marker}` in:\n{code}"));
+    let start = code
+        .find(marker)
+        .unwrap_or_else(|| panic!("no `{marker}` in:\n{code}"));
     let rest = &code[start..];
     match rest[marker.len()..].find(boundary) {
         Some(off) => &rest[..marker.len() + off],

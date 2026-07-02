@@ -1,0 +1,336 @@
+---
+source: framec/tests/rust_snapshots.rs
+expression: "compile_fixture(\"14_async_attribute\", \"rust\")"
+---
+#[allow(dead_code)]
+#[allow(non_camel_case_types)]
+#[allow(non_snake_case)]
+#[allow(unused_variables)]
+#[allow(unused_mut)]
+#[allow(unused_imports)]
+#[allow(clippy::assign_op_pattern)]
+#[allow(clippy::clone_on_copy)]
+#[allow(clippy::derivable_impls)]
+#[allow(clippy::match_single_binding)]
+#[allow(clippy::needless_return)]
+#[allow(clippy::new_without_default)]
+#[allow(clippy::single_match)]
+mod _async_fetcher_framec {
+    use super::*;
+    extern crate alloc;
+    use alloc::{vec, format};
+    #[derive(Clone, Debug)]
+    #[allow(dead_code, non_camel_case_types)]
+    enum AsyncFetcherFrameEvent {
+        Fetch { key: String },
+        FrameEnter {},
+        FrameExit {},
+    }
+
+    #[derive(Clone)]
+    #[allow(dead_code, non_camel_case_types)]
+    enum AsyncFetcherFrameReturn {
+        Fetch(String),
+        _Lifecycle(alloc::rc::Rc<dyn core::any::Any>),
+    }
+
+    #[allow(dead_code)]
+    impl AsyncFetcherFrameEvent {
+        fn name(&self) -> &'static str {
+            match self {
+                AsyncFetcherFrameEvent::Fetch { .. } => "fetch",
+                AsyncFetcherFrameEvent::FrameEnter { .. } => "$>",
+                AsyncFetcherFrameEvent::FrameExit { .. } => "<$",
+            }
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    #[allow(dead_code, non_camel_case_types)]
+    enum AsyncFetcherFrameValue {
+        Int(i64),
+        Float(f64),
+        Bool(bool),
+        Str(String),
+        List(Vec<Self>),
+        Dict(alloc::collections::BTreeMap<String, Self>),
+    }
+
+    #[allow(dead_code, non_camel_case_types)]
+    struct AsyncFetcherFrameContext {
+        event: alloc::rc::Rc<AsyncFetcherFrameEvent>,
+        _return: Option<AsyncFetcherFrameReturn>,
+        _data: alloc::collections::BTreeMap<String, AsyncFetcherFrameValue>,
+        _transitioned: bool,
+    }
+
+    impl AsyncFetcherFrameContext {
+        fn new(event: alloc::rc::Rc<AsyncFetcherFrameEvent>, default_return: Option<AsyncFetcherFrameReturn>) -> Self {
+            Self {
+                event,
+                _return: default_return,
+                _data: alloc::collections::BTreeMap::new(),
+                _transitioned: false,
+            }
+        }
+    }
+
+    #[allow(dead_code, non_camel_case_types)]
+    #[derive(Clone)]
+    enum AsyncFetcherStateContext {
+        Ready,
+        __NoContext,
+    }
+
+    impl Default for AsyncFetcherStateContext {
+        fn default() -> Self {
+            AsyncFetcherStateContext::Ready
+        }
+    }
+
+    #[allow(dead_code, non_camel_case_types)]
+    #[derive(Clone)]
+    struct AsyncFetcherCompartment {
+        state: String,
+        state_context: AsyncFetcherStateContext,
+        forward_event: Option<AsyncFetcherFrameEvent>,
+        parent_compartment: Option<Box<AsyncFetcherCompartment>>,
+    }
+
+    impl AsyncFetcherCompartment {
+        fn new(state: &str) -> Self {
+            let state_context = match state {
+                "Ready" => AsyncFetcherStateContext::Ready,
+                _ => AsyncFetcherStateContext::__NoContext,
+            };
+            Self {
+                state: state.to_string(),
+                state_context,
+                forward_event: None,
+                parent_compartment: None,
+            }
+        }
+    }
+
+    #[allow(dead_code)]
+    pub struct AsyncFetcher {
+        machine: _AsyncFetcherMachine,
+        busy: bool,
+        in_flight: Option<&'static str>,
+    }
+
+    #[allow(non_snake_case)]
+    impl AsyncFetcher {
+        pub fn new() -> Self {
+            Self {
+                machine: _AsyncFetcherMachine::new(),
+                busy: false,
+                in_flight: None,
+            }
+        }
+
+        pub fn __create() -> Self {
+            Self::new()
+        }
+
+        pub async fn fetch(&mut self, key: String) -> Result<String, FrameE703Error> {
+            if self.busy {
+                return Err(FrameE703Error {
+                    method: "fetch",
+                    in_flight: self.in_flight,
+                });
+            }
+            self.busy = true;
+            self.in_flight = Some("fetch");
+            let _guard = _GateGuard {
+                busy: &mut self.busy,
+                in_flight: &mut self.in_flight,
+            };
+            Ok(self.machine.fetch(key).await)
+        }
+
+        pub async fn init(&mut self) {
+            self.machine.init().await;
+        }
+    }
+
+
+    struct _GateGuard<'a> {
+        busy: &'a mut bool,
+        in_flight: &'a mut Option<&'static str>,
+    }
+
+    impl<'a> Drop for _GateGuard<'a> {
+        fn drop(&mut self) {
+            *self.busy = false;
+            *self.in_flight = None;
+        }
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct FrameE703Error {
+        pub method: &'static str,
+        pub in_flight: Option<&'static str>,
+    }
+
+    impl core::fmt::Display for FrameE703Error {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            write!(
+                f,
+                "E703: system busy: cannot enter '{}' while {:?} is in flight",
+                self.method, self.in_flight
+            )
+        }
+    }
+
+    impl std::error::Error for FrameE703Error {}
+
+    #[allow(dead_code)]
+    struct _AsyncFetcherMachine {
+        _state_stack: Vec<AsyncFetcherCompartment>,
+        __compartment: AsyncFetcherCompartment,
+        __next_compartment: Option<AsyncFetcherCompartment>,
+        _context_stack: Vec<AsyncFetcherFrameContext>,
+        pub cache: Cache,
+    }
+
+    #[allow(non_snake_case)]
+    impl _AsyncFetcherMachine {
+        pub fn new() -> Self {
+            Self {
+                _state_stack: Vec::new(),
+                _context_stack: Vec::new(),
+                cache: nil,
+                __compartment: AsyncFetcherCompartment::new("Ready"),
+                __next_compartment: None,
+            }
+        }
+
+        pub fn __create() -> Self {
+            let mut c = Self::new();
+            c.__compartment = c.__prepareEnter("Ready");
+            let __e = alloc::rc::Rc::new(AsyncFetcherFrameEvent::FrameEnter {});
+            let __ctx = AsyncFetcherFrameContext::new(alloc::rc::Rc::clone(&__e), None);
+            c._context_stack.push(__ctx);
+            c.__kernel(&__e);
+            c._context_stack.pop();
+            c
+        }
+
+        fn __hsm_chain(&mut self, leaf: &str) -> &'static [&'static str] {
+            match leaf {
+                "Ready" => &["Ready"],
+                _ => &[],
+            }
+        }
+
+        fn __prepareEnter(&mut self, leaf: &str) -> AsyncFetcherCompartment {
+            let chain = self.__hsm_chain(leaf);
+            let mut comp: Option<AsyncFetcherCompartment> = None;
+            for name in chain.iter() {
+                let mut new_comp = AsyncFetcherCompartment::new(name);
+                if let Some(parent) = comp.take() {
+                    new_comp.parent_compartment = Some(Box::new(parent));
+                }
+                comp = Some(new_comp);
+            }
+            comp.expect("chain must contain at least the leaf state")
+        }
+
+        fn __kernel<'a>(&'a mut self, __e: &'a alloc::rc::Rc<AsyncFetcherFrameEvent>) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + 'a>> {
+            Box::pin(async move {
+                // Route event to current state.
+                self.__router(__e).await;
+                // Drain any transitions queued by the handler.
+                while self.__next_compartment.is_some() {
+                    let next_compartment = self.__next_compartment.take().expect("invariant: while-loop guard checked is_some()");
+                    // Exit the current (leaf) state. RFC-0025.1: exit args live in the
+                    // source state's typed ctx (written at the transition site), so the
+                    // synthesized `<$` event carries no payload.
+                    let exit_event = alloc::rc::Rc::new(AsyncFetcherFrameEvent::FrameExit {});
+                    self.__router(&exit_event).await;
+                    // Switch to the new compartment.
+                    self.__compartment = next_compartment;
+                    // Three-branch forward-event handling (RFC-0025 Track B.1: forward
+                    // event is matched on enum variant; $> recognition is now a
+                    // structural match, not a string compare).
+                    match self.__compartment.forward_event.take() {
+                        None => {
+                            // No forwarded event — synthesize a fresh $>. RFC-0025.1:
+                            // enter args live in the destination's typed ctx.
+                            let enter_event = alloc::rc::Rc::new(AsyncFetcherFrameEvent::FrameEnter {});
+                            self.__router(&enter_event).await;
+                        }
+                        Some(fwd) if matches!(fwd, AsyncFetcherFrameEvent::FrameEnter { .. }) => {
+                            // Forwarded event IS $> — dispatch directly so the
+                            // destination's $> handler receives the caller's payload.
+                            let fwd_rc = alloc::rc::Rc::new(fwd);
+                            self.__router(&fwd_rc).await;
+                        }
+                        Some(fwd) => {
+                            // Forwarded event is not $> — initialize the destination
+                            // with a fresh $>, then dispatch the forward.
+                            let enter_event = alloc::rc::Rc::new(AsyncFetcherFrameEvent::FrameEnter {});
+                            self.__router(&enter_event).await;
+                            let fwd_rc = alloc::rc::Rc::new(fwd);
+                            self.__router(&fwd_rc).await;
+                        }
+                    }
+                    for ctx in self._context_stack.iter_mut() {
+                        ctx._transitioned = true;
+                    }
+                }
+            })
+        }
+
+        fn __router<'a>(&'a mut self, __e: &'a alloc::rc::Rc<AsyncFetcherFrameEvent>) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + 'a>> {
+            Box::pin(async move {
+                let __ev: &AsyncFetcherFrameEvent = __e;
+                match self.__compartment.state.as_str() {
+                    "Ready" => self._state_Ready(__ev).await,
+                    _ => {}
+                }
+            })
+        }
+
+        fn __transition(&mut self, next_compartment: AsyncFetcherCompartment) {
+            self.__next_compartment = Some(next_compartment);
+        }
+
+        pub async fn fetch(&mut self, key: String) -> String {
+            let __e = alloc::rc::Rc::new(AsyncFetcherFrameEvent::Fetch { key: key.clone() });
+            let mut __ctx = AsyncFetcherFrameContext::new(alloc::rc::Rc::clone(&__e), None);
+            self._context_stack.push(__ctx);
+            self.__kernel(&__e).await;
+            let __ctx = self._context_stack.pop().expect("invariant: handler must have pushed a context before reading return");
+            match __ctx._return {
+                Some(AsyncFetcherFrameReturn::Fetch(v)) => v,
+                Some(AsyncFetcherFrameReturn::_Lifecycle(v)) => v.downcast_ref::<String>().cloned().unwrap_or_default(),
+                _ => Default::default(),
+            }
+        }
+
+        async fn _state_Ready(&mut self, __e: &AsyncFetcherFrameEvent) {
+            match __e {
+                AsyncFetcherFrameEvent::Fetch { key, .. } => {
+                    self._s_Ready_hdl_user_fetch(__e, key.clone()).await;
+                }
+                _ => {}
+            }
+        }
+
+        async fn _s_Ready_hdl_user_fetch(&mut self, __e: &AsyncFetcherFrameEvent, key: String) {
+            let __return_val = AsyncFetcherFrameReturn::Fetch(self.cache.get(key));
+                            if let Some(ctx) = self._context_stack.last_mut() { ctx._return = Some(__return_val); }
+        }
+
+        pub async fn init(&mut self) {
+            let __e = alloc::rc::Rc::new(AsyncFetcherFrameEvent::FrameEnter {});
+            let __ctx = AsyncFetcherFrameContext::new(alloc::rc::Rc::clone(&__e), None);
+            self._context_stack.push(__ctx);
+            self.__kernel(&__e).await;
+            self._context_stack.pop();
+        }
+    }
+}
+pub use _async_fetcher_framec::*;

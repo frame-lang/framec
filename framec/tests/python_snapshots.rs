@@ -298,3 +298,10 @@ fn rfc0033_state_var_call_initializers_python() {
         );
     }
 }
+
+/// RFC-0043 `@@[async]` — golden coverage of the casing/machine layering (issue
+/// #111 R1). Previously the async emission core had zero snapshot coverage.
+#[test]
+fn async_attribute() {
+    insta::assert_snapshot!(compile_fixture("14_async_attribute", "python_3"));
+}

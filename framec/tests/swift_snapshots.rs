@@ -72,3 +72,10 @@ fn no_persist() {
 fn lifecycle_args() {
     insta::assert_snapshot!(compile_fixture("13_lifecycle_args", "swift"));
 }
+
+/// RFC-0043 `@@[async]` — golden coverage of the casing/machine layering (issue
+/// #111 R1). Previously the async emission core had zero snapshot coverage.
+#[test]
+fn async_attribute() {
+    insta::assert_snapshot!(compile_fixture("14_async_attribute", "swift"));
+}

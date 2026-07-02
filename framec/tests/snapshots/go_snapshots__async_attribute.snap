@@ -1,0 +1,175 @@
+---
+source: framec/tests/go_snapshots.rs
+expression: "compile_fixture(\"14_async_attribute\", \"go\")"
+---
+type AsyncFetcherFrameEvent struct {
+    _message    string
+    _parameters []any
+}
+
+type AsyncFetcherFrameContext struct {
+    _event  AsyncFetcherFrameEvent
+    _return       any
+    _data         map[string]any
+    _transitioned bool
+}
+
+type AsyncFetcherCompartment struct {
+    state            string
+    stateArgs        []any
+    stateVars        map[string]any
+    enterArgs        []any
+    exitArgs         []any
+    forwardEvent     *AsyncFetcherFrameEvent
+    parentCompartment *AsyncFetcherCompartment
+}
+
+func newAsyncFetcherCompartment(state string) *AsyncFetcherCompartment {
+    return &AsyncFetcherCompartment{
+        state:    state,
+        stateArgs: []any{},
+        stateVars: make(map[string]any),
+        enterArgs: []any{},
+        exitArgs:  []any{},
+    }
+}
+
+func (c *AsyncFetcherCompartment) copy() *AsyncFetcherCompartment {
+    nc := &AsyncFetcherCompartment{
+        state: c.state,
+        stateArgs: append([]any{}, c.stateArgs...),
+        stateVars: make(map[string]any),
+        enterArgs: append([]any{}, c.enterArgs...),
+        exitArgs:  append([]any{}, c.exitArgs...),
+        forwardEvent:     c.forwardEvent,
+        parentCompartment: c.parentCompartment,
+    }
+    for k, v := range c.stateVars { nc.stateVars[k] = v }
+    return nc
+}
+
+type AsyncFetcher struct {
+    _state_stack []*AsyncFetcherCompartment
+    __compartment *AsyncFetcherCompartment
+    __next_compartment *AsyncFetcherCompartment
+    _context_stack []AsyncFetcherFrameContext
+    cache Cache
+}
+
+func NewAsyncFetcher() *AsyncFetcher {
+    s := &AsyncFetcher{}
+    s._state_stack = make([]*AsyncFetcherCompartment, 0)
+    s._context_stack = make([]AsyncFetcherFrameContext, 0)
+    s.cache = nil
+    s.__compartment = s.__prepareEnter("Ready", []any{}, []any{})
+    s.__next_compartment = nil
+    return s
+}
+
+func CreateAsyncFetcher() *AsyncFetcher {
+    c := NewAsyncFetcher()
+    return c
+}
+
+func (s *AsyncFetcher) hsm_chain() map[string][]string {
+    return map[string][]string{
+        "Ready": {"Ready"},
+    }
+}
+func (s *AsyncFetcher) __prepareEnter(leaf string, state_args []any, enter_args []any) *AsyncFetcherCompartment {
+    var comp *AsyncFetcherCompartment = nil
+    for _, name := range s.hsm_chain()[leaf] {
+        new_comp := newAsyncFetcherCompartment(name)
+        new_comp.stateArgs = append([]any{}, state_args...)
+        new_comp.enterArgs = append([]any{}, enter_args...)
+        new_comp.parentCompartment = comp
+        comp = new_comp
+    }
+    return comp
+}
+
+func (s *AsyncFetcher) __prepareExit(exit_args []any) {
+    comp := s.__compartment
+    for comp != nil {
+        comp.exitArgs = append([]any{}, exit_args...)
+        comp = comp.parentCompartment
+    }
+    _ = comp
+}
+
+func (s *AsyncFetcher) __kernel(__e *AsyncFetcherFrameEvent) {
+    // Route event to current state.
+    s.__router(__e)
+    // Drain any transitions queued by the handler.
+    for s.__next_compartment != nil {
+        next_compartment := s.__next_compartment
+        s.__next_compartment = nil
+        // Exit the current (leaf) state.
+        exit_event := &AsyncFetcherFrameEvent{_message: "<$", _parameters: s.__compartment.exitArgs}
+        s.__router(exit_event)
+        // Switch to the new compartment.
+        s.__compartment = next_compartment
+        // Three-branch forward-event handling.
+        forward_event := next_compartment.forwardEvent
+        next_compartment.forwardEvent = nil
+        if forward_event == nil {
+            // No forwarded event — synthesize a fresh $>.
+            enter_event := &AsyncFetcherFrameEvent{_message: "$>", _parameters: s.__compartment.enterArgs}
+            s.__router(enter_event)
+        } else if forward_event._message == "$>" {
+            // Forwarded event IS $> — dispatch directly so the
+            // destination's $> handler receives the caller's payload.
+            s.__router(forward_event)
+        } else {
+            // Forwarded event is not $> — initialize the destination
+            // with a fresh $>, then dispatch the forward.
+            enter_event := &AsyncFetcherFrameEvent{_message: "$>", _parameters: s.__compartment.enterArgs}
+            s.__router(enter_event)
+            s.__router(forward_event)
+        }
+        for i := range s._context_stack {
+            s._context_stack[i]._transitioned = true
+        }
+    }
+}
+
+func (s *AsyncFetcher) __router(__e *AsyncFetcherFrameEvent) {
+    switch s.__compartment.state {
+    case "Ready":
+        s._state_Ready(__e, s.__compartment)
+    }
+}
+
+func (s *AsyncFetcher) __transition(next *AsyncFetcherCompartment) {
+    s.__next_compartment = next
+}
+
+func (s *AsyncFetcher) Fetch(key string) string {
+    __e := AsyncFetcherFrameEvent{_message: "fetch", _parameters: []any{key}}
+    __ctx := AsyncFetcherFrameContext{_event: __e, _data: make(map[string]any)}
+    s._context_stack = append(s._context_stack, __ctx)
+    defer func() { s._context_stack = s._context_stack[:len(s._context_stack)-1] }()
+    s.__kernel(&s._context_stack[len(s._context_stack)-1]._event)
+    var __result string
+    if __rv := s._context_stack[len(s._context_stack)-1]._return; __rv != nil { __result = __rv.(string) }
+    return __result
+}
+
+func (s *AsyncFetcher) _state_Ready(__e *AsyncFetcherFrameEvent, compartment *AsyncFetcherCompartment) {
+    if __e._message == "fetch" {
+        s._s_Ready_hdl_user_fetch(__e, compartment)
+        return
+    }
+}
+
+func (s *AsyncFetcher) _s_Ready_hdl_user_fetch(__e *AsyncFetcherFrameEvent, compartment *AsyncFetcherCompartment) {
+    key := __e._parameters[0].(string)
+    _ = key
+    {
+    s._context_stack[len(s._context_stack)-1]._return = s.cache.get(key)
+    }
+}
+
+func (s *AsyncFetcher) Init() {
+    // async init not yet implemented for Go
+}
