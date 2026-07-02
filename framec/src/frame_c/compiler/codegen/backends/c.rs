@@ -671,8 +671,20 @@ impl LanguageBackend for CBackend {
 
             CodegenNode::FieldAccess { object, field } => {
                 let obj_str = self.emit(object, ctx);
-                // If object is self or a pointer, use ->
-                if obj_str == "self" || obj_str.starts_with("self->") || obj_str.contains("->") {
+                // `self` is a pointer (`Sensor *self`) — decided structurally
+                // from the node kind. A chained access is a pointer when it
+                // carries a `->` in *code* (not inside a string literal): the
+                // `->` test now skips literals/comments (#155), so a native
+                // string like `arr["a->b"]` no longer forces `->`.
+                let is_pointer = matches!(**object, CodegenNode::SelfRef)
+                    || obj_str == "self"
+                    || crate::frame_c::compiler::codegen::codegen_utils::find_outside_strings_and_comments(
+                        &obj_str,
+                        crate::frame_c::visitors::TargetLanguage::C,
+                        "->",
+                    )
+                    .is_some();
+                if is_pointer {
                     format!("{}->{}", obj_str, field)
                 } else {
                     format!("{}.{}", obj_str, field)

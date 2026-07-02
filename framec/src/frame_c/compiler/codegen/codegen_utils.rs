@@ -818,7 +818,7 @@ pub(crate) fn erlang_lower_self_field_access(code: &str, data_var: &str) -> Stri
 /// Returns 1 for ASCII and any unexpected continuation byte (which
 /// should never appear at an iteration boundary since we always
 /// advance by full character widths).
-fn utf8_char_len(first_byte: u8) -> usize {
+pub(crate) fn utf8_char_len(first_byte: u8) -> usize {
     if first_byte < 0x80 {
         1
     } else if first_byte < 0xC0 {

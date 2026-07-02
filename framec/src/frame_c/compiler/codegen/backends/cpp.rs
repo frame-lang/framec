@@ -153,25 +153,68 @@ fn word_boundary_prefix_replace(haystack: &str, needle: &str, prefix: &str) -> S
     result
 }
 
+/// Rewrite `return` statements in an async C++ method body to `co_return`.
+///
+/// This is a TEXT pass by necessity, not a structural one: a user's *native*
+/// `return x;` (Frame passes native code through verbatim — it is a `NativeBlock`,
+/// not a `CodegenNode::Return`) must also become `co_return` for a C++23
+/// coroutine, and framec never parses native code into `Return` nodes. So the
+/// pass runs over the emitted body.
+///
+/// #155 makes it statement-aware and string/comment-safe via the dogfooded
+/// `SyntaxSkipper`: only a `return` at a *statement start* (body start, or right
+/// after `;`/`{`/`}`/newline, ignoring whitespace) that lies OUTSIDE a string
+/// literal or comment is rewritten. So a `return` inside a raw string, a `/* */`
+/// comment, or the middle of an expression is left untouched, and `returns` /
+/// `return_` identifiers are excluded by the trailing-boundary check.
 fn rewrite_return_to_co_return(body: &str) -> String {
+    use crate::frame_c::compiler::codegen::codegen_utils::utf8_char_len;
+    let skipper = crate::frame_c::compiler::native_region_scanner::create_skipper(
+        crate::frame_c::visitors::TargetLanguage::Cpp,
+    );
+    let bytes = body.as_bytes();
+    let end = bytes.len();
     let mut out = String::with_capacity(body.len() + 64);
-    for line in body.split_inclusive('\n') {
-        let trimmed_start = line.trim_start();
-        let indent_len = line.len() - trimmed_start.len();
-        // Bail if this isn't a `return` statement. Comment lines
-        // (`// ...`) already leave `return` inside a non-statement
-        // position, so a strict prefix check is safe.
-        let bare_return = trimmed_start == "return;" || trimmed_start == "return;\n";
-        let return_with_val = trimmed_start.starts_with("return ")
-            && !trimmed_start.starts_with("return_")  // defensive: no identifier collision
-            && !trimmed_start.starts_with("returns");
-        if bare_return || return_with_val {
-            out.push_str(&line[..indent_len]);
-            out.push_str("co_");
-            out.push_str(trimmed_start);
-        } else {
-            out.push_str(line);
+    let mut i = 0usize;
+    // A statement can begin at the very start of the body.
+    let mut at_stmt_start = true;
+    while i < end {
+        if let Some(next) = skipper.skip_string(bytes, i, end) {
+            out.push_str(&body[i..next]);
+            i = next;
+            at_stmt_start = false;
+            continue;
         }
+        if let Some(next) = skipper.skip_comment(bytes, i, end) {
+            out.push_str(&body[i..next]);
+            i = next;
+            // a comment doesn't consume the statement position it sits before
+            continue;
+        }
+        if at_stmt_start && body[i..].starts_with("return") {
+            let after = i + "return".len();
+            let boundary = matches!(
+                bytes.get(after),
+                None | Some(b' ') | Some(b'\t') | Some(b'\n') | Some(b'\r') | Some(b';')
+            );
+            if boundary {
+                out.push_str("co_return");
+                i = after;
+                at_stmt_start = false;
+                continue;
+            }
+        }
+        // Track statement-start: reset to true after `;`/`{`/`}`/newline, and
+        // keep it across intervening whitespace.
+        match bytes[i] {
+            b';' | b'{' | b'}' | b'\n' => at_stmt_start = true,
+            b' ' | b'\t' | b'\r' => {}
+            _ => at_stmt_start = false,
+        }
+        let w = utf8_char_len(bytes[i]);
+        let next = (i + w).min(end);
+        out.push_str(&body[i..next]);
+        i = next;
     }
     out
 }
