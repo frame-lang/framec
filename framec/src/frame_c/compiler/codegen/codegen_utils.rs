@@ -524,6 +524,19 @@ pub fn find_outside_strings_and_comments(
     lang: crate::frame_c::visitors::TargetLanguage,
     needle: &str,
 ) -> Option<usize> {
+    find_outside_strings_and_comments_from(code, lang, needle, 0)
+}
+
+/// As [`find_outside_strings_and_comments`], but begins scanning at byte offset
+/// `start`. `start` MUST be a code-region position (not inside a string literal
+/// or comment) — callers walking match-by-match satisfy this by resuming just
+/// past a previous code-region match.
+pub fn find_outside_strings_and_comments_from(
+    code: &str,
+    lang: crate::frame_c::visitors::TargetLanguage,
+    needle: &str,
+    start: usize,
+) -> Option<usize> {
     let nb = needle.as_bytes();
     if nb.is_empty() {
         return None;
@@ -531,7 +544,7 @@ pub fn find_outside_strings_and_comments(
     let skipper = crate::frame_c::compiler::native_region_scanner::create_skipper(lang);
     let bytes = code.as_bytes();
     let end = bytes.len();
-    let mut i = 0usize;
+    let mut i = start.min(end);
     while i < end {
         if let Some(next) = skipper.skip_string(bytes, i, end) {
             i = next;

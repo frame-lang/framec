@@ -138,6 +138,12 @@ pub struct FrameValidator {
     /// harvests these into `CompileResult.warnings` so the CLI can
     /// surface them to the user without failing the build.
     warnings: Vec<ValidationError>,
+    /// Target language, used to pick the native-region `SyntaxSkipper` when a
+    /// validation check must scan native operation/handler/initializer text for
+    /// Frame sigils or identifiers without tripping on string literals/comments
+    /// (#149). Defaults to Python (a neutral skipper); the pipeline sets the
+    /// real target via `with_target`.
+    target: crate::frame_c::visitors::TargetLanguage,
 }
 
 impl FrameValidator {
@@ -145,7 +151,15 @@ impl FrameValidator {
         Self {
             errors: Vec::new(),
             warnings: Vec::new(),
+            target: crate::frame_c::visitors::TargetLanguage::Python3,
         }
+    }
+
+    /// Set the target language used to pick the native-region skipper for
+    /// string/comment-aware validation scans (#149).
+    pub fn with_target(mut self, target: crate::frame_c::visitors::TargetLanguage) -> Self {
+        self.target = target;
+        self
     }
 
     /// Drain the accumulated warnings out of the validator. Used by
@@ -462,33 +476,60 @@ impl FrameValidator {
         //
         // `@@:system.state` is reserved unless it is a complete token
         // continued by `.name` (a word-bounded `.name` suffix).
-        fn has_reserved_system_state(code: &str) -> bool {
+        // #149: operation bodies are native code, so `@@:system.state` sigils
+        // are only real references in CODE regions — a mention inside a native
+        // string literal or comment is not one. Walk via the language
+        // `SyntaxSkipper` and test each occurrence's suffix, instead of a raw
+        // `code.find()` that would false-positive on a commented/quoted sigil.
+        fn has_reserved_system_state(
+            code: &str,
+            lang: crate::frame_c::visitors::TargetLanguage,
+        ) -> bool {
             let needle = "@@:system.state";
-            let mut from = 0;
-            while let Some(rel) = code[from..].find(needle) {
-                let after = from + rel + needle.len();
-                let rest = &code[after..];
-                let state_is_token = rest
-                    .chars()
-                    .next()
-                    .map_or(true, |c| !c.is_ascii_alphanumeric() && c != '_');
-                let is_name = rest.starts_with(".name")
-                    && rest[5..]
+            let skipper = crate::frame_c::compiler::native_region_scanner::create_skipper(lang);
+            let bytes = code.as_bytes();
+            let end = bytes.len();
+            let mut i = 0;
+            while i < end {
+                if let Some(n) = skipper.skip_string(bytes, i, end) {
+                    i = n;
+                    continue;
+                }
+                if let Some(n) = skipper.skip_comment(bytes, i, end) {
+                    i = n;
+                    continue;
+                }
+                if code[i..].starts_with(needle) {
+                    let after = i + needle.len();
+                    let rest = &code[after..];
+                    let state_is_token = rest
                         .chars()
                         .next()
                         .map_or(true, |c| !c.is_ascii_alphanumeric() && c != '_');
-                if state_is_token && !is_name {
-                    return true;
+                    let is_name = rest.starts_with(".name")
+                        && rest[5..]
+                            .chars()
+                            .next()
+                            .map_or(true, |c| !c.is_ascii_alphanumeric() && c != '_');
+                    if state_is_token && !is_name {
+                        return true;
+                    }
+                    i = after;
+                    continue;
                 }
-                from = after;
+                i += 1;
             }
             false
         }
 
+        // Target for the native-region skipper (set by the pipeline via
+        // `with_target`; defaults to Python — a neutral skipper — otherwise).
+        let scan_lang = self.target;
+
         for operation in &system.operations {
             self.validate_operation_no_frame_statements(operation);
             if let Some(ref code) = operation.body.code {
-                if has_reserved_system_state(code) {
+                if has_reserved_system_state(code, scan_lang) {
                     self.errors.push(
                         ValidationError::new(
                             "E608",
@@ -501,7 +542,14 @@ impl FrameValidator {
                         .with_span(operation.span.clone()),
                     );
                 }
-                if operation.is_static && code.contains("@@:system.state.name") {
+                if operation.is_static
+                    && crate::frame_c::compiler::codegen::codegen_utils::find_outside_strings_and_comments(
+                        code,
+                        scan_lang,
+                        "@@:system.state.name",
+                    )
+                    .is_some()
+                {
                     self.errors.push(
                         ValidationError::new(
                             "E421",
@@ -618,13 +666,22 @@ pub fn validate_frame_source(
 
 /// Count arguments in a parenthesized argument string like "(a, b, c)".
 /// Returns 0 for "()" or empty.
-/// Whether `ident` appears as a whole identifier inside `text`. Used by
-/// E418 to detect domain-field initializers that reference a domain-kind
-/// system parameter (e.g. `value: int = initial`).
-pub(super) fn identifier_appears_in(text: &str, ident: &str) -> bool {
+/// Whether `ident` appears as a whole identifier inside `text` — used by E418 to
+/// detect a domain-field initializer that references a domain-kind system param
+/// (e.g. `value: int = initial`).
+///
+/// #149: string/comment-safe (via the target `SyntaxSkipper`) and it does NOT
+/// count a member access — `foo.initial` is `foo`'s member, not a reference to
+/// param `initial`, and `= "initial"` is a string literal, not a reference.
+pub(super) fn identifier_appears_in(
+    text: &str,
+    ident: &str,
+    lang: crate::frame_c::visitors::TargetLanguage,
+) -> bool {
     if ident.is_empty() {
         return false;
     }
+    let skipper = crate::frame_c::compiler::native_region_scanner::create_skipper(lang);
     let bytes = text.as_bytes();
     let key = ident.as_bytes();
     let n = bytes.len();
@@ -633,9 +690,22 @@ pub(super) fn identifier_appears_in(text: &str, ident: &str) -> bool {
         return false;
     }
     let mut i = 0;
-    while i + m <= n {
-        if &bytes[i..i + m] == key {
-            let prev_ok = i == 0 || !(bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_');
+    while i < n {
+        if let Some(next) = skipper.skip_string(bytes, i, n) {
+            i = next;
+            continue;
+        }
+        if let Some(next) = skipper.skip_comment(bytes, i, n) {
+            i = next;
+            continue;
+        }
+        if i + m <= n && &bytes[i..i + m] == key {
+            // Left boundary: not a word char, and not a `.` (that would be a
+            // member access `something.ident`, not the bare identifier).
+            let prev_ok = i == 0
+                || !(bytes[i - 1].is_ascii_alphanumeric()
+                    || bytes[i - 1] == b'_'
+                    || bytes[i - 1] == b'.');
             let next_ok =
                 i + m == n || !(bytes[i + m].is_ascii_alphanumeric() || bytes[i + m] == b'_');
             if prev_ok && next_ok {

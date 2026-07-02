@@ -535,7 +535,7 @@ impl FrameValidator {
                 let matches_init = system.domain.iter().any(|v| {
                     v.initializer_text
                         .as_deref()
-                        .map(|t| identifier_appears_in(t, dp))
+                        .map(|t| identifier_appears_in(t, dp, self.target))
                         .unwrap_or(false)
                 });
                 if !matches_field && !matches_init {

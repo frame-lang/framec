@@ -92,8 +92,19 @@ impl FrameValidator {
                 let mut flagged = false;
                 for prefix in &prefixes {
                     let mut search_from = 0usize;
-                    while let Some(rel) = code[search_from..].find(prefix.as_str()) {
-                        let abs = search_from + rel;
+                    // #149: only a `self.field =` in a CODE region is a real
+                    // assignment — a match inside a native string literal
+                    // (`log("self.count = done")`) or comment is not. Scan via
+                    // the target's SyntaxSkipper. `search_from` always resumes at
+                    // a code position (just past a prior code-region match).
+                    while let Some(abs) =
+                        crate::frame_c::compiler::codegen::codegen_utils::find_outside_strings_and_comments_from(
+                            code,
+                            self.target,
+                            prefix.as_str(),
+                            search_from,
+                        )
+                    {
                         let after = &code[abs + prefix.len()..];
                         let trimmed = after.trim_start();
                         // Match `=` or augmented assignment, but NOT `==`.

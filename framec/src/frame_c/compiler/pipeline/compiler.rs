@@ -1226,7 +1226,7 @@ pub(crate) fn do_graphviz(c: &mut PipelineCtx) -> Option<CompileResult> {
     for system_ast in &mut system_asts {
         // Validate with shared arcanum
         let frame_ast = FrameAst::System(system_ast.clone());
-        let mut validator = FrameValidator::new();
+        let mut validator = FrameValidator::new().with_target(config.target);
         if let Err(errs) = validator.validate_with_arcanum(&frame_ast, &arcanum) {
             let errors = errs
                 .iter()
