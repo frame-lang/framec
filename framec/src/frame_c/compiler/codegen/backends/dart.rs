@@ -261,9 +261,7 @@ impl LanguageBackend for DartBackend {
                     // mutation. Compartment-init lines (`__compartment =
                     // __prepareEnter(...)`) must still run in the bare
                     // ctor so `@@!Foo()` shells are usable.
-                    let frame_init_only = rendered.contains("__kernel(")
-                        || rendered.contains("_context_stack.add(")
-                        || rendered.contains("_context_stack.removeLast(");
+                    let frame_init_only = matches!(stmt, CodegenNode::FrameInitBlock { .. });
                     if frame_init_only {
                         frame_init_lines.push(rendered);
                         continue;
@@ -694,7 +692,8 @@ impl LanguageBackend for DartBackend {
             }
 
             // ===== Native Code Preservation =====
-            CodegenNode::NativeBlock { code, span: _ } => {
+            CodegenNode::NativeBlock { code, span: _ }
+            | CodegenNode::FrameInitBlock { code, span: _ } => {
                 let indent = ctx.get_indent();
                 code.lines()
                     .map(|line| {
@@ -828,6 +827,7 @@ impl DartBackend {
                 | CodegenNode::Match { .. }
                 | CodegenNode::Comment { .. }
                 | CodegenNode::NativeBlock { .. }
+                | CodegenNode::FrameInitBlock { .. }
                 | CodegenNode::Empty
         )
     }

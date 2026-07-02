@@ -372,7 +372,8 @@ impl LanguageBackend for ErlangBackend {
                 format!("{}{{keep_state, Data}}", ind)
             }
 
-            CodegenNode::NativeBlock { code, span: _ } => {
+            CodegenNode::NativeBlock { code, span: _ }
+            | CodegenNode::FrameInitBlock { code, span: _ } => {
                 let indent = ctx.get_indent();
                 code.lines()
                     .map(|line| {

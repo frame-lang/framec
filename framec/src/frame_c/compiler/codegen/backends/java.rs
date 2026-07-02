@@ -363,10 +363,7 @@ impl LanguageBackend for JavaBackend {
                     // below). The `_context_stack = new ArrayList<>()`
                     // initializer must stay in the bare ctor so event
                     // dispatch later calls `_context_stack.add(...)`.
-                    let frame_init_only = rendered.contains("__kernel(")
-                        || rendered.contains("_context_stack.add(")
-                        || rendered.contains("_context_stack.remove(")
-                        || rendered.contains("_context_stack.get(");
+                    let frame_init_only = matches!(stmt, CodegenNode::FrameInitBlock { .. });
                     if frame_init_only {
                         frame_init_lines.push(rendered);
                         continue;
@@ -744,7 +741,7 @@ impl LanguageBackend for JavaBackend {
                 }
             }
 
-            CodegenNode::NativeBlock { code, .. } => {
+            CodegenNode::NativeBlock { code, .. } | CodegenNode::FrameInitBlock { code, .. } => {
                 let indent = ctx.get_indent();
                 code.lines()
                     .map(|line| {
@@ -886,6 +883,7 @@ impl JavaBackend {
                 | CodegenNode::Match { .. }
                 | CodegenNode::Comment { .. }
                 | CodegenNode::NativeBlock { .. }
+                | CodegenNode::FrameInitBlock { .. }
                 | CodegenNode::Empty
         )
     }

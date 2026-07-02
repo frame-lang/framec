@@ -258,9 +258,7 @@ impl LanguageBackend for CSharpBackend {
                     // mutation. Compartment-init lines (`__compartment =
                     // __prepareEnter(...)`) must still run in the bare
                     // ctor so `@@!Foo()` shells are usable.
-                    let frame_init_only = rendered.contains("__kernel(")
-                        || rendered.contains("_context_stack.Add(")
-                        || rendered.contains("_context_stack.RemoveAt(");
+                    let frame_init_only = matches!(stmt, CodegenNode::FrameInitBlock { .. });
                     if frame_init_only {
                         frame_init_lines.push(rendered);
                         continue;
@@ -642,7 +640,7 @@ impl LanguageBackend for CSharpBackend {
                 }
             }
 
-            CodegenNode::NativeBlock { code, .. } => {
+            CodegenNode::NativeBlock { code, .. } | CodegenNode::FrameInitBlock { code, .. } => {
                 let indent = ctx.get_indent();
                 code.lines()
                     .map(|line| {
@@ -737,6 +735,7 @@ impl CSharpBackend {
                 | CodegenNode::Match { .. }
                 | CodegenNode::Comment { .. }
                 | CodegenNode::NativeBlock { .. }
+                | CodegenNode::FrameInitBlock { .. }
                 | CodegenNode::Empty
         )
     }

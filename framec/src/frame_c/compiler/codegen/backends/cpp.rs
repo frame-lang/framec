@@ -354,7 +354,7 @@ impl LanguageBackend for CppBackend {
                             // __skipInitialEnter flag) that don't fit the
                             // Method/Field/Constructor node shapes. Emit
                             // them alongside public members.
-                            || matches!(m, CodegenNode::NativeBlock { .. })
+                            || matches!(m, CodegenNode::NativeBlock { .. } | CodegenNode::FrameInitBlock { .. })
                     })
                     .collect();
 
@@ -529,10 +529,7 @@ impl LanguageBackend for CppBackend {
                     // must run in the bare ctor too so `@@!Foo()` shells are
                     // usable (with empty-args compartment); when it mentions
                     // params, the mentions_param branch below handles the split.
-                    let frame_init_only = rendered.contains("__kernel(")
-                        || rendered.contains("_context_stack.push_back(")
-                        || rendered.contains("_context_stack.pop_back(")
-                        || rendered.contains("_context_stack.back(");
+                    let frame_init_only = matches!(stmt, CodegenNode::FrameInitBlock { .. });
                     if frame_init_only {
                         frame_init_lines.push(rendered);
                         continue;
@@ -929,7 +926,7 @@ impl LanguageBackend for CppBackend {
                 }
             }
 
-            CodegenNode::NativeBlock { code, .. } => {
+            CodegenNode::NativeBlock { code, .. } | CodegenNode::FrameInitBlock { code, .. } => {
                 let indent = ctx.get_indent();
                 let mut out = code
                     .lines()
@@ -1047,6 +1044,7 @@ impl CppBackend {
                 | CodegenNode::Match { .. }
                 | CodegenNode::Comment { .. }
                 | CodegenNode::NativeBlock { .. }
+                | CodegenNode::FrameInitBlock { .. }
                 | CodegenNode::Empty
         )
     }

@@ -243,9 +243,7 @@ impl LanguageBackend for GoBackend {
                     // too so `@@!Foo()` shells are usable (with empty-args
                     // compartment); when it mentions params the
                     // mentions_param branch below handles the split.
-                    let frame_init_only = rendered.contains("__kernel(")
-                        || rendered.contains("_context_stack = append(")
-                        || rendered.contains("_context_stack = s._context_stack[:");
+                    let frame_init_only = matches!(stmt, CodegenNode::FrameInitBlock { .. });
                     if frame_init_only {
                         frame_init_lines.push(rendered);
                         continue;
@@ -604,7 +602,7 @@ impl LanguageBackend for GoBackend {
                 }
             }
 
-            CodegenNode::NativeBlock { code, .. } => {
+            CodegenNode::NativeBlock { code, .. } | CodegenNode::FrameInitBlock { code, .. } => {
                 let indent = ctx.get_indent();
                 code.lines()
                     .map(|line| {

@@ -270,6 +270,7 @@ impl LanguageBackend for CBackend {
                                 | CodegenNode::Match { .. }
                                 | CodegenNode::Comment { .. }
                                 | CodegenNode::NativeBlock { .. }
+                                | CodegenNode::FrameInitBlock { .. }
                                 | CodegenNode::Empty
                         )
                     {
@@ -809,7 +810,7 @@ impl LanguageBackend for CBackend {
                 }
             }
 
-            CodegenNode::NativeBlock { code, .. } => {
+            CodegenNode::NativeBlock { code, .. } | CodegenNode::FrameInitBlock { code, .. } => {
                 let indent = ctx.get_indent();
                 code.lines()
                     .map(|line| {

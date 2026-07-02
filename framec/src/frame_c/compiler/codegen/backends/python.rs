@@ -239,7 +239,8 @@ impl LanguageBackend for PythonBackend {
                 let has_executable_code = body.iter().any(|stmt| {
                     match stmt {
                         CodegenNode::Comment { .. } | CodegenNode::Empty => false,
-                        CodegenNode::NativeBlock { code, .. } => {
+                        CodegenNode::NativeBlock { code, .. }
+                        | CodegenNode::FrameInitBlock { code, .. } => {
                             // Check if native block has any non-comment, non-whitespace lines
                             code.lines().any(|line| {
                                 let trimmed = line.trim();
@@ -372,8 +373,7 @@ impl LanguageBackend for PythonBackend {
                 }
                 for stmt in body {
                     let rendered = self.emit(stmt, ctx);
-                    let create_only =
-                        rendered.contains("__fire_enter_cascade") || rendered.contains("__kernel");
+                    let create_only = matches!(stmt, CodegenNode::FrameInitBlock { .. });
                     if create_only {
                         frame_init_lines.push(rendered);
                         continue;
@@ -808,7 +808,8 @@ impl LanguageBackend for PythonBackend {
             }
 
             // ===== Native Code Preservation =====
-            CodegenNode::NativeBlock { code, span: _ } => {
+            CodegenNode::NativeBlock { code, span: _ }
+            | CodegenNode::FrameInitBlock { code, span: _ } => {
                 // Re-indent native code to current context
                 let lines: Vec<&str> = code.lines().collect();
                 if lines.is_empty() {

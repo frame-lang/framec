@@ -386,19 +386,12 @@ fn ensure_cpp_coroutine_terminator(body: &mut Vec<CodegenNode>) {
     }
 }
 
-/// Remove kernel call from constructor body (for async two-phase init).
+/// Remove the start-state `$>` kernel dispatch from the constructor body (for
+/// async two-phase init — the casing fires it after construction). The dispatch
+/// is the sole `FrameInitBlock` in the body (issue #152 marker), so this is an
+/// exact structural drop, not a text scan for `__kernel(`.
 fn remove_kernel_call_from_body(body: &mut Vec<CodegenNode>) {
-    body.retain(|node| {
-        if let CodegenNode::NativeBlock { code, .. } = node {
-            !code.contains("__kernel(")
-                && !code.contains("_kernel(self,")
-                && !code.contains("__fire_enter_cascade")
-                && !code.contains("__fire_exit_cascade")
-                && !code.contains("__process_transition_loop")
-        } else {
-            true
-        }
-    });
+    body.retain(|node| !matches!(node, CodegenNode::FrameInitBlock { .. }));
 }
 
 /// Walk method body and add `await` to dispatch calls in NativeBlock strings.

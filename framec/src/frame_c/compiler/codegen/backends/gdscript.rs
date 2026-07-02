@@ -376,8 +376,7 @@ impl LanguageBackend for GDScriptBackend {
                     if !rendered.ends_with('\n') {
                         rendered.push('\n');
                     }
-                    let frame_init_only =
-                        rendered.contains("__fire_enter_cascade") || rendered.contains("__kernel");
+                    let frame_init_only = matches!(stmt, CodegenNode::FrameInitBlock { .. });
                     if frame_init_only {
                         frame_init_lines.push(rendered);
                         continue;
@@ -779,7 +778,8 @@ impl LanguageBackend for GDScriptBackend {
             }
 
             // ===== Native Code Preservation =====
-            CodegenNode::NativeBlock { code, span: _ } => {
+            CodegenNode::NativeBlock { code, span: _ }
+            | CodegenNode::FrameInitBlock { code, span: _ } => {
                 let lines: Vec<&str> = code.lines().collect();
                 if lines.is_empty() {
                     return String::new();

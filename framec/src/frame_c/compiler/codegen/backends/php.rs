@@ -220,9 +220,7 @@ impl LanguageBackend for PhpBackend {
                         rendered.push('\n');
                     }
                     // RFC-0020: scope to kernel call + context-stack mutation.
-                    let frame_init_only = rendered.contains("$this->__kernel(")
-                        || rendered.contains("$this->_context_stack[]")
-                        || rendered.contains("array_pop($this->_context_stack");
+                    let frame_init_only = matches!(stmt, CodegenNode::FrameInitBlock { .. });
                     if frame_init_only {
                         frame_init_lines.push(rendered);
                         continue;
@@ -596,7 +594,8 @@ impl LanguageBackend for PhpBackend {
             }
 
             // ===== Native Code Preservation =====
-            CodegenNode::NativeBlock { code, span: _ } => {
+            CodegenNode::NativeBlock { code, span: _ }
+            | CodegenNode::FrameInitBlock { code, span: _ } => {
                 let indent = ctx.get_indent();
                 code.lines()
                     .map(|line| {
@@ -695,6 +694,7 @@ impl PhpBackend {
                 | CodegenNode::Match { .. }
                 | CodegenNode::Comment { .. }
                 | CodegenNode::NativeBlock { .. }
+                | CodegenNode::FrameInitBlock { .. }
                 | CodegenNode::Empty
         )
     }

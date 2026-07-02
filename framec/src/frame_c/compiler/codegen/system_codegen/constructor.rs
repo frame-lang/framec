@@ -1405,10 +1405,7 @@ self._context_stack.pop_back()"#,
                 TargetLanguage::Erlang => String::new(), // gen_statem: handled natively by erlang_system.rs
                 TargetLanguage::Graphviz => unreachable!(),
             };
-            body.push(CodegenNode::NativeBlock {
-                code: init_event_code,
-                span: None,
-            });
+            body.push(CodegenNode::frame_init(init_event_code));
         }
     }
 

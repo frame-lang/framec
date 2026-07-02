@@ -440,6 +440,14 @@ pub enum CodegenNode {
     /// This preserves user-written native code exactly as-is
     NativeBlock { code: String, span: Option<Span> },
 
+    /// A constructor-body statement that belongs in the factory
+    /// (`_create`/`create`) rather than the bare constructor — the start-state
+    /// `$>` kernel dispatch. Structurally identical to `NativeBlock` when
+    /// emitted; the distinct variant lets the constructor→factory split classify
+    /// it by node identity instead of scanning the rendered text for
+    /// `__kernel(` (issue #152). Only the origin (constructor.rs) creates it.
+    FrameInitBlock { code: String, span: Option<Span> },
+
     /// Placeholder for splice point
     SplicePoint { id: String },
 }
@@ -545,6 +553,12 @@ impl CodegenNode {
             code: code.to_string(),
             span: None,
         }
+    }
+
+    /// The start-state `$>` kernel dispatch — belongs in the factory, not the
+    /// bare constructor (issue #152). Renders exactly like `native()`.
+    pub fn frame_init(code: String) -> Self {
+        CodegenNode::FrameInitBlock { code, span: None }
     }
 
     pub fn transition(target: &str) -> Self {

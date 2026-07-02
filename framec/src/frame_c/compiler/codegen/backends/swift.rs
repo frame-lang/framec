@@ -264,9 +264,7 @@ impl LanguageBackend for SwiftBackend {
                     // `@@!Foo()` shells are usable. Bare `_context_stack`
                     // initialization stays in `init()`; only push/pop go
                     // to `__frame_init`.
-                    let frame_init_only = rendered.contains("__kernel(")
-                        || rendered.contains("_context_stack.append(")
-                        || rendered.contains("_context_stack.removeLast(");
+                    let frame_init_only = matches!(stmt, CodegenNode::FrameInitBlock { .. });
                     if frame_init_only {
                         frame_init_lines.push(rendered);
                         continue;
@@ -644,7 +642,7 @@ impl LanguageBackend for SwiftBackend {
                 }
             }
 
-            CodegenNode::NativeBlock { code, .. } => {
+            CodegenNode::NativeBlock { code, .. } | CodegenNode::FrameInitBlock { code, .. } => {
                 let indent = ctx.get_indent();
                 code.lines()
                     .map(|line| {

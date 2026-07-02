@@ -231,9 +231,7 @@ impl LanguageBackend for LuaBackend {
                         rendered.push('\n');
                     }
                     // RFC-0020: scope to kernel call + context-stack mutation.
-                    let frame_init_only = rendered.contains("self:__kernel(")
-                        || rendered.contains("self._context_stack[#self._context_stack")
-                        || rendered.contains("table.remove(self._context_stack");
+                    let frame_init_only = matches!(stmt, CodegenNode::FrameInitBlock { .. });
                     if frame_init_only {
                         frame_init_lines.push(rendered);
                         continue;
@@ -603,7 +601,8 @@ impl LanguageBackend for LuaBackend {
                 }
             }
 
-            CodegenNode::NativeBlock { code, span: _ } => {
+            CodegenNode::NativeBlock { code, span: _ }
+            | CodegenNode::FrameInitBlock { code, span: _ } => {
                 // Transform if/else { } to Lua if/then/end before emitting
                 let code = crate::frame_c::compiler::codegen::block_transform::transform_blocks(
                     code,

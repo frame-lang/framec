@@ -235,9 +235,7 @@ impl LanguageBackend for JavaScriptBackend {
                         rendered.push('\n');
                     }
                     // RFC-0020: scope to kernel call + context-stack mutation.
-                    let frame_init_only = rendered.contains("this.__kernel(")
-                        || rendered.contains("this._context_stack.push(")
-                        || rendered.contains("this._context_stack.pop(");
+                    let frame_init_only = matches!(stmt, CodegenNode::FrameInitBlock { .. });
                     if frame_init_only {
                         frame_init_lines.push(rendered);
                         continue;
@@ -648,7 +646,8 @@ impl LanguageBackend for JavaScriptBackend {
             }
 
             // ===== Native Code Preservation =====
-            CodegenNode::NativeBlock { code, span: _ } => {
+            CodegenNode::NativeBlock { code, span: _ }
+            | CodegenNode::FrameInitBlock { code, span: _ } => {
                 // Apply current indentation to each line of native code
                 let indent = ctx.get_indent();
                 code.lines()
@@ -746,7 +745,7 @@ impl JavaScriptBackend {
             CodegenNode::For { .. } |
             CodegenNode::Match { .. } |
             CodegenNode::Comment { .. } |
-            CodegenNode::NativeBlock { .. } |  // Native blocks have their own semicolons
+            CodegenNode::NativeBlock { .. } | CodegenNode::FrameInitBlock { .. } |  // Native blocks have their own semicolons
             CodegenNode::Empty
         )
     }

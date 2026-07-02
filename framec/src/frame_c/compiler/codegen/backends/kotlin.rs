@@ -385,10 +385,7 @@ impl LanguageBackend for KotlinBackend {
                     // mutation. Compartment-init lines (`__compartment =
                     // __prepareEnter(...)`) must still run in `init {}`
                     // so `@@!Foo()` shells are usable.
-                    let frame_init_only = rendered.contains("__kernel(")
-                        || rendered.contains("_context_stack.add(")
-                        || rendered.contains("_context_stack.removeAt(")
-                        || rendered.contains("_context_stack.removeLast(");
+                    let frame_init_only = matches!(stmt, CodegenNode::FrameInitBlock { .. });
                     if frame_init_only {
                         frame_init_lines.push(rendered);
                         continue;
@@ -751,7 +748,7 @@ impl LanguageBackend for KotlinBackend {
                 }
             }
 
-            CodegenNode::NativeBlock { code, .. } => {
+            CodegenNode::NativeBlock { code, .. } | CodegenNode::FrameInitBlock { code, .. } => {
                 let indent = ctx.get_indent();
                 code.lines()
                     .map(|line| {
