@@ -9,6 +9,35 @@
 
 use super::super::{FrameSegmentKind, SegmentMetadata};
 
+/// Identifier extent at the start of `rest`, via the dogfooded
+/// `ident_scan.frs` recognizer (issue #154 — one identifier automaton, not
+/// per-site `take_while` walks). Returns the identifier slice, or `""` when
+/// `rest` doesn't start with `[A-Za-z_]` (stricter than the old
+/// `take_while(alnum|_)`, which accepted a leading digit — such a key was
+/// invalid in every target anyway).
+fn leading_ident(rest: &str) -> &str {
+    match crate::frame_c::compiler::ident_scan_fsm::scan(rest.as_bytes()) {
+        Some((_, end)) => &rest[..end],
+        None => "",
+    }
+}
+
+/// Matching depth-0 `)` for an expression starting at `from` (the byte after
+/// the opening paren), via the dogfooded `ExprScannerFsm` (`)`-terminator
+/// flag). String-aware — a `)` inside a string literal does not terminate,
+/// which the old hand-rolled depth counter got wrong (`@@:(f(")"))`).
+fn matching_close_paren(text: &str, from: usize) -> usize {
+    let mut fsm = super::_expr_scanner::ExprScannerFsm::new();
+    fsm.bytes = text.as_bytes().to_vec();
+    fsm.pos = from;
+    fsm.end = text.len();
+    fsm.stop_semicolon = false;
+    fsm.stop_newline = false;
+    fsm.stop_close_paren = true;
+    fsm.do_scan();
+    fsm.result_end
+}
+
 /// Extract structured metadata from a Frame segment's raw text.
 ///
 /// This is the scanner's parsing phase — it produces structured data that
@@ -20,10 +49,7 @@ pub(super) fn extract_segment_metadata(kind: FrameSegmentKind, text: &str) -> Se
         FrameSegmentKind::ContextParams => {
             // @@:params.key → extract key
             if let Some(rest) = text.strip_prefix("@@:params.") {
-                let key: String = rest
-                    .chars()
-                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-                    .collect();
+                let key = leading_ident(rest).to_string();
                 SegmentMetadata::ContextParams { key }
             } else {
                 SegmentMetadata::None
@@ -33,10 +59,7 @@ pub(super) fn extract_segment_metadata(kind: FrameSegmentKind, text: &str) -> Se
         FrameSegmentKind::ContextData => {
             // @@:data.key → extract key
             if let Some(rest) = text.strip_prefix("@@:data.") {
-                let key: String = rest
-                    .chars()
-                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-                    .collect();
+                let key = leading_ident(rest).to_string();
                 SegmentMetadata::ContextData {
                     key,
                     assign_expr: None,
@@ -49,10 +72,7 @@ pub(super) fn extract_segment_metadata(kind: FrameSegmentKind, text: &str) -> Se
         FrameSegmentKind::ContextDataAssign => {
             // @@:data.key = expr → extract key and expr
             if let Some(rest) = text.strip_prefix("@@:data.") {
-                let key: String = rest
-                    .chars()
-                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-                    .collect();
+                let key = leading_ident(rest).to_string();
                 let after_key = &rest[key.len()..];
                 let expr = after_key
                     .trim()
@@ -86,23 +106,12 @@ pub(super) fn extract_segment_metadata(kind: FrameSegmentKind, text: &str) -> Se
         }
 
         FrameSegmentKind::ContextReturnExpr => {
-            // @@:(expr) → extract the expression between parens
+            // @@:(expr) → extract the expression between parens. The
+            // depth-0 close is found by the dogfooded `ExprScannerFsm`.
             let trimmed = text.trim();
             if let Some(start) = trimmed.find("@@:(") {
                 let after_open = start + 4;
-                let bytes = trimmed.as_bytes();
-                let mut depth = 1i32;
-                let mut p = after_open;
-                while p < bytes.len() && depth > 0 {
-                    match bytes[p] {
-                        b'(' => depth += 1,
-                        b')' => depth -= 1,
-                        _ => {}
-                    }
-                    if depth > 0 {
-                        p += 1;
-                    }
-                }
+                let p = matching_close_paren(trimmed, after_open);
                 let expr = trimmed[after_open..p].to_string();
                 SegmentMetadata::ReturnExpr { expr }
             } else {
@@ -170,10 +179,7 @@ pub(super) fn extract_segment_metadata(kind: FrameSegmentKind, text: &str) -> Se
             // (if any, and not a call — calls are ContextSelfCall) tells the
             // two apart. Mirrors the `@@:params.key` extraction above.
             if let Some(rest) = text.strip_prefix("@@:self.") {
-                let field: String = rest
-                    .chars()
-                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-                    .collect();
+                let field = leading_ident(rest).to_string();
                 if field.is_empty() {
                     SegmentMetadata::None
                 } else {
@@ -194,12 +200,17 @@ pub(super) fn extract_segment_metadata(kind: FrameSegmentKind, text: &str) -> Se
 
         // --- State variables ---
         FrameSegmentKind::StateVar | FrameSegmentKind::StateVarAssign => {
-            // $.varName or $.varName = expr → extract name
-            if let Some(rest) = text.strip_prefix("$.") {
-                let name: String = rest
-                    .chars()
-                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-                    .collect();
+            // $.varName or $.varName = expr → extract name. Delegates the
+            // `$.` grammar to the dogfooded `StateVarParserFsm` (the same
+            // machine the scanner used to classify this segment), rather
+            // than re-walking the identifier by hand (#154).
+            if text.starts_with("$.") {
+                let mut parser = super::StateVarParserFsm::new();
+                parser.bytes = text.as_bytes().to_vec();
+                parser.pos = 0;
+                parser.end = text.len();
+                parser.do_parse();
+                let name = text[2..parser.ident_end].to_string();
                 SegmentMetadata::StateVar {
                     name,
                     interp_quote: None,
@@ -243,27 +254,22 @@ pub(super) fn extract_segment_metadata(kind: FrameSegmentKind, text: &str) -> Se
         }
 
         FrameSegmentKind::StackPush => {
-            // Detect push-with-transition: `push$ -> $State`
-            let transition_target = if let Some(arrow_pos) = text.find("->") {
-                let after_arrow = &text[arrow_pos + 2..];
-                let bytes = after_arrow.as_bytes();
-                let mut target_start = None;
-                for i in 0..bytes.len() {
-                    if bytes[i] == b'$' && i + 1 < bytes.len() && bytes[i + 1].is_ascii_uppercase()
+            // Detect push-with-transition: `push$ -> $State`. The `-> …`
+            // suffix is transition grammar, so it is parsed by the same
+            // dogfooded `TransitionMetaScannerFsm` the Transition kind uses
+            // (#154 — no separate hand-rolled `$Target` walk).
+            let transition_target = text.find("->").and_then(|arrow_pos| {
+                match crate::frame_c::compiler::transition_meta_scanner::parse_transition_meta(
+                    text[arrow_pos..].trim(),
+                ) {
+                    SegmentMetadata::Transition { target_state, .. }
+                        if !target_state.is_empty() =>
                     {
-                        target_start = Some(i + 1);
+                        Some(target_state)
                     }
+                    _ => None,
                 }
-                target_start.map(|start| {
-                    let after_dollar = &after_arrow[start..];
-                    let end = after_dollar
-                        .find(|c: char| !c.is_alphanumeric() && c != '_')
-                        .unwrap_or(after_dollar.len());
-                    after_dollar[..end].to_string()
-                })
-            } else {
-                None
-            };
+            });
             SegmentMetadata::StackPush { transition_target }
         }
 
@@ -271,5 +277,72 @@ pub(super) fn extract_segment_metadata(kind: FrameSegmentKind, text: &str) -> Se
         FrameSegmentKind::Forward
         | FrameSegmentKind::StackPop
         | FrameSegmentKind::ReturnStatement => SegmentMetadata::None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::super::{FrameSegmentKind, SegmentMetadata};
+    use super::extract_segment_metadata;
+
+    /// #154 — ident extraction is the `ident_scan.frs` automaton.
+    #[test]
+    fn ident_leaves_via_fsm() {
+        assert_eq!(
+            extract_segment_metadata(FrameSegmentKind::ContextParams, "@@:params.key_1 extra"),
+            SegmentMetadata::ContextParams {
+                key: "key_1".into()
+            }
+        );
+        assert_eq!(
+            extract_segment_metadata(FrameSegmentKind::ContextSelf, "@@:self.field9"),
+            SegmentMetadata::SelfField {
+                field: "field9".into()
+            }
+        );
+        assert_eq!(
+            extract_segment_metadata(FrameSegmentKind::StateVar, "$.hp = 3"),
+            SegmentMetadata::StateVar {
+                name: "hp".into(),
+                interp_quote: None
+            }
+        );
+    }
+
+    /// #154 — `@@:(expr)` close-paren is the string-aware `ExprScannerFsm`:
+    /// a `)` inside a string literal must NOT terminate (the old depth
+    /// counter mis-sliced `@@:(f(")")))`).
+    #[test]
+    fn return_expr_paren_is_string_aware() {
+        assert_eq!(
+            extract_segment_metadata(FrameSegmentKind::ContextReturnExpr, r#"@@:(f(")"))"#),
+            SegmentMetadata::ReturnExpr {
+                expr: r#"f(")")"#.into()
+            }
+        );
+        // Plain nesting still exact.
+        assert_eq!(
+            extract_segment_metadata(FrameSegmentKind::ContextReturnExpr, "@@:(a + (b * c))"),
+            SegmentMetadata::ReturnExpr {
+                expr: "a + (b * c)".into()
+            }
+        );
+    }
+
+    /// #154 — `push$ -> $State` target parses via the transition-grammar FSM.
+    #[test]
+    fn stack_push_target_via_transition_fsm() {
+        assert_eq!(
+            extract_segment_metadata(FrameSegmentKind::StackPush, "push$ -> $Working"),
+            SegmentMetadata::StackPush {
+                transition_target: Some("Working".into())
+            }
+        );
+        assert_eq!(
+            extract_segment_metadata(FrameSegmentKind::StackPush, "push$"),
+            SegmentMetadata::StackPush {
+                transition_target: None
+            }
+        );
     }
 }

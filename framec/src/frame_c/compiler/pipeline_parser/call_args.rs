@@ -242,18 +242,15 @@ fn split_named_or_positional(body: &str) -> (Option<String>, String) {
     if n == 0 {
         return (None, String::new());
     }
-    let is_ident_start = |b: u8| b.is_ascii_alphabetic() || b == b'_';
-    let is_ident_cont = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
 
-    // Walk leading identifier
-    if !is_ident_start(bytes[0]) {
-        return (None, body.to_string());
-    }
-    let mut p = 0;
-    while p < n && is_ident_cont(bytes[p]) {
-        p += 1;
-    }
-    let name_end = p;
+    // Leading identifier via the dogfooded `ident_scan.frs` recognizer
+    // (#154) — the same `[A-Za-z_][A-Za-z0-9_]*` automaton the lexer uses,
+    // not a re-rolled byte walk. No identifier → positional.
+    let name_end = match crate::frame_c::compiler::ident_scan_fsm::scan(bytes) {
+        Some((_, end)) => end,
+        None => return (None, body.to_string()),
+    };
+    let mut p = name_end;
 
     // Skip whitespace after the identifier
     while p < n && (bytes[p] == b' ' || bytes[p] == b'\t') {
