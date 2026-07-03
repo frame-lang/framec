@@ -124,6 +124,12 @@ while comp != null:
         //     the destination's $> receives the caller's payload
         //   - otherwise: synthesize $> first, then dispatch the forward
         let event_class = format!("{}FrameEvent", system.name);
+        // #158: `await` at emission for async systems (asyncness known here).
+        let aw = if system.is_async_layered() {
+            "await "
+        } else {
+            ""
+        };
         Some(CodegenNode::Method {
             name: "__kernel".to_string(),
             params: vec![Param::new("__e")],
@@ -131,33 +137,34 @@ while comp != null:
             body: vec![CodegenNode::NativeBlock {
                 code: format!(
                     r#"# Route event to current state
-self.__router(__e)
+{aw}self.__router(__e)
 # Drain any transitions queued by the handler
 while self.__next_compartment != null:
     var next_compartment = self.__next_compartment
     self.__next_compartment = null
     # Exit the current (leaf) state
-    self.__router({evt}.new("<$", self.__compartment.exit_args))
+    {aw}self.__router({evt}.new("<$", self.__compartment.exit_args))
     # Switch to the new compartment
     self.__compartment = next_compartment
     if next_compartment.forward_event == null:
         # No forwarded event — synthesize a fresh $>
-        self.__router({evt}.new("$>", self.__compartment.enter_args))
+        {aw}self.__router({evt}.new("$>", self.__compartment.enter_args))
     else:
         if next_compartment.forward_event._message == "$>":
             # Forwarded event IS $> — dispatch directly so the
             # destination's $> receives the caller's payload
-            self.__router(next_compartment.forward_event)
+            {aw}self.__router(next_compartment.forward_event)
         else:
             # Forwarded event is not $> — initialize the destination
             # with a fresh $>, then dispatch the forward to it
-            self.__router({evt}.new("$>", self.__compartment.enter_args))
-            self.__router(next_compartment.forward_event)
+            {aw}self.__router({evt}.new("$>", self.__compartment.enter_args))
+            {aw}self.__router(next_compartment.forward_event)
     next_compartment.forward_event = null
     # Mark all stacked contexts as transitioned
     for ctx in self._context_stack:
         ctx._transitioned = true"#,
-                    evt = event_class
+                    evt = event_class,
+                    aw = aw
                 ),
                 span: None,
             }],
@@ -182,8 +189,11 @@ while self.__next_compartment != null:
         for state in states {
             let keyword = if first { "if" } else { "elif" };
             body.push_str(&format!(
-                "{} self.__compartment.state == \"{}\":\n    self._state_{}(__e, self.__compartment)\n",
-                keyword, state.name, state.name
+                "{} self.__compartment.state == \"{}\":\n    {}self._state_{}(__e, self.__compartment)\n",
+                keyword,
+                state.name,
+                if system.is_async_layered() { "await " } else { "" },
+                state.name
             ));
             first = false;
         }

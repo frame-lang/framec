@@ -135,6 +135,12 @@ while comp != nil {{
         // - `String ==` is value equality.
         let event_class = format!("{}FrameEvent", system.name);
         let compartment_class = format!("{}Compartment", system.name);
+        // #158: `await` at emission for async systems (asyncness known here).
+        let aw = if system.is_async_layered() {
+            "await "
+        } else {
+            ""
+        };
         Some(CodegenNode::Method {
             name: "__kernel".to_string(),
             params: vec![Param::new("__e").with_type(&event_class)],
@@ -142,14 +148,14 @@ while comp != nil {{
             body: vec![CodegenNode::NativeBlock {
                 code: format!(
                     r#"// Route event to current state.
-__router(__e)
+{aw}__router(__e)
 // Drain any transitions queued by the handler.
 while __next_compartment != nil {{
     let next_compartment: {comp} = __next_compartment!
     __next_compartment = nil
     // Exit the current (leaf) state.
     let exit_event = {evt}(message: "<$", parameters: __compartment.exit_args)
-    __router(exit_event)
+    {aw}__router(exit_event)
     // Switch to the new compartment.
     __compartment = next_compartment
     // Three-branch forward-event handling.
@@ -158,24 +164,25 @@ while __next_compartment != nil {{
     if forward_event == nil {{
         // No forwarded event — synthesize a fresh $>.
         let enter_event = {evt}(message: "$>", parameters: __compartment.enter_args)
-        __router(enter_event)
+        {aw}__router(enter_event)
     }} else if forward_event!._message == "$>" {{
         // Forwarded event IS $> — dispatch directly so the
         // destination's $> handler receives the caller's payload.
-        __router(forward_event!)
+        {aw}__router(forward_event!)
     }} else {{
         // Forwarded event is not $> — initialize the destination
         // with a fresh $>, then dispatch the forward.
         let enter_event = {evt}(message: "$>", parameters: __compartment.enter_args)
-        __router(enter_event)
-        __router(forward_event!)
+        {aw}__router(enter_event)
+        {aw}__router(forward_event!)
     }}
     for ctx in _context_stack {{
         ctx._transitioned = true
     }}
 }}"#,
                     comp = compartment_class,
-                    evt = event_class
+                    evt = event_class,
+                    aw = aw
                 ),
                 span: None,
             }],
@@ -203,7 +210,15 @@ while __next_compartment != nil {{
                 "{} __compartment.state == \"{}\" {{\n",
                 prefix, state
             ));
-            router_code.push_str(&format!("    _state_{}(__e, __compartment)\n", state));
+            router_code.push_str(&format!(
+                "    {}_state_{}(__e, __compartment)\n",
+                if system.is_async_layered() {
+                    "await "
+                } else {
+                    ""
+                },
+                state
+            ));
         }
         if !states.is_empty() {
             router_code.push_str("}");

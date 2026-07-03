@@ -47,6 +47,8 @@ pub(crate) fn generate_python_handler_method(
     let method_name = handler_method_name(state_name, handler);
 
     let ctx = HandlerContext {
+        // #158 remainder: thread real asyncness for handler-body self-calls.
+        system_is_async: false,
         system_name: system_name.to_string(),
         state_name: state_name.to_string(),
         event_name: handler.event.clone(),

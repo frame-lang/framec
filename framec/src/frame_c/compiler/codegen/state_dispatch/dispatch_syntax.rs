@@ -69,7 +69,7 @@ pub(crate) struct DispatchSyntax {
         index: usize,
     ) -> String,
     /// Forward call to parent state for `=> $^`
-    pub fmt_forward: fn(parent_name: &str, indent: &str, system_name: &str) -> String,
+    pub fmt_forward: fn(parent_name: &str, indent: &str, system_name: &str, aw: &str) -> String,
 }
 
 /// Create the DispatchSyntax for a given language.
@@ -108,7 +108,9 @@ pub(crate) fn dispatch_syntax_for(lang: TargetLanguage) -> Option<DispatchSyntax
             fmt_unpack: |name, _type_str, indent, _sys, source, default, index| {
                 format!("{indent}{name} = __e._parameters[{index}]\n")
             },
-            fmt_forward: |parent, indent, _sys| format!("{indent}self._state_{parent}(__e)\n"),
+            fmt_forward: |parent, indent, _sys, aw| {
+                format!("{indent}{aw}self._state_{parent}(__e)\n")
+            },
         }),
         TargetLanguage::GDScript => Some(DispatchSyntax {
             lang,
@@ -143,7 +145,9 @@ pub(crate) fn dispatch_syntax_for(lang: TargetLanguage) -> Option<DispatchSyntax
             fmt_unpack: |name, _type_str, indent, _sys, source, default, index| {
                 format!("{indent}var {name} = __e._parameters[{index}]\n")
             },
-            fmt_forward: |parent, indent, _sys| format!("{indent}self._state_{parent}(__e)\n"),
+            fmt_forward: |parent, indent, _sys, aw| {
+                format!("{indent}{aw}self._state_{parent}(__e)\n")
+            },
         }),
         TargetLanguage::TypeScript | TargetLanguage::JavaScript => Some(DispatchSyntax {
             lang,
@@ -180,7 +184,9 @@ pub(crate) fn dispatch_syntax_for(lang: TargetLanguage) -> Option<DispatchSyntax
             fmt_unpack: |name, _type_str, indent, _sys, source, default, index| {
                 format!("{indent}let {name} = __e._parameters[{index}];\n")
             },
-            fmt_forward: |parent, indent, _sys| format!("{indent}this._state_{parent}(__e);\n"),
+            fmt_forward: |parent, indent, _sys, aw| {
+                format!("{indent}{aw}this._state_{parent}(__e);\n")
+            },
         }),
         TargetLanguage::Ruby => Some(DispatchSyntax {
             lang,
@@ -217,7 +223,7 @@ pub(crate) fn dispatch_syntax_for(lang: TargetLanguage) -> Option<DispatchSyntax
             fmt_unpack: |name, _type_str, indent, _sys, _source, default, index| {
                 format!("{indent}{name} = __e._parameters[{index}]\n")
             },
-            fmt_forward: |parent, indent, _sys| format!("{indent}_state_{parent}(__e)\n"),
+            fmt_forward: |parent, indent, _sys, aw| format!("{indent}{aw}_state_{parent}(__e)\n"),
         }),
         TargetLanguage::Lua => Some(DispatchSyntax {
             lang,
@@ -258,7 +264,9 @@ pub(crate) fn dispatch_syntax_for(lang: TargetLanguage) -> Option<DispatchSyntax
                 let lua_index = index + 1; // Lua is 1-indexed
                 format!("{indent}local {name} = __e._parameters[{lua_index}]\n")
             },
-            fmt_forward: |parent, indent, _sys| format!("{indent}self:_state_{parent}(__e)\n"),
+            fmt_forward: |parent, indent, _sys, aw| {
+                format!("{indent}{aw}self:_state_{parent}(__e)\n")
+            },
         }),
         TargetLanguage::Php => Some(DispatchSyntax {
             lang,
@@ -295,7 +303,9 @@ pub(crate) fn dispatch_syntax_for(lang: TargetLanguage) -> Option<DispatchSyntax
             fmt_unpack: |name, _type_str, indent, _sys, source, default, index| {
                 format!("{indent}${name} = $__e->_parameters[{index}];\n")
             },
-            fmt_forward: |parent, indent, _sys| format!("{indent}$this->_state_{parent}($__e);\n"),
+            fmt_forward: |parent, indent, _sys, aw| {
+                format!("{indent}{aw}$this->_state_{parent}($__e);\n")
+            },
         }),
         TargetLanguage::CSharp => Some(DispatchSyntax {
             lang,
@@ -361,7 +371,7 @@ pub(crate) fn dispatch_syntax_for(lang: TargetLanguage) -> Option<DispatchSyntax
                 };
                 format!("{indent}var {name} = {extract};\n")
             },
-            fmt_forward: |parent, indent, _sys| format!("{indent}_state_{parent}(__e);\n"),
+            fmt_forward: |parent, indent, _sys, aw| format!("{indent}{aw}_state_{parent}(__e);\n"),
         }),
         TargetLanguage::Java => Some(DispatchSyntax {
             lang,
@@ -431,7 +441,7 @@ pub(crate) fn dispatch_syntax_for(lang: TargetLanguage) -> Option<DispatchSyntax
                 };
                 format!("{indent}var {name} = {extract};\n")
             },
-            fmt_forward: |parent, indent, _sys| format!("{indent}_state_{parent}(__e);\n"),
+            fmt_forward: |parent, indent, _sys, aw| format!("{indent}{aw}_state_{parent}(__e);\n"),
         }),
         TargetLanguage::Kotlin => Some(DispatchSyntax {
             lang,
@@ -491,7 +501,7 @@ pub(crate) fn dispatch_syntax_for(lang: TargetLanguage) -> Option<DispatchSyntax
                 };
                 format!("{indent}val {name} = {extract}\n")
             },
-            fmt_forward: |parent, indent, _sys| format!("{indent}_state_{parent}(__e)\n"),
+            fmt_forward: |parent, indent, _sys, aw| format!("{indent}{aw}_state_{parent}(__e)\n"),
         }),
         TargetLanguage::Swift => Some(DispatchSyntax {
             lang,
@@ -553,7 +563,7 @@ pub(crate) fn dispatch_syntax_for(lang: TargetLanguage) -> Option<DispatchSyntax
                 };
                 format!("{indent}let {name} = {extract}\n")
             },
-            fmt_forward: |parent, indent, _sys| format!("{indent}_state_{parent}(__e)\n"),
+            fmt_forward: |parent, indent, _sys, aw| format!("{indent}{aw}_state_{parent}(__e)\n"),
         }),
         TargetLanguage::Dart => Some(DispatchSyntax {
             lang,
@@ -613,7 +623,7 @@ pub(crate) fn dispatch_syntax_for(lang: TargetLanguage) -> Option<DispatchSyntax
                     format!("{indent}final {name} = {list}[{index}] as {dart_type};\n")
                 }
             },
-            fmt_forward: |parent, indent, _sys| format!("{indent}_state_{parent}(__e);\n"),
+            fmt_forward: |parent, indent, _sys, aw| format!("{indent}{aw}_state_{parent}(__e);\n"),
         }),
         TargetLanguage::Cpp => Some(DispatchSyntax {
             lang,
@@ -670,7 +680,7 @@ pub(crate) fn dispatch_syntax_for(lang: TargetLanguage) -> Option<DispatchSyntax
                     )
                 }
             },
-            fmt_forward: |parent, indent, _sys| format!("{indent}_state_{parent}(__e);\n"),
+            fmt_forward: |parent, indent, _sys, aw| format!("{indent}{aw}_state_{parent}(__e);\n"),
         }),
         TargetLanguage::Go => Some(DispatchSyntax {
             lang,
@@ -709,7 +719,7 @@ pub(crate) fn dispatch_syntax_for(lang: TargetLanguage) -> Option<DispatchSyntax
                 };
                 format!("{indent}{name} := {list}[{index}].({go_type})\n{indent}_ = {name}\n")
             },
-            fmt_forward: |parent, indent, _sys| format!("{indent}s._state_{parent}(__e)\n"),
+            fmt_forward: |parent, indent, _sys, aw| format!("{indent}{aw}s._state_{parent}(__e)\n"),
         }),
         TargetLanguage::C => {
             /// Map a Frame parameter type to its C declaration + void*-cast.
@@ -791,7 +801,7 @@ pub(crate) fn dispatch_syntax_for(lang: TargetLanguage) -> Option<DispatchSyntax
                     // _parameters / enter_args / exit_args are FrameVec*; dereference ->items[N].
                     format!("{indent}{c_type} {name} = {cast}{list}->items[{index}];\n")
                 },
-                fmt_forward: |parent, indent, sys| {
+                fmt_forward: |parent, indent, sys, _aw| {
                     format!("{indent}{sys}_state_{parent}(self, __e);\n")
                 },
             })

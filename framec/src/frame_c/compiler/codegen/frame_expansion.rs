@@ -156,6 +156,7 @@ mod tests {
 
     fn make_ctx(state_var_types: Vec<(&str, &str)>) -> HandlerContext {
         HandlerContext {
+            system_is_async: false,
             system_name: "TestSys".to_string(),
             state_name: "S1".to_string(),
             event_name: "foo".to_string(),

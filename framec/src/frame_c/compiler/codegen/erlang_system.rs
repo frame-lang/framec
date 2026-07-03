@@ -685,6 +685,7 @@ pub(crate) fn generate_erlang_system(
                 }
                 // Use splicer for proper $.var expansion
                 let enter_ctx = HandlerContext {
+                    system_is_async: false,
                     system_name: sys.to_string(),
                     state_name: state.name.clone(),
                     event_name: "$>".to_string(),
@@ -991,6 +992,7 @@ pub(crate) fn generate_erlang_system(
 
                 // Use emit_handler_body_via_statements for proper Frame statement expansion
                 let handler_ctx = HandlerContext {
+                    system_is_async: false,
                     system_name: sys.to_string(),
                     state_name: state.name.clone(),
                     event_name: handler.event.clone(),
@@ -1576,6 +1578,7 @@ pub(crate) fn generate_erlang_system(
             // skip helper emission for those states.
             let has_enter_transition = if let Some(ref enter) = state.enter {
                 let enter_ctx = HandlerContext {
+                    system_is_async: false,
                     system_name: sys.to_string(),
                     state_name: state.name.clone(),
                     event_name: "$>".to_string(),
@@ -1662,6 +1665,7 @@ pub(crate) fn generate_erlang_system(
                     ));
                 }
                 let enter_ctx = HandlerContext {
+                    system_is_async: false,
                     system_name: sys.to_string(),
                     state_name: state.name.clone(),
                     event_name: "$>".to_string(),
@@ -1763,6 +1767,7 @@ pub(crate) fn generate_erlang_system(
 
                 // Exit handler body via splicer
                 let exit_ctx = HandlerContext {
+                    system_is_async: false,
                     system_name: sys.to_string(),
                     state_name: state.name.clone(),
                     event_name: "<$".to_string(),

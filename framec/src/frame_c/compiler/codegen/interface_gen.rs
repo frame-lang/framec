@@ -50,6 +50,13 @@ pub(crate) fn generate_interface_wrappers(
     // Get the target language from the syntax
     let lang = syntax.language;
     let event_class = format!("{}FrameEvent", system.name);
+    // RFC-0043 / #158: async systems get their `await`s AT EMISSION (asyncness
+    // is known here) instead of a post-pass rescanning emitted text for
+    // dispatch-call prefixes. `aw` is the prefix-await keyword for the
+    // languages that use one; Rust/C++/Java/Kotlin sites handle their own
+    // idiom (postfix `.await` / `co_await` / sync internals / bare suspend).
+    let sys_async = system.is_async_layered();
+    let aw = if sys_async { "await " } else { "" };
 
     // If explicit interface is defined, use it
     // Otherwise, collect unique events from state handlers
@@ -135,6 +142,7 @@ pub(crate) fn generate_interface_wrappers(
                     &system.name,
                     method,
                     &event_class,
+                    sys_async,
                 )
             }
             TargetLanguage::Python3 => {
@@ -184,11 +192,11 @@ pub(crate) fn generate_interface_wrappers(
 __ctx = {}(__e, None){}
 self._context_stack.append(__ctx)
 try:
-    self.__kernel(__e)
+    {aw}self.__kernel(__e)
 finally:
     __frame_ctx = self._context_stack.pop()
 return __frame_ctx._return"#,
-                            event_class, method.name, params_code, context_class, default_init
+                            event_class, method.name, params_code, context_class, default_init, aw = aw
                         ),
                         span: None,
                     }
@@ -201,10 +209,10 @@ return __frame_ctx._return"#,
 __ctx = {}(__e, None){}
 self._context_stack.append(__ctx)
 try:
-    self.__kernel(__e)
+    {aw}self.__kernel(__e)
 finally:
     self._context_stack.pop()"#,
-                            event_class, method.name, params_code, context_class, default_init
+                            event_class, method.name, params_code, context_class, default_init, aw = aw
                         ),
                         span: None,
                     }
@@ -246,16 +254,16 @@ finally:
                         // D-PY-1: pop on both success and exception paths so a
                         // throwing handler can't leak a context-stack entry.
                         code: format!(
-                            "const __e = new {}(\"{}\", {});\nconst __ctx = new {}(__e, null);{}\nthis._context_stack.push(__ctx);\ntry {{\n    this.__kernel(__e);\n    return this._context_stack.pop(){}._return;\n}} catch (__frame_err) {{\n    this._context_stack.pop();\n    throw __frame_err;\n}}",
-                            event_class, method.name, params_code, context_class, default_init, pop_suffix
+                            "const __e = new {}(\"{}\", {});\nconst __ctx = new {}(__e, null);{}\nthis._context_stack.push(__ctx);\ntry {{\n    {aw}this.__kernel(__e);\n    return this._context_stack.pop(){}._return;\n}} catch (__frame_err) {{\n    this._context_stack.pop();\n    throw __frame_err;\n}}",
+                            event_class, method.name, params_code, context_class, default_init, pop_suffix, aw = aw
                         ),
                         span: None,
                     }
                 } else {
                     CodegenNode::NativeBlock {
                         code: format!(
-                            "const __e = new {}(\"{}\", {});\nconst __ctx = new {}(__e, null);{}\nthis._context_stack.push(__ctx);\ntry {{\n    this.__kernel(__e);\n}} finally {{\n    this._context_stack.pop();\n}}",
-                            event_class, method.name, params_code, context_class, default_init
+                            "const __e = new {}(\"{}\", {});\nconst __ctx = new {}(__e, null);{}\nthis._context_stack.push(__ctx);\ntry {{\n    {aw}this.__kernel(__e);\n}} finally {{\n    this._context_stack.pop();\n}}",
+                            event_class, method.name, params_code, context_class, default_init, aw = aw
                         ),
                         span: None,
                     }
@@ -752,7 +760,7 @@ return __result;"#,
                 // it, leaking a stale context entry).
                 code.push_str("_context_stack.append(__ctx)\n");
                 code.push_str("defer { _context_stack.removeLast() }\n");
-                code.push_str("__kernel(_context_stack[_context_stack.count - 1]._event)\n");
+                code.push_str(&format!("{aw}__kernel(_context_stack[_context_stack.count - 1]._event)\n"));
 
                 if has_return && return_type_str != "void" && return_type_str != "Any" && return_type_str != "Any?" {
                     let swift_type = swift_map_type(&return_type_str);
@@ -794,7 +802,7 @@ return __result;"#,
                 // D-PY-1: pop on both paths so a throwing handler can't leak.
                 code.push_str("_context_stack.Add(__ctx);\n");
                 code.push_str("try {\n");
-                code.push_str("    __kernel(_context_stack[_context_stack.Count - 1]._event);\n");
+                code.push_str(&format!("    {aw}__kernel(_context_stack[_context_stack.Count - 1]._event);\n"));
 
                 if has_return && return_type_str != "void" && return_type_str != "Any" && return_type_str != "object" {
                     let cs_type = csharp_map_type(&return_type_str);
@@ -941,16 +949,16 @@ return __result;"#,
                     CodegenNode::NativeBlock {
                         // D-PY-1: pop on both paths so a throwing handler can't leak.
                         code: format!(
-                            "final __e = {}(\"{}\", {});\nfinal __ctx = {}(__e, {});{}\n_context_stack.add(__ctx);\ntry {{\n    __kernel(__e);\n    return _context_stack.removeLast()._return;\n}} catch (__frame_err) {{\n    _context_stack.removeLast();\n    rethrow;\n}}",
-                            event_class, method.name, params_code, context_class, dart_default, default_init
+                            "final __e = {}(\"{}\", {});\nfinal __ctx = {}(__e, {});{}\n_context_stack.add(__ctx);\ntry {{\n    {aw}__kernel(__e);\n    return _context_stack.removeLast()._return;\n}} catch (__frame_err) {{\n    _context_stack.removeLast();\n    rethrow;\n}}",
+                            event_class, method.name, params_code, context_class, dart_default, default_init, aw = aw
                         ),
                         span: None,
                     }
                 } else {
                     CodegenNode::NativeBlock {
                         code: format!(
-                            "final __e = {}(\"{}\", {});\nfinal __ctx = {}(__e, null);{}\n_context_stack.add(__ctx);\ntry {{\n    __kernel(__e);\n}} finally {{\n    _context_stack.removeLast();\n}}",
-                            event_class, method.name, params_code, context_class, default_init
+                            "final __e = {}(\"{}\", {});\nfinal __ctx = {}(__e, null);{}\n_context_stack.add(__ctx);\ntry {{\n    {aw}__kernel(__e);\n}} finally {{\n    _context_stack.removeLast();\n}}",
+                            event_class, method.name, params_code, context_class, default_init, aw = aw
                         ),
                         span: None,
                     }
@@ -984,9 +992,9 @@ return __result;"#,
                             r#"var __e = {}.new("{}", {})
 var __ctx = {}.new(__e, null){}
 self._context_stack.append(__ctx)
-self.__kernel(__e)
+{aw}self.__kernel(__e)
 return self._context_stack.pop_back()._return"#,
-                            event_class, method.name, params_code, context_class, default_init
+                            event_class, method.name, params_code, context_class, default_init, aw = aw
                         ),
                         span: None,
                     }
@@ -996,9 +1004,9 @@ return self._context_stack.pop_back()._return"#,
                             r#"var __e = {}.new("{}", {})
 var __ctx = {}.new(__e, null){}
 self._context_stack.append(__ctx)
-self.__kernel(__e)
+{aw}self.__kernel(__e)
 self._context_stack.pop_back()"#,
-                            event_class, method.name, params_code, context_class, default_init
+                            event_class, method.name, params_code, context_class, default_init, aw = aw
                         ),
                         span: None,
                     }

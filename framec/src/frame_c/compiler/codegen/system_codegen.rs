@@ -308,6 +308,7 @@ pub fn generate_system_shared(
             source,
             lang,
             has_state_vars,
+            system.is_async_layered(),
         ));
     }
 

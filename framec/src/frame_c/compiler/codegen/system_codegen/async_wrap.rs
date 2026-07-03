@@ -207,8 +207,12 @@ pub(crate) fn make_system_async(
                     continue;
                 }
                 *is_async = true;
-                // Add `await` to internal dispatch calls in NativeBlock strings
-                add_await_to_dispatch_calls(body, lang);
+                // #158: `await`/`co_await`/`.await` on internal dispatch
+                // calls is emitted AT GENERATION (machinery/*, interface_gen,
+                // state_dispatch, rust_system consult `is_async_layered()`),
+                // so no post-pass rescans the emitted text. Verified by the
+                // 17 async snapshots staying byte-identical when the old
+                // rewriter was deleted.
                 // C++ coroutines: per-handler methods (`_s_<…>_hdl_<…>`) may
                 // lack a terminating co_await / co_return / co_yield (e.g.
                 // a lifecycle enter that just runs native code). For those,
@@ -315,13 +319,13 @@ _context_stack.RemoveAt(_context_stack.Count - 1);"#,
                 s = system_name
             ),
             // Languages with async that haven't been implemented yet
-            TargetLanguage::Java
-            | TargetLanguage::Go
-            | TargetLanguage::Php
-            | TargetLanguage::Ruby
-            | TargetLanguage::Lua => {
+            TargetLanguage::Java | TargetLanguage::Go | TargetLanguage::Php => {
                 format!("// async init not yet implemented for {:?}", lang)
             }
+            // `//` is not a comment in Lua/Ruby — use each language's leader
+            // (the old shared placeholder emitted invalid syntax there).
+            TargetLanguage::Ruby => format!("# async init not yet implemented for {:?}", lang),
+            TargetLanguage::Lua => format!("-- async init not yet implemented for {:?}", lang),
             TargetLanguage::Erlang => String::new(), // gen_statem: handled natively by erlang_system.rs
             TargetLanguage::Graphviz => unreachable!(),
         };
@@ -392,184 +396,4 @@ fn ensure_cpp_coroutine_terminator(body: &mut Vec<CodegenNode>) {
 /// exact structural drop, not a text scan for `__kernel(`.
 fn remove_kernel_call_from_body(body: &mut Vec<CodegenNode>) {
     body.retain(|node| !matches!(node, CodegenNode::FrameInitBlock { .. }));
-}
-
-/// Walk method body and add `await` to dispatch calls in NativeBlock strings.
-/// Dispatch calls are: self.__kernel(...), self.__router(...), self._state_*(...),
-/// self._s_*(...) — all internal Frame dispatch methods.
-fn add_await_to_dispatch_calls(body: &mut Vec<CodegenNode>, lang: TargetLanguage) {
-    for node in body.iter_mut() {
-        match node {
-            CodegenNode::NativeBlock { code, .. } => {
-                *code = add_await_to_string(code, lang);
-            }
-            CodegenNode::If {
-                then_block,
-                else_block,
-                ..
-            } => {
-                add_await_to_dispatch_calls(then_block, lang);
-                if let Some(els) = else_block {
-                    add_await_to_dispatch_calls(els, lang);
-                }
-            }
-            CodegenNode::While {
-                body: while_body, ..
-            } => {
-                add_await_to_dispatch_calls(while_body, lang);
-            }
-            _ => {}
-        }
-    }
-}
-
-/// Add `await` to Frame dispatch calls in a string.
-/// Python/TypeScript: prefix `await` (e.g., `await self.__kernel()`)
-/// Rust: postfix `.await` (e.g., `self.__kernel().await`)
-fn add_await_to_string(code: &str, lang: TargetLanguage) -> String {
-    let mut result = String::with_capacity(code.len() + 100);
-    for line in code.lines() {
-        let trimmed = line.trim();
-        // Match dispatch call patterns that need await.
-        // Swift/Kotlin/C#/Dart (and some branches of others) emit bare
-        // references without a `self.`/`this.` prefix — match those too.
-        // These names are framec-generated (`__kernel`, `__router`,
-        // `_state_<Name>`, `_s_<...>`) so bare matching is safe.
-        let needs_await = trimmed.starts_with("self.__kernel(")
-            || trimmed.starts_with("self.__router(")
-            || trimmed.starts_with("self.__fire_")
-            || trimmed.starts_with("self.__route_to_state(")
-            || trimmed.starts_with("self.__process_transition_loop(")
-            || (trimmed.starts_with("self._state_") && !trimmed.starts_with("self._state_stack"))
-            || trimmed.starts_with("self._s_")
-            || trimmed.starts_with("handler(")         // Python dynamic dispatch
-            || trimmed.starts_with("handler.call(")   // TypeScript dynamic dispatch
-            || trimmed.starts_with("this.__kernel(")
-            || trimmed.starts_with("this.__router(")
-            || trimmed.starts_with("this.__fire_")
-            || trimmed.starts_with("this.__route_to_state(")
-            || trimmed.starts_with("this.__process_transition_loop(")
-            || trimmed.starts_with("this._state_")
-            || trimmed.starts_with("this._s_")
-            || trimmed.starts_with("this.#kernel(")
-            || trimmed.starts_with("this.#router(")
-            || trimmed.starts_with("$this->__kernel(")
-            || trimmed.starts_with("$this->__router(")
-            || trimmed.starts_with("$this->__fire_")
-            || trimmed.starts_with("$this->__route_to_state(")
-            || trimmed.starts_with("$this->_state_")
-            // C++: `this->` uses `->` deref, not `.` like TS/Java/etc.
-            || trimmed.starts_with("this->__kernel(")
-            || trimmed.starts_with("this->__router(")
-            || trimmed.starts_with("this->__fire_")
-            || trimmed.starts_with("this->__route_to_state(")
-            || trimmed.starts_with("this->_state_")
-            || trimmed.starts_with("this->_s_")
-            // Bare references (no `self.`/`this.` prefix): Swift uses bare
-            // for same-instance method calls.
-            || trimmed.starts_with("__kernel(")
-            || trimmed.starts_with("__router(")
-            || trimmed.starts_with("__fire_")
-            || trimmed.starts_with("__route_to_state(")
-            || trimmed.starts_with("__process_transition_loop(")
-            || (trimmed.starts_with("_state_") && !trimmed.starts_with("_state_stack"))
-            // Rust match arms and braced dispatch:
-            // "StateName" => self._state_X(__e),
-            // { self._s_Ready_fetch(__e, key); }
-            || (trimmed.contains("self._state_") && !trimmed.contains("_state_stack") && !trimmed.starts_with("fn ") && !trimmed.starts_with("async fn "))
-            || (trimmed.contains("self._s_") && !trimmed.starts_with("fn ") && !trimmed.starts_with("async fn "));
-        if needs_await {
-            let indent = &line[..line.len() - trimmed.len()];
-            match lang {
-                TargetLanguage::Rust => {
-                    // Rust: postfix .await — insert before ); or ); } or ), etc.
-                    if !trimmed.contains(".await") {
-                        result.push_str(indent);
-                        let modified = insert_rust_await(trimmed);
-                        result.push_str(&modified);
-                    } else {
-                        result.push_str(line);
-                    }
-                }
-                // Kotlin: `suspend fun` → `suspend fun` calls are bare,
-                // no `await` keyword. Emit the line unchanged.
-                TargetLanguage::Kotlin => {
-                    result.push_str(line);
-                }
-                // C++: coroutines use `co_await` keyword, not `await`.
-                TargetLanguage::Cpp => {
-                    if !trimmed.starts_with("co_await ") {
-                        result.push_str(indent);
-                        result.push_str("co_await ");
-                        result.push_str(trimmed);
-                    } else {
-                        result.push_str(line);
-                    }
-                }
-                // All other async-capable languages use prefix `await`
-                TargetLanguage::Python3
-                | TargetLanguage::TypeScript
-                | TargetLanguage::JavaScript
-                | TargetLanguage::CSharp
-                | TargetLanguage::Swift
-                | TargetLanguage::Java
-                | TargetLanguage::Go
-                | TargetLanguage::C
-                | TargetLanguage::Php
-                | TargetLanguage::Ruby
-                | TargetLanguage::Erlang
-                | TargetLanguage::Lua
-                | TargetLanguage::Dart
-                | TargetLanguage::GDScript => {
-                    if !trimmed.starts_with("await ") {
-                        result.push_str(indent);
-                        result.push_str("await ");
-                        result.push_str(trimmed);
-                    } else {
-                        result.push_str(line);
-                    }
-                }
-                TargetLanguage::Graphviz => unreachable!(),
-            }
-        } else {
-            result.push_str(line);
-        }
-        result.push('\n');
-    }
-    if !code.ends_with('\n') && result.ends_with('\n') {
-        result.pop();
-    }
-    result
-}
-
-/// Insert `.await` after the closing paren of a Rust function call.
-/// Handles patterns like:
-///   `self.__kernel();`          → `self.__kernel().await;`
-///   `self._state_Ready(__e),`   → `self._state_Ready(__e).await,`
-///   `{ self._s_X(__e, k); }`   → `{ self._s_X(__e, k).await; }`
-fn insert_rust_await(line: &str) -> String {
-    let bytes = line.as_bytes();
-    let mut last_close_paren = None;
-    let mut depth = 0;
-    for (i, &b) in bytes.iter().enumerate() {
-        if b == b'(' {
-            depth += 1;
-        }
-        if b == b')' {
-            depth -= 1;
-            if depth == 0 {
-                last_close_paren = Some(i);
-            }
-        }
-    }
-    if let Some(pos) = last_close_paren {
-        let mut result = String::with_capacity(line.len() + 6);
-        result.push_str(&line[..pos + 1]);
-        result.push_str(".await");
-        result.push_str(&line[pos + 1..]);
-        result
-    } else {
-        let trimmed_semi = line.trim_end_matches(';');
-        format!("{}.await;", trimmed_semi)
-    }
 }

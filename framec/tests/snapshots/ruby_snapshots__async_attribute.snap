@@ -110,25 +110,25 @@ class AsyncFetcher
 
     def __kernel(__e)
         # Route event to current state.
-        await __router(__e)
+        __router(__e)
         # Drain any transitions queued by the handler.
         while @__next_compartment != nil
             next_compartment = @__next_compartment
             @__next_compartment = nil
             exit_event = AsyncFetcherFrameEvent.new("<$", @__compartment.exit_args)
-            await __router(exit_event)
+            __router(exit_event)
             @__compartment = next_compartment
             forward_event = next_compartment.forward_event
             next_compartment.forward_event = nil
             if forward_event == nil
                 enter_event = AsyncFetcherFrameEvent.new("$>", @__compartment.enter_args)
-                await __router(enter_event)
+                __router(enter_event)
             elsif forward_event._message == "$>"
-                await __router(forward_event)
+                __router(forward_event)
             else
                 enter_event = AsyncFetcherFrameEvent.new("$>", @__compartment.enter_args)
-                await __router(enter_event)
-                await __router(forward_event)
+                __router(enter_event)
+                __router(forward_event)
             end
             @_context_stack.each { |ctx| ctx._transitioned = true }
         end
@@ -150,7 +150,7 @@ class AsyncFetcher
         __ctx = AsyncFetcherFrameContext.new(__e, nil)
         @_context_stack.push(__ctx)
         begin
-            await __kernel(__e)
+            __kernel(__e)
             return @_context_stack.last._return
         ensure
             @_context_stack.pop
@@ -159,7 +159,7 @@ class AsyncFetcher
 
     def _state_Ready(__e, compartment)
         if __e._message == "fetch"
-            await self._s_Ready_hdl_user_fetch(__e, compartment)
+            self._s_Ready_hdl_user_fetch(__e, compartment)
             return
         end
     end
@@ -170,6 +170,5 @@ class AsyncFetcher
     end
 
     def init
-        // async init not yet implemented for Ruby
     end
 end

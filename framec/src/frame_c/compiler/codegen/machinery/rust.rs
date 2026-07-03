@@ -140,6 +140,12 @@ comp.expect("chain must contain at least the leaf state")"#,
         // (via __router) without aliasing through `self`. The drain
         // loop wraps synthesized `<$` / `$>` events in fresh Rcs.
         let event_class = format!("{}FrameEvent", system.name);
+        // #158: postfix `.await` at emission for async systems.
+        let aw = if system.is_async_layered() {
+            ".await"
+        } else {
+            ""
+        };
         Some(CodegenNode::Method {
             name: "__kernel".to_string(),
             params: vec![Param::new("__e").with_type(&format!("&alloc::rc::Rc<{}>", event_class))],
@@ -147,7 +153,7 @@ comp.expect("chain must contain at least the leaf state")"#,
             body: vec![CodegenNode::NativeBlock {
                 code: format!(
                     r#"// Route event to current state.
-self.__router(__e);
+self.__router(__e){aw};
 // Drain any transitions queued by the handler.
 while self.__next_compartment.is_some() {{
     let next_compartment = self.__next_compartment.take().expect("invariant: while-loop guard checked is_some()");
@@ -155,7 +161,7 @@ while self.__next_compartment.is_some() {{
     // source state's typed ctx (written at the transition site), so the
     // synthesized `<$` event carries no payload.
     let exit_event = alloc::rc::Rc::new({evt}::FrameExit {{}});
-    self.__router(&exit_event);
+    self.__router(&exit_event){aw};
     // Switch to the new compartment.
     self.__compartment = next_compartment;
     // Three-branch forward-event handling (RFC-0025 Track B.1: forward
@@ -166,28 +172,29 @@ while self.__next_compartment.is_some() {{
             // No forwarded event — synthesize a fresh $>. RFC-0025.1:
             // enter args live in the destination's typed ctx.
             let enter_event = alloc::rc::Rc::new({evt}::FrameEnter {{}});
-            self.__router(&enter_event);
+            self.__router(&enter_event){aw};
         }}
         Some(fwd) if matches!(fwd, {evt}::FrameEnter {{ .. }}) => {{
             // Forwarded event IS $> — dispatch directly so the
             // destination's $> handler receives the caller's payload.
             let fwd_rc = alloc::rc::Rc::new(fwd);
-            self.__router(&fwd_rc);
+            self.__router(&fwd_rc){aw};
         }}
         Some(fwd) => {{
             // Forwarded event is not $> — initialize the destination
             // with a fresh $>, then dispatch the forward.
             let enter_event = alloc::rc::Rc::new({evt}::FrameEnter {{}});
-            self.__router(&enter_event);
+            self.__router(&enter_event){aw};
             let fwd_rc = alloc::rc::Rc::new(fwd);
-            self.__router(&fwd_rc);
+            self.__router(&fwd_rc){aw};
         }}
     }}
     for ctx in self._context_stack.iter_mut() {{
         ctx._transitioned = true;
     }}
 }}"#,
-                    evt = event_class
+                    evt = event_class,
+                    aw = aw
                 ),
                 span: None,
             }],
@@ -217,8 +224,14 @@ while self.__next_compartment.is_some() {{
         if let Some(ref machine) = system.machine {
             for state in &machine.states {
                 router_code.push_str(&format!(
-                    "    \"{}\" => self._state_{}(__ev),\n",
-                    state.name, state.name
+                    "    \"{}\" => self._state_{}(__ev){},\n",
+                    state.name,
+                    state.name,
+                    if system.is_async_layered() {
+                        ".await"
+                    } else {
+                        ""
+                    }
                 ));
             }
         }

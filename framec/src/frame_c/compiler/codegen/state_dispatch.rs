@@ -75,6 +75,29 @@ pub(crate) fn generate_unified_state_dispatch(
     syn: &DispatchSyntax,
 ) -> String {
     let mut code = String::new();
+    // #158: dispatch calls carry their await at EMISSION when the system is
+    // async-layered. Per-language idiom: C++ `co_await`, Kotlin bare
+    // (suspend), Java sync internals by design; the prefix-await languages
+    // get `await `. (Rust/Erlang/C don't route through this dispatcher.)
+    let aw = if ctx.system_is_async {
+        match syn.lang {
+            TargetLanguage::Cpp => "co_await ",
+            // Prefix-await languages of the RFC-0043 layered set. Kotlin
+            // (bare suspend calls) and Java (sync internals by design) stay
+            // unprefixed; languages without async layering (Go/PHP/Ruby/
+            // Lua/C) must never receive an `await` keyword they don't have.
+            TargetLanguage::Python3
+            | TargetLanguage::TypeScript
+            | TargetLanguage::JavaScript
+            | TargetLanguage::Swift
+            | TargetLanguage::CSharp
+            | TargetLanguage::Dart
+            | TargetLanguage::GDScript => "await ",
+            _ => "",
+        }
+    } else {
+        ""
+    };
     let mut first = true;
     // Only the lifecycle `$>` key signals an explicit enter handler. A user
     // interface method named `enter` is a regular event — it must not
@@ -213,10 +236,10 @@ pub(crate) fn generate_unified_state_dispatch(
         if let Some(ref parent) = ctx.parent_state {
             if !first {
                 code.push_str(syn.else_start);
-                code.push_str(&(syn.fmt_forward)(parent, syn.indent, system_name));
+                code.push_str(&(syn.fmt_forward)(parent, syn.indent, system_name, aw));
                 code.push_str(syn.close_final);
             } else {
-                code.push_str(&(syn.fmt_forward)(parent, "", system_name));
+                code.push_str(&(syn.fmt_forward)(parent, "", system_name, aw));
             }
         }
     } else if !first && !syn.close_final.is_empty() {
@@ -244,6 +267,28 @@ fn generate_thin_dispatcher_generic(
     has_state_vars: bool,
     syn: &DispatchSyntax,
 ) -> String {
+    // #158: dispatch calls carry their await at EMISSION when the system is
+    // async-layered (C++ `co_await`; Kotlin bare suspend / Java sync
+    // internals stay unprefixed; other routed languages use `await `).
+    let aw = if ctx.system_is_async {
+        match syn.lang {
+            TargetLanguage::Cpp => "co_await ",
+            // Prefix-await languages of the RFC-0043 layered set. Kotlin
+            // (bare suspend calls) and Java (sync internals by design) stay
+            // unprefixed; languages without async layering (Go/PHP/Ruby/
+            // Lua/C) must never receive an `await` keyword they don't have.
+            TargetLanguage::Python3
+            | TargetLanguage::TypeScript
+            | TargetLanguage::JavaScript
+            | TargetLanguage::Swift
+            | TargetLanguage::CSharp
+            | TargetLanguage::Dart
+            | TargetLanguage::GDScript => "await ",
+            _ => "",
+        }
+    } else {
+        ""
+    };
     let mut code = String::new();
     let indent = syn.indent;
     let semi = syn.semi;
@@ -291,7 +336,7 @@ fn generate_thin_dispatcher_generic(
             ));
         } else {
             code.push_str(&format!(
-                "{indent}{self_prefix}{method}({var_sigil}__e, {var_sigil}compartment){semi}\n"
+                "{indent}{aw}{self_prefix}{method}({var_sigil}__e, {var_sigil}compartment){semi}\n"
             ));
         }
         code.push_str(&format!("{indent}return{semi}\n"));
@@ -323,7 +368,7 @@ fn generate_thin_dispatcher_generic(
             ));
         } else {
             code.push_str(&format!(
-                "{indent}{self_prefix}{method_name}({var_sigil}__e, {var_sigil}compartment){semi}\n"
+                "{indent}{aw}{self_prefix}{method_name}({var_sigil}__e, {var_sigil}compartment){semi}\n"
             ));
         }
         code.push_str(&format!("{indent}return{semi}\n"));
@@ -504,6 +549,7 @@ pub(crate) fn generate_state_handlers_via_arcanum(
     source: &[u8],
     lang: TargetLanguage,
     has_state_vars: bool,
+    system_is_async: bool,
 ) -> Vec<CodegenNode> {
     let mut methods = Vec::new();
 
@@ -720,6 +766,7 @@ pub(crate) fn generate_state_handlers_via_arcanum(
             &defined_systems,
             &dispatch_domain_field_types,
             is_start_state,
+            system_is_async,
         );
         // State-level leading comments emit as NativeBlock nodes
         // before the dispatch method itself. Same shape as
@@ -1395,6 +1442,7 @@ pub(crate) fn generate_state_method(
     defined_systems: &std::collections::HashSet<String>,
     domain_field_types: &std::collections::HashMap<String, String>,
     is_start_state: bool,
+    system_is_async: bool,
 ) -> CodegenNode {
     // Use single underscore prefix to avoid Python name mangling
     // Python mangles __name to _ClassName__name, which breaks dynamic lookup
@@ -1414,6 +1462,7 @@ pub(crate) fn generate_state_method(
         .collect();
 
     let ctx = HandlerContext {
+        system_is_async,
         system_name: _system_name.to_string(),
         state_name: state_name.to_string(),
         event_name: String::new(), // Will be set per-handler
@@ -1504,6 +1553,7 @@ pub(crate) fn generate_state_method(
                 parent_state,
                 default_forward,
                 is_start_state,
+                system_is_async,
             ),
             TargetLanguage::Erlang => String::new(),
             _ => unreachable!("All other languages use unified dispatch"),
@@ -1674,6 +1724,8 @@ pub(crate) fn generate_handler_from_arcanum(
     // Without this, Rust's typed enum-of-structs StateContext would
     // emit `ctx.0 = val` (positional) instead of `ctx.initial = val`.
     let ctx = HandlerContext {
+        // #158 remainder: thread real asyncness through this path too.
+        system_is_async: false,
         system_name: system_name.to_string(),
         state_name: state_name.to_string(),
         event_name: handler.event.clone(),

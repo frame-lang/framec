@@ -133,6 +133,14 @@ while comp is not None:
         //   - otherwise: synthesize $> first, then dispatch the forward
         //     to the now-initialized state
         let event_class = format!("{}FrameEvent", system.name);
+        // RFC-0043 / #158: async systems get their `await`s AT EMISSION —
+        // asyncness is known here — instead of a post-pass rescanning the
+        // emitted text for dispatch-call prefixes.
+        let aw = if system.is_async_layered() {
+            "await "
+        } else {
+            ""
+        };
         Some(CodegenNode::Method {
             name: "__kernel".to_string(),
             params: vec![Param::new("__e")],
@@ -140,28 +148,28 @@ while comp is not None:
             body: vec![CodegenNode::NativeBlock {
                 code: format!(
                     r#"# Route event to current state
-self.__router(__e)
+{aw}self.__router(__e)
 # Drain any transitions queued by the handler
 while self.__next_compartment is not None:
     next_compartment = self.__next_compartment
     self.__next_compartment = None
     # Exit the current (leaf) state
-    self.__router({ec}("<$", self.__compartment.exit_args))
+    {aw}self.__router({ec}("<$", self.__compartment.exit_args))
     # Switch to the new compartment
     self.__compartment = next_compartment
     if next_compartment.forward_event is None:
         # No forwarded event — synthesize a fresh $>
-        self.__router({ec}("$>", self.__compartment.enter_args))
+        {aw}self.__router({ec}("$>", self.__compartment.enter_args))
     else:
         if next_compartment.forward_event._message == "$>":
             # Forwarded event IS $> — dispatch directly so the
             # destination's $> receives the caller's payload
-            self.__router(next_compartment.forward_event)
+            {aw}self.__router(next_compartment.forward_event)
         else:
             # Forwarded event is not $> — initialize the destination
             # with a fresh $>, then dispatch the forward to it
-            self.__router({ec}("$>", self.__compartment.enter_args))
-            self.__router(next_compartment.forward_event)
+            {aw}self.__router({ec}("$>", self.__compartment.enter_args))
+            {aw}self.__router(next_compartment.forward_event)
     next_compartment.forward_event = None
     # Mark all stacked contexts as transitioned
     for ctx in self._context_stack:
@@ -184,6 +192,12 @@ while self.__next_compartment is not None:
         // RFC-0020 the state-name match is inlined here (no separate
         // __route_to_state helper).
         let mut body = String::new();
+        // #158: `await` at emission for async systems (see emit_kernel).
+        let aw = if system.is_async_layered() {
+            "await "
+        } else {
+            ""
+        };
         let states = system
             .machine
             .as_ref()
@@ -193,8 +207,8 @@ while self.__next_compartment is not None:
         for state in states {
             let keyword = if first { "if" } else { "elif" };
             body.push_str(&format!(
-                "{} self.__compartment.state == \"{}\":\n    self._state_{}(__e, self.__compartment)\n",
-                keyword, state.name, state.name
+                "{} self.__compartment.state == \"{}\":\n    {}self._state_{}(__e, self.__compartment)\n",
+                keyword, state.name, aw, state.name
             ));
             first = false;
         }

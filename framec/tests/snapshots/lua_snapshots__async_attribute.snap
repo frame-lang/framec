@@ -140,7 +140,7 @@ end
 function AsyncFetcher:__router(__e)
     local handler = self["_state_" .. self.__compartment.state]
     if handler then
-        await handler(self, __e, self.__compartment)
+        handler(self, __e, self.__compartment)
     end
 end
 
@@ -173,7 +173,7 @@ function AsyncFetcher:_s_Ready_hdl_user_fetch(__e, compartment)
 end
 
 function AsyncFetcher:init()
-    // async init not yet implemented for Lua
+    -- async init not yet implemented for Lua
 end
 
 return {

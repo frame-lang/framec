@@ -129,20 +129,26 @@ while (comp != null) {{
         // transitions queued by the handler. Three-branch forward-
         // event protocol matches the Python reference.
         let event_class = format!("{}FrameEvent", system.name);
+        // #158: `await` at emission for async systems (asyncness known here).
+        let aw = if system.is_async_layered() {
+            "await "
+        } else {
+            ""
+        };
         Some(CodegenNode::Method {
             name: "__kernel".to_string(),
             params: vec![Param::new("__e").with_type(&event_class)],
             return_type: None,
             body: vec![CodegenNode::NativeBlock {
                 code: r#"// Route event to current state.
-__router(__e);
+__AW____router(__e);
 // Drain any transitions queued by the handler.
 while (__next_compartment != null) {
     final next_compartment = __next_compartment!;
     __next_compartment = null;
     // Exit the current (leaf) state.
     final exit_event = __EVT__("<\$", __compartment.exit_args);
-    __router(exit_event);
+    __AW____router(exit_event);
     // Switch to the new compartment.
     __compartment = next_compartment;
     // Three-branch forward-event handling.
@@ -151,23 +157,24 @@ while (__next_compartment != null) {
     if (forward_event == null) {
         // No forwarded event — synthesize a fresh $>.
         final enter_event = __EVT__("\$>", __compartment.enter_args);
-        __router(enter_event);
+        __AW____router(enter_event);
     } else if (forward_event._message == "\$>") {
         // Forwarded event IS $> — dispatch directly so the
         // destination's $> handler receives the caller's payload.
-        __router(forward_event);
+        __AW____router(forward_event);
     } else {
         // Forwarded event is not $> — initialize the destination
         // with a fresh $>, then dispatch the forward.
         final enter_event = __EVT__("\$>", __compartment.enter_args);
-        __router(enter_event);
-        __router(forward_event);
+        __AW____router(enter_event);
+        __AW____router(forward_event);
     }
     for (final ctx in _context_stack) {
         ctx._transitioned = true;
     }
 }"#
-                .replace("__EVT__", &event_class),
+                .replace("__EVT__", &event_class)
+                .replace("__AW__", aw),
                 span: None,
             }],
             is_async: false,
@@ -186,7 +193,12 @@ while (__next_compartment != null) {
             for state in &machine.states {
                 router_code.push_str(&format!("    case \"{}\":\n", state.name));
                 router_code.push_str(&format!(
-                    "        _state_{}(__e, __compartment);\n",
+                    "        {}_state_{}(__e, __compartment);\n",
+                    if system.is_async_layered() {
+                        "await "
+                    } else {
+                        ""
+                    },
                     state.name
                 ));
                 router_code.push_str("        break;\n");

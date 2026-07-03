@@ -158,6 +158,12 @@ while (comp !== null) {{
         // transitions queued by the handler. Three-branch forward-
         // event protocol matches the Python reference.
         let event_class = format!("{}FrameEvent", system.name);
+        // #158: `await` at emission for async systems (asyncness known here).
+        let aw = if system.is_async_layered() {
+            "await "
+        } else {
+            ""
+        };
         Some(CodegenNode::Method {
             name: "__kernel".to_string(),
             params: vec![Param::new("__e").with_type(&event_class)],
@@ -165,14 +171,14 @@ while (comp !== null) {{
             body: vec![CodegenNode::NativeBlock {
                 code: format!(
                     r#"// Route event to current state.
-this.__router(__e);
+{aw}this.__router(__e);
 // Drain any transitions queued by the handler.
 while (this.__next_compartment !== null) {{
     const next_compartment = this.__next_compartment;
     this.__next_compartment = null;
     // Exit the current (leaf) state.
     const exit_event = new {evt}("<$", this.__compartment.exit_args);
-    this.__router(exit_event);
+    {aw}this.__router(exit_event);
     // Switch to the new compartment.
     this.__compartment = next_compartment;
     // Three-branch forward-event handling.
@@ -181,23 +187,24 @@ while (this.__next_compartment !== null) {{
     if (forward_event === null) {{
         // No forwarded event — synthesize a fresh $>.
         const enter_event = new {evt}("$>", this.__compartment.enter_args);
-        this.__router(enter_event);
+        {aw}this.__router(enter_event);
     }} else if (forward_event._message === "$>") {{
         // Forwarded event IS $> — dispatch directly so the
         // destination's $> handler receives the caller's payload.
-        this.__router(forward_event);
+        {aw}this.__router(forward_event);
     }} else {{
         // Forwarded event is not $> — initialize the destination
         // with a fresh $>, then dispatch the forward.
         const enter_event = new {evt}("$>", this.__compartment.enter_args);
-        this.__router(enter_event);
-        this.__router(forward_event);
+        {aw}this.__router(enter_event);
+        {aw}this.__router(forward_event);
     }}
     for (const ctx of this._context_stack) {{
         ctx._transitioned = true;
     }}
 }}"#,
-                    evt = event_class
+                    evt = event_class,
+                    aw = aw
                 ),
                 span: None,
             }],
@@ -235,9 +242,14 @@ while (this.__next_compartment !== null) {{
                     r#"const handler_name = `_state_${{this.__compartment.state}}`;
 const handler = {dispatch};
 if (handler) {{
-    handler.call(this, __e, this.__compartment);
+    {aw}handler.call(this, __e, this.__compartment);
 }}"#,
-                    dispatch = dispatch_call
+                    dispatch = dispatch_call,
+                    aw = if system.is_async_layered() {
+                        "await "
+                    } else {
+                        ""
+                    }
                 ),
                 span: None,
             }],

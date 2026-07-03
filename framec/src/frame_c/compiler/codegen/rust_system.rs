@@ -219,6 +219,7 @@ pub fn generate_rust_system(system: &SystemAst, arcanum: &Arcanum, source: &[u8]
             source,
             lang,
             has_state_vars,
+            system.is_async_layered(),
         ));
     }
 
@@ -622,7 +623,10 @@ pub(crate) fn generate_rust_state_dispatch(
     parent_state: Option<&str>,
     default_forward: bool,
     is_start_state: bool,
+    system_is_async: bool,
 ) -> String {
+    // #158: postfix `.await` at emission for async systems.
+    let aw = if system_is_async { ".await" } else { "" };
     let mut code = String::new();
     let event_class = format!("{}FrameEvent", system_name);
     code.push_str("match __e {\n");
@@ -646,8 +650,8 @@ pub(crate) fn generate_rust_state_dispatch(
             };
             if handler.params.is_empty() {
                 code.push_str(&format!(
-                    "    {}::{} {{ .. }} => {{ self.{}(__e); }}\n",
-                    event_class, variant, handler_method
+                    "    {}::{} {{ .. }} => {{ self.{}(__e){}; }}\n",
+                    event_class, variant, handler_method, aw
                 ));
                 continue;
             }
@@ -660,8 +664,8 @@ pub(crate) fn generate_rust_state_dispatch(
                 // transitions that leave it) and must bind them from the
                 // typed ctx like any other state (RFC-0025.1 #35).
                 code.push_str(&format!(
-                    "    {}::{} {{ .. }} => {{ self.{}(__e); }}\n",
-                    event_class, variant, handler_method
+                    "    {}::{} {{ .. }} => {{ self.{}(__e){}; }}\n",
+                    event_class, variant, handler_method, aw
                 ));
                 continue;
             }
@@ -699,9 +703,10 @@ pub(crate) fn generate_rust_state_dispatch(
             }
             let param_names: Vec<_> = handler.params.iter().map(|p| p.name.clone()).collect();
             code.push_str(&format!(
-                "        self.{}(__e, {});\n",
+                "        self.{}(__e, {}){};\n",
                 handler_method,
-                param_names.join(", ")
+                param_names.join(", "),
+                aw
             ));
             code.push_str("    }\n");
             continue;
@@ -715,8 +720,8 @@ pub(crate) fn generate_rust_state_dispatch(
         let variant = super::runtime::pascal_case_variant(event);
         if handler.params.is_empty() {
             code.push_str(&format!(
-                "    {}::{} {{ .. }} => {{ self.{}(__e); }}\n",
-                event_class, variant, handler_method
+                "    {}::{} {{ .. }} => {{ self.{}(__e){}; }}\n",
+                event_class, variant, handler_method, aw
             ));
             continue;
         }
@@ -751,9 +756,10 @@ pub(crate) fn generate_rust_state_dispatch(
             })
             .collect();
         code.push_str(&format!(
-            "        self.{}(__e, {});\n",
+            "        self.{}(__e, {}){};\n",
             handler_method,
-            arg_exprs.join(", ")
+            arg_exprs.join(", "),
+            aw
         ));
         code.push_str("    }\n");
     }
@@ -910,7 +916,10 @@ pub(crate) fn generate_rust_interface_body(
     system_name: &str,
     method: &InterfaceMethod,
     event_class: &str,
+    system_is_async: bool,
 ) -> CodegenNode {
+    // #158: postfix `.await` at emission for async systems.
+    let aw = if system_is_async { ".await" } else { "" };
     let context_class = format!("{}FrameContext", system_name);
 
     // RFC-0025 Track B.1: construct the FrameEvent enum variant
@@ -972,7 +981,7 @@ pub(crate) fn generate_rust_interface_body(
         ));
     }
     code.push_str("self._context_stack.push(__ctx);\n");
-    code.push_str("self.__kernel(&__e);\n");
+    code.push_str(&format!("self.__kernel(&__e){aw};\n"));
 
     if let Some(ref rt) = method.return_type {
         let raw_type = type_to_string(rt);

@@ -87,6 +87,10 @@ pub(crate) struct HandlerContext {
     /// receive the caller-side transition guard. The body walk consults this
     /// to suppress the guard for action calls.
     pub actions: std::collections::HashSet<String>,
+    /// RFC-0043 / #158: true when the system is `@@[async]`-layered. Consulted
+    /// at EMISSION so dispatch calls carry their `await`/`co_await`/`.await`
+    /// directly, instead of a post-pass rescanning emitted text.
+    pub system_is_async: bool,
 }
 
 /// Coerce a value expression to its DECLARED float-family type at the point

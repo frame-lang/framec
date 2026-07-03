@@ -111,25 +111,25 @@ class AsyncFetcher {
 
     private function __kernel($__e) {
         // Route event to current state.
-        await $this->__router($__e);
+        $this->__router($__e);
         // Drain any transitions queued by the handler.
         while ($this->__next_compartment !== null) {
             $next_compartment = $this->__next_compartment;
             $this->__next_compartment = null;
             $exit_event = new AsyncFetcherFrameEvent("<$", $this->__compartment->exit_args);
-            await $this->__router($exit_event);
+            $this->__router($exit_event);
             $this->__compartment = $next_compartment;
             $forward_event = $next_compartment->forward_event;
             $next_compartment->forward_event = null;
             if ($forward_event === null) {
                 $enter_event = new AsyncFetcherFrameEvent("$>", $this->__compartment->enter_args);
-                await $this->__router($enter_event);
+                $this->__router($enter_event);
             } else if ($forward_event->_message === "$>") {
-                await $this->__router($forward_event);
+                $this->__router($forward_event);
             } else {
                 $enter_event = new AsyncFetcherFrameEvent("$>", $this->__compartment->enter_args);
-                await $this->__router($enter_event);
-                await $this->__router($forward_event);
+                $this->__router($enter_event);
+                $this->__router($forward_event);
             }
             foreach ($this->_context_stack as $ctx) {
                 $ctx->_transitioned = true;
@@ -153,7 +153,7 @@ class AsyncFetcher {
         $__ctx = new AsyncFetcherFrameContext($__e, null);
         $this->_context_stack[] = $__ctx;
         try {
-            await $this->__kernel($__e);
+            $this->__kernel($__e);
             return array_pop($this->_context_stack)->_return;
         } catch (\Throwable $__frame_err) {
             array_pop($this->_context_stack);

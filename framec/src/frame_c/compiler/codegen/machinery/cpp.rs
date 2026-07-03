@@ -148,6 +148,12 @@ while (comp) {{
         // - Synthesized `<$`/`$>` events are stack-local FrameEvents
         //   passed by reference into `__router`.
         let event_class = format!("{}FrameEvent", system.name);
+        // #158: `await` at emission for async systems (asyncness known here).
+        let aw = if system.is_async_layered() {
+            "co_await "
+        } else {
+            ""
+        };
         Some(CodegenNode::Method {
             name: "__kernel".to_string(),
             params: vec![Param::new("__e").with_type(&format!("{}&", event_class))],
@@ -155,38 +161,39 @@ while (comp) {{
             body: vec![CodegenNode::NativeBlock {
                 code: format!(
                     r#"// Route event to current state.
-__router(__e);
+{aw}__router(__e);
 // Drain any transitions queued by the handler.
 while (__next_compartment) {{
     auto next_compartment = std::move(__next_compartment);
     // Exit the current (leaf) state.
     {evt} __exit_event("<$", __compartment->exit_args);
-    __router(__exit_event);
+    {aw}__router(__exit_event);
     // Switch to the new compartment.
     __compartment = std::move(next_compartment);
     // Three-branch forward-event handling.
     if (!__compartment->forward_event) {{
         // No forwarded event — synthesize a fresh $>.
         {evt} __enter_event("$>", __compartment->enter_args);
-        __router(__enter_event);
+        {aw}__router(__enter_event);
     }} else if (__compartment->forward_event->_message == "$>") {{
         // Forwarded event IS $> — dispatch directly so the
         // destination's $> handler receives the caller's payload.
         auto forward_event = std::move(__compartment->forward_event);
-        __router(*forward_event);
+        {aw}__router(*forward_event);
     }} else {{
         // Forwarded event is not $> — initialize the destination
         // with a fresh $>, then dispatch the forward.
         auto forward_event = std::move(__compartment->forward_event);
         {evt} __enter_event("$>", __compartment->enter_args);
-        __router(__enter_event);
-        __router(*forward_event);
+        {aw}__router(__enter_event);
+        {aw}__router(*forward_event);
     }}
     for (auto& ctx : _context_stack) {{
         ctx._transitioned = true;
     }}
 }}"#,
-                    evt = event_class
+                    evt = event_class,
+                    aw = aw
                 ),
                 span: None,
             }],
@@ -215,7 +222,15 @@ while (__next_compartment) {{
                 "{} (__compartment->state == \"{}\") {{\n",
                 prefix, state
             ));
-            router_code.push_str(&format!("    _state_{}(__e, __compartment);\n", state));
+            router_code.push_str(&format!(
+                "    {}_state_{}(__e, __compartment);\n",
+                if system.is_async_layered() {
+                    "co_await "
+                } else {
+                    ""
+                },
+                state
+            ));
         }
         if !states.is_empty() {
             router_code.push_str("}");
