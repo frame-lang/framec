@@ -163,7 +163,16 @@ fn rust_handler_arg_expr(name: &str, source_type: &str, resolved_type: &str) -> 
         || resolved_type.starts_with("Vec<")
         || resolved_type.starts_with("HashMap<")
         || resolved_type.starts_with("std::collections::HashMap")
-        || resolved_type.contains("BTreeMap");
+        || resolved_type.contains("BTreeMap")
+        // #161: shared handles clone by refcount bump. `Rc<RefCell<Sys>>` is
+        // the reference-semantics equivalent of passing a system instance on
+        // the OO targets — the supported spelling for system-valued params.
+        || resolved_type.starts_with("Rc<")
+        || resolved_type.starts_with("Arc<")
+        || resolved_type.starts_with("std::rc::Rc<")
+        || resolved_type.starts_with("std::sync::Arc<")
+        || resolved_type.starts_with("alloc::rc::Rc<")
+        || resolved_type.starts_with("alloc::sync::Arc<");
     if is_non_copy {
         format!("{}.clone()", name)
     } else {

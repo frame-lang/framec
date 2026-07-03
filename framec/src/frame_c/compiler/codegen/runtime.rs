@@ -1092,7 +1092,14 @@ fn generate_rust_runtime_types(
     // event parameters are now fully typed, eliminating the
     // Box<dyn Any> downcast lies that the old struct+Vec<Box<dyn Any>>
     // shape required.
-    code.push_str("#[derive(Clone, Debug)]\n");
+    // #161: derive(Clone) IS required — the forward path (`-> => $S`)
+    // clones the in-flight event into `compartment.forward_event` from a
+    // `&Event` (the Rc isn't in scope in handlers). Debug however is used
+    // nowhere and forced every payload type to implement it — for the
+    // supported system-param spelling `Rc<RefCell<Sys>>`, Clone is a
+    // refcount bump but Debug would demand `Sys: Debug`. So: Clone yes,
+    // Debug no.
+    code.push_str("#[derive(Clone)]\n");
     code.push_str("#[allow(dead_code, non_camel_case_types)]\n");
     code.push_str(&format!("enum {}FrameEvent {{\n", system_name));
     for (event_name, fields) in &effective_events {

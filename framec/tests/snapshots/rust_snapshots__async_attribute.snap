@@ -19,7 +19,7 @@ mod _async_fetcher_framec {
     use super::*;
     extern crate alloc;
     use alloc::{vec, format};
-    #[derive(Clone, Debug)]
+    #[derive(Clone)]
     #[allow(dead_code, non_camel_case_types)]
     enum AsyncFetcherFrameEvent {
         Fetch { key: String },
@@ -298,7 +298,7 @@ mod _async_fetcher_framec {
         }
 
         pub async fn fetch(&mut self, key: String) -> String {
-            let __e = alloc::rc::Rc::new(AsyncFetcherFrameEvent::Fetch { key: key.clone() });
+            let __e = alloc::rc::Rc::new(AsyncFetcherFrameEvent::Fetch { key: key });
             let mut __ctx = AsyncFetcherFrameContext::new(alloc::rc::Rc::clone(&__e), None);
             self._context_stack.push(__ctx);
             self.__kernel(&__e).await;

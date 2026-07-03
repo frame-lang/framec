@@ -174,7 +174,11 @@ pub(crate) fn rust_dispatch_convert(t: &Type) -> &'static str {
     match result.as_str() {
         ".to_string()" => ".to_string()",
         ".to_vec()" => ".to_vec()",
-        _ => ".clone()",
+        // #161: owned params MOVE into the event variant — the wrapper is
+        // their last use. The old unconditional `.clone()` forced Clone on
+        // every payload type (impossible for a live system instance) and
+        // made a needless copy of every String/Vec argument.
+        _ => "",
     }
 }
 
@@ -321,11 +325,11 @@ mod tests {
             rust_dispatch_convert(&Type::Custom("&[u8]".into())),
             ".to_vec()"
         );
-        assert_eq!(
-            rust_dispatch_convert(&Type::Custom("String".into())),
-            ".clone()"
-        );
-        assert_eq!(rust_dispatch_convert(&Type::Unknown), ".clone()");
+        // #161: owned params MOVE into the event variant (empty suffix) —
+        // the wrapper is their last use; `.clone()` forced Clone on every
+        // payload type (impossible for a live system instance).
+        assert_eq!(rust_dispatch_convert(&Type::Custom("String".into())), "");
+        assert_eq!(rust_dispatch_convert(&Type::Unknown), "");
     }
 
     #[test]

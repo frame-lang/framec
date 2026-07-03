@@ -18,11 +18,19 @@ impl FrameValidator {
         ast: &FrameAst,
         target: crate::frame_c::visitors::TargetLanguage,
     ) -> Result<(), Vec<ValidationError>> {
+        // All system names in the compilation unit — E616 checks interface
+        // param types against them (a param typed as a sibling system).
+        let system_names: std::collections::HashSet<String> = match ast {
+            FrameAst::System(system) => std::iter::once(system.name.clone()).collect(),
+            FrameAst::Module(module) => module.systems.iter().map(|s| s.name.clone()).collect(),
+        };
         match ast {
-            FrameAst::System(system) => self.validate_system_target_specific(system, target),
+            FrameAst::System(system) => {
+                self.validate_system_target_specific(system, target, &system_names)
+            }
             FrameAst::Module(module) => {
                 for system in &module.systems {
-                    self.validate_system_target_specific(system, target);
+                    self.validate_system_target_specific(system, target, &system_names);
                 }
             }
         }
@@ -38,11 +46,45 @@ impl FrameValidator {
         &mut self,
         system: &SystemAst,
         target: crate::frame_c::visitors::TargetLanguage,
+        system_names: &std::collections::HashSet<String>,
     ) {
         // E605: Static targets require explicit type on domain fields
         self.validate_domain_types(system, target);
         // E606: Static targets require explicit type on interface params
         self.validate_interface_param_types(system, target);
+
+        // E616 (rust): an interface parameter typed as a live system instance
+        // (by value) cannot work — the event is Rc-shared (context stack +
+        // kernel), so a move-only payload can never be handed to the handler
+        // by value, and cloning a live FSM would be semantically wrong. The
+        // reference-semantics equivalent of the OO targets is a shared
+        // handle: `Rc<RefCell<Sys>>` (clones by refcount bump, preserves
+        // instance identity). #161.
+        if matches!(target, crate::frame_c::visitors::TargetLanguage::Rust) {
+            // The per-system pass sees one SystemAst; sibling names come from
+            // the compilation-wide registry (populated before validation).
+            let all_names = crate::frame_c::compiler::codegen::interface_gen::known_system_names();
+            for m in &system.interface {
+                for p in &m.params {
+                    let t = match &p.param_type {
+                        crate::frame_c::compiler::frame_ast::Type::Custom(name) => name.trim(),
+                        crate::frame_c::compiler::frame_ast::Type::Unknown => continue,
+                    };
+                    if system_names.contains(t) || all_names.contains(t) {
+                        self.errors.push(
+                            ValidationError::new(
+                                "E616",
+                                format!(
+                                    "interface method '{}' on system '{}' takes a live system instance by value (`{}: {}`) — on the rust target the event is Rc-shared, so a move-only payload can't reach the handler, and a live state machine must not be cloned. Pass a shared handle instead: `{}: Rc<RefCell<{}>>` (construct with `Rc::new(RefCell::new(@@{}(…)))`; call via `.borrow_mut()`), or construct the child in the domain.",
+                                    m.name, system.name, p.name, t, p.name, t, t
+                                ),
+                            )
+                            .with_span(system.span.clone()),
+                        );
+                    }
+                }
+            }
+        }
 
         match target {
             crate::frame_c::visitors::TargetLanguage::GDScript => {

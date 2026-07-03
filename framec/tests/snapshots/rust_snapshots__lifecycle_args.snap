@@ -19,7 +19,7 @@ mod _lifecycle_args_framec {
     use super::*;
     extern crate alloc;
     use alloc::{vec, format};
-    #[derive(Clone, Debug)]
+    #[derive(Clone)]
     #[allow(dead_code, non_camel_case_types)]
     enum LifecycleArgsFrameEvent {
         Load { n: i32, label: String },
@@ -247,7 +247,7 @@ mod _lifecycle_args_framec {
         }
 
         pub fn load(&mut self, n: i32, label: String) {
-            let __e = alloc::rc::Rc::new(LifecycleArgsFrameEvent::Load { n: n.clone(), label: label.clone() });
+            let __e = alloc::rc::Rc::new(LifecycleArgsFrameEvent::Load { n: n, label: label });
             let mut __ctx = LifecycleArgsFrameContext::new(alloc::rc::Rc::clone(&__e), None);
             self._context_stack.push(__ctx);
             self.__kernel(&__e);

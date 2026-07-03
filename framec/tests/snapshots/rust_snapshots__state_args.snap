@@ -19,7 +19,7 @@ mod _state_args_framec {
     use super::*;
     extern crate alloc;
     use alloc::{vec, format};
-    #[derive(Clone, Debug)]
+    #[derive(Clone)]
     #[allow(dead_code, non_camel_case_types)]
     enum StateArgsFrameEvent {
         Load { initial: i32 },
@@ -240,7 +240,7 @@ mod _state_args_framec {
         }
 
         pub fn load(&mut self, initial: i32) {
-            let __e = alloc::rc::Rc::new(StateArgsFrameEvent::Load { initial: initial.clone() });
+            let __e = alloc::rc::Rc::new(StateArgsFrameEvent::Load { initial: initial });
             let mut __ctx = StateArgsFrameContext::new(alloc::rc::Rc::clone(&__e), None);
             self._context_stack.push(__ctx);
             self.__kernel(&__e);
@@ -248,7 +248,7 @@ mod _state_args_framec {
         }
 
         pub fn adjust(&mut self, delta: i32) {
-            let __e = alloc::rc::Rc::new(StateArgsFrameEvent::Adjust { delta: delta.clone() });
+            let __e = alloc::rc::Rc::new(StateArgsFrameEvent::Adjust { delta: delta });
             let mut __ctx = StateArgsFrameContext::new(alloc::rc::Rc::clone(&__e), None);
             self._context_stack.push(__ctx);
             self.__kernel(&__e);

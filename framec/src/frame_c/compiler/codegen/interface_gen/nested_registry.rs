@@ -67,6 +67,13 @@ pub fn set_system_interfaces(map: HashMap<String, HashSet<String>>) {
     SYSTEM_INTERFACES.with(|s| *s.borrow_mut() = map);
 }
 
+/// Every system name registered for this compilation (the keys of
+/// `SYSTEM_INTERFACES`). Used by E616, whose per-system validation pass
+/// only sees one `SystemAst` at a time (#161).
+pub fn known_system_names() -> std::collections::HashSet<String> {
+    SYSTEM_INTERFACES.with(|s| s.borrow().keys().cloned().collect())
+}
+
 /// The unique system OTHER THAN `calling_system` whose interface declares
 /// `method`, or `None` when no such system (or more than one) declares it
 /// (#159 resolution rule 2). The calling system is excluded because the call

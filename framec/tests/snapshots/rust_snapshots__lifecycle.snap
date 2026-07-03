@@ -19,7 +19,7 @@ mod _lifecycle_framec {
     use super::*;
     extern crate alloc;
     use alloc::{vec, format};
-    #[derive(Clone, Debug)]
+    #[derive(Clone)]
     #[allow(dead_code, non_camel_case_types)]
     enum LifecycleFrameEvent {
         Start { label: String },
@@ -243,7 +243,7 @@ mod _lifecycle_framec {
         }
 
         pub fn start(&mut self, label: String) {
-            let __e = alloc::rc::Rc::new(LifecycleFrameEvent::Start { label: label.clone() });
+            let __e = alloc::rc::Rc::new(LifecycleFrameEvent::Start { label: label });
             let mut __ctx = LifecycleFrameContext::new(alloc::rc::Rc::clone(&__e), None);
             self._context_stack.push(__ctx);
             self.__kernel(&__e);
