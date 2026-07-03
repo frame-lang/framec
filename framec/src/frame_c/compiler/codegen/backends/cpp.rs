@@ -1078,8 +1078,20 @@ impl CppBackend {
         // is `std::shared_ptr<T>` — wrap the type and rewrite the
         // initializer's `new T(...)` to `std::make_shared<T>(...)`.
         let is_system_ref = ctx.defined_systems.contains(raw_type);
+        // Array-typed domain field (`kids: Kid*[4]`, #159 family): C++'s
+        // declarator puts the bracket group after the NAME
+        // (`Kid* kids[4];`). Split a trailing `[..]` off the declared type
+        // and emit it there — this keeps the element system visible to the
+        // indexed cross-system call resolution (structural rule 1), instead
+        // of hiding it behind a typedef or a template wrapper.
+        let (decl_type, brackets) = match raw_type.find('[') {
+            Some(b) if raw_type.ends_with(']') => (raw_type[..b].trim_end(), &raw_type[b..]),
+            _ => (raw_type, ""),
+        };
         let type_str = if is_system_ref {
             format!("std::shared_ptr<{}>", raw_type)
+        } else if !brackets.is_empty() {
+            decl_type.to_string()
         } else {
             raw_type.to_string()
         };
@@ -1105,12 +1117,13 @@ impl CppBackend {
         };
         let comments = field.format_leading_comments(&ctx.get_indent());
         format!(
-            "{}{}{}{} {}{};\n",
+            "{}{}{}{} {}{}{};\n",
             comments,
             ctx.get_indent(),
             const_kw,
             type_str,
             field.name,
+            brackets,
             init_suffix
         )
     }
