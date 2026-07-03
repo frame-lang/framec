@@ -152,7 +152,13 @@ pub(super) fn expand_context_self_field_call(
     let embed_base_owned: Option<String> = {
         // Plain form: exactly the pre-#159 rule (type minus trailing `*`s).
         let plain = field_type
-            .map(|t| t.trim().trim_end_matches('*').trim_end().to_string())
+            .map(|t| {
+                t.trim()
+                    .trim_start_matches('*')
+                    .trim_end_matches('*')
+                    .trim()
+                    .to_string()
+            })
             .filter(|base| ctx.defined_systems.contains(base));
         if plain.is_some() {
             plain
@@ -163,11 +169,26 @@ pub(super) fn expand_context_self_field_call(
             let elem = field_type
                 .map(|t| {
                     let t = t.trim();
-                    let no_arr = match t.find('[') {
-                        Some(b) => t[..b].trim_end(),
-                        None => t,
+                    // C-family spelling puts the array group AFTER the base
+                    // (`Counter*[4]`); Go puts it BEFORE (`[]*Counter`,
+                    // `[4]*Counter`). Strip whichever side carries it, then
+                    // the pointer stars.
+                    let no_arr = if let Some(rest) = t.strip_prefix('[') {
+                        match rest.find(']') {
+                            Some(c) => rest[c + 1..].trim_start(),
+                            None => t,
+                        }
+                    } else {
+                        match t.find('[') {
+                            Some(b) => t[..b].trim_end(),
+                            None => t,
+                        }
                     };
-                    no_arr.trim_end_matches('*').trim_end().to_string()
+                    no_arr
+                        .trim_start_matches('*')
+                        .trim_end_matches('*')
+                        .trim()
+                        .to_string()
                 })
                 .filter(|base| ctx.defined_systems.contains(base));
             if elem.is_some() {
@@ -175,6 +196,7 @@ pub(super) fn expand_context_self_field_call(
             } else {
                 crate::frame_c::compiler::codegen::interface_gen::unique_system_with_interface_method(
                     method,
+                    &ctx.system_name,
                 )
                 .filter(|sys| ctx.defined_systems.contains(sys))
             }

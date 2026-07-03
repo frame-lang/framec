@@ -163,3 +163,71 @@ fn unindexed_container_call_stays_native() {
         "[#159] unindexed `.push` must stay a native container call:\n{code}"
     );
 }
+
+/// #159 reopen — the called method's name colliding with the CALLING system's
+/// own interface method must not block resolution: the caller is excluded from
+/// the uniqueness scan (parent and child routinely share `tick`/`update`).
+#[test]
+fn caller_name_collision_still_lowers() {
+    let code = compile_source(
+        r#"
+@@[target("c")]
+typedef struct Counter Counter;
+typedef Counter* CounterArr[4];
+@@system Counter {
+    interface: tick(dt: float)
+    machine: $S { tick(dt: float) { @@:self.n = @@:self.n + 1; } }
+    domain: n: int = 0
+}
+@@[main]
+@@system Hub {
+    interface: tick(dt: float)
+    machine: $S { tick(dt: float) { @@:self._tick_all(dt); } }
+    actions:
+        _tick_all(dt: float) {
+            @@:self.counters[0].tick(dt);
+        }
+    domain:
+        counters: CounterArr
+}
+"#,
+        "c",
+    );
+    assert!(
+        code.contains("Counter_tick(self->counters[0], dt)"),
+        "[#159 reopen] collision-named indexed call must still lower:\n{code}"
+    );
+}
+
+/// Go twin: leading `[]*Sys` slice spelling resolves via rule 1, and the
+/// collision-named call case-maps (`tick` → `Tick`).
+#[test]
+fn go_slice_spelling_and_collision_case_map() {
+    let code = compile_source(
+        r#"
+@@[target("go")]
+package main
+@@system Counter {
+    interface: tick(dt: float64)
+    machine: $S { tick(dt: float64) { @@:self.n = @@:self.n + 1; } }
+    domain: n: int = 0
+}
+@@[main]
+@@system Hub {
+    interface: tick(dt: float64)
+    machine: $S { tick(dt: float64) { @@:self._tick_all(dt); } }
+    actions:
+        _tick_all(dt: float64) {
+            @@:self.counters[0].tick(dt);
+        }
+    domain:
+        counters: []*Counter
+}
+"#,
+        "go",
+    );
+    assert!(
+        code.contains("s.counters[0].Tick(dt)"),
+        "[#159 reopen] go collision-named indexed call must case-map:\n{code}"
+    );
+}

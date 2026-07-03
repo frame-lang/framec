@@ -67,14 +67,18 @@ pub fn set_system_interfaces(map: HashMap<String, HashSet<String>>) {
     SYSTEM_INTERFACES.with(|s| *s.borrow_mut() = map);
 }
 
-/// The unique system whose interface declares `method`, or `None` when no
-/// system (or more than one) declares it (#159 resolution rule 2).
-pub fn unique_system_with_interface_method(method: &str) -> Option<String> {
+/// The unique system OTHER THAN `calling_system` whose interface declares
+/// `method`, or `None` when no such system (or more than one) declares it
+/// (#159 resolution rule 2). The calling system is excluded because the call
+/// is on one of its own domain fields — dispatching to a CHILD — and parent
+/// and child routinely share event names (`tick`, `update`); counting the
+/// caller made every such name spuriously ambiguous (#159 reopen).
+pub fn unique_system_with_interface_method(method: &str, calling_system: &str) -> Option<String> {
     SYSTEM_INTERFACES.with(|s| {
         let map = s.borrow();
         let mut hit: Option<&String> = None;
         for (sys, methods) in map.iter() {
-            if methods.contains(method) {
+            if sys != calling_system && methods.contains(method) {
                 if hit.is_some() {
                     return None; // ambiguous
                 }
