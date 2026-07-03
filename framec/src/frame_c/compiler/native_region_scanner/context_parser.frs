@@ -313,6 +313,74 @@ include!("expr_scanner.gen.rs");
                         self.result_end = i;
                         self.result_kind = 10; // ContextSelfCall
                         self.has_result = true;
+                    } else if i < end && bytes[i] == b'[' {
+                        // #159: @@:self.field[index].method(args) — indexed
+                        // cross-system call. Scan the balanced (quote-aware)
+                        // bracket group, then require `.method(` — otherwise
+                        // fall back to the plain field splice (indexed READS
+                        // like `@@:self.list[i].x` keep their native tail).
+                        let field_end = i; // end of the field identifier
+                        let mut k = i + 1; // past '['
+                        let mut bdepth: usize = 1;
+                        while k < end && bdepth > 0 {
+                            if bytes[k] == b'[' { bdepth += 1; }
+                            if bytes[k] == b']' { bdepth -= 1; }
+                            if bytes[k] == b'"' || bytes[k] == b'\'' {
+                                let q = bytes[k];
+                                k += 1;
+                                while k < end {
+                                    if bytes[k] == b'\\' && k + 1 < end { k += 2; continue; }
+                                    if bytes[k] == q { break; }
+                                    k += 1;
+                                }
+                            }
+                            if bdepth > 0 { k += 1; }
+                        }
+                        let closed = bdepth == 0;
+                        if closed { k += 1; } // past ']'
+                        if closed && k + 1 < end && bytes[k] == b'.'
+                            && (bytes[k + 1].is_ascii_alphabetic() || bytes[k + 1] == b'_')
+                        {
+                            let mut j = k + 1; // past the '.'
+                            while j < end && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') {
+                                j += 1;
+                            }
+                            if j < end && bytes[j] == b'(' {
+                                // Balanced, quote-aware paren scan (mirrors
+                                // the method-call arm above).
+                                let mut depth: usize = 1;
+                                j += 1;
+                                while j < end && depth > 0 {
+                                    if bytes[j] == b'(' { depth += 1; }
+                                    if bytes[j] == b')' { depth -= 1; }
+                                    if bytes[j] == b'"' || bytes[j] == b'\'' {
+                                        let q = bytes[j];
+                                        j += 1;
+                                        while j < end {
+                                            if bytes[j] == b'\\' && j + 1 < end { j += 2; continue; }
+                                            if bytes[j] == q { break; }
+                                            j += 1;
+                                        }
+                                    }
+                                    if depth > 0 { j += 1; }
+                                }
+                                if depth == 0 { j += 1; }
+                                self.result_end = j;
+                                self.result_kind = 15; // ContextSelfFieldCall (indexed)
+                                self.has_result = true;
+                            } else {
+                                // `[idx].name` without a call — plain field
+                                // splice; the indexed tail stays native.
+                                self.result_end = field_end;
+                                self.result_kind = 11; // ContextSelf
+                                self.has_result = true;
+                            }
+                        } else {
+                            // `[idx]` read/write — plain field splice.
+                            self.result_end = field_end;
+                            self.result_kind = 11; // ContextSelf
+                            self.has_result = true;
+                        }
                     } else if i + 1 < end && bytes[i] == b'.'
                         && (bytes[i + 1].is_ascii_alphabetic() || bytes[i + 1] == b'_')
                     {

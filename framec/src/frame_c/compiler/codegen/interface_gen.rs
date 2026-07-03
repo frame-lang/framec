@@ -20,7 +20,7 @@ use utility::{frame_return_default, is_dynamic_target};
 pub use nested_registry::{
     child_persist_names, get_nested_system_domain_params, nested_uses_new_contract,
     set_local_systems, set_nested_system_domain_params, set_nested_system_persist_names,
-    set_new_contract_systems,
+    set_new_contract_systems, set_system_interfaces, unique_system_with_interface_method,
 };
 
 use std::collections::{HashMap, HashSet};

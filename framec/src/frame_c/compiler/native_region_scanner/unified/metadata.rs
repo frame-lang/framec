@@ -154,19 +154,50 @@ pub(super) fn extract_segment_metadata(kind: FrameSegmentKind, text: &str) -> Se
         }
 
         FrameSegmentKind::ContextSelfFieldCall => {
-            // `@@:self.field.method(args)` (RFC-0046) → field, method, args.
+            // `@@:self.field.method(args)` or `@@:self.field[idx].method(args)`
+            // (RFC-0046 / #159) → field, optional index, method, args. The
+            // field is an identifier (ident_scan automaton); the optional
+            // bracket group was scanned balanced+quote-aware by the
+            // ContextParserFsm, so slicing to its matching `]` here only has
+            // to track bracket depth.
             if let Some(rest) = text.strip_prefix("@@:self.") {
-                if let Some(dot) = rest.find('.') {
-                    let field = rest[..dot].to_string();
-                    let after = &rest[dot + 1..];
-                    if let Some(paren) = after.find('(') {
-                        let method = after[..paren].to_string();
-                        let args = after[paren..].to_string(); // includes parens
-                        return SegmentMetadata::SelfFieldCall {
-                            field,
-                            method,
-                            args,
-                        };
+                let field = leading_ident(rest).to_string();
+                if !field.is_empty() {
+                    let mut after = &rest[field.len()..];
+                    let mut index = None;
+                    if after.starts_with('[') {
+                        let bytes = after.as_bytes();
+                        let mut depth = 0usize;
+                        let mut k = 0usize;
+                        while k < bytes.len() {
+                            match bytes[k] {
+                                b'[' => depth += 1,
+                                b']' => {
+                                    depth -= 1;
+                                    if depth == 0 {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            k += 1;
+                        }
+                        if k < bytes.len() {
+                            index = Some(after[..=k].to_string());
+                            after = &after[k + 1..];
+                        }
+                    }
+                    if let Some(dotted) = after.strip_prefix('.') {
+                        let method = leading_ident(dotted).to_string();
+                        let call = &dotted[method.len()..];
+                        if !method.is_empty() && call.starts_with('(') {
+                            return SegmentMetadata::SelfFieldCall {
+                                field,
+                                method,
+                                args: call.to_string(), // includes parens
+                                index,
+                            };
+                        }
                     }
                 }
             }

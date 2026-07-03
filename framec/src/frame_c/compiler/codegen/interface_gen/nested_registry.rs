@@ -51,6 +51,38 @@ thread_local! {
     /// breaking when the child declared a non-default name).
     static NESTED_SYSTEM_PERSIST_NAMES: RefCell<HashMap<String, (Option<String>, Option<String>)>> =
         RefCell::new(HashMap::new());
+
+    /// `system_name → declared interface method names`. Consulted by the
+    /// indexed cross-system call lowering (#159): when a field's declared
+    /// type hides the element system behind a native typedef
+    /// (`counters: CounterArr`), the target system is resolved as the
+    /// UNIQUE system whose interface declares the called method.
+    static SYSTEM_INTERFACES: RefCell<HashMap<String, HashSet<String>>> =
+        RefCell::new(HashMap::new());
+}
+
+/// Set every local system's interface-method names. Called once per
+/// compilation, before per-system codegen runs (#159).
+pub fn set_system_interfaces(map: HashMap<String, HashSet<String>>) {
+    SYSTEM_INTERFACES.with(|s| *s.borrow_mut() = map);
+}
+
+/// The unique system whose interface declares `method`, or `None` when no
+/// system (or more than one) declares it (#159 resolution rule 2).
+pub fn unique_system_with_interface_method(method: &str) -> Option<String> {
+    SYSTEM_INTERFACES.with(|s| {
+        let map = s.borrow();
+        let mut hit: Option<&String> = None;
+        for (sys, methods) in map.iter() {
+            if methods.contains(method) {
+                if hit.is_some() {
+                    return None; // ambiguous
+                }
+                hit = Some(sys);
+            }
+        }
+        hit.cloned()
+    })
 }
 
 /// Set the names of systems using the new persist contract. Called

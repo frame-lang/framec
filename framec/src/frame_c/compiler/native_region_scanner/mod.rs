@@ -66,6 +66,10 @@ pub enum SegmentMetadata {
         field: String,
         method: String,
         args: String,
+        /// `Some("[i]")`-style bracket group (brackets included) for the
+        /// indexed form `@@:self.field[i].method(args)` (#159); `None` for
+        /// the plain field call.
+        index: Option<String>,
     },
     /// `@@SystemName(args)` (Factory) or `@@!SystemName()` (NoInitialization,
     /// per RFC-0015 D7). `args` is empty for the NoInitialization variant.

@@ -1363,6 +1363,23 @@ pub(crate) fn do_validate_codegen(c: &mut PipelineCtx) -> Option<CompileResult> 
             new_contract.insert(n.clone());
         }
         crate::frame_c::compiler::codegen::interface_gen::set_new_contract_systems(new_contract);
+        // #159: system → interface-method names, for resolving indexed
+        // cross-system calls whose field type hides the element system
+        // behind a native typedef.
+        let system_interfaces: std::collections::HashMap<
+            String,
+            std::collections::HashSet<String>,
+        > = system_asts
+            .iter()
+            .chain(imported_system_asts.iter())
+            .map(|s| {
+                (
+                    s.name.clone(),
+                    s.interface.iter().map(|m| m.name.clone()).collect(),
+                )
+            })
+            .collect();
+        crate::frame_c::compiler::codegen::interface_gen::set_system_interfaces(system_interfaces);
 
         // FRAMEC_BUGS Issue #17: register the full set of local
         // `@@system` names so `nested_uses_new_contract` can

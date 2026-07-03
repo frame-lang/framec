@@ -84,13 +84,19 @@ pub(super) fn expand_context_self_field_call(
     ctx: &HandlerContext,
     metadata: &SegmentMetadata,
 ) -> String {
-    let (field, method, raw_args) = if let SegmentMetadata::SelfFieldCall {
+    let (field, method, raw_args, index) = if let SegmentMetadata::SelfFieldCall {
         field,
         method,
         args,
+        index,
     } = metadata
     {
-        (field.as_str(), method.as_str(), args.as_str())
+        (
+            field.as_str(),
+            method.as_str(),
+            args.as_str(),
+            index.as_deref(),
+        )
     } else {
         return String::new();
     };
@@ -108,14 +114,96 @@ pub(super) fn expand_context_self_field_call(
         raw_args.to_string()
     };
 
+    // #159: the indexed form `@@:self.field[i].method(args)` splices the
+    // bracket group after the field on every target; `idx` is `""` for the
+    // plain field call. The index expression may itself contain Frame syntax
+    // (`@@:self.list[@@:self.cn]`), so expand it like the args.
+    let idx: String = match index {
+        Some(raw) if raw.len() >= 2 && raw.starts_with('[') && raw.ends_with(']') => {
+            let inner = &raw[1..raw.len() - 1];
+            if inner.trim().is_empty() {
+                raw.to_string()
+            } else {
+                format!("[{}]", expand_expression(inner, lang, ctx))
+            }
+        }
+        Some(raw) => raw.to_string(),
+        None => String::new(),
+    };
+
     // Embed = the field's declared type is itself a defined system. The
     // declared spelling may be pointer-qualified — the C guide's idiomatic
     // cross-system field is `inner: Inner*` (#73) — so strip trailing `*`s
     // to get the base system name for the check (and for C's free-function
     // family / Erlang's module name below).
+    //
+    // #159 resolution ladder for the INDEXED form, whose element type is
+    // routinely hidden behind a native container typedef
+    // (`counters: CounterArr`), which framec — type-ignorant by design —
+    // cannot see through:
+    //   1. declared type minus trailing `[..]` group and `*`s ∈ systems, or
+    //   2. the UNIQUE system whose Frame-declared interface has `method`
+    //      (arcanum knowledge, not native-type parsing). Ambiguous or
+    //      unknown → native passthrough, same as a scalar field.
+    // Rule 2 applies ONLY to the indexed form: on the plain form a scalar
+    // field's native method call must stay native even if its name collides
+    // with some system's interface method.
     let field_type = ctx.domain_field_types.get(field);
-    let embed_base: Option<&str> = field_type.map(|t| t.trim().trim_end_matches('*').trim_end());
-    let is_embed = embed_base.is_some_and(|base| ctx.defined_systems.contains(base));
+    let embed_base_owned: Option<String> = {
+        // Plain form: exactly the pre-#159 rule (type minus trailing `*`s).
+        let plain = field_type
+            .map(|t| t.trim().trim_end_matches('*').trim_end().to_string())
+            .filter(|base| ctx.defined_systems.contains(base));
+        if plain.is_some() {
+            plain
+        } else if index.is_some() {
+            // Indexed only — an unindexed call on an array-typed field is a
+            // native container-method call (`list.push(x)`) and must never
+            // resolve to a system.
+            let elem = field_type
+                .map(|t| {
+                    let t = t.trim();
+                    let no_arr = match t.find('[') {
+                        Some(b) => t[..b].trim_end(),
+                        None => t,
+                    };
+                    no_arr.trim_end_matches('*').trim_end().to_string()
+                })
+                .filter(|base| ctx.defined_systems.contains(base));
+            if elem.is_some() {
+                elem
+            } else {
+                crate::frame_c::compiler::codegen::interface_gen::unique_system_with_interface_method(
+                    method,
+                )
+                .filter(|sys| ctx.defined_systems.contains(sys))
+            }
+        } else {
+            None
+        }
+    };
+    let embed_base: Option<&str> = embed_base_owned.as_deref();
+    let is_embed = embed_base.is_some();
+    // Erlang lowers EVERY field call as a cross-system module call (it has no
+    // method-on-value syntax), keyed off the raw declared type base — no
+    // defined_systems membership required (matches the pre-#159 behavior; the
+    // type may be cross-file). Indexed fields strip the `[..]` group first,
+    // falling back to the resolved system when the typedef hides the element.
+    let erlang_base_owned: Option<String> = field_type
+        .map(|t| {
+            let t = t.trim();
+            let no_arr = if index.is_some() {
+                match t.find('[') {
+                    Some(b) => t[..b].trim_end(),
+                    None => t,
+                }
+            } else {
+                t
+            };
+            no_arr.trim_end_matches('*').trim_end().to_string()
+        })
+        .filter(|b| !b.is_empty())
+        .or_else(|| embed_base_owned.clone());
 
     match lang {
         // C: a struct has no methods, so an embed call is a cross-system
@@ -128,12 +216,12 @@ pub(super) fn expand_context_self_field_call(
                 let sys = embed_base.unwrap_or("");
                 let inner = strip_outer_parens(&args);
                 if inner.trim().is_empty() {
-                    format!("{sys}_{method}(self->{field})")
+                    format!("{sys}_{method}(self->{field}{idx})")
                 } else {
-                    format!("{sys}_{method}(self->{field}, {inner})")
+                    format!("{sys}_{method}(self->{field}{idx}, {inner})")
                 }
             } else {
-                format!("self->{field}.{method}{args}")
+                format!("self->{field}{idx}.{method}{args}")
             }
         }
         // Erlang: an embed field holds a Pid, so a cross-system call is a
@@ -145,16 +233,16 @@ pub(super) fn expand_context_self_field_call(
         // is always a cross-system call; the module name is the field's system
         // type, snake-cased — matching the field's `@@System()` initializer.)
         TargetLanguage::Erlang => {
-            if let Some(base) = embed_base {
+            if let Some(base) = erlang_base_owned.as_deref() {
                 let module = to_snake_case(base);
                 let inner = strip_outer_parens(&args);
                 if inner.trim().is_empty() {
-                    format!("{module}:{method}(self.{field})")
+                    format!("{module}:{method}(self.{field}{idx})")
                 } else {
-                    format!("{module}:{method}(self.{field}, {inner})")
+                    format!("{module}:{method}(self.{field}{idx}, {inner})")
                 }
             } else {
-                format!("self.{field}.{method}{args}")
+                format!("self.{field}{idx}.{method}{args}")
             }
         }
         // C++: embed fields are `shared_ptr` (deref with `->`); scalar fields are
@@ -162,10 +250,10 @@ pub(super) fn expand_context_self_field_call(
         // method-access operator.
         TargetLanguage::Cpp => {
             let mop = if is_embed { "->" } else { "." };
-            format!("this->{field}{mop}{method}{args}")
+            format!("this->{field}{idx}{mop}{method}{args}")
         }
         // PHP: every object method call uses `->`.
-        TargetLanguage::Php => format!("$this->{field}->{method}{args}"),
+        TargetLanguage::Php => format!("$this->{field}{idx}->{method}{args}"),
         // Go exports interface methods by capitalizing the first letter
         // (`tick` → `Tick`). A cross-system (embed) call must use that same
         // exported spelling, or it references an undefined method (#112). A
@@ -173,25 +261,25 @@ pub(super) fn expand_context_self_field_call(
         // framec does not control, so it stays verbatim.
         TargetLanguage::Go => {
             if is_embed {
-                format!("s.{field}.{}{args}", capitalize_first(method))
+                format!("s.{field}{idx}.{}{args}", capitalize_first(method))
             } else {
-                format!("s.{field}.{method}{args}")
+                format!("s.{field}{idx}.{method}{args}")
             }
         }
         TargetLanguage::Python3
         | TargetLanguage::GDScript
         | TargetLanguage::Ruby
         | TargetLanguage::Swift
-        | TargetLanguage::Rust => format!("self.{field}.{method}{args}"),
+        | TargetLanguage::Rust => format!("self.{field}{idx}.{method}{args}"),
         // Lua method calls use `:` (implicit self). A cross-system (embed) call
         // must use `:`, or `self` is not passed and the first real argument
         // shifts into it (#120 — the Lua analog of Go #112). A non-embed scalar
         // field's native method stays `.` (framec does not control its name).
         TargetLanguage::Lua => {
             if is_embed {
-                format!("self.{field}:{method}{args}")
+                format!("self.{field}{idx}:{method}{args}")
             } else {
-                format!("self.{field}.{method}{args}")
+                format!("self.{field}{idx}.{method}{args}")
             }
         }
         TargetLanguage::TypeScript
@@ -199,7 +287,7 @@ pub(super) fn expand_context_self_field_call(
         | TargetLanguage::Dart
         | TargetLanguage::Java
         | TargetLanguage::Kotlin
-        | TargetLanguage::CSharp => format!("this.{field}.{method}{args}"),
+        | TargetLanguage::CSharp => format!("this.{field}{idx}.{method}{args}"),
         TargetLanguage::Graphviz => unreachable!(),
     }
 }
