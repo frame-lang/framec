@@ -231,3 +231,55 @@ package main
         "[#159 reopen] go collision-named indexed call must case-map:\n{code}"
     );
 }
+
+/// #159 second reopen — TWO child system types define the same method
+/// (`Ghost.tick` / `GhostPen.tick`: every game system has `tick`), so the
+/// method-uniqueness fallback is unavailable BY DESIGN. The robust path is the
+/// visible array spelling `counters: Counter*[4]` — framec emits the proper C
+/// declarator (`Counter* counters[4];`, brackets after the name) and the
+/// element system resolves structurally from the declared type, no inference.
+#[test]
+fn two_tick_bearing_children_with_visible_array_type() {
+    let code = compile_source(
+        r#"
+@@[target("c")]
+typedef struct Counter Counter;
+@@system Counter {
+    interface: tick(dt: float)
+    machine: $S { tick(dt: float) { @@:self.n = @@:self.n + 1; } }
+    domain: n: int = 0
+}
+@@system Pen {
+    interface: tick(dt: float)
+    machine: $S { tick(dt: float) { @@:self.p = @@:self.p + 1; } }
+    domain: p: int = 0
+}
+@@[main]
+@@system Hub {
+    interface: run(dt: float)
+    machine: $S { run(dt: float) { @@:self._tick_all(dt); } }
+    actions:
+        _tick_all(dt: float) {
+            @@:self.counters[0].tick(dt);
+            @@:self.pen.tick(dt);
+        }
+    domain:
+        counters: Counter*[4]
+        pen: Pen* = @@Pen()
+}
+"#,
+        "c",
+    );
+    assert!(
+        code.contains("Counter* counters[4];"),
+        "[#159] array domain field must emit the C declarator form:\n{code}"
+    );
+    assert!(
+        code.contains("Counter_tick(self->counters[0], dt)"),
+        "[#159] indexed call must resolve structurally from the visible type:\n{code}"
+    );
+    assert!(
+        code.contains("Pen_tick(self->pen, dt)"),
+        "[#159] sibling plain call unaffected:\n{code}"
+    );
+}

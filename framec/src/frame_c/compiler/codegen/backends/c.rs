@@ -155,12 +155,33 @@ impl LanguageBackend for CBackend {
                     // to type-check. Same shape as the Go fix —
                     // recognized via `ctx.defined_systems`.
                     let raw_type = field.type_annotation.as_deref().unwrap_or("");
-                    let c_type = if ctx.defined_systems.contains(raw_type) {
-                        format!("{}*", raw_type)
-                    } else {
-                        self.convert_type_to_c(&field.type_annotation, &system_name)
+                    // Array-typed domain field (`counters: Counter*[4]`, #159):
+                    // C's declarator puts the bracket group after the NAME
+                    // (`Counter* counters[4];`), so split a trailing `[..]`
+                    // off the declared type and emit it there. This makes the
+                    // element system visible to the indexed cross-system call
+                    // resolution (rule 1 — structural), instead of forcing a
+                    // native typedef that hides it.
+                    let (elem_type, brackets) = match raw_type.find('[') {
+                        Some(b) if raw_type.ends_with(']') => {
+                            (raw_type[..b].trim_end(), &raw_type[b..])
+                        }
+                        _ => (raw_type, ""),
                     };
-                    result.push_str(&format!("{}{} {};\n", ctx.get_indent(), c_type, field.name));
+                    let c_type = if ctx.defined_systems.contains(elem_type) {
+                        format!("{}*", elem_type)
+                    } else if brackets.is_empty() {
+                        self.convert_type_to_c(&field.type_annotation, &system_name)
+                    } else {
+                        self.convert_type_to_c(&Some(elem_type.to_string()), &system_name)
+                    };
+                    result.push_str(&format!(
+                        "{}{} {}{};\n",
+                        ctx.get_indent(),
+                        c_type,
+                        field.name,
+                        brackets
+                    ));
                 }
                 ctx.pop_indent();
                 result.push_str(&format!("{}}};\n\n", ctx.get_indent()));

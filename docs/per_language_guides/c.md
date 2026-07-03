@@ -368,6 +368,26 @@ This matches the Phase 7 multi-system fuzz coverage (commit memory
 `phase7_multisys_2026_04_27.md`); the C codegen for cross-system
 pointer fields was one of the gaps closed in that round.
 
+### Arrays of embedded systems (#159)
+
+An **indexed** cross-system call — `@@:self.ghosts[i].tick(dt)` — lowers
+the same way: `Ghost_tick(self->ghosts[i], dt)`. For the element system to
+resolve, declare the array's element type **visibly** in the domain:
+
+```frame
+domain:
+    ghosts: Ghost*[4]      // framec emits the C declarator: Ghost* ghosts[4];
+```
+
+framec places the bracket group after the field name in the generated
+struct (C declarator syntax), so no native `typedef` is needed. Avoid
+hiding the element type behind a typedef (`ghosts: GhostArr`): framec is
+type-ignorant and cannot see through native typedefs. In that case it
+falls back to resolving the UNIQUE system whose Frame interface declares
+the called method — which fails as soon as two systems share the name
+(`tick` on every game system), leaving the call verbatim (invalid C).
+The visible spelling resolves structurally and is the supported form.
+
 ---
 
 ## Comments and the Oceans Model
