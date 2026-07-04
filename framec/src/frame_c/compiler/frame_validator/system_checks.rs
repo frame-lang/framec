@@ -52,6 +52,19 @@ impl FrameValidator {
         // segment walker can reject unknown members with E609.
         let domain_fields: std::collections::HashSet<String> =
             system.domain.iter().map(|d| d.name.clone()).collect();
+        // E617 (#159 round 3): field name → declared type string, for the
+        // indexed cross-system call resolvability check on Lua.
+        let domain_field_types: std::collections::HashMap<String, String> = system
+            .domain
+            .iter()
+            .filter_map(|d| match &d.var_type {
+                crate::frame_c::compiler::frame_ast::Type::Custom(t) => {
+                    Some((d.name.clone(), t.clone()))
+                }
+                crate::frame_c::compiler::frame_ast::Type::Unknown => None,
+            })
+            .collect();
+        let calling_system = system.name.clone();
 
         // RFC-0046: `@@:self.<action>(args)` is a valid direct action call.
         // Collect action names so the kind-10 walk accepts them instead of
@@ -74,6 +87,8 @@ impl FrameValidator {
                         body,
                         &interface_methods,
                         &domain_fields,
+                        &domain_field_types,
+                        &calling_system,
                         &actions,
                         &operations,
                         &state.name,
@@ -95,6 +110,8 @@ impl FrameValidator {
                 body,
                 &interface_methods,
                 &domain_fields,
+                &domain_field_types,
+                &calling_system,
                 &actions,
                 &operations,
                 "(action)",
@@ -320,11 +337,14 @@ impl FrameValidator {
     /// Runs the language-specific scanner on the body text, then walks the
     /// identified segments. No byte-level scanning — the scanner handles
     /// comments, strings, and language-specific syntax.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn validate_frame_segments_in_body(
         &mut self,
         body: &[u8],
         interface_methods: &HashMap<String, &InterfaceMethod>,
         domain_fields: &std::collections::HashSet<String>,
+        domain_field_types: &std::collections::HashMap<String, String>,
+        calling_system: &str,
         actions: &std::collections::HashSet<String>,
         operations: &std::collections::HashSet<String>,
         scope_outer: &str,
@@ -456,7 +476,13 @@ impl FrameValidator {
                     // a domain field. (Embed-vs-scalar is decided at codegen from
                     // the field's type; here we only confirm the field exists.)
                     FrameSegmentKind::ContextSelfFieldCall => {
-                        if let SegmentMetadata::SelfFieldCall { field, .. } = metadata {
+                        if let SegmentMetadata::SelfFieldCall {
+                            field,
+                            method,
+                            index,
+                            ..
+                        } = metadata
+                        {
                             if !domain_fields.contains(field) {
                                 self.errors.push(ValidationError::new(
                                     "E609",
@@ -465,6 +491,68 @@ impl FrameValidator {
                                         field, scope_outer, scope_inner
                                     ),
                                 ));
+                            } else if index.is_some()
+                                && matches!(target, crate::frame_c::visitors::TargetLanguage::Lua)
+                            {
+                                // E617 (#159 round 3, Lua only): an indexed
+                                // cross-system call whose element system can't
+                                // be resolved lowers to a DOT call — legal Lua
+                                // that silently passes the first argument as
+                                // `self` (state corruption, no diagnostic at
+                                // any later stage). Fail loudly instead.
+                                // Resolution mirrors codegen: the unique
+                                // system token in the declared type, else the
+                                // unique OTHER system declaring the method.
+                                let names = crate::frame_c::compiler::codegen::interface_gen::known_system_names();
+                                let type_resolves = domain_field_types
+                                    .get(field)
+                                    .map(|t| {
+                                        let is_word =
+                                            |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+                                        let bytes = t.as_bytes();
+                                        let mut hit: Option<&str> = None;
+                                        let mut ambiguous = false;
+                                        for sys in &names {
+                                            let mut from = 0usize;
+                                            while let Some(off) = t[from..].find(sys.as_str()) {
+                                                let st = from + off;
+                                                let en = st + sys.len();
+                                                let lok = st == 0 || !is_word(bytes[st - 1]);
+                                                let rok = en >= bytes.len() || !is_word(bytes[en]);
+                                                if lok && rok {
+                                                    match hit {
+                                                        Some(prev) if prev != sys.as_str() => {
+                                                            ambiguous = true
+                                                        }
+                                                        _ => hit = Some(sys.as_str()),
+                                                    }
+                                                    break;
+                                                }
+                                                from = en;
+                                            }
+                                        }
+                                        hit.is_some() && !ambiguous
+                                    })
+                                    .unwrap_or(false);
+                                let method_resolves =
+                                    crate::frame_c::compiler::codegen::interface_gen::unique_system_with_interface_method(
+                                        method,
+                                        calling_system,
+                                    )
+                                    .is_some();
+                                if !names.is_empty() && !type_resolves && !method_resolves {
+                                    self.errors.push(ValidationError::new(
+                                        "E617",
+                                        format!(
+                                            "indexed cross-system call `@@:self.{field}[…].{method}(…)` in {scope_outer}/{scope_inner} \
+cannot resolve its element system on the lua target — the field's declared type doesn't name one and \
+`{method}` is declared by zero or multiple other systems. Lua would emit a DOT call, which silently \
+passes the first argument as `self` (state corruption). Annotate the element type on the field, e.g. \
+`{field}: <System>[] = {{}}` — the annotation is informational on Lua but drives the colon-dispatch \
+lowering."
+                                        ),
+                                    ));
+                                }
                             }
                         }
                     }

@@ -18,6 +18,68 @@ use super::utility::strip_outer_parens;
 use crate::frame_c::compiler::native_region_scanner::{RegionSpan, SegmentMetadata};
 use crate::frame_c::visitors::TargetLanguage;
 
+/// #159 round 3 — the unique defined-system name appearing as an identifier
+/// token (word-boundary delimited) in a declared type string. `None` when no
+/// system name appears, or when two DIFFERENT system names do (ambiguous).
+fn unique_system_token(
+    type_str: &str,
+    systems: &std::collections::HashSet<String>,
+) -> Option<String> {
+    let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let bytes = type_str.as_bytes();
+    let mut hit: Option<&str> = None;
+    for sys in systems {
+        let mut from = 0usize;
+        while let Some(off) = type_str[from..].find(sys.as_str()) {
+            let start = from + off;
+            let end = start + sys.len();
+            let left_ok = start == 0 || !is_word(bytes[start - 1]);
+            let right_ok = end >= bytes.len() || !is_word(bytes[end]);
+            if left_ok && right_ok {
+                match hit {
+                    Some(prev) if prev != sys.as_str() => return None, // ambiguous
+                    _ => hit = Some(sys.as_str()),
+                }
+                break;
+            }
+            from = end;
+        }
+    }
+    hit.map(|s| s.to_string())
+}
+
+/// #159 round 3 (C++): whether the resolved element is accessed through a
+/// pointer — `Counter*` / `shared_ptr<Counter>` / `unique_ptr<Counter>` — vs
+/// held by value (`std::vector<Counter>`), read structurally off the declared
+/// type around the system-name token.
+fn cpp_element_is_pointer(type_str: &str, sys: &str) -> bool {
+    let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let bytes = type_str.as_bytes();
+    let mut from = 0usize;
+    while let Some(off) = type_str[from..].find(sys) {
+        let start = from + off;
+        let end = start + sys.len();
+        let left_ok = start == 0 || !is_word(bytes[start - 1]);
+        let right_ok = end >= bytes.len() || !is_word(bytes[end]);
+        if left_ok && right_ok {
+            // `Counter *` / `Counter*` after the token → raw pointer.
+            let after = type_str[end..].trim_start();
+            if after.starts_with('*') {
+                return true;
+            }
+            // `shared_ptr<Counter` / `unique_ptr<Counter` before → smart ptr.
+            let before = &type_str[..start];
+            let b = before.trim_end();
+            if b.ends_with("shared_ptr<") || b.ends_with("unique_ptr<") {
+                return true;
+            }
+            return false;
+        }
+        from = end;
+    }
+    false
+}
+
 pub(super) fn expand_context_self(
     _body_bytes: &[u8],
     _span: &RegionSpan,
@@ -166,31 +228,16 @@ pub(super) fn expand_context_self_field_call(
             // Indexed only — an unindexed call on an array-typed field is a
             // native container-method call (`list.push(x)`) and must never
             // resolve to a system.
-            let elem = field_type
-                .map(|t| {
-                    let t = t.trim();
-                    // C-family spelling puts the array group AFTER the base
-                    // (`Counter*[4]`); Go puts it BEFORE (`[]*Counter`,
-                    // `[4]*Counter`). Strip whichever side carries it, then
-                    // the pointer stars.
-                    let no_arr = if let Some(rest) = t.strip_prefix('[') {
-                        match rest.find(']') {
-                            Some(c) => rest[c + 1..].trim_start(),
-                            None => t,
-                        }
-                    } else {
-                        match t.find('[') {
-                            Some(b) => t[..b].trim_end(),
-                            None => t,
-                        }
-                    };
-                    no_arr
-                        .trim_start_matches('*')
-                        .trim_end_matches('*')
-                        .trim()
-                        .to_string()
-                })
-                .filter(|base| ctx.defined_systems.contains(base));
+            //
+            // TOKEN RULE (#159 round 3): the element system is the UNIQUE
+            // defined-system name appearing as an identifier token in the
+            // declared type string. One structural rule covers every visible
+            // spelling — `Counter*[4]`, `[]*Ghost`, `std::vector<Counter*>`,
+            // `Rc<RefCell<Counter>>`, Lua's informational `Counter[]` — while
+            // a native typedef (`CounterArr`) still resolves to nothing
+            // (word boundary), which is correct: it is physically opaque to
+            // a type-ignorant compiler.
+            let elem = field_type.and_then(|t| unique_system_token(t, &ctx.defined_systems));
             if elem.is_some() {
                 elem
             } else {
@@ -271,7 +318,32 @@ pub(super) fn expand_context_self_field_call(
         // values (`.`). This is the one target where the field type changes the
         // method-access operator.
         TargetLanguage::Cpp => {
-            let mop = if is_embed { "->" } else { "." };
+            // Indexed elements read their pointer-ness structurally off the
+            // declared type (`vector<Counter*>` → `->`, `vector<Counter>` →
+            // `.`); a plain embed field is a framec-emitted shared_ptr (`->`).
+            let mop = if is_embed {
+                if index.is_some() {
+                    // When the type names the system (token rule), read the
+                    // pointer-ness off it. When resolution came from the
+                    // method-uniqueness fallback (type hidden behind a
+                    // typedef), keep the historical `->` assumption — the
+                    // canonical container shapes are pointer elements.
+                    match embed_base.zip(field_type) {
+                        Some((sys, t)) if t.contains(sys) => {
+                            if cpp_element_is_pointer(t, sys) {
+                                "->"
+                            } else {
+                                "."
+                            }
+                        }
+                        _ => "->",
+                    }
+                } else {
+                    "->"
+                }
+            } else {
+                "."
+            };
             format!("this->{field}{idx}{mop}{method}{args}")
         }
         // PHP: every object method call uses `->`.

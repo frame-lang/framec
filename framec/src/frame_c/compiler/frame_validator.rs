@@ -1798,10 +1798,13 @@ mod tests {
         let empty_fields = std::collections::HashSet::new();
         let empty_actions = std::collections::HashSet::new();
         let empty_operations = std::collections::HashSet::new();
+        let empty_types = std::collections::HashMap::new();
         v.validate_frame_segments_in_body(
             &wrapped,
             &empty_methods,
             &empty_fields,
+            &empty_types,
+            "TestSys",
             &empty_actions,
             &empty_operations,
             "TestState",

@@ -8,7 +8,7 @@
 //! unindexed container-method calls (`list.push(x)`) never resolve to a system.
 
 mod common;
-use common::{compile_source, find_tool};
+use common::{compile_expect_error, compile_source, find_tool};
 use std::process::Command;
 
 const REPRO: &str = r#"
@@ -281,5 +281,99 @@ typedef struct Counter Counter;
     assert!(
         code.contains("Pen_tick(self->pen, dt)"),
         "[#159] sibling plain call unaffected:\n{code}"
+    );
+}
+
+/// #159 round 3 — the TOKEN RULE: the element system is the unique
+/// defined-system name appearing as an identifier token in the declared type,
+/// covering every visible spelling in one structural rule. C++'s canonical
+/// pointer-vector resolves the COLLIDED method (tick on caller + two children)
+/// and derefs `->`; a VALUE vector derefs `.`.
+#[test]
+fn cpp_vector_spellings_resolve_and_deref() {
+    let src = |vecty: &str| {
+        format!(
+            r#"
+@@[target("cpp_17")]
+#include <vector>
+@@system Counter {{
+    interface: tick(dt: double)
+    machine: $S {{ tick(dt: double) {{ this->n = this->n + 1; }} }}
+    domain: n: int = 0
+}}
+@@system Pen {{
+    interface: tick(dt: double)
+    machine: $S {{ tick(dt: double) {{ this->p = this->p + 1; }} }}
+    domain: p: int = 0
+}}
+@@[main]
+@@system Hub {{
+    interface: tick(dt: double)
+    machine: $S {{ tick(dt: double) {{ @@:self._all(dt); }} }}
+    actions:
+        _all(dt: double) {{
+            @@:self.counters[0].tick(dt);
+        }}
+    domain:
+        counters: {vecty} = {vecty}()
+}}
+"#
+        )
+    };
+    let ptr = compile_source(&src("std::vector<Counter*>"), "cpp_17");
+    assert!(
+        ptr.contains("this->counters[0]->tick(dt)"),
+        "[#159r3] pointer-vector collided call must deref ->:\n{ptr}"
+    );
+    let val = compile_source(&src("std::vector<Counter>"), "cpp_17");
+    assert!(
+        val.contains("this->counters[0].tick(dt)"),
+        "[#159r3] value-vector call must use . :\n{val}"
+    );
+}
+
+/// #159 round 3 — Lua: collided indexed call resolves via the informational
+/// `Counter[]` annotation (colon-lowered in BOTH handler and action bodies),
+/// and the unresolvable untyped+collided case is a hard **E617** instead of a
+/// silent dot call (legal Lua that passes the first arg as `self`).
+#[test]
+fn lua_collided_colon_and_e617() {
+    let src = |field: &str| {
+        format!(
+            r#"
+@@[target("lua")]
+@@system Counter {{
+    interface: tick(dt)
+    machine: $S {{ tick(dt) {{ self.n = self.n + 1 }} }}
+    domain: n: int = 0
+}}
+@@system Pen {{
+    interface: tick(dt)
+    machine: $S {{ tick(dt) {{ self.p = self.p + 1 }} }}
+    domain: p: int = 0
+}}
+@@[main]
+@@system Hub {{
+    interface: tick(dt)
+    machine: $S {{ tick(dt) {{ @@:self._all(dt) }} }}
+    actions:
+        _all(dt) {{
+            @@:self.counters[1].tick(dt)
+        }}
+    domain:
+        {field}
+}}
+"#
+        )
+    };
+    let typed = compile_source(&src("counters: Counter[] = {}"), "lua");
+    assert!(
+        typed.contains("self.counters[1]:tick(dt)"),
+        "[#159r3] annotated lua indexed call must colon-lower (action body too):\n{typed}"
+    );
+    let err = compile_expect_error(&src("counters = {}"), "lua");
+    assert!(
+        err.contains("E617"),
+        "[#159r3] unresolvable lua indexed call must be E617, not a silent dot:\n{err}"
     );
 }
