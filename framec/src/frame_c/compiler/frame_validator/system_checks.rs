@@ -492,7 +492,11 @@ impl FrameValidator {
                                     ),
                                 ));
                             } else if index.is_some()
-                                && matches!(target, crate::frame_c::visitors::TargetLanguage::Lua)
+                                && matches!(
+                                    target,
+                                    crate::frame_c::visitors::TargetLanguage::Lua
+                                        | crate::frame_c::visitors::TargetLanguage::C
+                                )
                             {
                                 // E617 (#159 round 3, Lua only): an indexed
                                 // cross-system call whose element system can't
@@ -541,15 +545,24 @@ impl FrameValidator {
                                     )
                                     .is_some();
                                 if !names.is_empty() && !type_resolves && !method_resolves {
+                                    let (consequence, guidance) = match target {
+                                        crate::frame_c::visitors::TargetLanguage::C => (
+                                            "C would emit a verbatim member call (`self->field[i].method(...)`), which is invalid C (structs have no methods)",
+                                            format!(
+                                                "Name the element system directly in the declared type, e.g. `{field}: <System>*[N]` — framec emits the C declarator (`<System>* {field}[N];`), so no native typedef is needed (a typedef hides the element type from the type-ignorant lowering)."
+                                            ),
+                                        ),
+                                        _ => (
+                                            "Lua would emit a DOT call, which silently passes the first argument as `self` (state corruption)",
+                                            format!(
+                                                "Annotate the element type on the field, e.g. `{field}: <System>[] = {{}}` — the annotation is informational on Lua but drives the colon-dispatch lowering."
+                                            ),
+                                        ),
+                                    };
                                     self.errors.push(ValidationError::new(
                                         "E617",
                                         format!(
-                                            "indexed cross-system call `@@:self.{field}[…].{method}(…)` in {scope_outer}/{scope_inner} \
-cannot resolve its element system on the lua target — the field's declared type doesn't name one and \
-`{method}` is declared by zero or multiple other systems. Lua would emit a DOT call, which silently \
-passes the first argument as `self` (state corruption). Annotate the element type on the field, e.g. \
-`{field}: <System>[] = {{}}` — the annotation is informational on Lua but drives the colon-dispatch \
-lowering."
+                                            "indexed cross-system call `@@:self.{field}[…].{method}(…)` in {scope_outer}/{scope_inner} cannot resolve its element system — the field's declared type doesn't name one and `{method}` is declared by zero or multiple other systems. {consequence}. {guidance}"
                                         ),
                                     ));
                                 }

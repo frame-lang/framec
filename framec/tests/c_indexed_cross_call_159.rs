@@ -377,3 +377,67 @@ fn lua_collided_colon_and_e617() {
         "[#159r3] unresolvable lua indexed call must be E617, not a silent dot:\n{err}"
     );
 }
+
+/// #164 — the C flavor of E617: a typedef-hidden element type with a
+/// collided method must be a hard error (the verbatim member call is invalid
+/// C — structs have no methods), never silent invalid output. The
+/// unique-method typedef case still resolves via rule 2, and the
+/// direct-named spelling stays the documented shape.
+#[test]
+fn c_typedef_collided_is_e617() {
+    let src = |domain_ty: &str, with_pen: bool| {
+        let pen = if with_pen {
+            r#"
+@@system Pen {
+    interface: tick(dt: float)
+    machine: $S { tick(dt: float) { @@:self.p = @@:self.p + 1; } }
+    domain: p: int = 0
+}
+"#
+        } else {
+            ""
+        };
+        format!(
+            r#"
+@@[target("c")]
+typedef struct Counter Counter;
+typedef Counter* CounterPtr;
+@@system Counter {{
+    interface: tick(dt: float)
+    machine: $S {{ tick(dt: float) {{ @@:self.n = @@:self.n + 1; }} }}
+    domain: n: int = 0
+}}
+{pen}
+@@[main]
+@@system Hub {{
+    interface: run(dt: float)
+    machine: $S {{ run(dt: float) {{ @@:self._all(dt); }} }}
+    actions:
+        _all(dt: float) {{
+            @@:self.counters[0].tick(dt);
+        }}
+    domain:
+        counters: {domain_ty}
+}}
+"#
+        )
+    };
+    // collided (Counter.tick + Pen.tick) + typedef → E617 with C guidance
+    let err = compile_expect_error(&src("CounterPtr[4]", true), "c");
+    assert!(
+        err.contains("E617") && err.contains("invalid C"),
+        "[#164] typedef+collided must be E617 with the C consequence:\n{err}"
+    );
+    // unique method + typedef → rule 2 resolves, no error
+    let ok = compile_source(&src("CounterPtr[4]", false), "c");
+    assert!(
+        ok.contains("Counter_tick(self->counters[0], dt)"),
+        "[#164] unique-method typedef must still lower via rule 2:\n{ok}"
+    );
+    // direct-named + collided → rule 1 resolves, no error
+    let ok2 = compile_source(&src("Counter*[4]", true), "c");
+    assert!(
+        ok2.contains("Counter_tick(self->counters[0], dt)"),
+        "[#164] direct-named spelling must lower regardless of collisions:\n{ok2}"
+    );
+}
