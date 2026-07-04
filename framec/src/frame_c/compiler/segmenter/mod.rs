@@ -221,6 +221,12 @@ impl SourceMap {
 pub enum SegmentError {
     /// Unterminated @@system block (no matching close brace)
     UnterminatedSystem { name: String, open_brace_pos: usize },
+    /// Unterminated @@fsm block (regex-aware closer failed). Distinct from
+    /// UnterminatedSystem so the message can carry @@fsm-specific guidance —
+    /// notably that `//` begins a line comment (RFC-0043 §3.5), the usual way
+    /// a closing `}` gets swallowed (#163: an "empty regex" `//` is lexically
+    /// a comment and cannot be written).
+    UnterminatedFsm { name: String, open_brace_pos: usize },
     /// Unterminated string literal found during scanning
     UnterminatedString { pos: usize },
     /// Unterminated comment found during scanning
@@ -239,6 +245,18 @@ impl std::fmt::Display for SegmentError {
                 write!(
                     f,
                     "Unterminated @@system block '{}' (opening brace at byte {})",
+                    name, open_brace_pos
+                )
+            }
+            SegmentError::UnterminatedFsm {
+                name,
+                open_brace_pos,
+            } => {
+                write!(
+                    f,
+                    "Unterminated @@fsm block '{}' (opening brace at byte {}). \
+Note: `//` begins a line comment inside @@fsm (RFC-0043 §3.5) — a comment can swallow the closing \
+`}}`, and an empty regex cannot be written as `//`.",
                     name, open_brace_pos
                 )
             }
@@ -583,7 +601,7 @@ pub fn segment<S: SyntaxSkipper>(skipper: &S, source: &[u8]) -> Result<SourceMap
                             {
                                 Ok(pos) => pos,
                                 Err(_) => {
-                                    return Err(SegmentError::UnterminatedSystem {
+                                    return Err(SegmentError::UnterminatedFsm {
                                         name: fsm_name,
                                         open_brace_pos: brace_pos,
                                     });

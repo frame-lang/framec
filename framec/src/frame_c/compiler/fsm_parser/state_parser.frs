@@ -105,6 +105,7 @@
                             child.parse();
                             self.tokens = child.tokens.take();
                             if let Some(e) = child.error.take() {
+                                self.error_code = child.error_code.take();
                                 self.error = Some(e);
                                 -> $Done
                             }
@@ -161,6 +162,7 @@
                             child.parse();
                             self.tokens = child.tokens.take();
                             if let Some(e) = child.error.take() {
+                                self.error_code = child.error_code.take();
                                 self.error = Some(e);
                                 -> $Done
                             }
@@ -361,4 +363,5 @@
         span_start: Span = Span::new(0, 0)
         result: Option<FsmStateAst> = None
         error: Option<ParseError> = None
+        error_code: Option<&'static str> = None
 }

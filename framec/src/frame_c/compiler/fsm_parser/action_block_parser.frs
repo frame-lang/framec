@@ -75,6 +75,9 @@
                             child.parse();
                             self.tokens = child.tokens.take();
                             if let Some(e) = child.error.take() {
+                                if let Some(code) = child.error_code.take() {
+                                    self.error_code = Some(code);
+                                }
                                 self.error = Some(e);
                                 -> $Done
                             }

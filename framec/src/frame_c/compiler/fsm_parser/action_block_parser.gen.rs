@@ -27,7 +27,7 @@ mod _action_block_parser_framec {
     use super::*;
     extern crate alloc;
     use alloc::{vec, format};
-    #[derive(Clone, Debug)]
+    #[derive(Clone)]
     #[allow(dead_code, non_camel_case_types)]
     enum ActionBlockParserFrameEvent {
         Parse {  },
@@ -352,6 +352,9 @@ mod _action_block_parser_framec {
                         child.parse();
                         self.tokens = child.tokens.take();
                         if let Some(e) = child.error.take() {
+                            if let Some(code) = child.error_code.take() {
+                                self.error_code = Some(code);
+                            }
                             self.error = Some(e);
                             let mut __compartment = self.__prepareEnter("Done");
                             self.__transition(__compartment);

@@ -36,7 +36,7 @@ mod _state_parser_framec {
     use super::*;
     extern crate alloc;
     use alloc::{vec, format};
-    #[derive(Clone, Debug)]
+    #[derive(Clone)]
     #[allow(dead_code, non_camel_case_types)]
     enum StateParserFrameEvent {
         Parse {  },
@@ -166,6 +166,7 @@ mod _state_parser_framec {
         pub span_start: Span,
         pub result: Option<FsmStateAst>,
         pub error: Option<ParseError>,
+        pub error_code: Option<&'static str>,
     }
 
     #[allow(non_snake_case)]
@@ -190,6 +191,7 @@ mod _state_parser_framec {
                 span_start: Span::new(0, 0),
                 result: None,
                 error: None,
+                error_code: None,
                 __compartment: StateParserCompartment::new("Start"),
                 __next_compartment: None,
             }
@@ -475,6 +477,7 @@ mod _state_parser_framec {
                         child.parse();
                         self.tokens = child.tokens.take();
                         if let Some(e) = child.error.take() {
+                            self.error_code = child.error_code.take();
                             self.error = Some(e);
                             let mut __compartment = self.__prepareEnter("Done");
                             self.__transition(__compartment);
@@ -529,6 +532,7 @@ mod _state_parser_framec {
                         child.parse();
                         self.tokens = child.tokens.take();
                         if let Some(e) = child.error.take() {
+                            self.error_code = child.error_code.take();
                             self.error = Some(e);
                             let mut __compartment = self.__prepareEnter("Done");
                             self.__transition(__compartment);
