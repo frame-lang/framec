@@ -235,6 +235,7 @@ impl LanguageBackend for RustBackend {
                     if let CodegenNode::Assignment { target, value } = stmt {
                         if let CodegenNode::FieldAccess { object, field } = target.as_ref() {
                             if matches!(object.as_ref(), CodegenNode::SelfRef) {
+                                let is_literal = matches!(value.as_ref(), CodegenNode::Literal(_));
                                 let value_str = if let CodegenNode::Literal(Literal::String(s)) =
                                     value.as_ref()
                                 {
@@ -245,11 +246,23 @@ impl LanguageBackend for RustBackend {
                                 } else {
                                     self.emit(value, ctx)
                                 };
-                                let mentions_param = params.iter().any(|p| {
-                                    value_str
-                                        .split(|c: char| !c.is_alphanumeric() && c != '_')
-                                        .any(|w| w == p.name)
-                                });
+                                // #123: a constant literal value is structurally
+                                // never param-bound (this is the `note = "rate
+                                // limited"` case — a string whose text merely
+                                // contains a param name). For a non-literal
+                                // expression, delegate to the shared, string-safe
+                                // param detector (the same one the generator uses)
+                                // instead of a hand-rolled string-blind scan.
+                                let mentions_param = !is_literal
+                                    && {
+                                        let param_names: Vec<String> =
+                                            params.iter().map(|p| p.name.clone()).collect();
+                                        crate::frame_c::compiler::codegen::system_codegen::init_references_param(
+                                        &value_str,
+                                        &param_names,
+                                        crate::frame_c::visitors::TargetLanguage::Rust,
+                                    )
+                                    };
                                 if mentions_param {
                                     // Find the param this field most directly
                                     // references and use its type for the

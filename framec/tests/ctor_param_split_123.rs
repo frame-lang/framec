@@ -119,3 +119,32 @@ fn java_param_override_is_factory_only() {
         "[#123] Java factory must apply the param override"
     );
 }
+
+/// Rust classifies each `self.field = value` into the struct literal by whether
+/// the value references a ctor param (a param-bound field gets a
+/// `Default::default()` placeholder in `new()`). A `String` field whose literal
+/// merely contains a param name (`note = "rate limited"`, param `rate`) is a
+/// constant — structurally a `Literal` value — and must keep its real value, not
+/// be treated as param-bound and placeholdered.
+#[test]
+fn rust_string_literal_field_is_not_param_bound() {
+    let code = compile_source(
+        &SRC.replace("LANGSTR", "String").replace("LANG", "rust"),
+        "rust",
+    );
+    assert!(
+        code.contains("note: String::from(\"rate limited\")"),
+        "[#123] Rust must keep the string field's real value:\n{code}"
+    );
+    // `note` must never be handed a Default placeholder…
+    assert!(
+        !code.contains("note: <String as Default>::default()")
+            && !code.contains("note: Default::default()"),
+        "[#123] Rust misclassified a constant string field as param-bound:\n{code}"
+    );
+    // …while a genuine param reference still is (the override lives in __create).
+    assert!(
+        code.contains("rate: rate"),
+        "[#123] Rust factory must still bind the real param field"
+    );
+}
