@@ -168,18 +168,38 @@ pub(super) fn expand_context_data_assign(
     let segment_text = String::from_utf8_lossy(&body_bytes[span.start..span.end]);
     let indent_str = " ".repeat(indent);
 
-    // @@:data[key] = expr - call-scoped data (assignment)
-    // Extract key and value from "@@:data.key = expr;"
-    let key = if let SegmentMetadata::ContextData { key, .. } = metadata {
-        key.clone()
+    // @@:data.key = expr — call-scoped data (assignment). #123: the scanner
+    // already split key and RHS into `SegmentMetadata::ContextData`; consume
+    // that structured pair rather than re-deriving the RHS from segment text
+    // with a string-blind `find('=')` (which would mis-slice an `=` inside a
+    // string literal on the value side).
+    let (key, expr) = if let SegmentMetadata::ContextData { key, assign_expr } = metadata {
+        let expr = assign_expr.clone().unwrap_or_else(|| {
+            // Defensive: the scanner populates assign_expr for every
+            // ContextDataAssign segment, so this is unreachable in practice.
+            let trimmed = segment_text.trim();
+            let eq_pos = trimmed.find('=').unwrap_or(trimmed.len());
+            trimmed[eq_pos + 1..]
+                .trim()
+                .trim_end_matches(';')
+                .trim()
+                .to_string()
+        });
+        (key.clone(), expr)
     } else {
-        extract_dot_key(&segment_text, "@@:data") // fallback
+        // Non-ContextData metadata should never reach this expander; keep the
+        // text-derived path as a last resort for robustness.
+        let key = extract_dot_key(&segment_text, "@@:data");
+        let trimmed = segment_text.trim();
+        let eq_pos = trimmed.find('=').unwrap_or(trimmed.len());
+        let expr = trimmed[eq_pos + 1..]
+            .trim()
+            .trim_end_matches(';')
+            .trim()
+            .to_string();
+        (key, expr)
     };
-    // Find the = and extract the expression
-    let trimmed = segment_text.trim();
-    let eq_pos = trimmed.find('=').unwrap_or(trimmed.len());
-    let expr = trimmed[eq_pos + 1..].trim().trim_end_matches(';').trim();
-    let expanded_expr = expand_expression(expr, lang, ctx);
+    let expanded_expr = expand_expression(&expr, lang, ctx);
     match lang {
         TargetLanguage::Python3 | TargetLanguage::GDScript => format!(
             "{}self._context_stack[-1]._data[\"{}\"] = {}",
