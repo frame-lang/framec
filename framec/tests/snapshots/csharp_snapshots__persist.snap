@@ -277,7 +277,7 @@ public class Counter {
         foreach (var c in _state_stack) { __stack.Add(__SerComp(c)); }
         __j["_state_stack"] = __stack;
         __j["count"] = count;
-        var __opts = new System.Text.Json.JsonSerializerOptions { TypeInfoResolver = new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver() };
+        var __opts = new System.Text.Json.JsonSerializerOptions { IncludeFields = true, TypeInfoResolver = new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver() };
         return System.Text.Json.JsonSerializer.Serialize(__j, __opts);
     }
 
@@ -289,6 +289,7 @@ public class Counter {
             this._state_stack = new List<CounterCompartment>();
             foreach (var item in __stack.EnumerateArray()) { this._state_stack.Add(__DeserComp(item)); }
         }
-        if (__root.TryGetProperty("count", out var __count)) { try { this.count = System.Text.Json.JsonSerializer.Deserialize<int>(__count.GetRawText()); } catch { } }
+        var __opts = new System.Text.Json.JsonSerializerOptions { IncludeFields = true, TypeInfoResolver = new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver() };
+        if (__root.TryGetProperty("count", out var __count)) { try { this.count = System.Text.Json.JsonSerializer.Deserialize<int>(__count.GetRawText(), __opts); } catch { } }
     }
 }

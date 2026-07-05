@@ -277,7 +277,11 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         }
     }
 
-    save_body.push_str("var __opts = new System.Text.Json.JsonSerializerOptions { TypeInfoResolver = new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver() };\n");
+    // IncludeFields = true: System.Text.Json ignores public *fields* by default, so
+    // field-based user types (structs like Vector2 / System.Numerics) would serialize
+    // as {} and silently restore as default(T) (#165). The flag is strictly widening —
+    // property-based types are unaffected — and must match the deserialize side below.
+    save_body.push_str("var __opts = new System.Text.Json.JsonSerializerOptions { IncludeFields = true, TypeInfoResolver = new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver() };\n");
     save_body.push_str("return System.Text.Json.JsonSerializer.Serialize(__j, __opts);");
 
     methods.push(CodegenNode::Method {
@@ -329,6 +333,18 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     ));
     restore_body.push_str("}\n");
 
+    // Must mirror the serialize side (#165): without IncludeFields the deserializer
+    // maps nothing onto field-based user structs and returns default(T). Only the
+    // STJ-deserialized (non-nested-system) vars use it, so skip the local when there
+    // are none, to avoid an unused-variable in the generated code.
+    let needs_deser_opts = system.domain.iter().any(|var| {
+        !var.attributes.iter().any(|a| a.name == "no_persist")
+            && extract_tagged_system_name(var.initializer_text.as_deref().unwrap_or("")).is_none()
+    });
+    if needs_deser_opts {
+        restore_body.push_str("var __opts = new System.Text.Json.JsonSerializerOptions { IncludeFields = true, TypeInfoResolver = new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver() };\n");
+    }
+
     for var in &system.domain {
         if var.attributes.iter().any(|a| a.name == "no_persist") {
             continue;
@@ -360,7 +376,7 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
                 _ => "object".to_string(),
             };
             restore_body.push_str(&format!(
-                "if (__root.TryGetProperty(\"{name}\", out var __{name})) {{ try {{ {tgt}.{name} = System.Text.Json.JsonSerializer.Deserialize<{t}>(__{name}.GetRawText()); }} catch {{ }} }}\n",
+                "if (__root.TryGetProperty(\"{name}\", out var __{name})) {{ try {{ {tgt}.{name} = System.Text.Json.JsonSerializer.Deserialize<{t}>(__{name}.GetRawText(), __opts); }} catch {{ }} }}\n",
                 tgt = target,
                 name = var.name,
                 t = declared
