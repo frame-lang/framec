@@ -1,0 +1,758 @@
+{
+ "arcanum.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 5
+ },
+ "assembler/mod.rs": {
+  "empty_arm": 0,
+  "mode_state": 1,
+  "replace": 0,
+  "text_probe": 27
+ },
+ "body_closer/c.rs": {
+  "empty_arm": 0,
+  "mode_state": 1,
+  "replace": 0,
+  "text_probe": 0
+ },
+ "body_closer/cpp.rs": {
+  "empty_arm": 0,
+  "mode_state": 1,
+  "replace": 0,
+  "text_probe": 0
+ },
+ "body_closer/csharp.rs": {
+  "empty_arm": 0,
+  "mode_state": 1,
+  "replace": 0,
+  "text_probe": 0
+ },
+ "body_closer/frame_structural.rs": {
+  "empty_arm": 0,
+  "mode_state": 1,
+  "replace": 0,
+  "text_probe": 0
+ },
+ "body_closer/fsm.rs": {
+  "empty_arm": 0,
+  "mode_state": 3,
+  "replace": 0,
+  "text_probe": 5
+ },
+ "body_closer/go.rs": {
+  "empty_arm": 0,
+  "mode_state": 1,
+  "replace": 0,
+  "text_probe": 0
+ },
+ "body_closer/java.rs": {
+  "empty_arm": 0,
+  "mode_state": 1,
+  "replace": 0,
+  "text_probe": 0
+ },
+ "body_closer/javascript.rs": {
+  "empty_arm": 0,
+  "mode_state": 1,
+  "replace": 0,
+  "text_probe": 0
+ },
+ "body_closer/kotlin.rs": {
+  "empty_arm": 0,
+  "mode_state": 1,
+  "replace": 0,
+  "text_probe": 0
+ },
+ "body_closer/lua.rs": {
+  "empty_arm": 0,
+  "mode_state": 1,
+  "replace": 0,
+  "text_probe": 0
+ },
+ "body_closer/php.rs": {
+  "empty_arm": 0,
+  "mode_state": 1,
+  "replace": 0,
+  "text_probe": 0
+ },
+ "body_closer/python.rs": {
+  "empty_arm": 0,
+  "mode_state": 1,
+  "replace": 0,
+  "text_probe": 0
+ },
+ "body_closer/ruby.rs": {
+  "empty_arm": 0,
+  "mode_state": 1,
+  "replace": 0,
+  "text_probe": 0
+ },
+ "body_closer/rust.rs": {
+  "empty_arm": 0,
+  "mode_state": 1,
+  "replace": 0,
+  "text_probe": 0
+ },
+ "body_closer/swift.rs": {
+  "empty_arm": 0,
+  "mode_state": 1,
+  "replace": 0,
+  "text_probe": 0
+ },
+ "body_closer/typescript.rs": {
+  "empty_arm": 0,
+  "mode_state": 1,
+  "replace": 0,
+  "text_probe": 0
+ },
+ "codegen/backend.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 2,
+  "text_probe": 0
+ },
+ "codegen/backends/c.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 37
+ },
+ "codegen/backends/cpp.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 13
+ },
+ "codegen/backends/csharp.rs": {
+  "empty_arm": 1,
+  "mode_state": 3,
+  "replace": 0,
+  "text_probe": 8
+ },
+ "codegen/backends/dart.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 1,
+  "text_probe": 11
+ },
+ "codegen/backends/gdscript.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 7
+ },
+ "codegen/backends/go.rs": {
+  "empty_arm": 0,
+  "mode_state": 3,
+  "replace": 0,
+  "text_probe": 4
+ },
+ "codegen/backends/java.rs": {
+  "empty_arm": 1,
+  "mode_state": 3,
+  "replace": 0,
+  "text_probe": 9
+ },
+ "codegen/backends/javascript.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 17
+ },
+ "codegen/backends/kotlin.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 1,
+  "text_probe": 16
+ },
+ "codegen/backends/lua.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 6
+ },
+ "codegen/backends/php.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 7
+ },
+ "codegen/backends/python.rs": {
+  "empty_arm": 0,
+  "mode_state": 3,
+  "replace": 1,
+  "text_probe": 17
+ },
+ "codegen/backends/ruby.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 16
+ },
+ "codegen/backends/rust.rs": {
+  "empty_arm": 1,
+  "mode_state": 0,
+  "replace": 5,
+  "text_probe": 4
+ },
+ "codegen/backends/swift.rs": {
+  "empty_arm": 1,
+  "mode_state": 3,
+  "replace": 0,
+  "text_probe": 13
+ },
+ "codegen/backends/typescript.rs": {
+  "empty_arm": 1,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 14
+ },
+ "codegen/block_transform.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 46
+ },
+ "codegen/c_marshal.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 7
+ },
+ "codegen/codegen_utils.rs": {
+  "empty_arm": 0,
+  "mode_state": 6,
+  "replace": 0,
+  "text_probe": 6
+ },
+ "codegen/frame_expansion.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 20
+ },
+ "codegen/frame_expansion/context_data.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 1
+ },
+ "codegen/frame_expansion/context_return.rs": {
+  "empty_arm": 0,
+  "mode_state": 1,
+  "replace": 0,
+  "text_probe": 7
+ },
+ "codegen/frame_expansion/context_self.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 17
+ },
+ "codegen/frame_expansion/expression.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 2
+ },
+ "codegen/frame_expansion/handler_body.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 28
+ },
+ "codegen/frame_expansion/return_stmt.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 4
+ },
+ "codegen/frame_expansion/scanner_dispatch.rs": {
+  "empty_arm": 0,
+  "mode_state": 4,
+  "replace": 0,
+  "text_probe": 0
+ },
+ "codegen/frame_expansion/stack.rs": {
+  "empty_arm": 1,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 0
+ },
+ "codegen/frame_expansion/state_var.rs": {
+  "empty_arm": 1,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 5
+ },
+ "codegen/frame_expansion/transition.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 2
+ },
+ "codegen/frame_expansion/utility.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 10
+ },
+ "codegen/fsm_c.rs": {
+  "empty_arm": 1,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 1
+ },
+ "codegen/fsm_cpp.rs": {
+  "empty_arm": 1,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 1
+ },
+ "codegen/fsm_csharp.rs": {
+  "empty_arm": 1,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 1
+ },
+ "codegen/fsm_dart.rs": {
+  "empty_arm": 1,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 1
+ },
+ "codegen/fsm_gdscript.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 3
+ },
+ "codegen/fsm_go.rs": {
+  "empty_arm": 1,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 1
+ },
+ "codegen/fsm_java.rs": {
+  "empty_arm": 1,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 1
+ },
+ "codegen/fsm_javascript.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 1
+ },
+ "codegen/fsm_kotlin.rs": {
+  "empty_arm": 1,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 1
+ },
+ "codegen/fsm_lua.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 1
+ },
+ "codegen/fsm_php.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 1
+ },
+ "codegen/fsm_ruby.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 1
+ },
+ "codegen/fsm_rust.rs": {
+  "empty_arm": 1,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 1
+ },
+ "codegen/fsm_swift.rs": {
+  "empty_arm": 1,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 1
+ },
+ "codegen/fsm_typescript.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 1
+ },
+ "codegen/interface_gen.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 4
+ },
+ "codegen/interface_gen/dart_types.rs": {
+  "empty_arm": 0,
+  "mode_state": 3,
+  "replace": 0,
+  "text_probe": 0
+ },
+ "codegen/interface_gen/extract.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 3
+ },
+ "codegen/interface_gen/nested_registry.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 3
+ },
+ "codegen/interface_gen/persist/cpp.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 9
+ },
+ "codegen/machinery/dart.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 2,
+  "text_probe": 0
+ },
+ "codegen/rust_system.rs": {
+  "empty_arm": 0,
+  "mode_state": 4,
+  "replace": 0,
+  "text_probe": 19
+ },
+ "codegen/state_dispatch.rs": {
+  "empty_arm": 3,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 9
+ },
+ "codegen/state_dispatch/dispatch_syntax.rs": {
+  "empty_arm": 1,
+  "mode_state": 0,
+  "replace": 2,
+  "text_probe": 4
+ },
+ "codegen/state_dispatch/handler_methods/c.rs": {
+  "empty_arm": 1,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 1
+ },
+ "codegen/state_dispatch/handler_methods/cpp.rs": {
+  "empty_arm": 1,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 3
+ },
+ "codegen/state_dispatch/handler_methods/csharp.rs": {
+  "empty_arm": 1,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 1
+ },
+ "codegen/state_dispatch/handler_methods/dart.rs": {
+  "empty_arm": 1,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 1
+ },
+ "codegen/state_dispatch/handler_methods/gdscript.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 1
+ },
+ "codegen/state_dispatch/handler_methods/go.rs": {
+  "empty_arm": 1,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 2
+ },
+ "codegen/state_dispatch/handler_methods/java.rs": {
+  "empty_arm": 1,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 1
+ },
+ "codegen/state_dispatch/handler_methods/kotlin.rs": {
+  "empty_arm": 1,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 1
+ },
+ "codegen/state_dispatch/handler_methods/swift.rs": {
+  "empty_arm": 1,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 1
+ },
+ "codegen/state_dispatch/handler_methods/typescript.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 1
+ },
+ "codegen/system_codegen/async_wrap.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 9
+ },
+ "codegen/system_codegen/casing.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 4
+ },
+ "codegen/system_codegen/constructor.rs": {
+  "empty_arm": 1,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 7
+ },
+ "codegen/system_codegen/word_util.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 1
+ },
+ "frame_ast.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 9
+ },
+ "frame_validator.rs": {
+  "empty_arm": 0,
+  "mode_state": 2,
+  "replace": 0,
+  "text_probe": 29
+ },
+ "frame_validator/attributes.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 2
+ },
+ "frame_validator/domain.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 10
+ },
+ "frame_validator/structure.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 1
+ },
+ "frame_validator/system_checks.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 5
+ },
+ "frame_validator/target_specific.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 2
+ },
+ "fsm_parser/mod.rs": {
+  "empty_arm": 1,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 0
+ },
+ "fsm_regex/metrics.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 4
+ },
+ "fsm_regex/parser.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 3
+ },
+ "fsm_regex/restrictions.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 2
+ },
+ "fsm_regex/subset.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 1
+ },
+ "fsm_regex/thompson.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 4
+ },
+ "fsm_validator/mod.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 19
+ },
+ "gdscript_multisys/mod.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 6
+ },
+ "graphviz/builder.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 5
+ },
+ "graphviz/dot_emitter.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 5,
+  "text_probe": 25
+ },
+ "hsm_cycle_validator/mod.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 2
+ },
+ "lexer/frame_stmt.rs": {
+  "empty_arm": 0,
+  "mode_state": 2,
+  "replace": 0,
+  "text_probe": 0
+ },
+ "lexer/mod.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 3
+ },
+ "mod.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 1
+ },
+ "model/builder.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 2
+ },
+ "native_region_scanner/cpp.rs": {
+  "empty_arm": 0,
+  "mode_state": 1,
+  "replace": 0,
+  "text_probe": 0
+ },
+ "native_region_scanner/go.rs": {
+  "empty_arm": 0,
+  "mode_state": 3,
+  "replace": 0,
+  "text_probe": 0
+ },
+ "native_region_scanner/lua.rs": {
+  "empty_arm": 0,
+  "mode_state": 2,
+  "replace": 0,
+  "text_probe": 0
+ },
+ "native_region_scanner/mod.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 1
+ },
+ "native_region_scanner/rust.rs": {
+  "empty_arm": 0,
+  "mode_state": 1,
+  "replace": 0,
+  "text_probe": 0
+ },
+ "native_region_scanner/unified.rs": {
+  "empty_arm": 0,
+  "mode_state": 13,
+  "replace": 0,
+  "text_probe": 13
+ },
+ "native_region_scanner/unified/interpolation.rs": {
+  "empty_arm": 0,
+  "mode_state": 6,
+  "replace": 0,
+  "text_probe": 0
+ },
+ "native_region_scanner/unified/metadata.rs": {
+  "empty_arm": 0,
+  "mode_state": 2,
+  "replace": 0,
+  "text_probe": 9
+ },
+ "number_scan_fsm/mod.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 1
+ },
+ "pipeline/compiler.rs": {
+  "empty_arm": 1,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 21
+ },
+ "pipeline_parser/call_args.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 1
+ },
+ "pipeline_parser/domain.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 25
+ },
+ "pipeline_parser/mod.rs": {
+  "empty_arm": 0,
+  "mode_state": 17,
+  "replace": 0,
+  "text_probe": 5
+ },
+ "section_order_validator/mod.rs": {
+  "empty_arm": 0,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 3
+ },
+ "segmenter/mod.rs": {
+  "empty_arm": 6,
+  "mode_state": 2,
+  "replace": 0,
+  "text_probe": 15
+ },
+ "type_map/mod.rs": {
+  "empty_arm": 1,
+  "mode_state": 0,
+  "replace": 0,
+  "text_probe": 0
+ }
+}
