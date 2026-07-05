@@ -235,7 +235,7 @@ impl FrameValidator {
                     // same word-boundary checker codegen uses elsewhere.
                     for param_name in &required_param_names {
                         let one = vec![param_name.clone()];
-                        if init_references_param(init_text, &one) {
+                        if init_references_param(init_text, &one, self.target) {
                             self.warnings.push(
                                 ValidationError::new(
                                     "W706",

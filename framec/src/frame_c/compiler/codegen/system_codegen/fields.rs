@@ -188,7 +188,8 @@ pub(crate) fn generate_fields(
         let init_text_str = domain_var.initializer_text.as_deref().unwrap_or("");
         let strip_unconditionally =
             matches!(syntax.language, TargetLanguage::Go | TargetLanguage::C);
-        let strip_collision = init_references_param(init_text_str, &sys_param_names);
+        let strip_collision =
+            init_references_param(init_text_str, &sys_param_names, syntax.language);
 
         // When a const field's init references a system param the
         // assignment moves to the constructor body / `__frame_init`

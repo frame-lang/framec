@@ -307,8 +307,11 @@ pub(crate) fn generate_constructor(system: &SystemAst, syntax: &ClassSyntax) -> 
             Some(t) => t,
             None => continue,
         };
-        let init_refs_param =
-            super::word_util::init_references_param(init_text, &sys_param_names_for_init);
+        let init_refs_param = super::word_util::init_references_param(
+            init_text,
+            &sys_param_names_for_init,
+            syntax.language,
+        );
         // For PHP this must mirror the field-emission strip decision exactly
         // (#144): any initializer stripped from the property default has to be
         // assigned here in the constructor body.
@@ -375,15 +378,20 @@ pub(crate) fn generate_constructor(system: &SystemAst, syntax: &ClassSyntax) -> 
                 crate::frame_c::compiler::frame_ast::Type::Custom(s) => s.clone(),
                 _ => String::new(),
             };
-            body.push(CodegenNode::NativeBlock {
-                code: format_field_assignment(
-                    syntax.language,
-                    &domain_var.name,
-                    &final_init,
-                    &type_str,
-                ),
-                span: None,
-            });
+            let assignment =
+                format_field_assignment(syntax.language, &domain_var.name, &final_init, &type_str);
+            // #123: a domain init that references a constructor param belongs
+            // only in the factory (the param is out of scope in the bare ctor).
+            // Tag it structurally instead of leaving backends to re-derive it by
+            // scanning the rendered text for param names.
+            if init_refs_param {
+                body.push(CodegenNode::factory_only(assignment));
+            } else {
+                body.push(CodegenNode::NativeBlock {
+                    code: assignment,
+                    span: None,
+                });
+            }
         }
     }
 
@@ -445,10 +453,11 @@ pub(crate) fn generate_constructor(system: &SystemAst, syntax: &ClassSyntax) -> 
                     format!("this.{} = {};", p.name, p.name)
                 }
             };
-            body.push(CodegenNode::NativeBlock {
-                code: assign_code,
-                span: None,
-            });
+            // #123: a domain-param override assignment (`self.x = x`) always
+            // references a constructor param, so it is factory-only — the bare
+            // ctor has no `x` in scope. Tag structurally (was: backends dropped
+            // it by scanning the rendered line for param names).
+            body.push(CodegenNode::factory_only(assign_code));
         }
     }
 
@@ -620,64 +629,67 @@ pub(crate) fn generate_constructor(system: &SystemAst, syntax: &ClassSyntax) -> 
                         })
                         .map(|p| p.name.clone())
                         .collect();
-                    let mut init_code = String::new();
-                    // Build temporary FrameVecs for state_args and enter_args.
-                    if state_args_vec.is_empty() {
-                        init_code.push_str(&format!(
-                            "{sys}_FrameVec* __sa = NULL;\n",
-                            sys = system.name
-                        ));
-                    } else {
-                        init_code.push_str(&format!(
-                            "{sys}_FrameVec* __sa = {sys}_FrameVec_new();\n",
-                            sys = system.name
-                        ));
-                        for n in &state_args_vec {
-                            init_code.push_str(&format!(
-                                "{sys}_FrameVec_push(__sa, (void*)(intptr_t)({n}));\n",
-                                sys = system.name,
-                                n = n
+                    // #123: build the compartment setup for a given arg set. The
+                    // factory gets the real state/enter args; the bare ctor gets
+                    // empty args (the params are out of scope there) so `@@!Sys()`
+                    // yields a usable shell. Emitting both forms structurally
+                    // replaces the per-backend text scan that dropped param-named
+                    // lines from the bare ctor.
+                    let build_compartment = |sa: &[String], ea: &[String]| -> String {
+                        let sys = &system.name;
+                        let mut code = String::new();
+                        if sa.is_empty() {
+                            code.push_str(&format!("{sys}_FrameVec* __sa = NULL;\n"));
+                        } else {
+                            code.push_str(&format!(
+                                "{sys}_FrameVec* __sa = {sys}_FrameVec_new();\n"
                             ));
+                            for n in sa {
+                                code.push_str(&format!(
+                                    "{sys}_FrameVec_push(__sa, (void*)(intptr_t)({n}));\n"
+                                ));
+                            }
                         }
-                    }
-                    if enter_args_vec.is_empty() {
-                        init_code.push_str(&format!(
-                            "{sys}_FrameVec* __ea = NULL;\n",
-                            sys = system.name
-                        ));
-                    } else {
-                        init_code.push_str(&format!(
-                            "{sys}_FrameVec* __ea = {sys}_FrameVec_new();\n",
-                            sys = system.name
-                        ));
-                        for n in &enter_args_vec {
-                            init_code.push_str(&format!(
-                                "{sys}_FrameVec_push(__ea, (void*)(intptr_t)({n}));\n",
-                                sys = system.name,
-                                n = n
+                        if ea.is_empty() {
+                            code.push_str(&format!("{sys}_FrameVec* __ea = NULL;\n"));
+                        } else {
+                            code.push_str(&format!(
+                                "{sys}_FrameVec* __ea = {sys}_FrameVec_new();\n"
                             ));
+                            for n in ea {
+                                code.push_str(&format!(
+                                    "{sys}_FrameVec_push(__ea, (void*)(intptr_t)({n}));\n"
+                                ));
+                            }
                         }
-                    }
-                    init_code.push_str(&format!(
-                        "self->__compartment = {sys}_prepareEnter(self, \"{leaf}\", __sa, __ea);\n",
-                        sys = system.name,
-                        leaf = first_state.name
-                    ));
-                    init_code.push_str("self->__next_compartment = NULL;\n");
-                    if !state_args_vec.is_empty() {
-                        init_code.push_str(&format!(
-                            "{sys}_FrameVec_destroy(__sa);\n",
-                            sys = system.name
+                        code.push_str(&format!(
+                            "self->__compartment = {sys}_prepareEnter(self, \"{leaf}\", __sa, __ea);\n",
+                            leaf = first_state.name
                         ));
+                        code.push_str("self->__next_compartment = NULL;\n");
+                        if !sa.is_empty() {
+                            code.push_str(&format!("{sys}_FrameVec_destroy(__sa);\n"));
+                        }
+                        if !ea.is_empty() {
+                            code.push_str(&format!("{sys}_FrameVec_destroy(__ea);"));
+                        }
+                        code
+                    };
+                    if !state_args_vec.is_empty() || !enter_args_vec.is_empty() {
+                        // Factory: real args. Bare shell: empty args.
+                        body.push(CodegenNode::factory_only(build_compartment(
+                            &state_args_vec,
+                            &enter_args_vec,
+                        )));
+                        body.push(CodegenNode::bare_ctor(build_compartment(&[], &[])));
+                    } else {
+                        // No args: one shared node (bare ctor sets it, the factory
+                        // inherits it via the `Sys_new()` call).
+                        body.push(CodegenNode::NativeBlock {
+                            code: build_compartment(&[], &[]),
+                            span: None,
+                        });
                     }
-                    if !enter_args_vec.is_empty() {
-                        init_code
-                            .push_str(&format!("{sys}_FrameVec_destroy(__ea);", sys = system.name));
-                    }
-                    body.push(CodegenNode::NativeBlock {
-                        code: init_code,
-                        span: None,
-                    });
                 }
                 TargetLanguage::Python3 => {
                     // Python: build the start state's compartment chain
@@ -699,13 +711,27 @@ pub(crate) fn generate_constructor(system: &SystemAst, syntax: &ClassSyntax) -> 
                     }
                     let state_args_lit = format!("[{}]", state_args_vec.join(", "));
                     let enter_args_lit = format!("[{}]", enter_args_vec.join(", "));
-                    body.push(CodegenNode::NativeBlock {
-                        code: format!(
-                            "self.__compartment = self.__prepareEnter(\"{}\", {}, {})\nself.__next_compartment = None",
-                            first_state.name, state_args_lit, enter_args_lit
-                        ),
-                        span: None,
-                    });
+                    // #123: factory gets the real args; the bare shell gets empty
+                    // args (params are out of scope there). Tagged structurally so
+                    // the split routes by node identity, not a text scan.
+                    if !state_args_vec.is_empty() || !enter_args_vec.is_empty() {
+                        body.push(CodegenNode::factory_only(format!(
+                        "self.__compartment = self.__prepareEnter(\"{}\", {}, {})\nself.__next_compartment = None",
+                        first_state.name, state_args_lit, enter_args_lit
+                    )));
+                        body.push(CodegenNode::bare_ctor(format!(
+                        "self.__compartment = self.__prepareEnter(\"{}\", [], [])\nself.__next_compartment = None",
+                        first_state.name
+                    )));
+                    } else {
+                        // No state/enter args: the two forms are identical,
+                        // so emit one shared node (the bare ctor sets it and
+                        // the factory inherits it via the bare-ctor call).
+                        body.push(CodegenNode::NativeBlock { code: format!(
+                        "self.__compartment = self.__prepareEnter(\"{}\", {}, {})\nself.__next_compartment = None",
+                        first_state.name, state_args_lit, enter_args_lit
+                    ), span: None });
+                    }
                 }
                 TargetLanguage::TypeScript | TargetLanguage::JavaScript => {
                     // TS/JS: build start chain via __prepareEnter, the same
@@ -726,13 +752,25 @@ pub(crate) fn generate_constructor(system: &SystemAst, syntax: &ClassSyntax) -> 
                     }
                     let state_args_lit = format!("[{}]", state_args_vec.join(", "));
                     let enter_args_lit = format!("[{}]", enter_args_vec.join(", "));
-                    body.push(CodegenNode::NativeBlock {
-                        code: format!(
-                            "this.__compartment = this.__prepareEnter(\"{}\", {}, {});\nthis.__next_compartment = null;",
-                            first_state.name, state_args_lit, enter_args_lit
-                        ),
-                        span: None,
-                    });
+                    // #123: factory gets real args; bare shell gets empty args.
+                    if !state_args_vec.is_empty() || !enter_args_vec.is_empty() {
+                        body.push(CodegenNode::factory_only(format!(
+                        "this.__compartment = this.__prepareEnter(\"{}\", {}, {});\nthis.__next_compartment = null;",
+                        first_state.name, state_args_lit, enter_args_lit
+                    )));
+                        body.push(CodegenNode::bare_ctor(format!(
+                        "this.__compartment = this.__prepareEnter(\"{}\", [], []);\nthis.__next_compartment = null;",
+                        first_state.name
+                    )));
+                    } else {
+                        // No state/enter args: the two forms are identical,
+                        // so emit one shared node (the bare ctor sets it and
+                        // the factory inherits it via the bare-ctor call).
+                        body.push(CodegenNode::NativeBlock { code: format!(
+                        "this.__compartment = this.__prepareEnter(\"{}\", {}, {});\nthis.__next_compartment = null;",
+                        first_state.name, state_args_lit, enter_args_lit
+                    ), span: None });
+                    }
                 }
                 TargetLanguage::Php => {
                     // PHP: build start chain via __prepareEnter, the same
@@ -762,13 +800,25 @@ pub(crate) fn generate_constructor(system: &SystemAst, syntax: &ClassSyntax) -> 
                         .collect();
                     let state_arg = format!("[{}]", state_args_vec.join(", "));
                     let enter_arg = format!("[{}]", enter_args_vec.join(", "));
-                    body.push(CodegenNode::NativeBlock {
-                        code: format!(
-                            "$this->__compartment = $this->__prepareEnter(\"{}\", {}, {});\n$this->__next_compartment = null;",
-                            first_state.name, state_arg, enter_arg
-                        ),
-                        span: None,
-                    });
+                    // #123: factory gets real args; bare shell gets empty args.
+                    if !state_args_vec.is_empty() || !enter_args_vec.is_empty() {
+                        body.push(CodegenNode::factory_only(format!(
+                        "$this->__compartment = $this->__prepareEnter(\"{}\", {}, {});\n$this->__next_compartment = null;",
+                        first_state.name, state_arg, enter_arg
+                    )));
+                        body.push(CodegenNode::bare_ctor(format!(
+                        "$this->__compartment = $this->__prepareEnter(\"{}\", [], []);\n$this->__next_compartment = null;",
+                        first_state.name
+                    )));
+                    } else {
+                        // No state/enter args: the two forms are identical,
+                        // so emit one shared node (the bare ctor sets it and
+                        // the factory inherits it via the bare-ctor call).
+                        body.push(CodegenNode::NativeBlock { code: format!(
+                        "$this->__compartment = $this->__prepareEnter(\"{}\", {}, {});\n$this->__next_compartment = null;",
+                        first_state.name, state_arg, enter_arg
+                    ), span: None });
+                    }
                 }
                 TargetLanguage::Ruby => {
                     // Ruby: build start chain via __prepareEnter, the same
@@ -789,13 +839,25 @@ pub(crate) fn generate_constructor(system: &SystemAst, syntax: &ClassSyntax) -> 
                     }
                     let state_args_lit = format!("[{}]", state_args_vec.join(", "));
                     let enter_args_lit = format!("[{}]", enter_args_vec.join(", "));
-                    body.push(CodegenNode::NativeBlock {
-                        code: format!(
-                            "@__compartment = __prepareEnter(\"{}\", {}, {})\n@__next_compartment = nil",
-                            first_state.name, state_args_lit, enter_args_lit
-                        ),
-                        span: None,
-                    });
+                    // #123: factory gets real args; bare shell gets empty args.
+                    if !state_args_vec.is_empty() || !enter_args_vec.is_empty() {
+                        body.push(CodegenNode::factory_only(format!(
+                        "@__compartment = __prepareEnter(\"{}\", {}, {})\n@__next_compartment = nil",
+                        first_state.name, state_args_lit, enter_args_lit
+                    )));
+                        body.push(CodegenNode::bare_ctor(format!(
+                        "@__compartment = __prepareEnter(\"{}\", [], [])\n@__next_compartment = nil",
+                        first_state.name
+                    )));
+                    } else {
+                        // No state/enter args: the two forms are identical,
+                        // so emit one shared node (the bare ctor sets it and
+                        // the factory inherits it via the bare-ctor call).
+                        body.push(CodegenNode::NativeBlock { code: format!(
+                        "@__compartment = __prepareEnter(\"{}\", {}, {})\n@__next_compartment = nil",
+                        first_state.name, state_args_lit, enter_args_lit
+                    ), span: None });
+                    }
                 }
                 TargetLanguage::Cpp => {
                     // C++: build start chain via __prepareEnter, the same
@@ -841,13 +903,28 @@ pub(crate) fn generate_constructor(system: &SystemAst, syntax: &ClassSyntax) -> 
                         format!("std::vector<std::any>{{{}}}", state_args_wrapped.join(", "));
                     let enter_arg =
                         format!("std::vector<std::any>{{{}}}", enter_args_wrapped.join(", "));
-                    body.push(CodegenNode::NativeBlock {
-                        code: format!(
+                    // #123: factory gets real args; bare shell gets empty args.
+                    if !state_args_wrapped.is_empty() || !enter_args_wrapped.is_empty() {
+                        body.push(CodegenNode::factory_only(format!(
                             "__compartment = __prepareEnter(\"{}\", {}, {});",
                             first_state.name, state_arg, enter_arg
-                        ),
-                        span: None,
-                    });
+                        )));
+                        body.push(CodegenNode::bare_ctor(format!(
+                        "__compartment = __prepareEnter(\"{}\", std::vector<std::any>{{}}, std::vector<std::any>{{}});",
+                        first_state.name
+                    )));
+                    } else {
+                        // No state/enter args: the two forms are identical,
+                        // so emit one shared node (the bare ctor sets it and
+                        // the factory inherits it via the bare-ctor call).
+                        body.push(CodegenNode::NativeBlock {
+                            code: format!(
+                                "__compartment = __prepareEnter(\"{}\", {}, {});",
+                                first_state.name, state_arg, enter_arg
+                            ),
+                            span: None,
+                        });
+                    }
                 }
                 TargetLanguage::Java => {
                     // Java: build start chain via __prepareEnter, the same
@@ -892,13 +969,25 @@ pub(crate) fn generate_constructor(system: &SystemAst, syntax: &ClassSyntax) -> 
                             enter_args_vec.join(", ")
                         )
                     };
-                    body.push(CodegenNode::NativeBlock {
-                        code: format!(
-                            "this.__compartment = __prepareEnter(\"{}\", {}, {});\nthis.__next_compartment = null;",
-                            first_state.name, state_arg, enter_arg
-                        ),
-                        span: None,
-                    });
+                    // #123: factory gets real args; bare shell gets empty args.
+                    if !state_args_vec.is_empty() || !enter_args_vec.is_empty() {
+                        body.push(CodegenNode::factory_only(format!(
+                        "this.__compartment = __prepareEnter(\"{}\", {}, {});\nthis.__next_compartment = null;",
+                        first_state.name, state_arg, enter_arg
+                    )));
+                        body.push(CodegenNode::bare_ctor(format!(
+                        "this.__compartment = __prepareEnter(\"{}\", new java.util.ArrayList<>(), new java.util.ArrayList<>());\nthis.__next_compartment = null;",
+                        first_state.name
+                    )));
+                    } else {
+                        // No state/enter args: the two forms are identical,
+                        // so emit one shared node (the bare ctor sets it and
+                        // the factory inherits it via the bare-ctor call).
+                        body.push(CodegenNode::NativeBlock { code: format!(
+                        "this.__compartment = __prepareEnter(\"{}\", {}, {});\nthis.__next_compartment = null;",
+                        first_state.name, state_arg, enter_arg
+                    ), span: None });
+                    }
                 }
                 TargetLanguage::Kotlin => {
                     // Kotlin: build start chain via __prepareEnter, the same
@@ -937,13 +1026,25 @@ pub(crate) fn generate_constructor(system: &SystemAst, syntax: &ClassSyntax) -> 
                     } else {
                         format!("mutableListOf<Any?>({})", enter_args_vec.join(", "))
                     };
-                    body.push(CodegenNode::NativeBlock {
-                        code: format!(
-                            "this.__compartment = __prepareEnter(\"{}\", {}, {})\nthis.__next_compartment = null",
-                            first_state.name, state_arg, enter_arg
-                        ),
-                        span: None,
-                    });
+                    // #123: factory gets real args; bare shell gets empty args.
+                    if !state_args_vec.is_empty() || !enter_args_vec.is_empty() {
+                        body.push(CodegenNode::factory_only(format!(
+                        "this.__compartment = __prepareEnter(\"{}\", {}, {})\nthis.__next_compartment = null",
+                        first_state.name, state_arg, enter_arg
+                    )));
+                        body.push(CodegenNode::bare_ctor(format!(
+                        "this.__compartment = __prepareEnter(\"{}\", mutableListOf<Any?>(), mutableListOf<Any?>())\nthis.__next_compartment = null",
+                        first_state.name
+                    )));
+                    } else {
+                        // No state/enter args: the two forms are identical,
+                        // so emit one shared node (the bare ctor sets it and
+                        // the factory inherits it via the bare-ctor call).
+                        body.push(CodegenNode::NativeBlock { code: format!(
+                        "this.__compartment = __prepareEnter(\"{}\", {}, {})\nthis.__next_compartment = null",
+                        first_state.name, state_arg, enter_arg
+                    ), span: None });
+                    }
                 }
                 TargetLanguage::Swift => {
                     // Swift: build start chain via __prepareEnter, the same
@@ -974,13 +1075,25 @@ pub(crate) fn generate_constructor(system: &SystemAst, syntax: &ClassSyntax) -> 
                         .collect();
                     let state_arg = format!("[{}]", state_args_vec.join(", "));
                     let enter_arg = format!("[{}]", enter_args_vec.join(", "));
-                    body.push(CodegenNode::NativeBlock {
-                        code: format!(
-                            "self.__compartment = {}.__prepareEnter(\"{}\", {}, {})\nself.__next_compartment = nil",
-                            system.name, first_state.name, state_arg, enter_arg
-                        ),
-                        span: None,
-                    });
+                    // #123: factory gets real args; bare shell gets empty args.
+                    if !state_args_vec.is_empty() || !enter_args_vec.is_empty() {
+                        body.push(CodegenNode::factory_only(format!(
+                        "self.__compartment = {}.__prepareEnter(\"{}\", {}, {})\nself.__next_compartment = nil",
+                        system.name, first_state.name, state_arg, enter_arg
+                    )));
+                        body.push(CodegenNode::bare_ctor(format!(
+                        "self.__compartment = {}.__prepareEnter(\"{}\", [], [])\nself.__next_compartment = nil",
+                        system.name, first_state.name
+                    )));
+                    } else {
+                        // No state/enter args: the two forms are identical,
+                        // so emit one shared node (the bare ctor sets it and
+                        // the factory inherits it via the bare-ctor call).
+                        body.push(CodegenNode::NativeBlock { code: format!(
+                        "self.__compartment = {}.__prepareEnter(\"{}\", {}, {})\nself.__next_compartment = nil",
+                        system.name, first_state.name, state_arg, enter_arg
+                    ), span: None });
+                    }
                 }
                 TargetLanguage::CSharp => {
                     // C#: build start chain via __prepareEnter, the same
@@ -1019,13 +1132,25 @@ pub(crate) fn generate_constructor(system: &SystemAst, syntax: &ClassSyntax) -> 
                     } else {
                         format!("new List<object> {{ {} }}", enter_args_vec.join(", "))
                     };
-                    body.push(CodegenNode::NativeBlock {
-                        code: format!(
-                            "this.__compartment = __prepareEnter(\"{}\", {}, {});\nthis.__next_compartment = null;",
-                            first_state.name, state_arg, enter_arg
-                        ),
-                        span: None,
-                    });
+                    // #123: factory gets real args; bare shell gets empty args.
+                    if !state_args_vec.is_empty() || !enter_args_vec.is_empty() {
+                        body.push(CodegenNode::factory_only(format!(
+                        "this.__compartment = __prepareEnter(\"{}\", {}, {});\nthis.__next_compartment = null;",
+                        first_state.name, state_arg, enter_arg
+                    )));
+                        body.push(CodegenNode::bare_ctor(format!(
+                        "this.__compartment = __prepareEnter(\"{}\", new List<object>(), new List<object>());\nthis.__next_compartment = null;",
+                        first_state.name
+                    )));
+                    } else {
+                        // No state/enter args: the two forms are identical,
+                        // so emit one shared node (the bare ctor sets it and
+                        // the factory inherits it via the bare-ctor call).
+                        body.push(CodegenNode::NativeBlock { code: format!(
+                        "this.__compartment = __prepareEnter(\"{}\", {}, {});\nthis.__next_compartment = null;",
+                        first_state.name, state_arg, enter_arg
+                    ), span: None });
+                    }
                 }
                 TargetLanguage::Go => {
                     // Go: build start chain via __prepareEnter, the same
@@ -1063,13 +1188,25 @@ pub(crate) fn generate_constructor(system: &SystemAst, syntax: &ClassSyntax) -> 
                     } else {
                         format!("[]any{{{}}}", enter_args_vec.join(", "))
                     };
-                    body.push(CodegenNode::NativeBlock {
-                        code: format!(
-                            "s.__compartment = s.__prepareEnter(\"{}\", {}, {})\ns.__next_compartment = nil",
-                            first_state.name, state_arg, enter_arg
-                        ),
-                        span: None,
-                    });
+                    // #123: factory gets real args; bare shell gets empty args.
+                    if !state_args_vec.is_empty() || !enter_args_vec.is_empty() {
+                        body.push(CodegenNode::factory_only(format!(
+                        "s.__compartment = s.__prepareEnter(\"{}\", {}, {})\ns.__next_compartment = nil",
+                        first_state.name, state_arg, enter_arg
+                    )));
+                        body.push(CodegenNode::bare_ctor(format!(
+                        "s.__compartment = s.__prepareEnter(\"{}\", []any{{}}, []any{{}})\ns.__next_compartment = nil",
+                        first_state.name
+                    )));
+                    } else {
+                        // No state/enter args: the two forms are identical,
+                        // so emit one shared node (the bare ctor sets it and
+                        // the factory inherits it via the bare-ctor call).
+                        body.push(CodegenNode::NativeBlock { code: format!(
+                        "s.__compartment = s.__prepareEnter(\"{}\", {}, {})\ns.__next_compartment = nil",
+                        first_state.name, state_arg, enter_arg
+                    ), span: None });
+                    }
                 }
                 TargetLanguage::Dart => {
                     // Dart: build start chain via __prepareEnter, the same
@@ -1101,13 +1238,25 @@ pub(crate) fn generate_constructor(system: &SystemAst, syntax: &ClassSyntax) -> 
                         .collect();
                     let state_arg = format!("[{}]", state_args_vec.join(", "));
                     let enter_arg = format!("[{}]", enter_args_vec.join(", "));
-                    body.push(CodegenNode::NativeBlock {
-                        code: format!(
-                            "this.__compartment = this.__prepareEnter(\"{}\", {}, {});\nthis.__next_compartment = null;",
-                            first_state.name, state_arg, enter_arg
-                        ),
-                        span: None,
-                    });
+                    // #123: factory gets real args; bare shell gets empty args.
+                    if !state_args_vec.is_empty() || !enter_args_vec.is_empty() {
+                        body.push(CodegenNode::factory_only(format!(
+                        "this.__compartment = this.__prepareEnter(\"{}\", {}, {});\nthis.__next_compartment = null;",
+                        first_state.name, state_arg, enter_arg
+                    )));
+                        body.push(CodegenNode::bare_ctor(format!(
+                        "this.__compartment = this.__prepareEnter(\"{}\", [], []);\nthis.__next_compartment = null;",
+                        first_state.name
+                    )));
+                    } else {
+                        // No state/enter args: the two forms are identical,
+                        // so emit one shared node (the bare ctor sets it and
+                        // the factory inherits it via the bare-ctor call).
+                        body.push(CodegenNode::NativeBlock { code: format!(
+                        "this.__compartment = this.__prepareEnter(\"{}\", {}, {});\nthis.__next_compartment = null;",
+                        first_state.name, state_arg, enter_arg
+                    ), span: None });
+                    }
                 }
                 TargetLanguage::GDScript => {
                     // GDScript: build start chain via __prepareEnter, the
@@ -1137,13 +1286,25 @@ pub(crate) fn generate_constructor(system: &SystemAst, syntax: &ClassSyntax) -> 
                         .collect();
                     let state_arg = format!("[{}]", state_args_vec.join(", "));
                     let enter_arg = format!("[{}]", enter_args_vec.join(", "));
-                    body.push(CodegenNode::NativeBlock {
-                        code: format!(
-                            "self.__compartment = self.__prepareEnter(\"{}\", {}, {})\nself.__next_compartment = null",
-                            first_state.name, state_arg, enter_arg
-                        ),
-                        span: None,
-                    });
+                    // #123: factory gets real args; bare shell gets empty args.
+                    if !state_args_vec.is_empty() || !enter_args_vec.is_empty() {
+                        body.push(CodegenNode::factory_only(format!(
+                        "self.__compartment = self.__prepareEnter(\"{}\", {}, {})\nself.__next_compartment = null",
+                        first_state.name, state_arg, enter_arg
+                    )));
+                        body.push(CodegenNode::bare_ctor(format!(
+                        "self.__compartment = self.__prepareEnter(\"{}\", [], [])\nself.__next_compartment = null",
+                        first_state.name
+                    )));
+                    } else {
+                        // No state/enter args: the two forms are identical,
+                        // so emit one shared node (the bare ctor sets it and
+                        // the factory inherits it via the bare-ctor call).
+                        body.push(CodegenNode::NativeBlock { code: format!(
+                        "self.__compartment = self.__prepareEnter(\"{}\", {}, {})\nself.__next_compartment = null",
+                        first_state.name, state_arg, enter_arg
+                    ), span: None });
+                    }
                 }
                 // Lua: build start chain via __prepareEnter, the same
                 // helper used by all transitions. System header params
@@ -1183,13 +1344,25 @@ pub(crate) fn generate_constructor(system: &SystemAst, syntax: &ClassSyntax) -> 
                     } else {
                         format!("table.pack({})", enter_args_vec.join(", "))
                     };
-                    body.push(CodegenNode::NativeBlock {
-                        code: format!(
-                            "self.__compartment = self:__prepareEnter(\"{}\", {}, {})\nself.__next_compartment = nil",
-                            first_state.name, state_arg, enter_arg
-                        ),
-                        span: None,
-                    });
+                    // #123: factory gets real args; bare shell gets empty (nil) args.
+                    if !state_args_vec.is_empty() || !enter_args_vec.is_empty() {
+                        body.push(CodegenNode::factory_only(format!(
+                        "self.__compartment = self:__prepareEnter(\"{}\", {}, {})\nself.__next_compartment = nil",
+                        first_state.name, state_arg, enter_arg
+                    )));
+                        body.push(CodegenNode::bare_ctor(format!(
+                        "self.__compartment = self:__prepareEnter(\"{}\", nil, nil)\nself.__next_compartment = nil",
+                        first_state.name
+                    )));
+                    } else {
+                        // No state/enter args: the two forms are identical,
+                        // so emit one shared node (the bare ctor sets it and
+                        // the factory inherits it via the bare-ctor call).
+                        body.push(CodegenNode::NativeBlock { code: format!(
+                        "self.__compartment = self:__prepareEnter(\"{}\", {}, {})\nself.__next_compartment = nil",
+                        first_state.name, state_arg, enter_arg
+                    ), span: None });
+                    }
                 }
                 // Dynamic languages and remaining: New expression
                 // (Erlang, Kotlin — all routed here)

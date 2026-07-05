@@ -1,5 +1,6 @@
 ---
 source: framec/tests/go_snapshots.rs
+assertion_line: 63
 expression: "compile_fixture(\"11_consts\", \"go\")"
 ---
 type ConstsFrameEvent struct {
@@ -62,6 +63,8 @@ func NewConsts() *Consts {
     s := &Consts{}
     s._state_stack = make([]*ConstsCompartment, 0)
     s._context_stack = make([]ConstsFrameContext, 0)
+    s.step = 5
+    s.limit = 20
     s.count = 0
     s.__compartment = s.__prepareEnter("Running", []any{}, []any{})
     s.__next_compartment = nil
@@ -70,8 +73,6 @@ func NewConsts() *Consts {
 
 func CreateConsts(step int, limit int) *Consts {
     c := NewConsts()
-    c.step = 5
-    c.limit = 20
     c.step = step
     c.limit = limit
     __e := ConstsFrameEvent{_message: "$>", _parameters: c.__compartment.enterArgs}

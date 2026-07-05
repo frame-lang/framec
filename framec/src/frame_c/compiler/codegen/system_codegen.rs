@@ -678,52 +678,97 @@ mod tests {
         }
     }
 
+    use crate::frame_c::visitors::TargetLanguage::Rust as R;
+
     #[test]
     fn test_init_references_param_exact_match() {
-        assert!(init_references_param("balance", &["balance".into()]));
+        assert!(init_references_param("balance", &["balance".into()], R));
     }
 
     #[test]
     fn test_init_references_param_in_expression() {
-        assert!(init_references_param("balance + 10", &["balance".into()]));
+        assert!(init_references_param(
+            "balance + 10",
+            &["balance".into()],
+            R
+        ));
     }
 
     #[test]
     fn test_init_references_param_no_match() {
-        assert!(!init_references_param("0", &["balance".into()]));
+        assert!(!init_references_param("0", &["balance".into()], R));
         assert!(!init_references_param(
             "mutableListOf<>()",
-            &["balance".into()]
+            &["balance".into()],
+            R
         ));
     }
 
     #[test]
     fn test_init_references_param_member_access_not_matched() {
         // Defaults.count should NOT match param "count" — it's a member access
-        assert!(!init_references_param("Defaults.count", &["count".into()]));
-        assert!(!init_references_param("obj.balance", &["balance".into()]));
+        assert!(!init_references_param(
+            "Defaults.count",
+            &["count".into()],
+            R
+        ));
+        assert!(!init_references_param(
+            "obj.balance",
+            &["balance".into()],
+            R
+        ));
         assert!(!init_references_param(
             "Config.DEFAULT_VALUE",
-            &["DEFAULT_VALUE".into()]
+            &["DEFAULT_VALUE".into()],
+            R
         ));
     }
 
     #[test]
     fn test_init_references_param_method_on_param() {
         // count.toString() SHOULD match — it's a method call on the param
-        assert!(init_references_param("count.toString()", &["count".into()]));
+        assert!(init_references_param(
+            "count.toString()",
+            &["count".into()],
+            R
+        ));
     }
 
     #[test]
     fn test_init_references_param_substring_not_matched() {
         // "rebalance" should NOT match param "balance"
-        assert!(!init_references_param("rebalance", &["balance".into()]));
-        assert!(!init_references_param("balanced_tree", &["balance".into()]));
+        assert!(!init_references_param("rebalance", &["balance".into()], R));
+        assert!(!init_references_param(
+            "balanced_tree",
+            &["balance".into()],
+            R
+        ));
+    }
+
+    #[test]
+    fn test_init_references_param_string_literal_not_matched() {
+        // #123: a param name inside a string literal is NOT a reference.
+        assert!(!init_references_param(
+            "\"rate limited\"",
+            &["rate".into()],
+            R
+        ));
+        assert!(!init_references_param(
+            "\"count is high\" + x",
+            &["count".into()],
+            R
+        ));
+        // …but a real reference outside the string still matches.
+        assert!(init_references_param(
+            "count + \"count\"",
+            &["count".into()],
+            R
+        ));
     }
 
     #[test]
     fn test_init_references_param_empty() {
-        assert!(!init_references_param("", &["balance".into()]));
-        assert!(!init_references_param("balance", &[]));
+        assert!(!init_references_param("", &["balance".into()], R));
+        assert!(!init_references_param("balance", &[], R));
     }
 }

@@ -1,5 +1,6 @@
 ---
 source: framec/tests/ruby_snapshots.rs
+assertion_line: 84
 expression: "compile_fixture(\"11_consts\", \"ruby\")"
 ---
 class ConstsFrameEvent
@@ -71,14 +72,14 @@ class Consts
     def initialize
         @_state_stack = []
         @_context_stack = []
+        @step = 5
+        @limit = 20
         @count = 0
         @__compartment = __prepareEnter("Running", [], [])
         @__next_compartment = nil
     end
 
     def _frame_init(step = 5, limit = 20)
-        @step = 5
-        @limit = 20
         @step = step
         @limit = limit
         __e = ConstsFrameEvent.new("$>", @__compartment.enter_args)

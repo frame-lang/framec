@@ -691,7 +691,9 @@ impl LanguageBackend for RustBackend {
             }
 
             CodegenNode::NativeBlock { code, span: _ }
-            | CodegenNode::FrameInitBlock { code, span: _ } => {
+            | CodegenNode::FrameInitBlock { code, span: _ }
+            | CodegenNode::FactoryOnlyBlock { code, span: _ }
+            | CodegenNode::BareCtorBlock { code, span: _ } => {
                 // Indent each line of the native block to match current context
                 let indent = ctx.get_indent();
                 code.lines()
@@ -804,7 +806,10 @@ impl RustBackend {
             // is `{ }`) also don't need one — adding `;` to an
             // otherwise empty block produces a `redundant_semicolons`
             // lint warning.
-            CodegenNode::NativeBlock { code, .. } | CodegenNode::FrameInitBlock { code, .. } => {
+            CodegenNode::NativeBlock { code, .. }
+            | CodegenNode::FrameInitBlock { code, .. }
+            | CodegenNode::FactoryOnlyBlock { code, .. }
+            | CodegenNode::BareCtorBlock { code, .. } => {
                 let trimmed = code.trim();
                 if trimmed.is_empty() {
                     false

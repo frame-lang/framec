@@ -261,17 +261,15 @@ impl LanguageBackend for DartBackend {
                     // mutation. Compartment-init lines (`__compartment =
                     // __prepareEnter(...)`) must still run in the bare
                     // ctor so `@@!Foo()` shells are usable.
-                    let frame_init_only = matches!(stmt, CodegenNode::FrameInitBlock { .. });
-                    if frame_init_only {
-                        frame_init_lines.push(rendered);
-                        continue;
-                    }
-                    let mentions_param = param_names.iter().any(|p| {
-                        rendered
-                            .split(|c: char| !c.is_alphanumeric() && c != '_')
-                            .any(|w| w == *p)
-                    });
-                    if mentions_param {
+                    // #123: route by node identity, not a param-name text scan.
+                    // Factory-only statements (kernel dispatch, full-args
+                    // compartment, param assigns) go to the frame_init cascade;
+                    // the bare ctor gets the shared statements plus the empty-args
+                    // compartment (BareCtorBlock).
+                    if matches!(
+                        stmt,
+                        CodegenNode::FrameInitBlock { .. } | CodegenNode::FactoryOnlyBlock { .. }
+                    ) {
                         frame_init_lines.push(rendered);
                     } else {
                         framework_lines.push(rendered);
@@ -693,7 +691,9 @@ impl LanguageBackend for DartBackend {
 
             // ===== Native Code Preservation =====
             CodegenNode::NativeBlock { code, span: _ }
-            | CodegenNode::FrameInitBlock { code, span: _ } => {
+            | CodegenNode::FrameInitBlock { code, span: _ }
+            | CodegenNode::FactoryOnlyBlock { code, span: _ }
+            | CodegenNode::BareCtorBlock { code, span: _ } => {
                 let indent = ctx.get_indent();
                 code.lines()
                     .map(|line| {
@@ -828,6 +828,8 @@ impl DartBackend {
                 | CodegenNode::Comment { .. }
                 | CodegenNode::NativeBlock { .. }
                 | CodegenNode::FrameInitBlock { .. }
+                | CodegenNode::FactoryOnlyBlock { .. }
+                | CodegenNode::BareCtorBlock { .. }
                 | CodegenNode::Empty
         )
     }

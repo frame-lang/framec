@@ -529,17 +529,15 @@ impl LanguageBackend for CppBackend {
                     // must run in the bare ctor too so `@@!Foo()` shells are
                     // usable (with empty-args compartment); when it mentions
                     // params, the mentions_param branch below handles the split.
-                    let frame_init_only = matches!(stmt, CodegenNode::FrameInitBlock { .. });
-                    if frame_init_only {
-                        frame_init_lines.push(rendered);
-                        continue;
-                    }
-                    let mentions_param = param_names.iter().any(|p| {
-                        rendered
-                            .split(|c: char| !c.is_alphanumeric() && c != '_')
-                            .any(|w| w == *p)
-                    });
-                    if mentions_param {
+                    // #123: route by node identity, not a param-name text scan.
+                    // Factory-only statements (kernel dispatch, full-args
+                    // compartment, param assigns) go to the frame_init cascade;
+                    // the bare ctor gets the shared statements plus the empty-args
+                    // compartment (BareCtorBlock).
+                    if matches!(
+                        stmt,
+                        CodegenNode::FrameInitBlock { .. } | CodegenNode::FactoryOnlyBlock { .. }
+                    ) {
                         frame_init_lines.push(rendered);
                     } else {
                         framework_lines.push(rendered);
@@ -926,7 +924,10 @@ impl LanguageBackend for CppBackend {
                 }
             }
 
-            CodegenNode::NativeBlock { code, .. } | CodegenNode::FrameInitBlock { code, .. } => {
+            CodegenNode::NativeBlock { code, .. }
+            | CodegenNode::FrameInitBlock { code, .. }
+            | CodegenNode::FactoryOnlyBlock { code, .. }
+            | CodegenNode::BareCtorBlock { code, .. } => {
                 let indent = ctx.get_indent();
                 let mut out = code
                     .lines()
@@ -1045,6 +1046,8 @@ impl CppBackend {
                 | CodegenNode::Comment { .. }
                 | CodegenNode::NativeBlock { .. }
                 | CodegenNode::FrameInitBlock { .. }
+                | CodegenNode::FactoryOnlyBlock { .. }
+                | CodegenNode::BareCtorBlock { .. }
                 | CodegenNode::Empty
         )
     }

@@ -231,17 +231,15 @@ impl LanguageBackend for LuaBackend {
                         rendered.push('\n');
                     }
                     // RFC-0020: scope to kernel call + context-stack mutation.
-                    let frame_init_only = matches!(stmt, CodegenNode::FrameInitBlock { .. });
-                    if frame_init_only {
-                        frame_init_lines.push(rendered);
-                        continue;
-                    }
-                    let mentions_param = param_names.iter().any(|p| {
-                        rendered
-                            .split(|c: char| !c.is_alphanumeric() && c != '_')
-                            .any(|w| w == *p)
-                    });
-                    if mentions_param {
+                    // #123: route by node identity, not a param-name text scan.
+                    // Factory-only statements (kernel dispatch, full-args
+                    // compartment, param assigns) go to the frame_init cascade;
+                    // the bare ctor gets the shared statements plus the empty-args
+                    // compartment (BareCtorBlock).
+                    if matches!(
+                        stmt,
+                        CodegenNode::FrameInitBlock { .. } | CodegenNode::FactoryOnlyBlock { .. }
+                    ) {
                         frame_init_lines.push(rendered);
                     } else {
                         framework_lines.push(rendered);
@@ -602,7 +600,9 @@ impl LanguageBackend for LuaBackend {
             }
 
             CodegenNode::NativeBlock { code, span: _ }
-            | CodegenNode::FrameInitBlock { code, span: _ } => {
+            | CodegenNode::FrameInitBlock { code, span: _ }
+            | CodegenNode::FactoryOnlyBlock { code, span: _ }
+            | CodegenNode::BareCtorBlock { code, span: _ } => {
                 // Transform if/else { } to Lua if/then/end before emitting
                 let code = crate::frame_c::compiler::codegen::block_transform::transform_blocks(
                     code,

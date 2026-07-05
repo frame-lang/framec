@@ -219,21 +219,15 @@ impl LanguageBackend for PhpBackend {
                     } else if !rendered.ends_with('\n') {
                         rendered.push('\n');
                     }
-                    // RFC-0020: scope to kernel call + context-stack mutation.
-                    let frame_init_only = matches!(stmt, CodegenNode::FrameInitBlock { .. });
-                    if frame_init_only {
-                        frame_init_lines.push(rendered);
-                        continue;
-                    }
-                    // PHP variables have `$` prefix; param names in source
-                    // are without prefix. Check for both forms.
-                    let mentions_param = param_names.iter().any(|p| {
-                        let with_dollar = format!("${}", p);
-                        rendered
-                            .split(|c: char| !c.is_alphanumeric() && c != '_' && c != '$')
-                            .any(|w| w == *p || w == with_dollar.as_str())
-                    });
-                    if mentions_param {
+                    // #123: route by node identity, not a param-name text scan.
+                    // Factory-only statements (kernel dispatch, full-args
+                    // compartment, param assigns) go to the frame_init cascade;
+                    // the bare ctor gets the shared statements plus the empty-args
+                    // compartment (BareCtorBlock).
+                    if matches!(
+                        stmt,
+                        CodegenNode::FrameInitBlock { .. } | CodegenNode::FactoryOnlyBlock { .. }
+                    ) {
                         frame_init_lines.push(rendered);
                     } else {
                         framework_lines.push(rendered);
@@ -595,7 +589,9 @@ impl LanguageBackend for PhpBackend {
 
             // ===== Native Code Preservation =====
             CodegenNode::NativeBlock { code, span: _ }
-            | CodegenNode::FrameInitBlock { code, span: _ } => {
+            | CodegenNode::FrameInitBlock { code, span: _ }
+            | CodegenNode::FactoryOnlyBlock { code, span: _ }
+            | CodegenNode::BareCtorBlock { code, span: _ } => {
                 let indent = ctx.get_indent();
                 code.lines()
                     .map(|line| {
@@ -695,6 +691,8 @@ impl PhpBackend {
                 | CodegenNode::Comment { .. }
                 | CodegenNode::NativeBlock { .. }
                 | CodegenNode::FrameInitBlock { .. }
+                | CodegenNode::FactoryOnlyBlock { .. }
+                | CodegenNode::BareCtorBlock { .. }
                 | CodegenNode::Empty
         )
     }

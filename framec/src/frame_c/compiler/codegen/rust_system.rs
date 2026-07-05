@@ -361,7 +361,11 @@ fn generate_rust_fields(system: &SystemAst) -> Vec<Field> {
         field.is_const = domain_var.is_const;
 
         let init_text_str = domain_var.initializer_text.as_deref().unwrap_or("");
-        let strip_collision = init_references_param(init_text_str, &sys_param_names);
+        let strip_collision = init_references_param(
+            init_text_str,
+            &sys_param_names,
+            crate::frame_c::visitors::TargetLanguage::Rust,
+        );
         if !strip_collision {
             if let Some(ref init_text) = &domain_var.initializer_text {
                 let expanded_init =

@@ -7,48 +7,6 @@ use crate::frame_c::visitors::TargetLanguage;
 /// Kotlin backend for code generation
 pub struct KotlinBackend;
 
-/// RFC-0017 Phase A1 helper: replace `mutableListOf<Any?>(<param>(, <param>)*)`
-/// or `[<param>(, <param>)*]` substrings with empty-list literals if every
-/// element is a known constructor param name. Used by the Kotlin
-/// Constructor arm to strip user-arg-bound enter_args / state_args from
-/// the bare `init {}` body — those are re-supplied by `__frame_init`.
-fn strip_kotlin_param_lists(text: &str, param_names: &[&str]) -> String {
-    // The pattern emitted by system_codegen.rs for Kotlin is
-    // `mutableListOf<Any?>(seed)` or `mutableListOf<Any?>()`. The matching
-    // close paren comes from the shared string/comment-aware
-    // `matching_close_paren` primitive (#123 — the old hand depth walk was
-    // string-blind, so a `)` inside a string seed mis-sliced), and the byte
-    // copy is a slice append (the old `bytes[i] as char` corrupted UTF-8).
-    use crate::frame_c::compiler::codegen::codegen_utils::{
-        matching_close_paren, split_top_level_args,
-    };
-    let needle = "mutableListOf<Any?>(";
-    let lang = crate::frame_c::visitors::TargetLanguage::Kotlin;
-    let mut result = String::with_capacity(text.len());
-    let mut i = 0;
-    while let Some(off) = text[i..].find(needle) {
-        let hit = i + off;
-        let args_start = hit + needle.len();
-        match matching_close_paren(text, lang, args_start) {
-            Some(close) => {
-                let inner = &text[args_start..close];
-                let parts = split_top_level_args(inner, lang);
-                if !parts.is_empty() && parts.iter().all(|p| param_names.contains(&p.as_str())) {
-                    result.push_str(&text[i..hit]);
-                    result.push_str("mutableListOf<Any?>()");
-                    i = close + 1;
-                } else {
-                    result.push_str(&text[i..close]);
-                    i = close;
-                }
-            }
-            None => break, // unbalanced — emit the rest verbatim below
-        }
-    }
-    result.push_str(&text[i..]);
-    result
-}
-
 impl LanguageBackend for KotlinBackend {
     fn emit(&self, node: &CodegenNode, ctx: &mut EmitContext) -> String {
         match node {
@@ -381,33 +339,17 @@ impl LanguageBackend for KotlinBackend {
                     // mutation. Compartment-init lines (`__compartment =
                     // __prepareEnter(...)`) must still run in `init {}`
                     // so `@@!Foo()` shells are usable.
-                    let frame_init_only = matches!(stmt, CodegenNode::FrameInitBlock { .. });
-                    if frame_init_only {
+                    // #123: route by node identity, not a param-name text scan.
+                    // Factory-only statements (kernel dispatch, full-args
+                    // compartment, param assigns) go to the frame_init cascade;
+                    // the bare ctor gets the shared statements plus the empty-args
+                    // compartment (BareCtorBlock). This retires the string-blind
+                    // `mentions_param` scan and the `*_strip_param_lists` walk.
+                    if matches!(
+                        stmt,
+                        CodegenNode::FrameInitBlock { .. } | CodegenNode::FactoryOnlyBlock { .. }
+                    ) {
                         frame_init_lines.push(rendered);
-                        continue;
-                    }
-                    let mentions_param = param_names.iter().any(|p| {
-                        rendered
-                            .split(|c: char| !c.is_alphanumeric() && c != '_')
-                            .any(|w| w == *p)
-                    });
-                    if mentions_param {
-                        frame_init_lines.push(rendered.clone());
-                        // RFC-0017: strip handles `mutableListOf(seed)`
-                        // → empty in prepareEnter args. For plain
-                        // `this.field = seed` strip is a no-op;
-                        // emitting it into the no-arg bare ctor would
-                        // refuse to compile. Skip when a param ref
-                        // survives the strip.
-                        let stripped = strip_kotlin_param_lists(&rendered, &param_names);
-                        let still_refs_param = param_names.iter().any(|p| {
-                            stripped
-                                .split(|c: char| !c.is_alphanumeric() && c != '_')
-                                .any(|w| w == *p)
-                        });
-                        if !still_refs_param {
-                            framework_lines.push(stripped);
-                        }
                     } else {
                         framework_lines.push(rendered);
                     }
@@ -744,7 +686,10 @@ impl LanguageBackend for KotlinBackend {
                 }
             }
 
-            CodegenNode::NativeBlock { code, .. } | CodegenNode::FrameInitBlock { code, .. } => {
+            CodegenNode::NativeBlock { code, .. }
+            | CodegenNode::FrameInitBlock { code, .. }
+            | CodegenNode::FactoryOnlyBlock { code, .. }
+            | CodegenNode::BareCtorBlock { code, .. } => {
                 let indent = ctx.get_indent();
                 code.lines()
                     .map(|line| {

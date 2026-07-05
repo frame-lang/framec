@@ -373,7 +373,9 @@ impl LanguageBackend for ErlangBackend {
             }
 
             CodegenNode::NativeBlock { code, span: _ }
-            | CodegenNode::FrameInitBlock { code, span: _ } => {
+            | CodegenNode::FrameInitBlock { code, span: _ }
+            | CodegenNode::FactoryOnlyBlock { code, span: _ }
+            | CodegenNode::BareCtorBlock { code, span: _ } => {
                 let indent = ctx.get_indent();
                 code.lines()
                     .map(|line| {

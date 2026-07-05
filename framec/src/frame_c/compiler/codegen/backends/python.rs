@@ -12,49 +12,6 @@ fn python_identifier_present(text: &str, ident: &str) -> bool {
         .any(|w| w == ident)
 }
 
-/// RFC-0017 Phase A0 helper: replace `[<param>(, <param>)*]` substrings
-/// with `[]` if every comma-separated entry is a known param name. Used
-/// by the Python Constructor arm to strip user-arg-bound enter_args /
-/// state_args from the bare `__init__` body — those are re-supplied by
-/// `__frame_init` in the proper init path.
-fn python_strip_param_lists(text: &str, param_names: &[&str]) -> String {
-    let chars: Vec<char> = text.chars().collect();
-    let mut result = String::with_capacity(text.len());
-    let mut i = 0;
-    while i < chars.len() {
-        if chars[i] == '[' {
-            let mut depth = 1;
-            let mut j = i + 1;
-            while j < chars.len() && depth > 0 {
-                match chars[j] {
-                    '[' => depth += 1,
-                    ']' => depth -= 1,
-                    _ => {}
-                }
-                if depth == 0 {
-                    break;
-                }
-                j += 1;
-            }
-            if depth == 0 {
-                let inner: String = chars[i + 1..j].iter().collect();
-                let parts = crate::frame_c::compiler::codegen::codegen_utils::split_top_level_args(
-                    &inner,
-                    crate::frame_c::visitors::TargetLanguage::Python3,
-                );
-                if !parts.is_empty() && parts.iter().all(|p| param_names.contains(&p.as_str())) {
-                    result.push_str("[]");
-                    i = j + 1;
-                    continue;
-                }
-            }
-        }
-        result.push(chars[i]);
-        i += 1;
-    }
-    result
-}
-
 /// Python backend for code generation
 pub struct PythonBackend;
 
@@ -240,7 +197,9 @@ impl LanguageBackend for PythonBackend {
                     match stmt {
                         CodegenNode::Comment { .. } | CodegenNode::Empty => false,
                         CodegenNode::NativeBlock { code, .. }
-                        | CodegenNode::FrameInitBlock { code, .. } => {
+                        | CodegenNode::FrameInitBlock { code, .. }
+                        | CodegenNode::FactoryOnlyBlock { code, .. }
+                        | CodegenNode::BareCtorBlock { code, .. } => {
                             // Check if native block has any non-comment, non-whitespace lines
                             code.lines().any(|line| {
                                 let trimmed = line.trim();
@@ -373,30 +332,17 @@ impl LanguageBackend for PythonBackend {
                 }
                 for stmt in body {
                     let rendered = self.emit(stmt, ctx);
-                    let create_only = matches!(stmt, CodegenNode::FrameInitBlock { .. });
-                    if create_only {
+                    // #123: route by node identity, not a param-name text scan.
+                    // Factory-only statements (kernel dispatch, full-args
+                    // compartment, param assigns) go to `__frame_init`; the bare
+                    // `__init__` gets the shared statements plus the empty-args
+                    // compartment (BareCtorBlock). Retires `mentions_param` +
+                    // `python_strip_param_lists`.
+                    if matches!(
+                        stmt,
+                        CodegenNode::FrameInitBlock { .. } | CodegenNode::FactoryOnlyBlock { .. }
+                    ) {
                         frame_init_lines.push(rendered);
-                        continue;
-                    }
-                    let mentions_param = param_names
-                        .iter()
-                        .any(|p| python_identifier_present(&rendered, p));
-                    if mentions_param {
-                        frame_init_lines.push(rendered.clone());
-                        // Strip handles `[seed]` → `[]` in prepareEnter
-                        // args (StateArg/EnterArg kind params). For
-                        // Domain-kind params the line is a plain
-                        // `self.field = seed` and strip is a no-op —
-                        // emitting the stripped form into the no-arg
-                        // bare ctor would leave `seed` undefined.
-                        // Skip those; `_create` owns them.
-                        let stripped = python_strip_param_lists(&rendered, &param_names);
-                        let still_refs_param = param_names
-                            .iter()
-                            .any(|p| python_identifier_present(&stripped, p));
-                        if !still_refs_param {
-                            init_lines.push(stripped);
-                        }
                     } else {
                         init_lines.push(rendered);
                     }
@@ -809,7 +755,9 @@ impl LanguageBackend for PythonBackend {
 
             // ===== Native Code Preservation =====
             CodegenNode::NativeBlock { code, span: _ }
-            | CodegenNode::FrameInitBlock { code, span: _ } => {
+            | CodegenNode::FrameInitBlock { code, span: _ }
+            | CodegenNode::FactoryOnlyBlock { code, span: _ }
+            | CodegenNode::BareCtorBlock { code, span: _ } => {
                 // Re-indent native code to current context
                 let lines: Vec<&str> = code.lines().collect();
                 if lines.is_empty() {

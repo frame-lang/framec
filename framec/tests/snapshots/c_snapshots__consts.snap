@@ -1,5 +1,6 @@
 ---
 source: framec/tests/c_snapshots.rs
+assertion_line: 63
 expression: "compile_fixture(\"11_consts\", \"c\")"
 ---
 #include <stdlib.h>
@@ -414,6 +415,8 @@ Consts* Consts_new(void) {
     Consts* self = calloc(1, sizeof(Consts));
     self->_state_stack = Consts_FrameVec_new();
     self->_context_stack = Consts_FrameVec_new();
+    self->step = 5;
+    self->limit = 20;
     self->count = 0;
     Consts_FrameVec* __sa = NULL;
     Consts_FrameVec* __ea = NULL;

@@ -448,6 +448,27 @@ pub enum CodegenNode {
     /// `__kernel(` (issue #152). Only the origin (constructor.rs) creates it.
     FrameInitBlock { code: String, span: Option<Span> },
 
+    /// A constructor-body statement that references a constructor parameter and
+    /// therefore belongs ONLY in the factory (`_create`/`create`), never in the
+    /// bare, parameterless constructor (`_new` / `new Sys()` / `@@!Sys()` shell)
+    /// where the parameter is out of scope. The generator (constructor.rs) knows
+    /// this structurally — it built the statement from the system's params — so
+    /// it tags the node instead of leaving backends to re-derive it by scanning
+    /// the rendered text for param names (issue #123; the string-blind scan
+    /// silently mis-routed a statement whose string literal merely contained a
+    /// param name — #165-class silent corruption). Renders identically to
+    /// `NativeBlock`. The split treats it exactly like `FrameInitBlock`.
+    FactoryOnlyBlock { code: String, span: Option<Span> },
+
+    /// The bare-constructor form of a statement that has a distinct factory form
+    /// — specifically the start-state compartment setup, which the factory emits
+    /// with the real enter/state args (a `FactoryOnlyBlock`) and the bare ctor
+    /// emits with empty args so `@@!Sys()` yields a usable shell. Appears ONLY in
+    /// the bare constructor. Renders identically to `NativeBlock`. Replaces the
+    /// per-backend `*_strip_param_lists` text walks that derived the empty form
+    /// by stripping rendered arg lists (issue #123).
+    BareCtorBlock { code: String, span: Option<Span> },
+
     /// Placeholder for splice point
     SplicePoint { id: String },
 }
@@ -559,6 +580,18 @@ impl CodegenNode {
     /// bare constructor (issue #152). Renders exactly like `native()`.
     pub fn frame_init(code: String) -> Self {
         CodegenNode::FrameInitBlock { code, span: None }
+    }
+
+    /// A constructor statement that references a param — factory only, never the
+    /// bare parameterless ctor. Renders exactly like `native()` (issue #123).
+    pub fn factory_only(code: String) -> Self {
+        CodegenNode::FactoryOnlyBlock { code, span: None }
+    }
+
+    /// The empty-args bare-ctor form of the compartment setup — bare ctor only
+    /// (issue #123). Renders exactly like `native()`.
+    pub fn bare_ctor(code: String) -> Self {
+        CodegenNode::BareCtorBlock { code, span: None }
     }
 
     pub fn transition(target: &str) -> Self {

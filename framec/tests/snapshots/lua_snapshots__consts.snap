@@ -1,5 +1,6 @@
 ---
 source: framec/tests/lua_snapshots.rs
+assertion_line: 85
 expression: "compile_fixture(\"11_consts\", \"lua\")"
 ---
 local ConstsFrameEvent = {}
@@ -63,6 +64,8 @@ function Consts.new()
     local self = setmetatable({}, Consts)
     self._state_stack = {}
     self._context_stack = {}
+    self.step = 5
+    self.limit = 20
     self.count = 0
     self.__compartment = self:__prepareEnter("Running", nil, nil)
     self.__next_compartment = nil
@@ -70,8 +73,6 @@ function Consts.new()
 end
 
 function Consts:_frame_init(step, limit)
-    self.step = 5
-    self.limit = 20
     self.step = step
     self.limit = limit
     local __e = ConstsFrameEvent.new("$>", self.__compartment.enter_args)

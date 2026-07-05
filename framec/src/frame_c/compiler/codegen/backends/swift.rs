@@ -7,49 +7,6 @@ use crate::frame_c::visitors::TargetLanguage;
 /// Swift backend for code generation
 pub struct SwiftBackend;
 
-/// RFC-0017 Phase A2 helper: replace `[<param>(, <param>)*]` substrings
-/// with `[]` if every comma-separated entry is a known constructor
-/// param name. Used by the Swift Constructor arm to strip user-arg-bound
-/// enter_args / state_args from the bare `init()` body — those are
-/// re-supplied by `__frame_init`.
-fn swift_strip_param_lists(text: &str, param_names: &[&str]) -> String {
-    let chars: Vec<char> = text.chars().collect();
-    let mut result = String::with_capacity(text.len());
-    let mut i = 0;
-    while i < chars.len() {
-        if chars[i] == '[' {
-            let mut depth = 1;
-            let mut j = i + 1;
-            while j < chars.len() && depth > 0 {
-                match chars[j] {
-                    '[' => depth += 1,
-                    ']' => depth -= 1,
-                    _ => {}
-                }
-                if depth == 0 {
-                    break;
-                }
-                j += 1;
-            }
-            if depth == 0 {
-                let inner: String = chars[i + 1..j].iter().collect();
-                let parts = crate::frame_c::compiler::codegen::codegen_utils::split_top_level_args(
-                    &inner,
-                    crate::frame_c::visitors::TargetLanguage::Swift,
-                );
-                if !parts.is_empty() && parts.iter().all(|p| param_names.contains(&p.as_str())) {
-                    result.push_str("[]");
-                    i = j + 1;
-                    continue;
-                }
-            }
-        }
-        result.push(chars[i]);
-        i += 1;
-    }
-    result
-}
-
 impl LanguageBackend for SwiftBackend {
     fn emit(&self, node: &CodegenNode, ctx: &mut EmitContext) -> String {
         match node {
@@ -264,32 +221,17 @@ impl LanguageBackend for SwiftBackend {
                     // `@@!Foo()` shells are usable. Bare `_context_stack`
                     // initialization stays in `init()`; only push/pop go
                     // to `__frame_init`.
-                    let frame_init_only = matches!(stmt, CodegenNode::FrameInitBlock { .. });
-                    if frame_init_only {
+                    // #123: route by node identity, not a param-name text scan.
+                    // Factory-only statements (kernel dispatch, full-args
+                    // compartment, param assigns) go to the frame_init cascade;
+                    // the bare ctor gets the shared statements plus the empty-args
+                    // compartment (BareCtorBlock). This retires the string-blind
+                    // `mentions_param` scan and the `*_strip_param_lists` walk.
+                    if matches!(
+                        stmt,
+                        CodegenNode::FrameInitBlock { .. } | CodegenNode::FactoryOnlyBlock { .. }
+                    ) {
                         frame_init_lines.push(rendered);
-                        continue;
-                    }
-                    let mentions_param = param_names.iter().any(|p| {
-                        rendered
-                            .split(|c: char| !c.is_alphanumeric() && c != '_')
-                            .any(|w| w == *p)
-                    });
-                    if mentions_param {
-                        frame_init_lines.push(rendered.clone());
-                        // RFC-0017: strip handles `[seed]` → `[]` in
-                        // prepareEnter args. For plain `self.field =
-                        // seed` strip is a no-op; emitting it into
-                        // the no-arg bare ctor would refuse to
-                        // compile. Skip when a param ref survives.
-                        let stripped = swift_strip_param_lists(&rendered, &param_names);
-                        let still_refs_param = param_names.iter().any(|p| {
-                            stripped
-                                .split(|c: char| !c.is_alphanumeric() && c != '_')
-                                .any(|w| w == *p)
-                        });
-                        if !still_refs_param {
-                            framework_lines.push(stripped);
-                        }
                     } else {
                         framework_lines.push(rendered);
                     }
@@ -642,7 +584,10 @@ impl LanguageBackend for SwiftBackend {
                 }
             }
 
-            CodegenNode::NativeBlock { code, .. } | CodegenNode::FrameInitBlock { code, .. } => {
+            CodegenNode::NativeBlock { code, .. }
+            | CodegenNode::FrameInitBlock { code, .. }
+            | CodegenNode::FactoryOnlyBlock { code, .. }
+            | CodegenNode::BareCtorBlock { code, .. } => {
                 let indent = ctx.get_indent();
                 code.lines()
                     .map(|line| {

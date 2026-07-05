@@ -1,5 +1,6 @@
 ---
 source: framec/tests/python_snapshots.rs
+assertion_line: 154
 expression: "compile_fixture(\"11_consts\", \"python_3\")"
 ---
 from typing import Any, Optional, List, Dict, Callable
@@ -42,6 +43,8 @@ class Consts:
     def __init__(self):
         self._state_stack = []
         self._context_stack = []
+        self.step = 5
+        self.limit = 20
         self.count = 0
         self.__compartment = self.__prepareEnter("Running", [], [])
         self.__next_compartment = None
@@ -49,8 +52,6 @@ class Consts:
     @classmethod
     def _create(cls, step: int = 5, limit: int = 20):
         c = cls()
-        c.step = 5
-        c.limit = 20
         c.step = step
         c.limit = limit
         __e = ConstsFrameEvent("$>", c.__compartment.enter_args)

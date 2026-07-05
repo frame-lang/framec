@@ -16,53 +16,6 @@ use crate::frame_c::visitors::TargetLanguage;
 
 /// Go backend for code generation
 pub struct GoBackend;
-
-/// RFC-0017 Phase A2 helper: replace `[]any{<param>(, <param>)*}` with
-/// `[]any{}` if every comma-separated entry is a known constructor
-/// param name. Used by the Go Constructor arm to strip user-arg-bound
-/// enter_args / state_args from the bare `NewCounter()` body — those
-/// are re-supplied by `__frame_init`.
-fn go_strip_param_lists(text: &str, param_names: &[&str]) -> String {
-    let needle = "[]any{";
-    let mut result = String::with_capacity(text.len());
-    let bytes = text.as_bytes();
-    let needle_bytes = needle.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i..].starts_with(needle_bytes) {
-            let args_start = i + needle_bytes.len();
-            let mut depth = 1;
-            let mut j = args_start;
-            while j < bytes.len() && depth > 0 {
-                match bytes[j] {
-                    b'{' => depth += 1,
-                    b'}' => depth -= 1,
-                    _ => {}
-                }
-                if depth == 0 {
-                    break;
-                }
-                j += 1;
-            }
-            if depth == 0 {
-                let inner = &text[args_start..j];
-                let parts = crate::frame_c::compiler::codegen::codegen_utils::split_top_level_args(
-                    &inner,
-                    crate::frame_c::visitors::TargetLanguage::Go,
-                );
-                if !parts.is_empty() && parts.iter().all(|p| param_names.contains(&p.as_str())) {
-                    result.push_str("[]any{}");
-                    i = j + 1;
-                    continue;
-                }
-            }
-        }
-        result.push(bytes[i] as char);
-        i += 1;
-    }
-    result
-}
-
 impl LanguageBackend for GoBackend {
     fn emit(&self, node: &CodegenNode, ctx: &mut EmitContext) -> String {
         let system_name = ctx.system_name.clone().unwrap_or_default();
@@ -243,34 +196,17 @@ impl LanguageBackend for GoBackend {
                     // too so `@@!Foo()` shells are usable (with empty-args
                     // compartment); when it mentions params the
                     // mentions_param branch below handles the split.
-                    let frame_init_only = matches!(stmt, CodegenNode::FrameInitBlock { .. });
-                    if frame_init_only {
+                    // #123: route by node identity, not a param-name text scan.
+                    // Factory-only statements (kernel dispatch, full-args
+                    // compartment, param assigns) go to the frame_init cascade;
+                    // the bare ctor gets the shared statements plus the empty-args
+                    // compartment (BareCtorBlock). Retires the string-blind
+                    // mentions_param scan and the strip-param-lists walk.
+                    if matches!(
+                        stmt,
+                        CodegenNode::FrameInitBlock { .. } | CodegenNode::FactoryOnlyBlock { .. }
+                    ) {
                         frame_init_lines.push(rendered);
-                        continue;
-                    }
-                    let mentions_param = param_names.iter().any(|p| {
-                        rendered
-                            .split(|c: char| !c.is_alphanumeric() && c != '_')
-                            .any(|w| w == *p)
-                    });
-                    if mentions_param {
-                        frame_init_lines.push(rendered.clone());
-                        // RFC-0017 carry-over: a stripped version
-                        // (param-list args replaced with empty slice
-                        // literal) goes in NewFoo() too, so `@@!Foo()`
-                        // still ends up with a valid (empty-args)
-                        // compartment. Skip the stripped form if a
-                        // param ref survives (`s.field = seed` strip
-                        // is a no-op and would not compile).
-                        let stripped = go_strip_param_lists(&rendered, &param_names);
-                        let still_refs_param = param_names.iter().any(|p| {
-                            stripped
-                                .split(|c: char| !c.is_alphanumeric() && c != '_')
-                                .any(|w| w == *p)
-                        });
-                        if !still_refs_param {
-                            framework_lines.push(stripped);
-                        }
                     } else {
                         framework_lines.push(rendered);
                     }
@@ -602,7 +538,10 @@ impl LanguageBackend for GoBackend {
                 }
             }
 
-            CodegenNode::NativeBlock { code, .. } | CodegenNode::FrameInitBlock { code, .. } => {
+            CodegenNode::NativeBlock { code, .. }
+            | CodegenNode::FrameInitBlock { code, .. }
+            | CodegenNode::FactoryOnlyBlock { code, .. }
+            | CodegenNode::BareCtorBlock { code, .. } => {
                 let indent = ctx.get_indent();
                 code.lines()
                     .map(|line| {

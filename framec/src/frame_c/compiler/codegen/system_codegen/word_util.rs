@@ -40,37 +40,22 @@ pub(super) fn is_whole_word_at(
     prev_ok && next_ok
 }
 
-/// Find all whole-word occurrences of `word` in `text`, calling
-/// `callback` for each. The callback receives `(start, end)` byte
-/// positions and returns `true` to continue, `false` to stop.
-pub(super) fn find_whole_words(
-    text: &[u8],
-    word: &[u8],
-    extra_leading: &[u8],
-    mut callback: impl FnMut(usize, usize) -> bool,
-) {
-    let mut i = 0;
-    while i + word.len() <= text.len() {
-        if let Some(found) = text[i..].windows(word.len()).position(|w| w == word) {
-            let start = i + found;
-            let end = start + word.len();
-            if is_whole_word_at(text, start, end, extra_leading) {
-                if !callback(start, end) {
-                    return;
-                }
-            }
-            i = end;
-        } else {
-            break;
-        }
-    }
-}
-
-/// True iff the init expression text contains any of the supplied
-/// param names as a whole word. Used to detect `balance: int = balance`
-/// where a domain field initializer references a constructor
-/// parameter.
-pub(crate) fn init_references_param(init_text: &str, params: &[String]) -> bool {
+/// True iff the init expression text references any of the supplied param
+/// names as a whole word **in code** — string literals and comments are
+/// skipped. Used to detect `balance: int = balance` (a domain field seeded
+/// from a constructor parameter) so the assignment moves to the factory.
+///
+/// #123: skipping string literals is load-bearing, not cosmetic. A constant
+/// init like `note: string = "rate limited"` must NOT be treated as
+/// param-referencing just because its *text* contains the word `rate` — the
+/// old string-blind scan silently dropped such constants from the bare
+/// (`@@!Sys()`) constructor. The scan uses the shared per-language skipper so
+/// the same string/comment rules the backend emits under are respected.
+pub(crate) fn init_references_param(
+    init_text: &str,
+    params: &[String],
+    lang: crate::frame_c::visitors::TargetLanguage,
+) -> bool {
     if params.is_empty() || init_text.is_empty() {
         return false;
     }
@@ -79,13 +64,21 @@ pub(crate) fn init_references_param(init_text: &str, params: &[String]) -> bool 
         if p.is_empty() {
             continue;
         }
-        let mut found = false;
-        find_whole_words(bytes, p.as_bytes(), b".", |_, _| {
-            found = true;
-            false
-        });
-        if found {
-            return true;
+        // Walk every code-region occurrence of the param name and accept the
+        // first that sits on whole-word boundaries (`.` allowed as a leading
+        // boundary so `obj.count` does not match param `count`, but
+        // `count.toString()` does).
+        let mut from = 0;
+        while let Some(pos) =
+            crate::frame_c::compiler::codegen::codegen_utils::find_outside_strings_and_comments_from(
+                init_text, lang, p, from,
+            )
+        {
+            let end = pos + p.len();
+            if is_whole_word_at(bytes, pos, end, b".") {
+                return true;
+            }
+            from = end;
         }
     }
     false

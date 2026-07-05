@@ -85,50 +85,6 @@ fn java_word_boundary_prefix_replace(haystack: &str, needle: &str, prefix: &str)
     result
 }
 
-fn java_strip_param_lists(text: &str, param_names: &[&str]) -> String {
-    let needle = "new java.util.ArrayList<>(java.util.Arrays.asList(";
-    let mut result = String::with_capacity(text.len());
-    let bytes = text.as_bytes();
-    let needle_bytes = needle.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i..].starts_with(needle_bytes) {
-            // Find the matching `)` for the asList call.
-            let args_start = i + needle_bytes.len();
-            let mut depth = 1;
-            let mut j = args_start;
-            while j < bytes.len() && depth > 0 {
-                match bytes[j] {
-                    b'(' => depth += 1,
-                    b')' => depth -= 1,
-                    _ => {}
-                }
-                if depth == 0 {
-                    break;
-                }
-                j += 1;
-            }
-            // Now bytes[j] is the closing `)` of asList. The outer
-            // ArrayList<>(...) closes at j+1.
-            if depth == 0 && j + 1 < bytes.len() && bytes[j + 1] == b')' {
-                let inner = &text[args_start..j];
-                let parts = crate::frame_c::compiler::codegen::codegen_utils::split_top_level_args(
-                    &inner,
-                    crate::frame_c::visitors::TargetLanguage::Java,
-                );
-                if !parts.is_empty() && parts.iter().all(|p| param_names.contains(&p.as_str())) {
-                    result.push_str("new java.util.ArrayList<>()");
-                    i = j + 2; // skip past both closing parens
-                    continue;
-                }
-            }
-        }
-        result.push(bytes[i] as char);
-        i += 1;
-    }
-    result
-}
-
 impl LanguageBackend for JavaBackend {
     fn emit(&self, node: &CodegenNode, ctx: &mut EmitContext) -> String {
         match node {
@@ -363,33 +319,17 @@ impl LanguageBackend for JavaBackend {
                     // below). The `_context_stack = new ArrayList<>()`
                     // initializer must stay in the bare ctor so event
                     // dispatch later calls `_context_stack.add(...)`.
-                    let frame_init_only = matches!(stmt, CodegenNode::FrameInitBlock { .. });
-                    if frame_init_only {
+                    // #123: route by node identity, not a param-name text scan.
+                    // Factory-only statements (kernel dispatch, full-args
+                    // compartment, param assigns) go to the frame_init cascade;
+                    // the bare ctor gets the shared statements plus the empty-args
+                    // compartment (BareCtorBlock). This retires the string-blind
+                    // `mentions_param` scan and the `*_strip_param_lists` walk.
+                    if matches!(
+                        stmt,
+                        CodegenNode::FrameInitBlock { .. } | CodegenNode::FactoryOnlyBlock { .. }
+                    ) {
                         frame_init_lines.push(rendered);
-                        continue;
-                    }
-                    let mentions_param = param_names.iter().any(|p| {
-                        rendered
-                            .split(|c: char| !c.is_alphanumeric() && c != '_')
-                            .any(|w| w == *p)
-                    });
-                    if mentions_param {
-                        frame_init_lines.push(rendered.clone());
-                        // RFC-0017: strip handles `Arrays.asList(seed)`
-                        // → empty in prepareEnter args. For plain
-                        // `this.field = seed` (Domain-kind param)
-                        // strip is a no-op; emitting into the no-arg
-                        // bare ctor would leave `seed` undefined.
-                        // Skip when a param ref survives the strip.
-                        let stripped = java_strip_param_lists(&rendered, &param_names);
-                        let still_refs_param = param_names.iter().any(|p| {
-                            stripped
-                                .split(|c: char| !c.is_alphanumeric() && c != '_')
-                                .any(|w| w == *p)
-                        });
-                        if !still_refs_param {
-                            framework_lines.push(stripped);
-                        }
                     } else {
                         framework_lines.push(rendered);
                     }
@@ -741,7 +681,10 @@ impl LanguageBackend for JavaBackend {
                 }
             }
 
-            CodegenNode::NativeBlock { code, .. } | CodegenNode::FrameInitBlock { code, .. } => {
+            CodegenNode::NativeBlock { code, .. }
+            | CodegenNode::FrameInitBlock { code, .. }
+            | CodegenNode::FactoryOnlyBlock { code, .. }
+            | CodegenNode::BareCtorBlock { code, .. } => {
                 let indent = ctx.get_indent();
                 code.lines()
                     .map(|line| {
@@ -884,6 +827,8 @@ impl JavaBackend {
                 | CodegenNode::Comment { .. }
                 | CodegenNode::NativeBlock { .. }
                 | CodegenNode::FrameInitBlock { .. }
+                | CodegenNode::FactoryOnlyBlock { .. }
+                | CodegenNode::BareCtorBlock { .. }
                 | CodegenNode::Empty
         )
     }

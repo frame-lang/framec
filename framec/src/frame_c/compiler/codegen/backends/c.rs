@@ -331,7 +331,6 @@ impl LanguageBackend for CBackend {
                 // The double-set of state_stack / compartment etc. is
                 // harmless — the second assignment replaces the first.
                 let class_name = system_name.clone();
-                let param_names: Vec<&str> = params.iter().map(|p| p.name.as_str()).collect();
 
                 // Render body to text WITH function-body indent + semicolons
                 // applied (matching the original Constructor arm's logic).
@@ -342,10 +341,17 @@ impl LanguageBackend for CBackend {
                 // sibling event/context lines from the bare allocator, where
                 // they were dead weight (an event created, a context
                 // pushed/popped/destroyed, no dispatch).
+                // #123: route each constructor statement by node identity, not by
+                // scanning rendered text for param names. The factory
+                // (`Sys_create`) gets everything except the bare-only compartment
+                // form; the bare allocator (`Sys_new`) gets the shared statements
+                // plus the empty-args compartment (`BareCtorBlock`), excluding the
+                // start-`$>` kernel dispatch (`FrameInitBlock`) and any
+                // param-referencing statement (`FactoryOnlyBlock`).
                 ctx.push_indent();
                 let body_indent = ctx.get_indent();
                 let mut body_text = String::new();
-                let mut bare_text = String::new();
+                let mut bare_body = String::new();
                 for stmt in body {
                     let s = self.emit(stmt, ctx);
                     let trimmed = s.trim();
@@ -365,25 +371,17 @@ impl LanguageBackend for CBackend {
                     } else if !trimmed.is_empty() && !s.ends_with('\n') {
                         rendered.push('\n');
                     }
-                    body_text.push_str(&rendered);
-                    if !matches!(stmt, CodegenNode::FrameInitBlock { .. }) {
-                        bare_text.push_str(&rendered);
+                    if !matches!(stmt, CodegenNode::BareCtorBlock { .. }) {
+                        body_text.push_str(&rendered);
+                    }
+                    if !matches!(
+                        stmt,
+                        CodegenNode::FrameInitBlock { .. } | CodegenNode::FactoryOnlyBlock { .. }
+                    ) {
+                        bare_body.push_str(&rendered);
                     }
                 }
                 ctx.pop_indent();
-
-                let mentions_param = |line: &str| {
-                    param_names.iter().any(|p| {
-                        line.split(|c: char| !c.is_alphanumeric() && c != '_')
-                            .any(|w| w == *p)
-                    })
-                };
-
-                let bare_body: String = bare_text
-                    .lines()
-                    .filter(|l| !mentions_param(l))
-                    .map(|l| format!("{}\n", l))
-                    .collect();
 
                 // Emit `Counter* Counter_new(void)` — bare framework
                 let mut result = format!(
@@ -845,7 +843,10 @@ impl LanguageBackend for CBackend {
                 }
             }
 
-            CodegenNode::NativeBlock { code, .. } | CodegenNode::FrameInitBlock { code, .. } => {
+            CodegenNode::NativeBlock { code, .. }
+            | CodegenNode::FrameInitBlock { code, .. }
+            | CodegenNode::FactoryOnlyBlock { code, .. }
+            | CodegenNode::BareCtorBlock { code, .. } => {
                 let indent = ctx.get_indent();
                 code.lines()
                     .map(|line| {
