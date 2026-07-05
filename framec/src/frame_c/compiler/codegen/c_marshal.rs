@@ -116,7 +116,16 @@ pub(crate) fn c_return_write(sys: &str, slot: &str, expr: &str, type_str: &str) 
              if ({slot}) free({slot}); {slot} = __rbox; }}",
             t = type_str.trim(),
         ),
-        _ => format!("{slot} = (void*)(intptr_t)({expr});"),
+        // Int/Str/Ptr/Vec/Dict all travel as (or fit in) the pointer slot, so
+        // they share one write. Spelled out explicitly — NOT `_` — so that a
+        // future `CMarshal` variant (like `Dbl` in #72, which needed boxing) is
+        // a compile error here, exactly as it already is in the exhaustive
+        // `c_return_read` mirror below. A silent `_` here would pointer-truncate
+        // a new variant on write while `c_return_read` rejected it — the very
+        // write/read drift this module exists to make impossible.
+        CMarshal::Int | CMarshal::Str | CMarshal::Ptr | CMarshal::Vec | CMarshal::Dict => {
+            format!("{slot} = (void*)(intptr_t)({expr});")
+        }
     }
 }
 
@@ -186,5 +195,19 @@ mod tests {
         assert!(w.contains("malloc(sizeof(*__rbox))"), "{w}");
         assert!(w.contains("if (SLOT) free(SLOT);"), "{w}");
         assert_eq!(r, "*(Vector2*)SLOT");
+    }
+
+    #[test]
+    fn intptr_group_writes_are_a_plain_pointer_store() {
+        // #123: the Int/Str/Ptr/Vec/Dict group shares one intptr write and is
+        // spelled out explicitly (no `_` arm), so a future CMarshal variant is a
+        // compile error on both the write and read sides rather than silently
+        // pointer-truncating on write. Pin the shared shape per representative.
+        for t in ["int", "char*", "Demo*", "list", "dict"] {
+            let w = c_return_write("Demo", "SLOT", "x", t);
+            assert_eq!(w, "SLOT = (void*)(intptr_t)(x);", "{t}");
+            // Not a heap-box write — those belong to Dbl/Boxed only.
+            assert!(!w.contains("malloc") && !w.contains("pack_double"), "{t}");
+        }
     }
 }
