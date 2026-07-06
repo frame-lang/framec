@@ -1,6 +1,5 @@
 ---
 source: framec/tests/dart_snapshots.rs
-assertion_line: 68
 expression: "compile_fixture(\"12_no_persist\", \"dart\")"
 ---
 import 'dart:convert';
@@ -233,7 +232,7 @@ class NoPersist {
     }
 
     void _s_Active_hdl_user_bump(NoPersistFrameEvent __e, NoPersistCompartment compartment) {
-        this.count = this.count + 1
+        this.count = this.count + 1;
     }
 
     void _s_Active_hdl_user_get_cache(NoPersistFrameEvent __e, NoPersistCompartment compartment) {
@@ -246,7 +245,7 @@ class NoPersist {
 
     void _s_Active_hdl_user_set_cache(NoPersistFrameEvent __e, NoPersistCompartment compartment) {
         final v = __e._parameters[0] as int;
-        this.cache = v
+        this.cache = v;
     }
 
     String snapshot() {

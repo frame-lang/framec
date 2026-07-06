@@ -198,7 +198,7 @@ export class Counter {
 
     _s_Counting_hdl_user_increment(__e, compartment) {
         const by = __e._parameters[0];
-        this.count = this.count + by
+        this.count = this.count + by;
     }
 
     _s_Counting_hdl_user_value(__e, compartment) {

@@ -213,7 +213,7 @@ class Lifecycle {
     }
 
     private function _s_Running_hdl_frame_exit($__e, $compartment) {
-        $this->exited = $this->exited + 1
+        $this->exited = $this->exited + 1;
     }
 
     private function _s_Running_hdl_frame_enter($__e, $compartment) {

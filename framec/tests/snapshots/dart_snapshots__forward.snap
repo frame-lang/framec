@@ -233,7 +233,7 @@ class Forward {
     }
 
     void _s_Middle_hdl_user_run(ForwardFrameEvent __e, ForwardCompartment compartment) {
-        this.middles = this.middles + 1
+        this.middles = this.middles + 1;
     }
 
     void _s_End_hdl_user_finish(ForwardFrameEvent __e, ForwardCompartment compartment) {

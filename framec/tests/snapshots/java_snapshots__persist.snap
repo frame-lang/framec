@@ -198,7 +198,7 @@ public class Counter {
 
     private void _s_Counting_hdl_user_increment(CounterFrameEvent __e, CounterCompartment compartment) {
         int by = ((Number) __e._parameters.get(0)).intValue();
-        this.count = this.count + by
+        this.count = this.count + by;
     }
 
     private void _s_Counting_hdl_user_value(CounterFrameEvent __e, CounterCompartment compartment) {

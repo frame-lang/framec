@@ -249,7 +249,7 @@ export class MiniHsm {
     }
 
     private _s_Awake_hdl_frame_enter(__e: MiniHsmFrameEvent, compartment: MiniHsmCompartment) {
-        this.awakes = this.awakes + 1
+        this.awakes = this.awakes + 1;
     }
 
     private _s_Awake_hdl_user_signal(__e: MiniHsmFrameEvent, compartment: MiniHsmCompartment) {
@@ -258,7 +258,7 @@ export class MiniHsm {
     }
 
     private _s_Asleep_hdl_frame_enter(__e: MiniHsmFrameEvent, compartment: MiniHsmCompartment) {
-        this.sleeps = this.sleeps + 1
+        this.sleeps = this.sleeps + 1;
     }
 
     private _s_Asleep_hdl_user_signal(__e: MiniHsmFrameEvent, compartment: MiniHsmCompartment) {

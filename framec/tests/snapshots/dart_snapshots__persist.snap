@@ -1,6 +1,5 @@
 ---
 source: framec/tests/dart_snapshots.rs
-assertion_line: 23
 expression: "compile_fixture(\"03_persist\", \"dart\")"
 ---
 import 'dart:convert';
@@ -202,7 +201,7 @@ class Counter {
 
     void _s_Counting_hdl_user_increment(CounterFrameEvent __e, CounterCompartment compartment) {
         final by = __e._parameters[0] as int;
-        this.count = this.count + by
+        this.count = this.count + by;
     }
 
     void _s_Counting_hdl_user_value(CounterFrameEvent __e, CounterCompartment compartment) {

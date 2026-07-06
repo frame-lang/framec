@@ -234,11 +234,11 @@ export class PushPop {
     }
 
     private _s_Idle_hdl_user_ping(__e: PushPopFrameEvent, compartment: PushPopCompartment) {
-        this.pings = this.pings + 1
+        this.pings = this.pings + 1;
     }
 
     private _s_Nested_hdl_user_leaf(__e: PushPopFrameEvent, compartment: PushPopCompartment) {
-        this.leaves = this.leaves + 1
+        this.leaves = this.leaves + 1;
     }
 
     private _s_Nested_hdl_user_unnest(__e: PushPopFrameEvent, compartment: PushPopCompartment) {

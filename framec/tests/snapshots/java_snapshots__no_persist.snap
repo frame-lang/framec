@@ -234,7 +234,7 @@ public class NoPersist {
     }
 
     private void _s_Active_hdl_user_bump(NoPersistFrameEvent __e, NoPersistCompartment compartment) {
-        this.count = this.count + 1
+        this.count = this.count + 1;
     }
 
     private void _s_Active_hdl_user_get_cache(NoPersistFrameEvent __e, NoPersistCompartment compartment) {
@@ -247,7 +247,7 @@ public class NoPersist {
 
     private void _s_Active_hdl_user_set_cache(NoPersistFrameEvent __e, NoPersistCompartment compartment) {
         int v = ((Number) __e._parameters.get(0)).intValue();
-        this.cache = v
+        this.cache = v;
     }
 
     private Object __serComp(NoPersistCompartment comp) {

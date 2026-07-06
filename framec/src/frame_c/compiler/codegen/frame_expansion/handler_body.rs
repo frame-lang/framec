@@ -628,6 +628,24 @@ pub(crate) fn emit_handler_body_via_statements(
         out.push_str(&guard);
     }
 
+    // #173: the forward statement-terminator pass (see `needs_statement_terminator`)
+    // only fires when a *following* frame segment forces it, so the LAST native
+    // statement in a body (e.g. a trailing `@@:self.field = expr`) never receives
+    // its terminator and the emitted code fails to compile on semicolon targets.
+    // Terminate it here. `needs_statement_terminator` already returns false for
+    // already-terminated (`;`/`}`), mid-expression, empty, and non-semicolon-lang
+    // output, so transitions ending in `return;`/`}` and self-calls that were
+    // already terminated are not double-punctuated. Swift/Kotlin/Go strip the
+    // trailing `;` again in the post-pass below, so this is a no-op for them.
+    if needs_statement_terminator(&out, lang) {
+        if let Some(pos) = out.rfind(|c: char| !c.is_whitespace()) {
+            let tail: String = out[pos + 1..].to_string();
+            out.truncate(pos + 1);
+            out.push(';');
+            out.push_str(&tail);
+        }
+    }
+
     // Same post-processing as splice path
     let text = out.trim_start_matches('\n').trim_end();
     let text = normalize_indentation(text);

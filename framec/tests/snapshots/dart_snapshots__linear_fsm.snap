@@ -239,6 +239,6 @@ class LinearFsm {
 
     void _s_Active_hdl_user_progress(LinearFsmFrameEvent __e, LinearFsmCompartment compartment) {
         final amount = __e._parameters[0] as int;
-        this.total = this.total + amount
+        this.total = this.total + amount;
     }
 }

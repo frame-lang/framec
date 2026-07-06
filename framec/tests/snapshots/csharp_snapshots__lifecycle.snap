@@ -227,7 +227,7 @@ public class Lifecycle {
     }
 
     private void _s_Running_hdl_frame_exit(LifecycleFrameEvent __e, LifecycleCompartment compartment) {
-        this.exited = this.exited + 1
+        this.exited = this.exited + 1;
     }
 
     private void _s_Running_hdl_frame_enter(LifecycleFrameEvent __e, LifecycleCompartment compartment) {

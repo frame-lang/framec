@@ -145,7 +145,7 @@ private:
     }
 
     void _s_Active_hdl_user_bump(NoPersistFrameEvent& __e, std::shared_ptr<NoPersistCompartment> compartment) {
-        this->count = this->count + 1
+        this->count = this->count + 1;
 
     }
 
@@ -161,7 +161,7 @@ private:
 
     void _s_Active_hdl_user_set_cache(NoPersistFrameEvent& __e, std::shared_ptr<NoPersistCompartment> compartment) {
         auto v = std::any_cast<int>(__e._parameters[0]);
-        this->cache = v
+        this->cache = v;
 
     }
 

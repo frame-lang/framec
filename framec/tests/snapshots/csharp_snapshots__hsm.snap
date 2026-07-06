@@ -266,7 +266,7 @@ public class MiniHsm {
     }
 
     private void _s_Awake_hdl_frame_enter(MiniHsmFrameEvent __e, MiniHsmCompartment compartment) {
-        this.awakes = this.awakes + 1
+        this.awakes = this.awakes + 1;
     }
 
     private void _s_Awake_hdl_user_signal(MiniHsmFrameEvent __e, MiniHsmCompartment compartment) {
@@ -275,7 +275,7 @@ public class MiniHsm {
     }
 
     private void _s_Asleep_hdl_frame_enter(MiniHsmFrameEvent __e, MiniHsmCompartment compartment) {
-        this.sleeps = this.sleeps + 1
+        this.sleeps = this.sleeps + 1;
     }
 
     private void _s_Asleep_hdl_user_signal(MiniHsmFrameEvent __e, MiniHsmCompartment compartment) {

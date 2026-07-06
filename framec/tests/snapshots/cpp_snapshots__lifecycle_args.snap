@@ -168,13 +168,13 @@ private:
 
     void _s_Active_hdl_user_tag(LifecycleArgsFrameEvent& __e, std::shared_ptr<LifecycleArgsCompartment> compartment) {
         _context_stack.back()._return = std::any(this->label);
-                        return
+                        return;
 
     }
 
     void _s_Active_hdl_user_total(LifecycleArgsFrameEvent& __e, std::shared_ptr<LifecycleArgsCompartment> compartment) {
         _context_stack.back()._return = std::any(this->sum);
-                        return
+                        return;
 
     }
 

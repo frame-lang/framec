@@ -196,7 +196,7 @@ export class Counter {
 
     private _s_Counting_hdl_user_increment(__e: CounterFrameEvent, compartment: CounterCompartment) {
         const by = __e._parameters[0];
-        this.count = this.count + by
+        this.count = this.count + by;
     }
 
     private _s_Counting_hdl_user_value(__e: CounterFrameEvent, compartment: CounterCompartment) {

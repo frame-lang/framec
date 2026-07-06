@@ -231,7 +231,7 @@ export class NoPersist {
     }
 
     _s_Active_hdl_user_bump(__e, compartment) {
-        this.count = this.count + 1
+        this.count = this.count + 1;
     }
 
     _s_Active_hdl_user_get_cache(__e, compartment) {
@@ -244,7 +244,7 @@ export class NoPersist {
 
     _s_Active_hdl_user_set_cache(__e, compartment) {
         const v = __e._parameters[0];
-        this.cache = v
+        this.cache = v;
     }
 
     snapshot() {

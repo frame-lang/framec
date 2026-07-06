@@ -243,11 +243,11 @@ public class LifecycleArgs {
 
     private void _s_Active_hdl_user_tag(LifecycleArgsFrameEvent __e, LifecycleArgsCompartment compartment) {
         _context_stack.get(_context_stack.size() - 1)._return = this.label;
-                        return
+                        return;
     }
 
     private void _s_Active_hdl_user_total(LifecycleArgsFrameEvent __e, LifecycleArgsCompartment compartment) {
         _context_stack.get(_context_stack.size() - 1)._return = this.sum;
-                        return
+                        return;
     }
 }

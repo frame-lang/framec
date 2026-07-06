@@ -227,7 +227,7 @@ export class NoPersist {
     }
 
     private _s_Active_hdl_user_bump(__e: NoPersistFrameEvent, compartment: NoPersistCompartment) {
-        this.count = this.count + 1
+        this.count = this.count + 1;
     }
 
     private _s_Active_hdl_user_get_cache(__e: NoPersistFrameEvent, compartment: NoPersistCompartment) {
@@ -240,7 +240,7 @@ export class NoPersist {
 
     private _s_Active_hdl_user_set_cache(__e: NoPersistFrameEvent, compartment: NoPersistCompartment) {
         const v = __e._parameters[0];
-        this.cache = v
+        this.cache = v;
     }
 
     public snapshot(): string {

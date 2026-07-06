@@ -223,7 +223,7 @@ export class Forward {
     }
 
     private _s_Middle_hdl_user_run(__e: ForwardFrameEvent, compartment: ForwardCompartment) {
-        this.middles = this.middles + 1
+        this.middles = this.middles + 1;
     }
 
     private _s_End_hdl_user_finish(__e: ForwardFrameEvent, compartment: ForwardCompartment) {

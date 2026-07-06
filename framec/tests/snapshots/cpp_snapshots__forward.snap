@@ -172,7 +172,7 @@ private:
     }
 
     void _s_Middle_hdl_user_run(ForwardFrameEvent& __e, std::shared_ptr<ForwardCompartment> compartment) {
-        this->middles = this->middles + 1
+        this->middles = this->middles + 1;
 
     }
 

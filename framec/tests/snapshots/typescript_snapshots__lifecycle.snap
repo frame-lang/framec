@@ -214,7 +214,7 @@ export class Lifecycle {
     }
 
     private _s_Running_hdl_frame_exit(__e: LifecycleFrameEvent, compartment: LifecycleCompartment) {
-        this.exited = this.exited + 1
+        this.exited = this.exited + 1;
     }
 
     private _s_Running_hdl_frame_enter(__e: LifecycleFrameEvent, compartment: LifecycleCompartment) {

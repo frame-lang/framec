@@ -138,7 +138,7 @@ private:
 
     void _s_Counting_hdl_user_increment(CounterFrameEvent& __e, std::shared_ptr<CounterCompartment> compartment) {
         auto by = std::any_cast<int>(__e._parameters[0]);
-        this->count = this->count + by
+        this->count = this->count + by;
 
     }
 

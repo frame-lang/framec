@@ -243,11 +243,11 @@ class LifecycleArgs {
 
     void _s_Active_hdl_user_tag(LifecycleArgsFrameEvent __e, LifecycleArgsCompartment compartment) {
         this._context_stack[this._context_stack.length - 1]._return = this.label;
-                        return
+                        return;
     }
 
     void _s_Active_hdl_user_total(LifecycleArgsFrameEvent __e, LifecycleArgsCompartment compartment) {
         this._context_stack[this._context_stack.length - 1]._return = this.sum;
-                        return
+                        return;
     }
 }

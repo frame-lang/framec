@@ -222,7 +222,7 @@ class Forward {
     }
 
     private function _s_Middle_hdl_user_run($__e, $compartment) {
-        $this->middles = $this->middles + 1
+        $this->middles = $this->middles + 1;
     }
 
     private function _s_End_hdl_user_finish($__e, $compartment) {

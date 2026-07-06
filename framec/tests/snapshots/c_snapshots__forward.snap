@@ -635,7 +635,7 @@ static void Forward_s_Middle_hdl_user_finish(Forward* self, Forward_FrameEvent* 
 }
 
 static void Forward_s_Middle_hdl_user_run(Forward* self, Forward_FrameEvent* __e, Forward_Compartment* compartment) {
-    self->middles = self->middles + 1
+    self->middles = self->middles + 1;
 }
 
 static void Forward_s_End_hdl_user_finish(Forward* self, Forward_FrameEvent* __e, Forward_Compartment* compartment) {

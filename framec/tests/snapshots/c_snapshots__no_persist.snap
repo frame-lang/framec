@@ -707,7 +707,7 @@ static void NoPersist_state_Active(NoPersist* self, NoPersist_FrameEvent* __e, N
 }
 
 static void NoPersist_s_Active_hdl_user_bump(NoPersist* self, NoPersist_FrameEvent* __e, NoPersist_Compartment* compartment) {
-    self->count = self->count + 1
+    self->count = self->count + 1;
 }
 
 static void NoPersist_s_Active_hdl_user_get_cache(NoPersist* self, NoPersist_FrameEvent* __e, NoPersist_Compartment* compartment) {
@@ -721,7 +721,7 @@ static void NoPersist_s_Active_hdl_user_get_count(NoPersist* self, NoPersist_Fra
 static void NoPersist_s_Active_hdl_user_set_cache(NoPersist* self, NoPersist_FrameEvent* __e, NoPersist_Compartment* compartment) {
     int v = (int)(intptr_t)NoPersist_FrameVec_get(__e->_parameters, 0);
     (void)v;
-    self->cache = v
+    self->cache = v;
 }
 
 static cJSON* NoPersist_serialize_compartment(NoPersist_Compartment* comp) {

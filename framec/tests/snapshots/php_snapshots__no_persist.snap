@@ -226,7 +226,7 @@ class NoPersist {
     }
 
     private function _s_Active_hdl_user_bump($__e, $compartment) {
-        $this->count = $this->count + 1
+        $this->count = $this->count + 1;
     }
 
     private function _s_Active_hdl_user_get_cache($__e, $compartment) {
@@ -239,7 +239,7 @@ class NoPersist {
 
     private function _s_Active_hdl_user_set_cache($__e, $compartment) {
         $v = $__e->_parameters[0];
-        $this->cache = v
+        $this->cache = v;
     }
 
     private function __serComp($comp) {
