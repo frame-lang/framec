@@ -207,7 +207,15 @@ fn format_field_assignment(
         Java | CSharp | Dart | TypeScript | JavaScript => {
             format!("this.{} = {};", field_name, init_value)
         }
-        Swift | GDScript | Python3 | Lua => format!("self.{} = {}", field_name, init_value),
+        // #175: a domain field named after a Swift keyword must be
+        // backtick-escaped when assigned in `__frame_init` (matches its escaped
+        // declaration + access sites). No-op for non-keyword names.
+        Swift => format!(
+            "self.{} = {}",
+            crate::frame_c::compiler::codegen::codegen_utils::swift_escape_ident(field_name),
+            init_value
+        ),
+        GDScript | Python3 | Lua => format!("self.{} = {}", field_name, init_value),
         Kotlin => format!("this.{} = {}", field_name, init_value),
         Php => format!("$this->{} = {};", field_name, init_value),
         Ruby => format!("@{} = {}", field_name, init_value),

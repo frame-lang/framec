@@ -4,6 +4,8 @@ use crate::frame_c::compiler::codegen::ast::*;
 use crate::frame_c::compiler::codegen::backend::*;
 use crate::frame_c::visitors::TargetLanguage;
 
+use crate::frame_c::compiler::codegen::codegen_utils::swift_escape_ident;
+
 /// Swift backend for code generation
 pub struct SwiftBackend;
 
@@ -156,7 +158,7 @@ impl LanguageBackend for SwiftBackend {
                     ctx.get_indent(),
                     vis_prefix,
                     static_kw,
-                    name,
+                    swift_escape_ident(name),
                     params_str,
                     async_kw,
                     throws_kw,
@@ -464,13 +466,13 @@ impl LanguageBackend for SwiftBackend {
                 format!(
                     "{}.{}({})",
                     self.emit(object, ctx),
-                    method,
+                    swift_escape_ident(method),
                     args_str.join(", ")
                 )
             }
 
             CodegenNode::FieldAccess { object, field } => {
-                format!("{}.{}", self.emit(object, ctx), field)
+                format!("{}.{}", self.emit(object, ctx), swift_escape_ident(field))
             }
             // Swift: use indexer syntax obj[index]
             CodegenNode::IndexAccess { object, index } => {
@@ -645,7 +647,7 @@ impl SwiftBackend {
             .map(|p| {
                 let type_ann =
                     self.map_type(p.type_annotation.as_ref().unwrap_or(&"Any?".to_string()));
-                format!("_ {}: {}", p.name, type_ann)
+                format!("_ {}: {}", swift_escape_ident(&p.name), type_ann)
             })
             .collect::<Vec<_>>()
             .join(", ")
@@ -779,13 +781,16 @@ impl SwiftBackend {
             type_str.push('!');
         }
         let comments = field.format_leading_comments(&ctx.get_indent());
+        // #175: a domain field whose name is a Swift keyword (`guard`, `default`,
+        // `case`, …) must be backtick-escaped in its declaration too.
+        let name = swift_escape_ident(&field.name);
         if vis.is_empty() {
             format!(
                 "{}{}{}{}: {}{}\n",
                 comments,
                 ctx.get_indent(),
                 var_kw,
-                field.name,
+                name,
                 type_str,
                 init_suffix
             )
@@ -796,7 +801,7 @@ impl SwiftBackend {
                 ctx.get_indent(),
                 vis,
                 var_kw,
-                field.name,
+                name,
                 type_str,
                 init_suffix
             )

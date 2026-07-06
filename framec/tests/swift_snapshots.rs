@@ -79,3 +79,12 @@ fn lifecycle_args() {
 fn async_attribute() {
     insta::assert_snapshot!(compile_fixture("14_async_attribute", "swift"));
 }
+
+/// #175 — a Frame method/field/param named after a Swift keyword (`init`,
+/// `guard`, `default`) must be backtick-escaped in the emitted Swift at its
+/// declaration and every call/access site, or `swiftc` rejects it. Golden
+/// coverage of the `swift_escape_ident` escaping.
+#[test]
+fn keyword_ident() {
+    insta::assert_snapshot!(compile_fixture("15_keyword_ident", "swift"));
+}

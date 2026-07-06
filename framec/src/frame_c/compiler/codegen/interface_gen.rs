@@ -720,10 +720,13 @@ return __result;"#,
 
                 let mut code = String::new();
 
-                // Build params list — Swift: [Any] array literal
+                // Build params list — Swift: [Any] array literal.
+                // #175: a param whose name is a Swift keyword must be
+                // backtick-escaped here too (it references the escaped
+                // func-signature param).
                 if !method.params.is_empty() {
                     let param_items: Vec<String> = method.params.iter()
-                        .map(|p| p.name.clone())
+                        .map(|p| crate::frame_c::compiler::codegen::codegen_utils::swift_escape_ident(&p.name).into_owned())
                         .collect();
                     code.push_str(&format!("let __e = {}(message: \"{}\", parameters: [{}])\n",
                         event_class, method.name, param_items.join(", ")));

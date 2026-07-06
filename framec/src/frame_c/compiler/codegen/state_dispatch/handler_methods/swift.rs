@@ -5,8 +5,8 @@
 use super::super::super::ast::{CodegenNode, Param, Visibility};
 use super::super::super::codegen_utils::{
     cpp_map_type, csharp_map_type, expression_to_string, go_map_type, java_map_type,
-    kotlin_map_type, state_var_initializer, swift_map_type, to_snake_case, type_to_cpp_string,
-    HandlerContext,
+    kotlin_map_type, state_var_initializer, swift_escape_ident, swift_escape_keyword_param_refs,
+    swift_map_type, to_snake_case, type_to_cpp_string, HandlerContext,
 };
 use super::super::super::frame_expansion::{
     emit_handler_body_via_statements, normalize_indentation,
@@ -93,6 +93,8 @@ pub(crate) fn generate_swift_handler_method(
                 "Int64" => format!("(compartment.state_args[{i}] as! NSNumber).int64Value"),
                 _ => format!("compartment.state_args[{i}] as! {sw_type}"),
             };
+            // #175: escape a state-param bound to a Swift keyword.
+            let name = swift_escape_ident(name);
             body.push_str(&format!("let {name} = {extract}\n"));
         }
     }
@@ -108,9 +110,13 @@ pub(crate) fn generate_swift_handler_method(
     for (i, param) in handler.params.iter().enumerate() {
         let type_str = param.symbol_type.as_deref().unwrap_or("int");
         let sw_type = swift_map_type(type_str);
+        // #175: escape a handler param bound to a Swift keyword
+        // (`let `default` = …`); the matching body references are escaped by
+        // `swift_escape_keyword_param_refs` on the lowered body below.
+        let name = swift_escape_ident(&param.name);
         body.push_str(&format!(
             "let {} = {}[{}] as! {}\n",
-            param.name, param_source, i, sw_type
+            name, param_source, i, sw_type
         ));
     }
 
@@ -142,6 +148,15 @@ pub(crate) fn generate_swift_handler_method(
     }
 
     let body_src = emit_handler_body_via_statements(&handler.body_span, source, lang, &ctx);
+    // #175: a param whose name is a Swift keyword is bound as `let `default` = …`
+    // above; its references in the lowered body must be backtick-escaped to
+    // match. Collect the param names in scope (handler + state) and escape their
+    // keyword-valued references. No-op unless some param name is a keyword.
+    let mut scope_params: Vec<String> = handler.params.iter().map(|p| p.name.clone()).collect();
+    if let Some(sp) = state_param_names.get(state_name) {
+        scope_params.extend(sp.iter().cloned());
+    }
+    let body_src = swift_escape_keyword_param_refs(&body_src, &scope_params);
     body.push_str(&body_src);
 
     let event_type = format!("{}FrameEvent", system_name);

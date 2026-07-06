@@ -447,6 +447,171 @@ pub(crate) fn capitalize_first(s: &str) -> String {
     }
 }
 
+/// Backtick-escape a Swift reserved keyword used as an identifier (#175).
+///
+/// Frame method, field, and parameter names are user-authored and can collide
+/// with Swift keywords — `init`, `default`, `guard`, `case`, `deinit`,
+/// `subscript`, … — all valid Frame identifiers. Swift is the only one of the
+/// 17 targets that rejects such an identifier unless it is backtick-escaped
+/// (`` func `init` ``), at both the declaration and every call site. This wraps
+/// a name in backticks iff it is a reserved word; every other name (including
+/// the generated framework identifiers `_state_S`, `__transition`, `__e`, …)
+/// passes through unchanged. Apply it only where a Frame name is emitted as a
+/// Swift *identifier* — never to the string dispatch keys (`message == "init"`),
+/// which are plain string literals.
+///
+/// Single source of truth: used by both the Swift backend (structural
+/// interface/method emission) and the `@@:self.*` self-call lowering in
+/// `frame_expansion`.
+pub(crate) fn swift_escape_ident(name: &str) -> std::borrow::Cow<'_, str> {
+    // Swift reserved words that are invalid as a bare identifier. `self`,
+    // `Self`, and `super` are intentionally omitted: they carry special
+    // semantics even when backtick-escaped and are emitted structurally, never
+    // as a user name.
+    const SWIFT_KEYWORDS: &[&str] = &[
+        // declarations
+        "associatedtype",
+        "class",
+        "deinit",
+        "enum",
+        "extension",
+        "fileprivate",
+        "func",
+        "import",
+        "init",
+        "inout",
+        "internal",
+        "let",
+        "open",
+        "operator",
+        "private",
+        "protocol",
+        "public",
+        "rethrows",
+        "static",
+        "struct",
+        "subscript",
+        "typealias",
+        "var",
+        // statements
+        "break",
+        "case",
+        "continue",
+        "default",
+        "defer",
+        "do",
+        "else",
+        "fallthrough",
+        "for",
+        "guard",
+        "if",
+        "in",
+        "repeat",
+        "return",
+        "switch",
+        "where",
+        "while",
+        // expressions & types
+        "as",
+        "await",
+        "catch",
+        "false",
+        "is",
+        "nil",
+        "throw",
+        "throws",
+        "true",
+        "try",
+        "Any",
+    ];
+    if SWIFT_KEYWORDS.contains(&name) {
+        std::borrow::Cow::Owned(format!("`{}`", name))
+    } else {
+        std::borrow::Cow::Borrowed(name)
+    }
+}
+
+/// Backtick-escape bare references to Swift-keyword-named params in lowered
+/// native handler text (#175).
+///
+/// Companion to [`swift_escape_ident`]: a param whose name is a Swift keyword
+/// (`default`, `guard`, …) has its binding emitted as `let `default` = …`, so
+/// its *references* in the handler body must be escaped to match, or `swiftc`
+/// rejects the keyword. Mirrors the PHP `php_prefix_params` native-rewrite
+/// pattern — boundary-safe (skips string literals, comments, and spans already
+/// inside backticks) and word-boundary-exact.
+///
+/// Only names in `params` that are *also* Swift keywords are touched; every
+/// other identifier passes through, so this is a fast no-op for the
+/// overwhelmingly common case of non-keyword param names.
+pub(crate) fn swift_escape_keyword_param_refs(text: &str, params: &[String]) -> String {
+    // Nothing to do unless some param name is actually a Swift keyword.
+    let keyword_params: Vec<&str> = params
+        .iter()
+        .filter(|p| matches!(swift_escape_ident(p), std::borrow::Cow::Owned(_)))
+        .map(|p| p.as_str())
+        .collect();
+    if keyword_params.is_empty() {
+        return text.to_string();
+    }
+    let is_ident_char = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let skipper = crate::frame_c::compiler::native_region_scanner::create_skipper(
+        crate::frame_c::visitors::TargetLanguage::Swift,
+    );
+    let bytes = text.as_bytes();
+    let end = bytes.len();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < end {
+        // String literals and comments pass through verbatim.
+        if let Some(next) = skipper.skip_string(bytes, i, end) {
+            out.push_str(&text[i..next]);
+            i = next;
+            continue;
+        }
+        if let Some(next) = skipper.skip_comment(bytes, i, end) {
+            out.push_str(&text[i..next]);
+            i = next;
+            continue;
+        }
+        // An already-escaped `...` identifier passes through verbatim (avoids
+        // double-escaping a field/method name a prior pass already wrapped).
+        if bytes[i] == b'`' {
+            let start = i;
+            i += 1;
+            while i < end && bytes[i] != b'`' {
+                i += 1;
+            }
+            if i < end {
+                i += 1; // consume the closing backtick
+            }
+            out.push_str(&text[start..i]);
+            continue;
+        }
+        let c = bytes[i];
+        let is_ident_start =
+            (c.is_ascii_alphabetic() || c == b'_') && !(i > 0 && is_ident_char(bytes[i - 1]));
+        if is_ident_start {
+            let start = i;
+            while i < end && is_ident_char(bytes[i]) {
+                i += 1;
+            }
+            let ident = &text[start..i];
+            if keyword_params.contains(&ident) {
+                out.push('`');
+                out.push_str(ident);
+                out.push('`');
+            } else {
+                out.push_str(ident);
+            }
+            continue;
+        }
+        out.push(c as char);
+        i += 1;
+    }
+    out
+}
+
 // ─── String-aware literal replace ────────────────────────────────────
 //
 // Used by codegen branches that need to rewrite tokens inside generated

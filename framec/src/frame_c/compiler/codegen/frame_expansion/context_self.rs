@@ -124,6 +124,13 @@ pub(super) fn expand_context_self(
             TargetLanguage::Cpp | TargetLanguage::Php | TargetLanguage::C => "->",
             _ => ".",
         };
+        // #175: a domain field named after a Swift keyword must be
+        // backtick-escaped at the access site to match its escaped declaration.
+        let field = if matches!(lang, TargetLanguage::Swift) {
+            super::super::codegen_utils::swift_escape_ident(field)
+        } else {
+            std::borrow::Cow::Borrowed(field.as_str())
+        };
         format!("{receiver}{sep}{field}")
     } else {
         // Bare `@@:self` — rejected by the validator before codegen; emit the
@@ -363,8 +370,16 @@ pub(super) fn expand_context_self_field_call(
         TargetLanguage::Python3
         | TargetLanguage::GDScript
         | TargetLanguage::Ruby
-        | TargetLanguage::Swift
         | TargetLanguage::Rust => format!("self.{field}{idx}.{method}{args}"),
+        // Swift: backtick-escape a field/method name that collides with a Swift
+        // keyword (#175) — e.g. a composed system's canonical `init(...)`
+        // interface method → `self.kid.`init`(5)`. The escaper is a no-op for
+        // non-keyword names.
+        TargetLanguage::Swift => {
+            let field = super::super::codegen_utils::swift_escape_ident(field);
+            let method = super::super::codegen_utils::swift_escape_ident(method);
+            format!("self.{field}{idx}.{method}{args}")
+        }
         // Lua method calls use `:` (implicit self). A cross-system (embed) call
         // must use `:`, or `self` is not passed and the first real argument
         // shifts into it (#120 — the Lua analog of Go #112). A non-embed scalar
@@ -480,6 +495,9 @@ pub(super) fn expand_context_self_call(
             }
         }
         TargetLanguage::Swift => {
+            // Backtick-escape a self-call to an interface method whose name is a
+            // Swift keyword (#175), e.g. `@@:self.init(x)` → `self.`init`(x)`.
+            let method_name = super::super::codegen_utils::swift_escape_ident(method_name);
             format!("self.{}{}", method_name, args_with_parens)
         }
         TargetLanguage::Cpp => format!("this->{}{}", method_name, args_with_parens),

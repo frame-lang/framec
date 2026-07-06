@@ -15,8 +15,8 @@
 //! of this path entirely.
 
 use super::super::codegen_utils::{
-    cpp_map_type, csharp_map_type, go_map_type, java_map_type, kotlin_map_type, swift_map_type,
-    to_snake_case,
+    cpp_map_type, csharp_map_type, go_map_type, java_map_type, kotlin_map_type, swift_escape_ident,
+    swift_map_type, to_snake_case,
 };
 use crate::frame_c::visitors::TargetLanguage;
 
@@ -538,6 +538,8 @@ pub(crate) fn dispatch_syntax_for(lang: TargetLanguage) -> Option<DispatchSyntax
                     }
                     _ => format!("__compartment.state_args[{index}] as! {sw_type}"),
                 };
+                // #175: escape a param bound to a Swift keyword (`let `default` = …`).
+                let name = swift_escape_ident(name);
                 format!("let {name} = {extract}\n")
             },
             fmt_init_sv: |var_name, init_val, indent, _sys| {
@@ -561,6 +563,8 @@ pub(crate) fn dispatch_syntax_for(lang: TargetLanguage) -> Option<DispatchSyntax
                     "Int64" => format!("({list}[{index}] as! NSNumber).int64Value"),
                     _ => format!("{list}[{index}] as! {sw_type}"),
                 };
+                // #175: escape a param/arg bound to a Swift keyword.
+                let name = swift_escape_ident(name);
                 format!("{indent}let {name} = {extract}\n")
             },
             fmt_forward: |parent, indent, _sys, aw| format!("{indent}{aw}_state_{parent}(__e)\n"),
