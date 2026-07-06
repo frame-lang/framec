@@ -58,7 +58,8 @@ numbers are not re-used.
 | [0041](rfc-0041.md) | Web persistence — storage-bound save/load for browser targets (`@@[web_persist]`) | Draft | builds on [0012](rfc-0012.md), [0015](rfc-0015.md), [0016](rfc-0016.md) |
 | [0042](rfc-0042.md) | `@@fsm` — finite-state recognizer construct | Draft | new construct; runtime model independent of [0020](rfc-0020.md); depends on [0050](rfc-0050.md) for action-body statement grammar; amended by [0042.1](rfc-0042-1.md) |
 | [0042.1](rfc-0042-1.md) | Pluggable input source — `@@fsm` over owned buffers, borrowed slices, and callbacks | Accepted; implemented (Rust) | amends [0042](rfc-0042.md) Principle 9 / §11.3; recognizer generic over input source + reusable `over`/`scan_at` |
-| [0043](rfc-0043.md) | `@@[async]` — single-driver gate via layered casing/machine | Accepted; shipped in 4.4.0 | builds on [0015](rfc-0015.md), [0017](rfc-0017.md), [0020](rfc-0020.md) |
+| [0043](rfc-0043.md) | `@@[async]` — single-driver gate via layered casing/machine | Accepted; shipped in 4.4.0 | builds on [0015](rfc-0015.md), [0017](rfc-0017.md), [0020](rfc-0020.md); amended by [0043.1](rfc-0043-1.md) |
+| [0043.1](rfc-0043-1.md) | `@@[async(casing: false)]` — optional casing/gate | Draft — design accepted (#168); not yet implemented | amends [0043](rfc-0043.md); opt-out flat async form |
 | [0044](rfc-0044.md) | Kernel context-stack must clean up on exception | Draft | builds on [0020](rfc-0020.md), surfaced by [0043](rfc-0043.md) |
 | [0045](rfc-0045.md) | Reserve `@@:system`; relocate state name to `@@:system.state.name` | Accepted; implemented | builds on [0006](rfc-0006.md), [0013](rfc-0013.md); breaking (pre-public-beta) |
 | [0046](rfc-0046.md) | `@@:self` — portable, blessed self-reference for fields, calls, embeds | Implemented | builds on [0006](rfc-0006.md), [0013](rfc-0013.md) |
