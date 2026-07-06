@@ -93,6 +93,11 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
 
     // save_state()
     let mut save_body = String::new();
+    // #166: the serializer uses `JSON.generate`; Ruby does not auto-load the
+    // stdlib json module, so the generated module must require it itself to be
+    // self-contained (mirrors Python emitting `import json` at each persist
+    // site). `require` is idempotent, so emitting it per-method is safe.
+    save_body.push_str("require 'json'\n");
     save_body.push_str("raise \"E700: system not quiescent\" unless @_context_stack.empty?\n");
     save_body.push_str("j = {}\n");
     save_body.push_str("j[\"_compartment\"] = __ser_comp(@__compartment)\n");
@@ -131,6 +136,8 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     });
 
     let mut restore_body = String::new();
+    // #166: `JSON.parse` needs the stdlib json module loaded.
+    restore_body.push_str("require 'json'\n");
     restore_body.push_str(&format!("_parsed = JSON.parse({})\n", load_param_name));
     if uses_new_contract {
         restore_body.push_str("@_context_stack = []\n");

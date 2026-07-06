@@ -1,5 +1,6 @@
 ---
 source: framec/tests/ruby_snapshots.rs
+assertion_line: 89
 expression: "compile_fixture(\"12_no_persist\", \"ruby\")"
 ---
 class NoPersistFrameEvent
@@ -264,6 +265,7 @@ class NoPersist
     end
 
     def snapshot
+        require 'json'
         raise "E700: system not quiescent" unless @_context_stack.empty?
         j = {}
         j["_compartment"] = __ser_comp(@__compartment)
@@ -275,6 +277,7 @@ class NoPersist
     end
 
     def restore(json)
+        require 'json'
         _parsed = JSON.parse(json)
         @_context_stack = []
         @__next_compartment = nil

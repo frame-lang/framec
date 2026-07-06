@@ -1,5 +1,6 @@
 ---
 source: framec/tests/ruby_snapshots.rs
+assertion_line: 44
 expression: "compile_fixture(\"03_persist\", \"ruby\")"
 ---
 class CounterFrameEvent
@@ -223,6 +224,7 @@ class Counter
     end
 
     def snapshot
+        require 'json'
         raise "E700: system not quiescent" unless @_context_stack.empty?
         j = {}
         j["_compartment"] = __ser_comp(@__compartment)
@@ -234,6 +236,7 @@ class Counter
     end
 
     def restore(json)
+        require 'json'
         _parsed = JSON.parse(json)
         @_context_stack = []
         @__next_compartment = nil
