@@ -49,6 +49,7 @@ impl LanguageBackend for LuaBackend {
             }
 
             CodegenNode::Class {
+                is_framework_helper,
                 name,
                 fields: _,
                 methods,
@@ -56,6 +57,7 @@ impl LanguageBackend for LuaBackend {
                 is_abstract: _,
                 ..
             } => {
+                ctx.is_framework_helper = *is_framework_helper;
                 let mut result = String::new();
                 result.push_str(&format!("{}local {} = {{}}\n", ctx.get_indent(), name));
                 result.push_str(&format!(
@@ -174,9 +176,7 @@ impl LanguageBackend for LuaBackend {
                     .get("class_name")
                     .cloned()
                     .unwrap_or("M".to_string());
-                let is_frame_helper = class_name.ends_with("FrameEvent")
-                    || class_name.ends_with("FrameContext")
-                    || class_name.ends_with("Compartment");
+                let is_frame_helper = ctx.is_framework_helper;
 
                 if is_frame_helper {
                     let params_str = self.emit_params(params);

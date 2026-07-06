@@ -50,6 +50,7 @@ impl LanguageBackend for TypeScriptBackend {
             }
 
             CodegenNode::Class {
+                is_framework_helper,
                 name,
                 fields,
                 methods,
@@ -58,6 +59,7 @@ impl LanguageBackend for TypeScriptBackend {
                 visibility,
                 ..
             } => {
+                ctx.is_framework_helper = *is_framework_helper;
                 let mut result = String::new();
 
                 let vis_kw = match visibility {
@@ -88,9 +90,7 @@ impl LanguageBackend for TypeScriptBackend {
                 // visibility flag. Support classes (FrameEvent /
                 // FrameContext / Compartment) are pure data containers
                 // and use Frame's visibility flag verbatim.
-                let is_support_class = name.ends_with("FrameEvent")
-                    || name.ends_with("FrameContext")
-                    || name.ends_with("Compartment");
+                let is_support_class = ctx.is_framework_helper;
                 for field in fields {
                     result.push_str(&self.emit_field(field, ctx, !is_support_class));
                 }
@@ -889,6 +889,7 @@ mod tests {
             is_abstract: false,
             derives: vec![],
             visibility: Visibility::Public,
+            is_framework_helper: false,
         };
 
         let result = backend.emit(&node, &mut ctx);

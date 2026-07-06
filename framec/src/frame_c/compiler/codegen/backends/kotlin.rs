@@ -41,6 +41,7 @@ impl LanguageBackend for KotlinBackend {
             }
 
             CodegenNode::Class {
+                is_framework_helper,
                 name,
                 fields,
                 methods,
@@ -48,6 +49,7 @@ impl LanguageBackend for KotlinBackend {
                 is_abstract,
                 ..
             } => {
+                ctx.is_framework_helper = *is_framework_helper;
                 let mut result = String::new();
                 let abstract_kw = if *is_abstract { "abstract " } else { "" };
                 let extends = if base_classes.is_empty() {
@@ -69,9 +71,7 @@ impl LanguageBackend for KotlinBackend {
                 // The Constructor arm reads `ctx.system_name` (set just
                 // below) to know whether this Class is the system or a
                 // helper, and renders accordingly.
-                let is_frame_helper = name.ends_with("FrameEvent")
-                    || name.ends_with("FrameContext")
-                    || name.ends_with("Compartment");
+                let is_frame_helper = ctx.is_framework_helper;
                 let primary_params: Vec<Param> = if is_frame_helper {
                     methods
                         .iter()

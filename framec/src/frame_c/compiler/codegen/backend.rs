@@ -15,6 +15,13 @@ pub struct EmitContext {
     pub indent_str: String,
     /// Current system name
     pub system_name: Option<String>,
+    /// True while emitting the methods of a framework runtime-helper class
+    /// (`{Sys}FrameEvent` / `{Sys}FrameContext` / `{Sys}Compartment`). Set by
+    /// the `Class` arm from `CodegenNode::Class::is_framework_helper` and read
+    /// by the `Constructor` arm to skip the system `new`/`_create` split —
+    /// replacing a class-name suffix probe that misclassified user systems
+    /// whose name ended in one of those suffixes (#123).
+    pub is_framework_helper: bool,
     /// Whether we're in a method body
     pub in_method: bool,
     /// Whether we're in a class
@@ -38,6 +45,7 @@ impl Default for EmitContext {
             indent: 0,
             indent_str: "    ".to_string(),
             system_name: None,
+            is_framework_helper: false,
             in_method: false,
             in_class: false,
             output: String::new(),

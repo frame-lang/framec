@@ -246,6 +246,7 @@ impl LanguageBackend for CppBackend {
             CodegenNode::Import { module, .. } => format!("#include <{}>", module),
 
             CodegenNode::Class {
+                is_framework_helper,
                 name,
                 fields,
                 methods,
@@ -253,6 +254,7 @@ impl LanguageBackend for CppBackend {
                 is_abstract: _,
                 ..
             } => {
+                ctx.is_framework_helper = *is_framework_helper;
                 let mut result = String::new();
                 let extends = if base_classes.is_empty() {
                     String::new()
@@ -461,9 +463,7 @@ impl LanguageBackend for CppBackend {
                 // (FrameEvent/FrameContext/Compartment) keep the
                 // original single-ctor emission below.
                 let class_name = ctx.system_name.clone().unwrap_or("Class".to_string());
-                let is_frame_helper = class_name.ends_with("FrameEvent")
-                    || class_name.ends_with("FrameContext")
-                    || class_name.ends_with("Compartment");
+                let is_frame_helper = ctx.is_framework_helper;
 
                 if is_frame_helper {
                     let params_str = self.emit_params(params);

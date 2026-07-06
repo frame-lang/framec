@@ -34,6 +34,7 @@ impl LanguageBackend for CSharpBackend {
             } => format!("using {};", module),
 
             CodegenNode::Class {
+                is_framework_helper,
                 name,
                 fields,
                 methods,
@@ -42,6 +43,7 @@ impl LanguageBackend for CSharpBackend {
                 visibility,
                 ..
             } => {
+                ctx.is_framework_helper = *is_framework_helper;
                 let mut result = String::new();
                 let vis_kw = match visibility {
                     Visibility::Public => "public ",
@@ -162,9 +164,7 @@ impl LanguageBackend for CSharpBackend {
                 // + __create factory. Framework helpers keep original
                 // single-ctor emission.
                 let class_name = ctx.system_name.clone().unwrap_or("Class".to_string());
-                let is_frame_helper = class_name.ends_with("FrameEvent")
-                    || class_name.ends_with("FrameContext")
-                    || class_name.ends_with("Compartment");
+                let is_frame_helper = ctx.is_framework_helper;
 
                 if is_frame_helper {
                     let params_str = self.emit_params(params);

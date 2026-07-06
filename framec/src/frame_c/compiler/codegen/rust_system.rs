@@ -282,6 +282,7 @@ pub fn generate_rust_system(system: &SystemAst, arcanum: &Arcanum, source: &[u8]
         } else {
             Visibility::Public
         },
+        is_framework_helper: false,
     };
 
     if needs_async {

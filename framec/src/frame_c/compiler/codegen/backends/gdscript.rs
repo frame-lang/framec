@@ -112,6 +112,7 @@ impl LanguageBackend for GDScriptBackend {
             }
 
             CodegenNode::Class {
+                is_framework_helper,
                 name,
                 fields,
                 methods,
@@ -119,6 +120,7 @@ impl LanguageBackend for GDScriptBackend {
                 is_abstract: _,
                 ..
             } => {
+                ctx.is_framework_helper = *is_framework_helper;
                 let mut result = String::new();
 
                 // When a system declares base classes (@@system Foo : Base)
@@ -328,9 +330,7 @@ impl LanguageBackend for GDScriptBackend {
                     .system_name
                     .clone()
                     .unwrap_or_else(|| "Class".to_string());
-                let is_frame_helper = class_name.ends_with("FrameEvent")
-                    || class_name.ends_with("FrameContext")
-                    || class_name.ends_with("Compartment");
+                let is_frame_helper = ctx.is_framework_helper;
 
                 if is_frame_helper {
                     let params_str = self.emit_params(params, false);

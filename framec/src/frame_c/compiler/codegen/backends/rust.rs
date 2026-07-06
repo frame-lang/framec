@@ -48,6 +48,7 @@ impl LanguageBackend for RustBackend {
                 is_abstract: _,
                 derives,
                 visibility,
+                is_framework_helper: _,
             } => {
                 let mut result = String::new();
 

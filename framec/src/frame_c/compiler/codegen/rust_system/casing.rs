@@ -128,6 +128,7 @@ fn generate_casing(system: &SystemAst, machine_name: &str) -> CodegenNode {
         } else {
             Visibility::Public
         },
+        is_framework_helper: false,
     }
 }
 

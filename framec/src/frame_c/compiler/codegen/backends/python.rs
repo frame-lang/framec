@@ -60,6 +60,7 @@ impl LanguageBackend for PythonBackend {
             }
 
             CodegenNode::Class {
+                is_framework_helper,
                 name,
                 fields,
                 methods,
@@ -67,6 +68,7 @@ impl LanguageBackend for PythonBackend {
                 is_abstract: _,
                 ..
             } => {
+                ctx.is_framework_helper = *is_framework_helper;
                 let mut result = String::new();
 
                 // Class declaration
@@ -284,9 +286,7 @@ impl LanguageBackend for PythonBackend {
                 // (FrameEvent / FrameContext / Compartment). They aren't
                 // user-facing systems and don't need `__frame_init` /
                 // `__create`. Fall back to the original single-method shape.
-                let is_frame_helper = class_name.ends_with("FrameEvent")
-                    || class_name.ends_with("FrameContext")
-                    || class_name.ends_with("Compartment");
+                let is_frame_helper = ctx.is_framework_helper;
                 if is_frame_helper {
                     let params_str = self.emit_params(params, true);
                     result.push_str(&format!(
@@ -956,6 +956,7 @@ mod tests {
             is_abstract: false,
             derives: vec![],
             visibility: Visibility::Public,
+            is_framework_helper: false,
         };
 
         let result = backend.emit(&node, &mut ctx);

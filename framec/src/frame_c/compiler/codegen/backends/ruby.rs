@@ -56,6 +56,7 @@ impl LanguageBackend for RubyBackend {
             }
 
             CodegenNode::Class {
+                is_framework_helper,
                 name,
                 fields,
                 methods,
@@ -63,6 +64,7 @@ impl LanguageBackend for RubyBackend {
                 is_abstract: _,
                 ..
             } => {
+                ctx.is_framework_helper = *is_framework_helper;
                 let mut result = String::new();
 
                 let extends = if base_classes.is_empty() {
@@ -210,9 +212,7 @@ impl LanguageBackend for RubyBackend {
             } => {
                 // RFC-0017 Phase A5: split into bare initialize + _frame_init + self._create.
                 let class_name = ctx.system_name.clone().unwrap_or_default();
-                let is_frame_helper = class_name.ends_with("FrameEvent")
-                    || class_name.ends_with("FrameContext")
-                    || class_name.ends_with("Compartment");
+                let is_frame_helper = ctx.is_framework_helper;
 
                 if is_frame_helper {
                     let params_str = self.emit_params(params);
@@ -854,6 +854,7 @@ mod tests {
             is_abstract: false,
             derives: vec![],
             visibility: Visibility::Public,
+            is_framework_helper: false,
         };
 
         let result = backend.emit(&node, &mut ctx);

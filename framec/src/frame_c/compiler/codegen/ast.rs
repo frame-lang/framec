@@ -217,8 +217,17 @@ pub enum CodegenNode {
         is_abstract: bool,
         /// Derive attributes for Rust (e.g., ["Serialize", "Deserialize"])
         derives: Vec<String>,
-        /// Visibility (Public for system classes, Private for helpers)
+        /// Visibility (Public for system classes, Private for helpers — but a
+        /// user system may be declared `private`, so visibility does NOT
+        /// identify framework helpers; use `is_framework_helper`).
         visibility: Visibility,
+        /// True only for the framework runtime-helper classes
+        /// (`{Sys}FrameEvent` / `{Sys}FrameContext` / `{Sys}Compartment`),
+        /// set at their sole construction sites in `runtime.rs`. Backends use
+        /// this to skip the constructor `new`/`_create` split — replacing a
+        /// name-suffix probe (`ends_with("Compartment")`) that misclassified a
+        /// user system whose name ends in one of those suffixes (#123).
+        is_framework_helper: bool,
     },
 
     /// Enum definition
