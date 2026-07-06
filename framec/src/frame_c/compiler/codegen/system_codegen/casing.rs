@@ -209,7 +209,7 @@ fn generate_casing(system: &SystemAst, machine_name: &str, lang: TargetLanguage)
         });
     }
 
-    methods.push(generate_casing_constructor(machine_name, lang));
+    methods.push(generate_casing_constructor(system, machine_name, lang));
 
     for ifm in &system.interface {
         methods.push(generate_casing_interface_wrapper(ifm, lang));
@@ -246,6 +246,7 @@ fn generate_casing(system: &SystemAst, machine_name: &str, lang: TargetLanguage)
         } else {
             Visibility::Public
         },
+        is_framework_helper: false,
     }
 }
 
@@ -534,7 +535,136 @@ fn generate_casing_fields(machine_name: &str, lang: TargetLanguage) -> Vec<Field
     }
 }
 
-fn generate_casing_constructor(machine_name: &str, lang: TargetLanguage) -> CodegenNode {
+/// The busy/in-flight flag initializers for the casing (identical in the bare
+/// ctor and the factory), and the machine-field LHS + its bare (param-less)
+/// construction RHS. `machine_name` is the private machine class.
+fn casing_ctor_parts(machine_name: &str, lang: TargetLanguage) -> (String, String, String) {
+    let m = machine_name;
+    match lang {
+        TargetLanguage::Python3 => (
+            "self._machine".into(),
+            format!("{m}()"),
+            "self._busy = False\nself._in_flight = None".into(),
+        ),
+        TargetLanguage::TypeScript | TargetLanguage::JavaScript => (
+            "this.machine".into(),
+            format!("new {m}()"),
+            "this.busy = false;\nthis.in_flight = null;".into(),
+        ),
+        TargetLanguage::Java | TargetLanguage::CSharp => (
+            "this.machine".into(),
+            format!("new {m}()"),
+            "this.busy = false;\nthis.in_flight = null;".into(),
+        ),
+        TargetLanguage::Kotlin => (
+            "this.machine".into(),
+            format!("{m}()"),
+            "this.busy = false\nthis.in_flight = null".into(),
+        ),
+        TargetLanguage::Swift => (
+            "self.machine".into(),
+            format!("{m}()"),
+            "self.busy = false\nself.in_flight = nil".into(),
+        ),
+        TargetLanguage::Dart => (
+            "this.machine".into(),
+            format!("{m}()"),
+            "this.busy = false;\nthis.in_flight = null;".into(),
+        ),
+        TargetLanguage::GDScript => (
+            "self.machine".into(),
+            format!("{m}.new()"),
+            "self.busy = false\nself.in_flight = null".into(),
+        ),
+        TargetLanguage::Cpp => (
+            "this->machine".into(),
+            String::new(),
+            "this->busy = false;".into(),
+        ),
+        _ => unreachable!(
+            "async layered casing (constructor parts): unhandled backend {lang:?} \
+             — should_emit_layered() admitted a target with no explicit arm"
+        ),
+    }
+}
+
+fn generate_casing_constructor(
+    system: &SystemAst,
+    machine_name: &str,
+    lang: TargetLanguage,
+) -> CodegenNode {
+    // #167: an @@[async] system with a domain field wired from a constructor
+    // param must forward those params to the machine's factory, or the domain
+    // field is never set and the system is unconstructable via its public class.
+    // The casing's `machine` field is param-wired exactly like a domain field,
+    // so it takes the same bare/factory split (#123): the bare ctor builds a
+    // param-less machine (usable `@@!Sys()` shell); the factory forwards the
+    // params to the machine's `_create` factory (which wires the domain field).
+    if !system.params.is_empty() {
+        let (field, bare_rhs, flags) = casing_ctor_parts(machine_name, lang);
+        let args = system
+            .params
+            .iter()
+            .map(|p| p.name.clone())
+            .collect::<Vec<_>>()
+            .join(", ");
+        // Canonical per-language factory call for the machine — the same spelling
+        // the assembler emits for a source-level `@@Machine(args)`.
+        let factory_call = if matches!(lang, TargetLanguage::Cpp) {
+            // The casing's machine is a value member (not a shared_ptr domain
+            // field), so use the bare factory rather than the make_shared wrap.
+            format!("{machine_name}::__create({args})")
+        } else {
+            crate::frame_c::compiler::assembler::generate_constructor(machine_name, &args, lang)
+        };
+        // These tag blocks render as native statements, so they carry their own
+        // terminator (the split's `needs_semicolon` does not add one).
+        let term = match lang {
+            TargetLanguage::Java
+            | TargetLanguage::CSharp
+            | TargetLanguage::TypeScript
+            | TargetLanguage::JavaScript
+            | TargetLanguage::Dart
+            | TargetLanguage::Cpp => ";",
+            _ => "",
+        };
+        let mut body = vec![CodegenNode::NativeBlock {
+            code: flags,
+            span: None,
+        }];
+        // Bare shell: a param-less machine (C++ default-constructs its value
+        // member, so no bare assignment).
+        if !bare_rhs.is_empty() {
+            body.push(CodegenNode::bare_ctor(format!(
+                "{field} = {bare_rhs}{term}"
+            )));
+        }
+        // Factory: forward the params to the machine factory (overwrites the
+        // bare machine — the same harmless double-set as the compartment split).
+        body.push(CodegenNode::factory_only(format!(
+            "{field} = {factory_call}{term}"
+        )));
+        // The casing constructor accepts the system's params (converted to the
+        // codegen `Param` shape the machine's factory uses).
+        let params = system
+            .params
+            .iter()
+            .map(|p| {
+                let ty =
+                    crate::frame_c::compiler::codegen::codegen_utils::type_to_string(&p.param_type);
+                let mut param = Param::new(&p.name).with_type(&ty);
+                if let Some(ref def) = p.default {
+                    param = param.with_default(CodegenNode::Ident(def.clone()));
+                }
+                param
+            })
+            .collect();
+        return CodegenNode::Constructor {
+            params,
+            body,
+            super_call: None,
+        };
+    }
     let body_code = match lang {
         TargetLanguage::Python3 => format!(
             "self._machine = {m}()\n\

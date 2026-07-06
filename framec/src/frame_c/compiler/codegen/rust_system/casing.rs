@@ -94,8 +94,14 @@ fn generate_casing(system: &SystemAst, machine_name: &str) -> CodegenNode {
     let fields = generate_casing_fields(machine_name);
     let mut methods = Vec::new();
 
-    methods.push(generate_casing_constructor(machine_name));
-    methods.push(generate_casing_factory_alias(system));
+    // #167: when the system has params, the machine has no parameterless
+    // `new()` (RFC-0020/#123: a param-bound struct is built only by
+    // `__create`), so the casing likewise skips `new()` and builds the struct
+    // directly in its `__create`.
+    if system.params.is_empty() {
+        methods.push(generate_casing_constructor(machine_name));
+    }
+    methods.push(generate_casing_factory_alias(system, machine_name));
 
     for ifm in &system.interface {
         methods.push(generate_casing_interface_wrapper(ifm));
@@ -199,12 +205,43 @@ fn generate_casing_constructor(machine_name: &str) -> CodegenNode {
 ///
 /// RFC-0015 `@@[create(<name>)]` rename: if the user supplied a
 /// factory name, use that instead of `__create`.
-fn generate_casing_factory_alias(system: &SystemAst) -> CodegenNode {
+fn generate_casing_factory_alias(system: &SystemAst, machine_name: &str) -> CodegenNode {
     let name = system.create_op_name().unwrap_or("__create").to_string();
-    let body_code = "Self::new()".to_string();
+    // #167: forward the system's params to the machine's factory so a domain
+    // field seeded from a constructor param is actually set. A param-carrying
+    // machine has no parameterless `new()`, so build the casing struct directly
+    // with the param-wired machine (`_<Name>Machine::__create(args)`).
+    let (params, body_code) = if system.params.is_empty() {
+        (Vec::new(), "Self::new()".to_string())
+    } else {
+        let params: Vec<Param> = system
+            .params
+            .iter()
+            .map(|p| Param {
+                name: p.name.clone(),
+                type_annotation: Some(rust_type_to_string(Some(&p.param_type))),
+                default_value: None,
+            })
+            .collect();
+        let args = system
+            .params
+            .iter()
+            .map(|p| p.name.clone())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let body = format!(
+            "Self {{\n\
+             \x20   machine: {m}::__create({args}),\n\
+             \x20   busy: false,\n\
+             \x20   in_flight: None,\n\
+             }}",
+            m = machine_name
+        );
+        (params, body)
+    };
     CodegenNode::Method {
         name,
-        params: vec![],
+        params,
         return_type: Some("Self".to_string()),
         body: vec![CodegenNode::NativeBlock {
             code: body_code,
