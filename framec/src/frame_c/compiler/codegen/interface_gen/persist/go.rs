@@ -13,7 +13,7 @@
 //! returning `*Sys`; new contract is a receiver method on `s *Sys`.
 
 use crate::frame_c::compiler::codegen::ast::{CodegenNode, Param, Visibility};
-use crate::frame_c::compiler::codegen::codegen_utils::go_map_type;
+use crate::frame_c::compiler::codegen::codegen_utils::{capitalize_first, go_map_type};
 use crate::frame_c::compiler::frame_ast::SystemAst;
 
 use super::super::{child_persist_names, extract_tagged_system_name, nested_uses_new_contract};
@@ -77,9 +77,12 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         if let Some(child_sys) = extract_tagged_system_name(init) {
             let (child_save, _) =
                 child_persist_names(child_sys, "SaveState", &format!("Restore{}", child_sys));
+            // #172: the child's save method is emitted with Go's exported
+            // (leading-capital) name, so the call MUST use the same casing —
+            // `s.kid.Save_state()`, not the raw `save_state`.
             save_body.push_str(&format!(
                 "    \"{0}\": func() interface{{}} {{ var __raw interface{{}}; _ = json.Unmarshal([]byte(s.{0}.{1}()), &__raw); return __raw }}(),\n",
-                var.name, child_save
+                var.name, capitalize_first(&child_save)
             ));
         } else {
             save_body.push_str(&format!("    \"{}\": s.{},\n", var.name, var.name));
@@ -264,9 +267,10 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
             if nested_uses_new_contract(child_sys) {
                 // New-contract child: construct, then call the child's
                 // declared (instance) load op — `Restore<Child>` by default.
+                // #172: instance-method load call must use the exported name.
                 restore_body.push_str(&format!(
                     "if __raw_{1}, err_{1} := json.Marshal(_parsed[\"{1}\"]); err_{1} == nil {{ {0}.{1} = New{2}(); {0}.{1}.{3}(string(__raw_{1})) }}\n",
-                    target, var.name, child_sys, child_load
+                    target, var.name, child_sys, capitalize_first(&child_load)
                 ));
             } else {
                 restore_body.push_str(&format!(

@@ -67,6 +67,9 @@ pub fn assemble(
     module_imports: &[String],
     imported_system_names: &[String],
     main_system: Option<&str>,
+    // #171: Go persist emits `json.Marshal`/`json.Unmarshal`; when set, inject
+    // `import "encoding/json"` after the `package` clause (deduped).
+    go_needs_json_import: bool,
 ) -> Result<String, AssemblyError> {
     let source = &source_map.source;
     let mut output = String::new();
@@ -458,6 +461,26 @@ pub fn assemble(
                 output.push_str(&format!("    {n} = {n},\n"));
             }
             output.push_str("}\n");
+        }
+    }
+
+    // #171: Go has no inline imports and requires the import block after the
+    // `package` clause, so the persist codegen's `encoding/json` use can't ride
+    // `runtime_imports` (which precede the prolog, as C++'s nlohmann include
+    // does). Inject it right after the `package` line — but only when the file
+    // doesn't already import it (a duplicate import is a Go compile error).
+    if go_needs_json_import && !output.contains("\"encoding/json\"") {
+        let mut insert_at = None;
+        let mut offset = 0;
+        for line in output.split_inclusive('\n') {
+            if line.trim_start().starts_with("package ") {
+                insert_at = Some(offset + line.len());
+                break;
+            }
+            offset += line.len();
+        }
+        if let Some(at) = insert_at {
+            output.insert_str(at, "\nimport \"encoding/json\"\n");
         }
     }
 
@@ -917,6 +940,7 @@ mod tests {
             &[],
             &[],
             None,
+            false,
         )
         .unwrap();
         assert_eq!(result, src);
@@ -971,6 +995,7 @@ mod tests {
             &[],
             &[],
             None,
+            false,
         )
         .unwrap();
         assert_eq!(result, "prolog\nclass Foo:\n  pass\nepilogue\n");
@@ -1006,6 +1031,7 @@ mod tests {
             &[],
             &[],
             None,
+            false,
         )
         .unwrap();
         assert_eq!(result, "import os\n");
@@ -1277,6 +1303,7 @@ mod tests {
             &[],
             &[],
             None,
+            false,
         )
         .unwrap();
         assert!(result.contains("prolog\n"));
@@ -1313,6 +1340,7 @@ mod tests {
             &[],
             &[],
             None,
+            false,
         );
         assert!(result.is_err());
         assert!(result.unwrap_err().message.contains("Foo"));
@@ -1389,6 +1417,7 @@ mod tests {
             &[],
             &[],
             None,
+            false,
         )
         .unwrap();
         // RFC-0017 Phase A0: Python factory expansion uses `_create`.
@@ -1437,6 +1466,7 @@ mod tests {
             &[],
             &[],
             None,
+            false,
         )
         .unwrap();
         // Runtime imports should come first, then the native prolog, then system

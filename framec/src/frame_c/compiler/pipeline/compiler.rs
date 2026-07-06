@@ -1705,6 +1705,13 @@ pub(crate) fn do_assemble(c: &mut PipelineCtx) -> CompileResult {
     {
         runtime_imports.push("#include <nlohmann/json.hpp>".to_string());
     }
+    // #171: the Go persist codegen emits `json.Marshal`/`json.Unmarshal`, but Go
+    // requires `import "encoding/json"` after the `package` clause — so unlike
+    // C++ it can't ride `runtime_imports` (which precede the prolog). The
+    // assembler injects it after the package line, deduped against the user's
+    // own imports. Gate on Go + any persisted system.
+    let go_needs_json_import =
+        config.target == TargetLanguage::Go && system_asts.iter().any(|s| s.persist_attr.is_some());
 
     // Stage 7: Assemble final output (native pass-through + system substitution + system instantiations)
     // Runtime imports are emitted first (before any native prolog) to fix import ordering.
@@ -1757,6 +1764,7 @@ pub(crate) fn do_assemble(c: &mut PipelineCtx) -> CompileResult {
         &module_imports_emitted,
         &imported_system_names,
         main_system.as_deref(),
+        go_needs_json_import,
     ) {
         Ok(output) => output,
         Err(e) => {
