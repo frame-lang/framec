@@ -1,7 +1,9 @@
 ---
 source: framec/tests/dart_snapshots.rs
+assertion_line: 23
 expression: "compile_fixture(\"03_persist\", \"dart\")"
 ---
+import 'dart:convert';
 // ignore_for_file: unused_field, unused_element, unused_local_variable, non_constant_identifier_names, constant_identifier_names, library_private_types_in_public_api, prefer_final_fields, type=lint
 
 class CounterFrameEvent {

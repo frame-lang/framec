@@ -67,9 +67,10 @@ pub fn assemble(
     module_imports: &[String],
     imported_system_names: &[String],
     main_system: Option<&str>,
-    // #171: Go persist emits `json.Marshal`/`json.Unmarshal`; when set, inject
-    // `import "encoding/json"` after the `package` clause (deduped).
-    go_needs_json_import: bool,
+    // #171 + hygiene: when set, inject the persist serializer import for targets
+    // whose import can't ride `runtime_imports` (Go after `package`, Dart at the
+    // file top), deduped against the user's own imports.
+    persist_needs_import: bool,
 ) -> Result<String, AssemblyError> {
     let source = &source_map.source;
     let mut output = String::new();
@@ -464,23 +465,36 @@ pub fn assemble(
         }
     }
 
-    // #171: Go has no inline imports and requires the import block after the
-    // `package` clause, so the persist codegen's `encoding/json` use can't ride
+    // Persist-import injection for backends whose serializer import can't ride
     // `runtime_imports` (which precede the prolog, as C++'s nlohmann include
-    // does). Inject it right after the `package` line — but only when the file
-    // doesn't already import it (a duplicate import is a Go compile error).
-    if go_needs_json_import && !output.contains("\"encoding/json\"") {
-        let mut insert_at = None;
-        let mut offset = 0;
-        for line in output.split_inclusive('\n') {
-            if line.trim_start().starts_with("package ") {
-                insert_at = Some(offset + line.len());
-                break;
+    // does). Deduped against the user's own import — a duplicate is a Go compile
+    // error and a Dart lint. Other backends are self-contained (fully-qualified
+    // names, globals, inline `require`/`import`, or a framec-emitted serializer).
+    if persist_needs_import {
+        match lang {
+            // #171: Go requires the import block after the `package` clause.
+            TargetLanguage::Go if !output.contains("\"encoding/json\"") => {
+                let mut insert_at = None;
+                let mut offset = 0;
+                for line in output.split_inclusive('\n') {
+                    if line.trim_start().starts_with("package ") {
+                        insert_at = Some(offset + line.len());
+                        break;
+                    }
+                    offset += line.len();
+                }
+                if let Some(at) = insert_at {
+                    output.insert_str(at, "\nimport \"encoding/json\"\n");
+                }
             }
-            offset += line.len();
-        }
-        if let Some(at) = insert_at {
-            output.insert_str(at, "\nimport \"encoding/json\"\n");
+            // Dart's `jsonEncode`/`jsonDecode` need `dart:convert`. Dart imports
+            // must precede all declarations, so prepend at the top; the
+            // codegen's leading `// ignore_for_file` applies file-wide
+            // regardless of position, so it may follow the import.
+            TargetLanguage::Dart if !output.contains("dart:convert") => {
+                output.insert_str(0, "import 'dart:convert';\n");
+            }
+            _ => {}
         }
     }
 

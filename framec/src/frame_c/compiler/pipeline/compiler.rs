@@ -1705,13 +1705,17 @@ pub(crate) fn do_assemble(c: &mut PipelineCtx) -> CompileResult {
     {
         runtime_imports.push("#include <nlohmann/json.hpp>".to_string());
     }
-    // #171: the Go persist codegen emits `json.Marshal`/`json.Unmarshal`, but Go
-    // requires `import "encoding/json"` after the `package` clause — so unlike
-    // C++ it can't ride `runtime_imports` (which precede the prolog). The
-    // assembler injects it after the package line, deduped against the user's
-    // own imports. Gate on Go + any persisted system.
-    let go_needs_json_import =
-        config.target == TargetLanguage::Go && system_asts.iter().any(|s| s.persist_attr.is_some());
+    // #171 + persist-import hygiene: some backends' persist codegen uses a
+    // stdlib serializer whose import can't ride `runtime_imports` the way C++'s
+    // nlohmann include does — Go requires the import after the `package` clause,
+    // Dart requires it at the top of the file. The assembler injects the right
+    // import for those targets (deduped against the user's own). Other backends
+    // are self-contained: fully-qualified names (Java/Kotlin Jackson, C#
+    // System.Text.Json), globals (JS/TS `JSON`, GDScript `JSON`, PHP
+    // `json_encode`), an inline `require`/`import` (Ruby, Lua, Swift Foundation),
+    // or a framec-emitted serializer (C).
+    let persist_needs_import = matches!(config.target, TargetLanguage::Go | TargetLanguage::Dart)
+        && system_asts.iter().any(|s| s.persist_attr.is_some());
 
     // Stage 7: Assemble final output (native pass-through + system substitution + system instantiations)
     // Runtime imports are emitted first (before any native prolog) to fix import ordering.
@@ -1764,7 +1768,7 @@ pub(crate) fn do_assemble(c: &mut PipelineCtx) -> CompileResult {
         &module_imports_emitted,
         &imported_system_names,
         main_system.as_deref(),
-        go_needs_json_import,
+        persist_needs_import,
     ) {
         Ok(output) => output,
         Err(e) => {
