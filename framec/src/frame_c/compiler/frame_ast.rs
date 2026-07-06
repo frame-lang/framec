@@ -132,6 +132,13 @@ pub struct SystemAst {
     /// is drained into `attributes`. Downstream codegen reads this
     /// flag rather than re-scanning attributes or members.
     pub is_async_layered: bool,
+    /// RFC-0043.1: whether the async casing/gate is emitted. `true` (the
+    /// default, `@@[async]` / `@@[async(casing: true)]`) emits the layered
+    /// casing/machine with the `E703` single-driver gate. `false`
+    /// (`@@[async(casing: false)]`) emits the flat single-class async form —
+    /// the dispatch core + `init()` but no casing, no gate, no `_<Name>Machine`
+    /// split. Only meaningful when `is_async_layered` is set.
+    pub async_casing: bool,
 }
 
 /// Which group a system header parameter belongs to.
@@ -768,6 +775,7 @@ impl SystemAst {
             visibility: None,
             attributes: vec![],
             is_async_layered: false,
+            async_casing: true,
         }
     }
 

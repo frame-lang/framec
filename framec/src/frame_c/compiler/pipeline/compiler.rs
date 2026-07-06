@@ -181,6 +181,30 @@ impl PipelineCtx {
     }
 }
 
+/// RFC-0043.1: parse the `casing:` argument of `@@[async(...)]` from its raw
+/// `(args)` value (parens included, e.g. `"(casing: false)"`). Returns whether
+/// the casing/gate is emitted — `true` (the default) unless the args are a clean
+/// `casing: false`. Lenient by design: a malformed arg keeps the safe gated
+/// default here; the validator reports it as `E724`.
+pub(crate) fn parse_async_casing(args: Option<&str>) -> bool {
+    let Some(raw) = args else { return true };
+    let inner = raw
+        .trim()
+        .trim_start_matches('(')
+        .trim_end_matches(')')
+        .trim();
+    if inner.is_empty() {
+        return true;
+    }
+    match inner.split_once(':') {
+        Some((key, val)) if key.trim() == "casing" => match val.trim() {
+            "false" => false,
+            _ => true, // "true" or malformed → gated (validator flags non-bool)
+        },
+        _ => true, // unknown/absent key → gated (validator flags it)
+    }
+}
+
 /// Stage 0 + RFC-0013 hard-cut gates. Segments the source, records the
 /// `@@persist` flag, and rejects the retired bare directives
 /// (`@@persist` / `@@target` / `@@codegen` / `@@import`). Returns `Some` with
@@ -503,7 +527,13 @@ fn parse_module_segments(
     let mut pending_main_attr_span: Option<crate::frame_c::compiler::frame_ast::Span> = None;
     // RFC-0043: `@@[async]` accumulates here until the next @@system parses
     // and we attach it to that system's attribute vec.
-    let mut pending_async_attr_span: Option<crate::frame_c::compiler::frame_ast::Span> = None;
+    // RFC-0043.1: the pragma span plus its raw `(args)` value (e.g.
+    // `Some("(casing: false)")`), so the attach site can parse `casing:` and
+    // carry the args onto the attribute for validation.
+    let mut pending_async_attr: Option<(
+        crate::frame_c::compiler::frame_ast::Span,
+        Option<String>,
+    )> = None;
     // Vec (not Option) so multiple occurrences of the same lifecycle
     // pragma — `@@[create(a)]` followed by `@@[create(b)]` — all
     // arrive at the validator and trigger E818 (at most one per
@@ -568,11 +598,13 @@ fn parse_module_segments(
         if let Segment::Pragma {
             kind: crate::frame_c::compiler::segmenter::PragmaKind::Async,
             span,
+            value,
             ..
         } = segment
         {
-            pending_async_attr_span = Some(crate::frame_c::compiler::frame_ast::Span::new(
-                span.start, span.end,
+            pending_async_attr = Some((
+                crate::frame_c::compiler::frame_ast::Span::new(span.start, span.end),
+                value.clone(),
             ));
             continue;
         }
@@ -857,15 +889,20 @@ fn parse_module_segments(
             // can read it directly without re-scanning attributes or
             // members. Resets after attachment so the pragma can't
             // bleed onto a later system.
-            if let Some(async_span) = pending_async_attr_span.take() {
+            if let Some((async_span, async_args)) = pending_async_attr.take() {
+                // RFC-0043.1: carry the raw `(args)` onto the attribute so the
+                // validator can emit E724 on a malformed `casing:` arg, and
+                // parse it here (leniently — a malformed arg keeps the safe
+                // gated default) to set the codegen flag.
                 system_ast
                     .attributes
                     .push(crate::frame_c::compiler::frame_ast::Attribute {
                         name: "async".to_string(),
-                        args: None,
+                        args: async_args.clone(),
                         span: async_span,
                     });
                 system_ast.is_async_layered = true;
+                system_ast.async_casing = parse_async_casing(async_args.as_deref());
             }
 
             // RFC-0015: attach pending lifecycle attributes (`@@[create]`,
@@ -1972,6 +2009,21 @@ fn filter_by_target_attribute(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_parse_async_casing() {
+        // RFC-0043.1: default (gated) unless a clean `casing: false`.
+        assert!(parse_async_casing(None)); // @@[async]
+        assert!(parse_async_casing(Some("(casing: true)")));
+        assert!(!parse_async_casing(Some("(casing: false)")));
+        assert!(!parse_async_casing(Some("(casing:false)"))); // whitespace-tolerant
+        assert!(!parse_async_casing(Some("( casing : false )")));
+        // Malformed → gated default here (the validator raises E724).
+        assert!(parse_async_casing(Some("(casing: yes)")));
+        assert!(parse_async_casing(Some("(gate: false)")));
+        assert!(parse_async_casing(Some("(false)")));
+        assert!(parse_async_casing(Some("()")));
+    }
 
     #[test]
     fn test_compile_result_creation() {

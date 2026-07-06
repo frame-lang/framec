@@ -302,7 +302,12 @@ pub fn generate_rust_system(system: &SystemAst, arcanum: &Arcanum, source: &[u8]
     // RAII helper. Gated by both `is_async_layered()` (set by the
     // pipeline from the `@@[async]` attribute) and the shared
     // `should_emit_layered` predicate (which now includes Rust).
-    if system.is_async_layered() && super::system_codegen::casing::should_emit_layered(lang) {
+    // RFC-0043.1: `@@[async(casing: false)]` opts out of the casing/gate; skip
+    // the wrap to emit the flat single-struct async form.
+    if system.is_async_layered()
+        && system.async_casing
+        && super::system_codegen::casing::should_emit_layered(lang)
+    {
         return casing::wrap_in_casing(system, class_node);
     }
 

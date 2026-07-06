@@ -387,7 +387,12 @@ pub fn generate_system_shared(
     // containing the casing + machine pair. Backends that haven't been
     // flipped on yet (Phase 4 day-1: everything except Python) return
     // the single-class shape unchanged.
-    if system.is_async_layered() && casing::should_emit_layered(lang) {
+    // RFC-0043.1: `@@[async(casing: false)]` opts out of the casing/gate — the
+    // async dispatch core (with `init()`) is emitted as a single public class
+    // under the system name (no casing, no `E703`, no `_<Name>Machine` split).
+    // Skipping `wrap_in_casing` yields exactly that: the class is renamed/hidden
+    // only inside the wrap.
+    if system.is_async_layered() && system.async_casing && casing::should_emit_layered(lang) {
         return casing::wrap_in_casing(system, class_node, lang);
     }
 

@@ -377,6 +377,43 @@ impl FrameValidator {
                 .with_span(system.span.clone()),
             );
         }
+
+        // E724 (RFC-0043.1): the only argument `@@[async(...)]` accepts is
+        // `casing: true|false`. Reject an unknown key, a non-boolean value, or a
+        // positional/malformed arg. The pipeline parses `casing:` leniently
+        // (defaulting to the safe gated form); this makes a malformed arg a hard
+        // error rather than a silent fallback.
+        if let Some(async_attr) = system.attributes.iter().find(|a| a.name == "async") {
+            if let Some(raw) = &async_attr.args {
+                let inner = raw
+                    .trim()
+                    .trim_start_matches('(')
+                    .trim_end_matches(')')
+                    .trim();
+                if !inner.is_empty() {
+                    let ok = matches!(
+                        inner.split_once(':'),
+                        Some((k, v)) if k.trim() == "casing" && matches!(v.trim(), "true" | "false")
+                    );
+                    if !ok {
+                        self.errors.push(
+                            ValidationError::new(
+                                "E724",
+                                format!(
+                                    "@@system '{}': invalid `@@[async(...)]` argument `({})`. \
+                                     The only accepted forms are `@@[async]` and \
+                                     `@@[async(casing: true|false)]` (RFC-0043.1). \
+                                     `casing: false` emits the flat, ungated async form; \
+                                     the default `casing: true` keeps the E703 single-driver gate.",
+                                    system.name, inner
+                                ),
+                            )
+                            .with_span(system.span.clone()),
+                        );
+                    }
+                }
+            }
+        }
     }
 
     /// **E721 — sync system composes async system as domain field**
