@@ -509,10 +509,6 @@ impl LanguageBackend for GoBackend {
                 let ind = format!("{}{}", ctx.get_indent(), " ".repeat(*indent));
                 format!("{}// change_state to {}", ind, target_state)
             }
-            CodegenNode::Forward { indent, .. } => {
-                let ind = format!("{}{}", ctx.get_indent(), " ".repeat(*indent));
-                format!("{}return", ind)
-            }
             CodegenNode::StackPush { indent } => {
                 let ind = format!("{}{}", ctx.get_indent(), " ".repeat(*indent));
                 format!(

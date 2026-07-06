@@ -711,18 +711,6 @@ impl LanguageBackend for PythonBackend {
                 }
             }
 
-            CodegenNode::Forward { to_parent, indent } => {
-                // Forward dispatches event to parent state in HSM
-                // Add relative indent to context indent
-                let ind = format!("{}{}", ctx.get_indent(), " ".repeat(*indent));
-
-                if *to_parent {
-                    format!("{}print(\"FORWARD:PARENT\")\n{}return", ind, ind)
-                } else {
-                    format!("{}print(\"FORWARD:PARENT\")\n{}return", ind, ind)
-                }
-            }
-
             CodegenNode::StackPush { indent } => {
                 // Add relative indent to context indent
                 let ind = format!("{}{}", ctx.get_indent(), " ".repeat(*indent));

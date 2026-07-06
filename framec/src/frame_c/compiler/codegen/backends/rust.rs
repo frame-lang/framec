@@ -667,13 +667,6 @@ impl LanguageBackend for RustBackend {
                 )
             }
 
-            CodegenNode::Forward {
-                to_parent: _,
-                indent,
-            } => {
-                let ind = format!("{}{}", ctx.get_indent(), " ".repeat(*indent));
-                format!("{}return", ind)
-            }
             CodegenNode::StackPush { indent } => {
                 let ind = format!("{}{}", ctx.get_indent(), " ".repeat(*indent));
                 format!("{}self._state_stack_push()", ind)

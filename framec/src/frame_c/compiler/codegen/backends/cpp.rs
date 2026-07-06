@@ -894,10 +894,6 @@ impl LanguageBackend for CppBackend {
                 let ind = format!("{}{}", ctx.get_indent(), " ".repeat(*indent));
                 format!("{}this->_changeState({})", ind, target_state)
             }
-            CodegenNode::Forward { indent, .. } => {
-                let ind = format!("{}{}", ctx.get_indent(), " ".repeat(*indent));
-                format!("{}return", ind)
-            }
             CodegenNode::StackPush { indent } => {
                 let ind = format!("{}{}", ctx.get_indent(), " ".repeat(*indent));
                 format!("{}_state_stack.push_back(__compartment->clone())", ind)

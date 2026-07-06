@@ -554,10 +554,6 @@ impl LanguageBackend for SwiftBackend {
                 let ind = format!("{}{}", ctx.get_indent(), " ".repeat(*indent));
                 format!("{}self._changeState(self.{})", ind, target_state)
             }
-            CodegenNode::Forward { indent, .. } => {
-                let ind = format!("{}{}", ctx.get_indent(), " ".repeat(*indent));
-                format!("{}return", ind)
-            }
             CodegenNode::StackPush { indent } => {
                 let ind = format!("{}{}", ctx.get_indent(), " ".repeat(*indent));
                 format!("{}self._state_stack.append(self.__compartment.copy())", ind)

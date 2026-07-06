@@ -365,14 +365,6 @@ impl LanguageBackend for ErlangBackend {
                 )
             }
 
-            CodegenNode::Forward {
-                indent,
-                to_parent: _,
-            } => {
-                let ind = format!("{}{}", ctx.get_indent(), " ".repeat(*indent));
-                format!("{}{{keep_state, Data}}", ind)
-            }
-
             CodegenNode::NativeBlock { code, span: _ }
             | CodegenNode::FrameInitBlock { code, span: _ }
             | CodegenNode::FactoryOnlyBlock { code, span: _ }

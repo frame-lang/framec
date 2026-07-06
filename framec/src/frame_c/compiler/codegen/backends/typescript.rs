@@ -639,14 +639,6 @@ impl LanguageBackend for TypeScriptBackend {
                 }
             }
 
-            CodegenNode::Forward {
-                to_parent: _,
-                indent,
-            } => {
-                let ind = format!("{}{}", ctx.get_indent(), " ".repeat(*indent));
-                format!("{}return", ind)
-            }
-
             CodegenNode::StackPush { indent } => {
                 let ind = format!("{}{}", ctx.get_indent(), " ".repeat(*indent));
                 format!("{}this._stateStack.push(this._state)", ind)

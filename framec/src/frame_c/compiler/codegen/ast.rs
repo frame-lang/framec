@@ -416,13 +416,6 @@ pub enum CodegenNode {
         indent: usize,
     },
 
-    /// Forward to parent state
-    Forward {
-        to_parent: bool,
-        /// Source indentation level for proper code placement
-        indent: usize,
-    },
-
     /// Push current state onto stack
     StackPush {
         /// Source indentation level for proper code placement

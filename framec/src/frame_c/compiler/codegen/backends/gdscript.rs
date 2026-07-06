@@ -737,16 +737,6 @@ impl LanguageBackend for GDScriptBackend {
                 }
             }
 
-            CodegenNode::Forward { to_parent, indent } => {
-                let ind = format!("{}{}", ctx.get_indent(), " ".repeat(*indent));
-
-                if *to_parent {
-                    format!("{}print(\"FORWARD:PARENT\")\n{}return", ind, ind)
-                } else {
-                    format!("{}print(\"FORWARD:PARENT\")\n{}return", ind, ind)
-                }
-            }
-
             CodegenNode::StackPush { indent } => {
                 let ind = format!("{}{}", ctx.get_indent(), " ".repeat(*indent));
                 format!("{}self._state_stack.append(self._state)", ind)

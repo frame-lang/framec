@@ -623,11 +623,6 @@ impl LanguageBackend for RubyBackend {
                 }
             }
 
-            CodegenNode::Forward { indent, .. } => {
-                let ind = format!("{}{}", ctx.get_indent(), " ".repeat(*indent));
-                format!("{}return", ind)
-            }
-
             CodegenNode::StackPush { indent } => {
                 let ind = format!("{}{}", ctx.get_indent(), " ".repeat(*indent));
                 format!("{}@_state_stack.push(@__compartment.copy)", ind)

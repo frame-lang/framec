@@ -648,10 +648,6 @@ impl LanguageBackend for JavaBackend {
                 let ind = format!("{}{}", ctx.get_indent(), " ".repeat(*indent));
                 format!("{}this._changeState(this.{})", ind, target_state)
             }
-            CodegenNode::Forward { indent, .. } => {
-                let ind = format!("{}{}", ctx.get_indent(), " ".repeat(*indent));
-                format!("{}return", ind)
-            }
             CodegenNode::StackPush { indent } => {
                 let ind = format!("{}{}", ctx.get_indent(), " ".repeat(*indent));
                 format!("{}this._state_stack.add(this.__compartment.copy())", ind)

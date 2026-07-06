@@ -547,10 +547,6 @@ impl LanguageBackend for CSharpBackend {
                 let ind = format!("{}{}", ctx.get_indent(), " ".repeat(*indent));
                 format!("{}this._changeState(this.{})", ind, target_state)
             }
-            CodegenNode::Forward { indent, .. } => {
-                let ind = format!("{}{}", ctx.get_indent(), " ".repeat(*indent));
-                format!("{}return", ind)
-            }
             CodegenNode::StackPush { indent } => {
                 let ind = format!("{}{}", ctx.get_indent(), " ".repeat(*indent));
                 format!("{}this._state_stack.Add(this.__compartment.Copy())", ind)

@@ -807,10 +807,6 @@ impl LanguageBackend for CBackend {
                     target_state
                 )
             }
-            CodegenNode::Forward { indent, .. } => {
-                let ind = " ".repeat(*indent);
-                format!("{}{}return", ctx.get_indent(), ind)
-            }
             CodegenNode::StackPush { indent } => {
                 let ind = " ".repeat(*indent);
                 format!("{}{}{}_FrameVec_push(self->_state_stack, {}_Compartment_copy(self->__compartment))",
