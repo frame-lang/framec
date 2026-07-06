@@ -28,7 +28,7 @@ use handler_body::context_return_read_typed;
 use pop_transition::generate_pop_transition;
 use utility::{
     c_return_assign, cpp_wrap_string_literal, is_ident_char, paren_wrap_if_multiline,
-    split_transition_return, strip_outer_parens,
+    strip_outer_parens,
 };
 
 pub(crate) use handler_body::{
@@ -81,17 +81,16 @@ pub(crate) fn generate_frame_expansion(
     let indent_str = " ".repeat(indent);
 
     match kind {
-        FrameSegmentKind::Transition => {
-            transition::expand_transition(body_bytes, span, indent, lang, ctx, metadata)
-        }
-        FrameSegmentKind::Forward => {
-            forward::expand_forward(body_bytes, span, indent, lang, ctx, metadata)
-        }
-        FrameSegmentKind::StackPush => {
-            stack::expand_stack_push(body_bytes, span, indent, lang, ctx, metadata)
-        }
-        FrameSegmentKind::StackPop => {
-            stack::expand_stack_pop(body_bytes, span, indent, lang, ctx, metadata)
+        FrameSegmentKind::Transition
+        | FrameSegmentKind::Forward
+        | FrameSegmentKind::StackPush
+        | FrameSegmentKind::StackPop => {
+            // Control-flow segments build their body and terminator separately
+            // (#169); re-join them here for the plain-`String` expansion API.
+            let (body, terminator) = generate_frame_transition_parts(
+                body_bytes, span, kind, indent, lang, ctx, metadata,
+            );
+            join_transition_terminator(body, terminator, &indent_str)
         }
         FrameSegmentKind::StateVar => {
             state_var::expand_state_var(body_bytes, span, indent, lang, ctx, metadata)
@@ -145,6 +144,60 @@ pub(crate) fn generate_frame_expansion(
         FrameSegmentKind::ReturnStatement => {
             return_stmt::expand_return_statement(body_bytes, span, indent, lang, ctx, metadata)
         }
+    }
+}
+
+/// Expand a control-flow segment (`->`/`=>`/`push$`/`pop$`) into its
+/// `(body, terminator)` parts.
+///
+/// The body is the state-change code WITHOUT the trailing handler-exit
+/// `return`; the terminator is the language's `return`/`return;`/`""` (see
+/// [`transition_terminator`](utility::transition_terminator)). The handler
+/// orchestrator calls this directly so it can hoist a same-scope `@@:(expr)`
+/// between the body and the terminator — replacing the old
+/// `split_transition_return` text oracle that recovered the split by
+/// suffix-probing the emitter's own output (#123/#169).
+///
+/// Only the four control-flow kinds are valid here (the orchestrator gates on
+/// them); any other kind is a caller bug.
+pub(crate) fn generate_frame_transition_parts(
+    body_bytes: &[u8],
+    span: &crate::frame_c::compiler::native_region_scanner::RegionSpan,
+    kind: FrameSegmentKind,
+    indent: usize,
+    lang: TargetLanguage,
+    ctx: &HandlerContext,
+    metadata: &SegmentMetadata,
+) -> (String, &'static str) {
+    match kind {
+        FrameSegmentKind::Transition => {
+            transition::expand_transition(body_bytes, span, indent, lang, ctx, metadata)
+        }
+        FrameSegmentKind::Forward => {
+            forward::expand_forward(body_bytes, span, indent, lang, ctx, metadata)
+        }
+        FrameSegmentKind::StackPush => {
+            stack::expand_stack_push(body_bytes, span, indent, lang, ctx, metadata)
+        }
+        FrameSegmentKind::StackPop => {
+            stack::expand_stack_pop(body_bytes, span, indent, lang, ctx, metadata)
+        }
+        other => unreachable!(
+            "generate_frame_transition_parts called for non-control-flow kind {other:?}"
+        ),
+    }
+}
+
+/// Re-join a `(body, terminator)` control-flow expansion into a single string,
+/// the terminator on its own line at the body's indent. Reproduces the
+/// pre-#169 baked-in output byte-for-byte. `body.trim_end()` mirrors the
+/// trailing-whitespace trim the old `split_transition_return` applied before
+/// re-emitting the return.
+fn join_transition_terminator(body: String, terminator: &str, indent_str: &str) -> String {
+    if terminator.is_empty() {
+        body
+    } else {
+        format!("{}\n{}{}", body.trim_end(), indent_str, terminator)
     }
 }
 

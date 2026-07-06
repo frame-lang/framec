@@ -11,9 +11,12 @@
 //!   `cpp_wrap_string_literal` (`std::any` round-trip), and the
 //!   PHP `$`-prefix sigil rewriter `php_prefix_params`.
 //! - **Source-shape extractors** — `extract_dot_key`,
-//!   `extract_state_var_name`, `strip_outer_parens`, and
-//!   `split_transition_return` pull substrings out of Frame
-//!   source text in a way that's identical across every backend.
+//!   `extract_state_var_name`, and `strip_outer_parens` pull
+//!   substrings out of Frame source text in a way that's identical
+//!   across every backend. The handler-exit terminator for a
+//!   transition is supplied structurally by `transition_terminator`
+//!   (the emitter states it; the consumer no longer suffix-probes
+//!   the emitted text — #123/#169).
 //! - **Indent / formatting helpers** — `paren_wrap_if_multiline`
 //!   restores implicit line-continuation for indent-sensitive
 //!   targets; `strip_java_unreachable` drops dead code after a
@@ -185,22 +188,48 @@ pub(crate) fn extract_state_var_name(text: &str) -> String {
     }
 }
 
-/// Split a transition expansion into `(body, trailing_return)`.
+/// The handler-exit terminator a transition (or pop-transition / decorated
+/// `push$`) emits, per target language.
 ///
-/// Transition expansions always end with `return` or `return;` to exit
-/// the handler after the state change. The orchestrator needs these
-/// separated so it can insert a return-expr between the body and the
-/// return when `-> $State` is followed by `@@:(expr)` in the same scope.
-pub(super) fn split_transition_return(expansion: &str) -> (&str, &str) {
-    let trimmed = expansion.trim_end();
-    if trimmed.ends_with("return;") {
-        (trimmed[..trimmed.len() - 7].trim_end(), "return;")
-    } else if trimmed.ends_with("return") {
-        (trimmed[..trimmed.len() - 6].trim_end(), "return")
-    } else {
-        // Expansion doesn't end with return (e.g., Rust uses different
-        // control flow, or Graphviz). Emit as-is.
-        (trimmed, "")
+/// This is the single source of truth for the trailing `return` that exits a
+/// handler after a state change. The control-flow emitters
+/// (`expand_transition`, `generate_pop_transition`, `expand_stack_push`) build
+/// their body WITHOUT this terminator and hand it back as the second element
+/// of a `(body, terminator)` pair; `generate_frame_expansion` re-joins it for
+/// the plain-`String` API, and the handler orchestrator uses it to hoist a
+/// same-scope `@@:(expr)` between the body and the return (`-> $State`
+/// immediately followed by `@@:(expr)`).
+///
+/// Replaces the old `split_transition_return` text oracle (#123/#169), which
+/// recovered this fact by suffix-probing the emitter's own output with
+/// `ends_with("return;")`. The emitter now states the terminator structurally
+/// instead of the consumer guessing it back.
+///
+/// - Brace/semicolon targets exit with `return;`.
+/// - Expression/newline targets (Python, GDScript, Kotlin, Swift, Go, Ruby,
+///   Lua) exit with a bare `return`.
+/// - Rust / Erlang / Graphviz use their own control flow and append nothing.
+pub(super) fn transition_terminator(
+    lang: crate::frame_c::visitors::TargetLanguage,
+) -> &'static str {
+    use crate::frame_c::visitors::TargetLanguage;
+    match lang {
+        TargetLanguage::Java
+        | TargetLanguage::CSharp
+        | TargetLanguage::Cpp
+        | TargetLanguage::C
+        | TargetLanguage::Php
+        | TargetLanguage::TypeScript
+        | TargetLanguage::JavaScript
+        | TargetLanguage::Dart => "return;",
+        TargetLanguage::Python3
+        | TargetLanguage::GDScript
+        | TargetLanguage::Kotlin
+        | TargetLanguage::Swift
+        | TargetLanguage::Go
+        | TargetLanguage::Ruby
+        | TargetLanguage::Lua => "return",
+        TargetLanguage::Rust | TargetLanguage::Erlang | TargetLanguage::Graphviz => "",
     }
 }
 

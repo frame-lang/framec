@@ -365,77 +365,44 @@ pub(super) fn generate_pop_transition(
     let var = "__saved"; // Rust returns early above
     match lang {
         TargetLanguage::Python3 | TargetLanguage::GDScript => {
-            code.push_str(&format!(
-                "{}self.__transition({})\n{}return",
-                indent, var, indent
-            ));
+            code.push_str(&format!("{}self.__transition({})", indent, var));
         }
         TargetLanguage::TypeScript | TargetLanguage::JavaScript | TargetLanguage::Dart => {
-            code.push_str(&format!(
-                "{}this.__transition({});\n{}return;",
-                indent, var, indent
-            ));
+            code.push_str(&format!("{}this.__transition({});", indent, var));
         }
         TargetLanguage::Rust => {}
         TargetLanguage::C => {
             code.push_str(&format!(
-                "{}{}_transition(self, {});\n{}return;",
-                indent, ctx.system_name, var, indent
+                "{}{}_transition(self, {});",
+                indent, ctx.system_name, var
             ));
         }
         TargetLanguage::Cpp => {
-            code.push_str(&format!(
-                "{}__transition(std::move({}));\n{}return;",
-                indent, var, indent
-            ));
+            code.push_str(&format!("{}__transition(std::move({}));", indent, var));
         }
         TargetLanguage::Java => {
-            code.push_str(&format!(
-                "{}__transition({});\n{}return;",
-                indent, var, indent
-            ));
+            code.push_str(&format!("{}__transition({});", indent, var));
         }
         TargetLanguage::Kotlin => {
-            code.push_str(&format!(
-                "{}__transition({})\n{}return",
-                indent, var, indent
-            ));
+            code.push_str(&format!("{}__transition({})", indent, var));
         }
         TargetLanguage::Swift => {
-            code.push_str(&format!(
-                "{}__transition({})\n{}return",
-                indent, var, indent
-            ));
+            code.push_str(&format!("{}__transition({})", indent, var));
         }
         TargetLanguage::CSharp => {
-            code.push_str(&format!(
-                "{}__transition({});\n{}return;",
-                indent, var, indent
-            ));
+            code.push_str(&format!("{}__transition({});", indent, var));
         }
         TargetLanguage::Go => {
-            code.push_str(&format!(
-                "{}s.__transition({})\n{}return",
-                indent, var, indent
-            ));
+            code.push_str(&format!("{}s.__transition({})", indent, var));
         }
         TargetLanguage::Php => {
-            code.push_str(&format!(
-                "{}$this->__transition(${});\n{}return;",
-                indent, var, indent
-            ));
+            code.push_str(&format!("{}$this->__transition(${});", indent, var));
         }
         TargetLanguage::Ruby => {
-            code.push_str(&format!(
-                "{}__transition({})\n{}return",
-                indent, var, indent
-            ));
+            code.push_str(&format!("{}__transition({})", indent, var));
         }
         TargetLanguage::Lua => {
-            code.push_str(&format!(
-                "{}self:__transition({})\n{}return",
-                indent, var, indent
-            ));
+            code.push_str(&format!("{}self:__transition({})", indent, var));
         }
         TargetLanguage::Erlang | TargetLanguage::Graphviz => {}
     }

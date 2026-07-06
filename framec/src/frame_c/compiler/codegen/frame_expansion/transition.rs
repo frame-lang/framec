@@ -35,6 +35,13 @@ use super::utility::php_prefix_params;
 use crate::frame_c::compiler::native_region_scanner::{RegionSpan, SegmentMetadata};
 use crate::frame_c::visitors::TargetLanguage;
 
+/// Expand a `-> $State` transition (and its `push$`/`pop$`/forward variants)
+/// into `(body, terminator)`. The body is the state-change code WITHOUT the
+/// trailing handler-exit `return`; the terminator is
+/// [`transition_terminator`](super::utility::transition_terminator) — the
+/// language's `return`/`return;`/`""`. Keeping them separate lets the handler
+/// orchestrator hoist a same-scope `@@:(expr)` between them (#123/#169), and
+/// `generate_frame_expansion` re-joins them for the plain-`String` API.
 pub(super) fn expand_transition(
     body_bytes: &[u8],
     span: &RegionSpan,
@@ -42,7 +49,7 @@ pub(super) fn expand_transition(
     lang: TargetLanguage,
     ctx: &HandlerContext,
     metadata: &SegmentMetadata,
-) -> String {
+) -> (String, &'static str) {
     let segment_text = String::from_utf8_lossy(&body_bytes[span.start..span.end]);
     let indent_str = " ".repeat(indent);
 
@@ -63,13 +70,16 @@ pub(super) fn expand_transition(
     } else {
         segment_text.contains("pop$")
     };
-    if is_pop {
+    // Every transition variant exits the handler with the same per-language
+    // terminator; the body-builders below omit it so the orchestrator can
+    // hoist a same-scope `@@:(expr)` before it (#169).
+    let body = if is_pop {
         // Pop-transition with optional decorations (RFC-0008):
         // 1. Write exit_args to current compartment (if present)
         // 2. Pop from stack
         // 3. If enter_args present: clear + write fresh values
         // 4. If is_forward: set forward_event
-        // 5. __transition + return
+        // 5. __transition (terminator appended by the caller)
         let (exit_str, enter_str) = match metadata {
             SegmentMetadata::Transition {
                 exit_args,
@@ -226,10 +236,7 @@ pub(super) fn expand_transition(
                 code.push_str(&forward_event_line("__compartment"));
 
                 // Cache and return.
-                code.push_str(&format!(
-                    "{}self.__transition(__compartment)\n{}return",
-                    indent_str, indent_str
-                ));
+                code.push_str(&format!("{}self.__transition(__compartment)", indent_str));
                 code
             }
             TargetLanguage::GDScript => {
@@ -274,10 +281,7 @@ pub(super) fn expand_transition(
 
                 code.push_str(&forward_event_line("__compartment"));
 
-                code.push_str(&format!(
-                    "{}self.__transition(__compartment)\n{}return",
-                    indent_str, indent_str
-                ));
+                code.push_str(&format!("{}self.__transition(__compartment)", indent_str));
                 code
             }
             TargetLanguage::TypeScript | TargetLanguage::JavaScript => {
@@ -322,10 +326,7 @@ pub(super) fn expand_transition(
 
                 code.push_str(&forward_event_line("__compartment"));
 
-                code.push_str(&format!(
-                    "{}this.__transition(__compartment);\n{}return;",
-                    indent_str, indent_str
-                ));
+                code.push_str(&format!("{}this.__transition(__compartment);", indent_str));
                 code
             }
             TargetLanguage::Dart => {
@@ -370,10 +371,7 @@ pub(super) fn expand_transition(
 
                 code.push_str(&forward_event_line("__compartment"));
 
-                code.push_str(&format!(
-                    "{}this.__transition(__compartment);\n{}return;",
-                    indent_str, indent_str
-                ));
+                code.push_str(&format!("{}this.__transition(__compartment);", indent_str));
                 code
             }
             TargetLanguage::Rust => super::super::rust_system::rust_expand_transition(
@@ -581,7 +579,6 @@ pub(super) fn expand_transition(
                     indent_str, sys
                 ));
                 code.push_str(&format!("{}}}\n", indent_str));
-                code.push_str(&format!("{}return;", indent_str));
                 code
             }
             TargetLanguage::Cpp => {
@@ -645,10 +642,7 @@ pub(super) fn expand_transition(
 
                 code.push_str(&forward_event_line("__next"));
 
-                code.push_str(&format!(
-                    "{}__transition(std::move(__next));\n{}return;",
-                    indent_str, indent_str
-                ));
+                code.push_str(&format!("{}__transition(std::move(__next));", indent_str));
                 code
             }
             TargetLanguage::Java => {
@@ -709,10 +703,7 @@ pub(super) fn expand_transition(
 
                 code.push_str(&forward_event_line("__compartment"));
 
-                code.push_str(&format!(
-                    "{}__transition(__compartment);\n{}return;",
-                    indent_str, indent_str
-                ));
+                code.push_str(&format!("{}__transition(__compartment);", indent_str));
                 code
             }
             TargetLanguage::Kotlin => {
@@ -767,10 +758,7 @@ pub(super) fn expand_transition(
 
                 code.push_str(&forward_event_line("__compartment"));
 
-                code.push_str(&format!(
-                    "{}__transition(__compartment)\n{}return",
-                    indent_str, indent_str
-                ));
+                code.push_str(&format!("{}__transition(__compartment)", indent_str));
                 code
             }
             TargetLanguage::Swift => {
@@ -817,10 +805,7 @@ pub(super) fn expand_transition(
 
                 code.push_str(&forward_event_line("__compartment"));
 
-                code.push_str(&format!(
-                    "{}__transition(__compartment)\n{}return",
-                    indent_str, indent_str
-                ));
+                code.push_str(&format!("{}__transition(__compartment)", indent_str));
                 code
             }
             TargetLanguage::CSharp => {
@@ -884,10 +869,7 @@ pub(super) fn expand_transition(
 
                 code.push_str(&forward_event_line("__next"));
 
-                code.push_str(&format!(
-                    "{}__transition(__next); }}\n{}return;",
-                    indent_str, indent_str
-                ));
+                code.push_str(&format!("{}__transition(__next); }}", indent_str));
                 code
             }
             TargetLanguage::Go => {
@@ -934,10 +916,7 @@ pub(super) fn expand_transition(
 
                 code.push_str(&forward_event_line("__compartment"));
 
-                code.push_str(&format!(
-                    "{}s.__transition(__compartment)\n{}return",
-                    indent_str, indent_str
-                ));
+                code.push_str(&format!("{}s.__transition(__compartment)", indent_str));
                 code
             }
             TargetLanguage::Php => {
@@ -1014,8 +993,8 @@ pub(super) fn expand_transition(
                 code.push_str(&forward_event_line("$__compartment"));
 
                 code.push_str(&format!(
-                    "{}$this->__transition($__compartment);\n{}return;",
-                    indent_str, indent_str
+                    "{}$this->__transition($__compartment);",
+                    indent_str
                 ));
                 code
             }
@@ -1061,10 +1040,7 @@ pub(super) fn expand_transition(
 
                 code.push_str(&forward_event_line("__compartment"));
 
-                code.push_str(&format!(
-                    "{}__transition(__compartment)\n{}return",
-                    indent_str, indent_str
-                ));
+                code.push_str(&format!("{}__transition(__compartment)", indent_str));
                 code
             }
             TargetLanguage::Lua => {
@@ -1126,10 +1102,7 @@ pub(super) fn expand_transition(
 
                 code.push_str(&forward_event_line("__compartment"));
 
-                code.push_str(&format!(
-                    "{}self:__transition(__compartment)\n{}return",
-                    indent_str, indent_str
-                ));
+                code.push_str(&format!("{}self:__transition(__compartment)", indent_str));
                 code
             }
             TargetLanguage::Erlang => {
@@ -1198,5 +1171,6 @@ pub(super) fn expand_transition(
             }
             TargetLanguage::Graphviz => unreachable!(),
         }
-    }
+    };
+    (body, super::utility::transition_terminator(lang))
 }

@@ -29,6 +29,12 @@ use super::super::codegen_utils::{to_snake_case, HandlerContext};
 use crate::frame_c::compiler::native_region_scanner::{RegionSpan, SegmentMetadata};
 use crate::frame_c::visitors::TargetLanguage;
 
+/// Expand `=> $^` (forward to parent) into `(body, terminator)`. A forward is
+/// NOT a terminal transition — the parent handler is invoked and control
+/// returns — so the terminator is always `""`. The no-parent fallback arms do
+/// emit a bare `return`, but with a trailing comment, so they too are the whole
+/// body with no separately-hoistable terminator. Returning `(body, "")`
+/// preserves that (#169): the orchestrator appends nothing.
 pub(super) fn expand_forward(
     body_bytes: &[u8],
     span: &RegionSpan,
@@ -36,12 +42,12 @@ pub(super) fn expand_forward(
     lang: TargetLanguage,
     ctx: &HandlerContext,
     metadata: &SegmentMetadata,
-) -> String {
+) -> (String, &'static str) {
     let segment_text = String::from_utf8_lossy(&body_bytes[span.start..span.end]);
     let indent_str = " ".repeat(indent);
 
     // HSM forward: call parent state's handler for the same event
-    if let Some(ref parent) = ctx.parent_state {
+    let body = if let Some(ref parent) = ctx.parent_state {
         match lang {
             // Python/TypeScript: call _state_Parent(__e) to dispatch via unified state method
             TargetLanguage::Python3 | TargetLanguage::GDScript => {
@@ -248,5 +254,6 @@ pub(super) fn expand_forward(
             }
             TargetLanguage::Graphviz => unreachable!(),
         }
-    }
+    };
+    (body, "")
 }

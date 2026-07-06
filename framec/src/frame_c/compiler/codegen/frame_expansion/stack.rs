@@ -17,6 +17,10 @@ use super::super::codegen_utils::{to_snake_case, HandlerContext};
 use crate::frame_c::compiler::native_region_scanner::{RegionSpan, SegmentMetadata};
 use crate::frame_c::visitors::TargetLanguage;
 
+/// Expand `push$` (RFC-0008) into `(body, terminator)`. A bare `push$` (no
+/// `$State`) just saves the current compartment and is NOT terminal, so its
+/// terminator is `""`; a `push$ $State` push-transition exits the handler with
+/// the language's [`transition_terminator`](super::utility::transition_terminator).
 pub(super) fn expand_stack_push(
     body_bytes: &[u8],
     span: &RegionSpan,
@@ -24,7 +28,7 @@ pub(super) fn expand_stack_push(
     lang: TargetLanguage,
     ctx: &HandlerContext,
     metadata: &SegmentMetadata,
-) -> String {
+) -> (String, &'static str) {
     let segment_text = String::from_utf8_lossy(&body_bytes[span.start..span.end]);
     let indent_str = " ".repeat(indent);
 
@@ -43,17 +47,14 @@ pub(super) fn expand_stack_push(
     // bare push$ (ownership model) but push-with-transition uses
     // mem::replace (ownership transfer). pop$ restores the saved
     // reference as the current compartment.
-    match lang {
+    let body = match lang {
         TargetLanguage::Python3 => {
             let push_code = format!("{}self._state_stack.append(self.__compartment)", indent_str);
             if !target.is_empty() {
                 // Compartment model (matches a normal transition + `-> pop$`).
                 // The runtime has no `_transition(name, …)` method — only
                 // `__transition(compartment)`. See FRAMEC_BUGS Issue #42.
-                format!(
-                    "{}\n{}__compartment = self.__prepareEnter(\"{}\", [], [])\n{}self.__transition(__compartment)\n{}return",
-                    push_code, indent_str, target, indent_str, indent_str
-                )
+                format!("{}\n{}__compartment = self.__prepareEnter(\"{}\", [], [])\n{}self.__transition(__compartment)", push_code, indent_str, target, indent_str)
             } else {
                 push_code
             }
@@ -64,10 +65,7 @@ pub(super) fn expand_stack_push(
                 // Compartment model (matches a normal transition + `-> pop$`).
                 // The runtime has no `_transition(name, …)` func — only
                 // `__transition(next_compartment)`. See FRAMEC_BUGS Issue #42.
-                format!(
-                    "{}\n{}var __compartment = self.__prepareEnter(\"{}\", [], [])\n{}self.__transition(__compartment)\n{}return",
-                    push_code, indent_str, target, indent_str, indent_str
-                )
+                format!("{}\n{}var __compartment = self.__prepareEnter(\"{}\", [], [])\n{}self.__transition(__compartment)", push_code, indent_str, target, indent_str)
             } else {
                 push_code
             }
@@ -80,10 +78,7 @@ pub(super) fn expand_stack_push(
                 // runtime has no `_transition(name, …)` method — only
                 // `__transition(compartment)` — so the old form threw at
                 // runtime. See FRAMEC_BUGS Issue #42.
-                format!(
-                    "{}\n{}const __compartment = this.__prepareEnter(\"{}\", [], []);\n{}this.__transition(__compartment);\n{}return;",
-                    push_code, indent_str, target, indent_str, indent_str
-                )
+                format!("{}\n{}const __compartment = this.__prepareEnter(\"{}\", [], []);\n{}this.__transition(__compartment);", push_code, indent_str, target, indent_str)
             } else {
                 push_code
             }
@@ -92,8 +87,8 @@ pub(super) fn expand_stack_push(
             let push_code = format!("{}this._state_stack.add(this.__compartment);", indent_str);
             if !target.is_empty() {
                 format!(
-                    "{}\n{}this.__transition({}Compartment(\"{}\"));\n{}return;",
-                    push_code, indent_str, ctx.system_name, target, indent_str
+                    "{}\n{}this.__transition({}Compartment(\"{}\"));",
+                    push_code, indent_str, ctx.system_name, target
                 )
             } else {
                 push_code
@@ -128,8 +123,8 @@ pub(super) fn expand_stack_push(
             let push_code = format!("{}_state_stack.push_back(__compartment);", indent_str);
             if !target.is_empty() {
                 format!(
-                    "{}\n{}__transition(std::make_shared<{}Compartment>(\"{}\"));\n{}return;",
-                    push_code, indent_str, ctx.system_name, target, indent_str
+                    "{}\n{}__transition(std::make_shared<{}Compartment>(\"{}\"));",
+                    push_code, indent_str, ctx.system_name, target
                 )
             } else {
                 push_code
@@ -139,8 +134,8 @@ pub(super) fn expand_stack_push(
             let push_code = format!("{}_state_stack.add(__compartment);", indent_str);
             if !target.is_empty() {
                 format!(
-                    "{}\n{}__transition(new {}Compartment(\"{}\"));\n{}return;",
-                    push_code, indent_str, ctx.system_name, target, indent_str
+                    "{}\n{}__transition(new {}Compartment(\"{}\"));",
+                    push_code, indent_str, ctx.system_name, target
                 )
             } else {
                 push_code
@@ -150,8 +145,8 @@ pub(super) fn expand_stack_push(
             let push_code = format!("{}_state_stack.add(__compartment)", indent_str);
             if !target.is_empty() {
                 format!(
-                    "{}\n{}__transition({}Compartment(\"{}\"))\n{}return",
-                    push_code, indent_str, ctx.system_name, target, indent_str
+                    "{}\n{}__transition({}Compartment(\"{}\"))",
+                    push_code, indent_str, ctx.system_name, target
                 )
             } else {
                 push_code
@@ -161,8 +156,8 @@ pub(super) fn expand_stack_push(
             let push_code = format!("{}_state_stack.append(__compartment)", indent_str);
             if !target.is_empty() {
                 format!(
-                    "{}\n{}__transition({}Compartment(state: \"{}\"))\n{}return",
-                    push_code, indent_str, ctx.system_name, target, indent_str
+                    "{}\n{}__transition({}Compartment(state: \"{}\"))",
+                    push_code, indent_str, ctx.system_name, target
                 )
             } else {
                 push_code
@@ -175,8 +170,8 @@ pub(super) fn expand_stack_push(
             );
             if !target.is_empty() {
                 format!(
-                    "{}\n{}s.__transition(new{}Compartment(\"{}\"))\n{}return",
-                    push_code, indent_str, ctx.system_name, target, indent_str
+                    "{}\n{}s.__transition(new{}Compartment(\"{}\"))",
+                    push_code, indent_str, ctx.system_name, target
                 )
             } else {
                 push_code
@@ -186,8 +181,8 @@ pub(super) fn expand_stack_push(
             let push_code = format!("{}_state_stack.Add(__compartment);", indent_str);
             if !target.is_empty() {
                 format!(
-                    "{}\n{}__transition(new {}Compartment(\"{}\"));\n{}return;",
-                    push_code, indent_str, ctx.system_name, target, indent_str
+                    "{}\n{}__transition(new {}Compartment(\"{}\"));",
+                    push_code, indent_str, ctx.system_name, target
                 )
             } else {
                 push_code
@@ -200,8 +195,8 @@ pub(super) fn expand_stack_push(
             );
             if !target.is_empty() {
                 format!(
-                    "{}\n{}$this->__transition(new {}Compartment(\"{}\"));\n{}return;",
-                    push_code, indent_str, ctx.system_name, target, indent_str
+                    "{}\n{}$this->__transition(new {}Compartment(\"{}\"));",
+                    push_code, indent_str, ctx.system_name, target
                 )
             } else {
                 push_code
@@ -211,8 +206,8 @@ pub(super) fn expand_stack_push(
             let push_code = format!("{}@_state_stack.push(@__compartment)", indent_str);
             if !target.is_empty() {
                 format!(
-                    "{}\n{}__transition({}Compartment.new(\"{}\"))\n{}return",
-                    push_code, indent_str, ctx.system_name, target, indent_str
+                    "{}\n{}__transition({}Compartment.new(\"{}\"))",
+                    push_code, indent_str, ctx.system_name, target
                 )
             } else {
                 push_code
@@ -225,8 +220,8 @@ pub(super) fn expand_stack_push(
             );
             if !target.is_empty() {
                 format!(
-                    "{}\n{}self:__transition({}Compartment.new(\"{}\"))\n{}return",
-                    push_code, indent_str, ctx.system_name, target, indent_str
+                    "{}\n{}self:__transition({}Compartment.new(\"{}\"))",
+                    push_code, indent_str, ctx.system_name, target
                 )
             } else {
                 push_code
@@ -263,9 +258,21 @@ pub(super) fn expand_stack_push(
             }
         }
         TargetLanguage::Graphviz => unreachable!(),
-    }
+    };
+    // A bare `push$` (empty target) is not terminal — no return. A
+    // push-transition exits the handler like any other transition.
+    let terminator = if target.is_empty() {
+        ""
+    } else {
+        super::utility::transition_terminator(lang)
+    };
+    (body, terminator)
 }
 
+/// Expand a standalone `pop$` (discard the stack top) into `(body, terminator)`.
+/// This form is NOT a transition — it never exits the handler — so the
+/// terminator is always `""`. (Transitioning to the popped state is `-> pop$`,
+/// handled by `generate_pop_transition`.)
 pub(super) fn expand_stack_pop(
     body_bytes: &[u8],
     span: &RegionSpan,
@@ -273,13 +280,13 @@ pub(super) fn expand_stack_pop(
     lang: TargetLanguage,
     ctx: &HandlerContext,
     metadata: &SegmentMetadata,
-) -> String {
+) -> (String, &'static str) {
     let segment_text = String::from_utf8_lossy(&body_bytes[span.start..span.end]);
     let indent_str = " ".repeat(indent);
 
     // Standalone pop$ — pop the top of the stack and discard it.
     // No transition. For transitioning to the popped state, use -> pop$.
-    match lang {
+    let body = match lang {
         TargetLanguage::Python3 => format!("{}self._state_stack.pop()", indent_str),
         TargetLanguage::GDScript => format!("{}self._state_stack.pop_back()", indent_str),
         TargetLanguage::TypeScript => format!("{}this._state_stack.pop();", indent_str),
@@ -320,5 +327,7 @@ pub(super) fn expand_stack_pop(
                     )
         }
         TargetLanguage::Graphviz => unreachable!(),
-    }
+    };
+    // Standalone `pop$` is not terminal — it never exits the handler.
+    (body, "")
 }

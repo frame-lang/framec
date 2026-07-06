@@ -29,7 +29,7 @@ use super::super::codegen_utils::{
     cpp_map_type, csharp_map_type, go_map_type, java_map_type, kotlin_map_type, swift_map_type,
     HandlerContext,
 };
-use super::utility::{normalize_indentation, split_transition_return, strip_java_unreachable};
+use super::utility::{normalize_indentation, strip_java_unreachable};
 use crate::frame_c::compiler::native_region_scanner::{FrameSegmentKind, Region};
 use crate::frame_c::visitors::TargetLanguage;
 
@@ -398,10 +398,6 @@ pub(crate) fn emit_handler_body_via_statements(
                         metadata,
                     } = frame_regions[frame_idx]
                     {
-                        let expansion = super::generate_frame_expansion(
-                            body_bytes, seg_span, *kind, *indent, lang, ctx, metadata,
-                        );
-
                         // ── Transition control flow ──────────────────────
                         // Transition expansions end with `return` to exit the
                         // handler after the state change. But if a return-expr
@@ -467,7 +463,16 @@ pub(crate) fn emit_handler_body_via_statements(
                             }
                         }
                         if is_transition {
-                            let (body, return_kw) = split_transition_return(&expansion);
+                            // The control-flow emitter hands back the body and
+                            // its handler-exit terminator separately (#169), so
+                            // we can hoist a same-scope `@@:(expr)` between them
+                            // without suffix-probing the emitted text. `trim_end`
+                            // mirrors the trailing-whitespace trim the old
+                            // `split_transition_return` applied.
+                            let (raw_body, return_kw) = super::generate_frame_transition_parts(
+                                body_bytes, seg_span, *kind, *indent, lang, ctx, metadata,
+                            );
+                            let body = raw_body.trim_end();
                             // Multi-line expansion on same line as native code
                             // needs a line break first
                             if !out.is_empty() && !out.ends_with('\n') && body.contains('\n') {
@@ -543,6 +548,13 @@ pub(crate) fn emit_handler_body_via_statements(
                             }
                         } else {
                             // ── Non-transition expansion ─────────────────
+                            // (Control-flow kinds take the `is_transition` path
+                            // above via `generate_frame_transition_parts`; only
+                            // the remaining kinds are expanded to a plain string
+                            // here.)
+                            let expansion = super::generate_frame_expansion(
+                                body_bytes, seg_span, *kind, *indent, lang, ctx, metadata,
+                            );
                             if !out.is_empty() && !out.ends_with('\n') && expansion.contains('\n') {
                                 out.push('\n');
                             }
