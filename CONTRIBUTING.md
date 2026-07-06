@@ -17,6 +17,33 @@ cargo build
 ./scripts/install-hooks.sh   # enables pre-commit doc-sample validation
 ```
 
+### Build & install paths (policy)
+
+Two distinct install locations, so `framec --version` never confuses a local
+dev build with a release:
+
+| Kind | Install path | Version reported | How to build |
+|---|---|---|---|
+| **Official release** | `~/.frame/bin/framec` | 3-number workspace semver, e.g. `4.6.1` | `framec/tools/build-official.sh` |
+| **Local dev build** | `~/.frame/local/bin/framec` | 4-number `<last-release>.<seq>`, e.g. `4.6.0.3` | `framec/tools/build-local.sh` |
+
+The local version's **root is the last official release tag** (the version
+you're evolving *from*), so local builds sort **between** the last release and
+the next. The **4th number is a monotonic local build sequence** that
+auto-increments each `build-local.sh` run and **resets to 1** when a new release
+tag lands. The sequence is tracked in `~/.frame/local/.build_seq`.
+
+Mechanism: `framec --version` reads `env!("FRAME_VERSION")`, set by
+`framec/build.rs`. build.rs uses `FRAME_LOCAL_VERSION` when that env var is
+present (set by `build-local.sh` to `<root>.<seq>`), otherwise the workspace
+`CARGO_PKG_VERSION`. A plain `cargo build` is unaffected and reports the
+workspace semver.
+
+```bash
+bash framec/tools/build-local.sh      # → ~/.frame/local/bin/framec  (e.g. 4.6.0.3)
+bash framec/tools/build-official.sh   # → ~/.frame/bin/framec        (e.g. 4.6.1)
+```
+
 ### Running Tests
 
 ```bash
