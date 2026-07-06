@@ -1,0 +1,285 @@
+---
+source: framec/tests/dart_snapshots.rs
+expression: "compile_fixture(\"16_persist_class\", \"dart\")"
+---
+// ignore_for_file: unused_field, unused_element, unused_local_variable, non_constant_identifier_names, constant_identifier_names, library_private_types_in_public_api, prefer_final_fields, type=lint
+
+import 'dart:convert';
+
+class Vec {
+    double x, y;
+    Vec([this.x = 0.0, this.y = 0.0]);
+    Map<String, dynamic> toJson() => {'x': x, 'y': y};
+    factory Vec.fromJson(Map<String, dynamic> j) =>
+        Vec((j['x'] as num).toDouble(), (j['y'] as num).toDouble());
+}
+
+class BagFrameEvent {
+    late String _message;
+    late List<dynamic> _parameters;
+
+    BagFrameEvent(String message, List<dynamic> parameters) {
+        this._message = message;
+        this._parameters = parameters;
+    }
+}
+
+
+class BagFrameContext {
+    late BagFrameEvent event;
+    dynamic _return;
+    late Map<String, dynamic> _data;
+    late bool _transitioned;
+
+    BagFrameContext(BagFrameEvent event, dynamic default_return) {
+        this.event = event;
+        this._return = default_return;
+        this._data = <String, dynamic>{};
+        this._transitioned = false;
+    }
+}
+
+
+class BagCompartment {
+    late String state;
+    late List<dynamic> state_args;
+    late Map<String, dynamic> state_vars;
+    late List<dynamic> enter_args;
+    late List<dynamic> exit_args;
+    dynamic forward_event;
+    BagCompartment? parent_compartment;
+
+    BagCompartment(String state, [BagCompartment? parent_compartment = null]) {
+        this.state = state;
+        this.state_args = [];
+        this.state_vars = <String, dynamic>{};
+        this.enter_args = [];
+        this.exit_args = [];
+        this.forward_event = null;
+        this.parent_compartment = parent_compartment;
+    }
+
+    BagCompartment copy() {
+        final c = BagCompartment(this.state, this.parent_compartment);
+        c.state_args = List<dynamic>.from(this.state_args);
+        c.state_vars = Map<String, dynamic>.from(this.state_vars);
+        c.enter_args = List<dynamic>.from(this.enter_args);
+        c.exit_args = List<dynamic>.from(this.exit_args);
+        c.forward_event = this.forward_event;
+        return c;
+    }
+}
+
+
+class Bag {
+    late List<BagCompartment> _state_stack;
+    late BagCompartment __compartment;
+    BagCompartment? __next_compartment;
+    late List<BagFrameContext> _context_stack;
+    Vec v = Vec(0.0, 0.0);
+    List<Vec> pts = [];
+
+    Bag() {
+        this._state_stack = [];
+        this._context_stack = [];
+        this.__compartment = this.__prepareEnter("S", [], []);
+        this.__next_compartment = null;
+    }
+
+    void _frame_init() {
+        final __e = BagFrameEvent("\$>", __compartment.enter_args);
+        final __ctx = BagFrameContext(__e, null);
+        _context_stack.add(__ctx);
+        __kernel(__e);
+        _context_stack.removeLast();
+    }
+
+    factory Bag.create() {
+        final c = Bag();
+        c._frame_init();
+        return c;
+    }
+
+    Map<String, List<String>> hsm_chain() {
+        return {
+            "S": ["S"],
+        };
+    }
+    BagCompartment __prepareEnter(String leaf, List<dynamic> state_args, List<dynamic> enter_args) {
+        BagCompartment? comp = null;
+        for (final name in hsm_chain()[leaf]!) {
+            final new_comp = BagCompartment(name);
+            new_comp.state_args = List<dynamic>.from(state_args);
+            new_comp.enter_args = List<dynamic>.from(enter_args);
+            new_comp.parent_compartment = comp;
+            comp = new_comp;
+        }
+        return comp!;
+    }
+
+    void __prepareExit(List<dynamic> exit_args) {
+        BagCompartment? comp = __compartment;
+        while (comp != null) {
+            comp.exit_args = List<dynamic>.from(exit_args);
+            comp = comp.parent_compartment;
+        }
+    }
+
+    void __kernel(BagFrameEvent __e) {
+        // Route event to current state.
+        __router(__e);
+        // Drain any transitions queued by the handler.
+        while (__next_compartment != null) {
+            final next_compartment = __next_compartment!;
+            __next_compartment = null;
+            // Exit the current (leaf) state.
+            final exit_event = BagFrameEvent("<\$", __compartment.exit_args);
+            __router(exit_event);
+            // Switch to the new compartment.
+            __compartment = next_compartment;
+            // Three-branch forward-event handling.
+            final forward_event = next_compartment.forward_event;
+            next_compartment.forward_event = null;
+            if (forward_event == null) {
+                // No forwarded event — synthesize a fresh $>.
+                final enter_event = BagFrameEvent("\$>", __compartment.enter_args);
+                __router(enter_event);
+            } else if (forward_event._message == "\$>") {
+                // Forwarded event IS $> — dispatch directly so the
+                // destination's $> handler receives the caller's payload.
+                __router(forward_event);
+            } else {
+                // Forwarded event is not $> — initialize the destination
+                // with a fresh $>, then dispatch the forward.
+                final enter_event = BagFrameEvent("\$>", __compartment.enter_args);
+                __router(enter_event);
+                __router(forward_event);
+            }
+            for (final ctx in _context_stack) {
+                ctx._transitioned = true;
+            }
+        }
+    }
+
+    void __router(BagFrameEvent __e) {
+        switch (__compartment.state) {
+            case "S":
+                _state_S(__e, __compartment);
+                break;
+        }
+    }
+
+    void __transition(BagCompartment next_compartment) {
+        __next_compartment = next_compartment;
+    }
+
+    void setv(double x, double y) {
+        final __e = BagFrameEvent("setv", [x, y]);
+        final __ctx = BagFrameContext(__e, null);
+        _context_stack.add(__ctx);
+        try {
+            __kernel(__e);
+        } finally {
+            _context_stack.removeLast();
+        }
+    }
+
+    void add(double x, double y) {
+        final __e = BagFrameEvent("add", [x, y]);
+        final __ctx = BagFrameContext(__e, null);
+        _context_stack.add(__ctx);
+        try {
+            __kernel(__e);
+        } finally {
+            _context_stack.removeLast();
+        }
+    }
+
+    int count() {
+        final __e = BagFrameEvent("count", []);
+        final __ctx = BagFrameContext(__e, 0);
+        _context_stack.add(__ctx);
+        try {
+            __kernel(__e);
+            return _context_stack.removeLast()._return;
+        } catch (__frame_err) {
+            _context_stack.removeLast();
+            rethrow;
+        }
+    }
+
+    void _state_S(BagFrameEvent __e, BagCompartment compartment) {
+        if (__e._message == "add") {
+            this._s_S_hdl_user_add(__e, compartment);
+            return;
+        }
+        if (__e._message == "count") {
+            this._s_S_hdl_user_count(__e, compartment);
+            return;
+        }
+        if (__e._message == "setv") {
+            this._s_S_hdl_user_setv(__e, compartment);
+            return;
+        }
+    }
+
+    void _s_S_hdl_user_add(BagFrameEvent __e, BagCompartment compartment) {
+        final x = __e._parameters[0] as double;
+        final y = __e._parameters[1] as double;
+        this.pts.add(Vec(x, y));
+    }
+
+    void _s_S_hdl_user_count(BagFrameEvent __e, BagCompartment compartment) {
+        this._context_stack[this._context_stack.length - 1]._return = this.pts.length;
+    }
+
+    void _s_S_hdl_user_setv(BagFrameEvent __e, BagCompartment compartment) {
+        final x = __e._parameters[0] as double;
+        final y = __e._parameters[1] as double;
+        this.v = Vec(x, y);
+    }
+
+    String save_state() {
+        if (_context_stack.isNotEmpty) throw Exception("E700: system not quiescent");
+        Map<String, dynamic>? serializeComp(BagCompartment? comp) {
+            if (comp == null) return null;
+            return {
+                'state': comp.state,
+                'state_args': List<dynamic>.from(comp.state_args),
+                'state_vars': Map<String, dynamic>.from(comp.state_vars),
+                'enter_args': List<dynamic>.from(comp.enter_args),
+                'exit_args': List<dynamic>.from(comp.exit_args),
+                'forward_event': comp.forward_event,
+                'parent_compartment': serializeComp(comp.parent_compartment),
+            };
+        }
+        return jsonEncode({
+            '_compartment': serializeComp(this.__compartment),
+            '_state_stack': this._state_stack.map((c) => serializeComp(c)).toList(),
+            'v': this.v,
+            'pts': this.pts,
+        });
+    }
+
+    void restore_state(String json) {
+        BagCompartment? deserializeComp(dynamic data) {
+            if (data == null || data is! Map) return null;
+            final comp = BagCompartment(data['state'] as String);
+            comp.state_vars = Map<String, dynamic>.from(data['state_vars'] ?? {});
+            final __saRaw = (data['state_args'] as List?) ?? <dynamic>[];
+            final __eaRaw = (data['enter_args'] as List?) ?? <dynamic>[];
+            comp.exit_args = List<dynamic>.from(data['exit_args'] ?? <dynamic>[]);
+            comp.state_args.addAll(__saRaw);
+            comp.enter_args.addAll(__eaRaw);
+            comp.forward_event = data['forward_event'];
+            comp.parent_compartment = deserializeComp(data['parent_compartment']);
+            return comp;
+        }
+        final _parsed = jsonDecode(json) as Map<String, dynamic>;
+        this.__compartment = deserializeComp(_parsed['_compartment'])!;
+        this.__next_compartment = null;
+        this._state_stack = (_parsed['_state_stack'] as List?)?.map((c) => deserializeComp(c)!).toList() ?? <BagCompartment>[];
+        this.v = Vec.fromJson(_parsed['v'] as Map<String, dynamic>);
+        this.pts = <Vec>[for (var __e0 in (_parsed['pts'] as List)) Vec.fromJson(__e0 as Map<String, dynamic>)];
+    }
+}

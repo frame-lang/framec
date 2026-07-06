@@ -18,12 +18,16 @@
 //! `Map<...,...>` — and treats every other declaration as
 //! `Primitive(name)`. The downstream cast emitter handles the
 //! per-primitive translation (`str` → `String`, `float` → `double`,
-//! `num.toInt()` for `int`, etc.); we never add a per-user-type
-//! branch here.
+//! `num.toInt()` for `int`, etc.), and reconstructs any non-primitive
+//! leaf through the uniform `<Type>.fromJson(map)` reviver convention
+//! (#176) — symmetric with the `toJson` the save side relies on. We
+//! never add a per-user-*type* branch: every user class takes the same
+//! `fromJson` path, exactly as scalars all take the same `as` path.
 
 /// Dart type-tree node. Two structural shapes plus a primitive leaf.
 /// Anything that doesn't pattern-match `List<...>` / `Map<...,...>`
-/// becomes a `Primitive(name)` and is emitted as `value as <name>`.
+/// becomes a `Primitive(name)`: a scalar leaf is emitted as
+/// `value as <name>`, and a user class as `<name>.fromJson(value ...)`.
 pub(in crate::frame_c::compiler::codegen::interface_gen) enum DartTypeNode {
     Primitive(String),
     List(Box<DartTypeNode>),
@@ -106,7 +110,15 @@ fn dart_conv_expr_at(t: &DartTypeNode, input: &str, depth: usize) -> String {
             "String" => format!("{input} as String"),
             "bool" => format!("{input} as bool"),
             "dynamic" | "Object" | "Object?" => input.to_string(),
-            other => format!("{input} as {other}"),
+            // A user class: reconstruct via its `fromJson` factory (#176).
+            // `jsonDecode` yields a `Map<String, dynamic>` for a class value,
+            // never the typed object, so a bare `{input} as {other}` cast throws
+            // at runtime. The save side already relies on the symmetric
+            // `toJson` (via `jsonEncode`), and every other typed backend
+            // reconstructs user types on restore (serde / Codable / Jackson /
+            // nlohmann `get<T>` / …); Dart needs the explicit reviver. This is a
+            // uniform class-case convention, not a per-user-type branch.
+            other => format!("{other}.fromJson({input} as Map<String, dynamic>)"),
         },
         DartTypeNode::List(inner) => {
             let var = format!("__e{}", depth);

@@ -79,3 +79,12 @@ fn lifecycle_args() {
 fn async_attribute() {
     insta::assert_snapshot!(compile_fixture("14_async_attribute", "dart"));
 }
+
+/// #176 — `@@[persist]` restore of a user-class domain var must reconstruct via
+/// the class's `fromJson` factory (`Vec.fromJson(map)`), not blind-cast the
+/// decoded JSON Map (`_parsed['v'] as Vec`, which throws at runtime). Also
+/// covers the `List<class>` comprehension path (`patrol: List<Vector2>`).
+#[test]
+fn persist_class() {
+    insta::assert_snapshot!(compile_fixture("16_persist_class", "dart"));
+}
