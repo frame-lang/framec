@@ -12,6 +12,45 @@ use crate::frame_c::compiler::frame_ast::SystemAst;
 
 use super::super::{child_persist_names, extract_tagged_system_name, nested_uses_new_contract};
 
+/// Whether a mapped Swift type is a Foundation JSON-native value that
+/// `JSONSerialization` accepts directly — a numeric/`Bool`/`String` scalar, or a
+/// collection (`[T]`, `[K: V]`, `T?`) built only from such. Anything else (a user
+/// `Codable` type, or a collection carrying one) must be routed through
+/// `JSONEncoder` on save (#178), since a raw Swift value bridges to `__SwiftValue`
+/// and throws. Errs toward `false` (encode) on any shape it doesn't recognize,
+/// which is always safe — `JSONEncoder` handles it too.
+fn is_swift_json_native(t: &str) -> bool {
+    let t = t.trim();
+    if let Some(inner) = t.strip_suffix('?') {
+        return is_swift_json_native(inner);
+    }
+    if let Some(inner) = t.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+        // `[K: V]` — JSON object keys are strings, so only the value type
+        // determines JSON-nativeness; `[T]` — the element type does.
+        return match inner.find(':') {
+            Some(colon) => is_swift_json_native(&inner[colon + 1..]),
+            None => is_swift_json_native(inner),
+        };
+    }
+    matches!(
+        t,
+        "Int"
+            | "Int8"
+            | "Int16"
+            | "Int32"
+            | "Int64"
+            | "UInt"
+            | "UInt8"
+            | "UInt16"
+            | "UInt32"
+            | "UInt64"
+            | "Double"
+            | "Float"
+            | "Bool"
+            | "String"
+    )
+}
+
 pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     system: &SystemAst,
 ) -> Vec<CodegenNode> {
@@ -116,7 +155,28 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
                 var.name, child_save
             ));
         } else {
-            save_body.push_str(&format!("j[\"{}\"] = {}\n", var.name, var.name));
+            let swift_type = match &var.var_type {
+                crate::frame_c::compiler::frame_ast::Type::Custom(t) => swift_map_type(t),
+                _ => "Any".to_string(),
+            };
+            if swift_type == "Any" || is_swift_json_native(&swift_type) {
+                // A Foundation JSON-native value (scalar, or a collection built
+                // only from such) bridges into the dictionary directly, exactly
+                // as before — `JSONSerialization` accepts it.
+                save_body.push_str(&format!("j[\"{}\"] = {}\n", var.name, var.name));
+            } else {
+                // #178: the field carries a user `Codable` type that
+                // `JSONSerialization` cannot serialize directly (a Swift struct
+                // bridges to `__SwiftValue` and throws at save). Encode it through
+                // `JSONEncoder` first — symmetric with the `JSONDecoder` restore
+                // path below — and splice the resulting Foundation object into the
+                // dictionary. The single-element array wrap mirrors restore's `[T]`
+                // decode and sidesteps `JSONEncoder` rejecting a top-level fragment.
+                save_body.push_str(&format!(
+                    "if let __enc_{name} = try? JSONEncoder().encode([{name}]), let __arr_{name} = try? JSONSerialization.jsonObject(with: __enc_{name}) as? [Any], let __first_{name} = __arr_{name}.first {{ j[\"{name}\"] = __first_{name} }}\n",
+                    name = var.name
+                ));
+            }
         }
     }
     save_body.push_str("let data = try! JSONSerialization.data(withJSONObject: j)\n");

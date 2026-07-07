@@ -1,0 +1,255 @@
+---
+source: framec/tests/swift_snapshots.rs
+expression: "compile_fixture(\"16_persist_class\", \"swift\")"
+---
+import Foundation
+
+import Foundation
+
+public struct Vec2: Codable {
+    public var x: Double = 0.0
+    public var y: Double = 0.0
+    public init() {}
+    public init(_ x: Double, _ y: Double) { self.x = x; self.y = y }
+    public func magSq() -> Double { return x * x + y * y }
+}
+
+class BagFrameEvent {
+    var _message: String
+    var _parameters: [Any]
+
+    init(message: String, parameters: [Any] = []) {
+        self._message = message
+        self._parameters = parameters
+    }
+}
+
+class BagFrameContext {
+    var _event: BagFrameEvent
+    var _return: Any?
+    var _data: [String: Any] = [:]
+    var _transitioned: Bool = false
+
+    init(event: BagFrameEvent, defaultReturn: Any? = nil) {
+        self._event = event
+        self._return = defaultReturn
+    }
+}
+
+class BagCompartment {
+    var state: String
+    var state_args: [Any] = []
+    var state_vars: [String: Any] = [:]
+    var enter_args: [Any] = []
+    var exit_args: [Any] = []
+    var forward_event: BagFrameEvent?
+    var parent_compartment: BagCompartment?
+
+    init(state: String) {
+        self.state = state
+    }
+
+    func copy() -> BagCompartment {
+        let c = BagCompartment(state: self.state)
+        c.state_args = self.state_args
+        c.state_vars = self.state_vars
+        c.enter_args = self.enter_args
+        c.exit_args = self.exit_args
+        c.forward_event = self.forward_event
+        c.parent_compartment = self.parent_compartment
+        return c
+    }
+}
+
+public class Bag {
+    private var _state_stack: [BagCompartment] = []
+    private var __compartment: BagCompartment
+    private var __next_compartment: BagCompartment? = nil
+    private var _context_stack: [BagFrameContext] = []
+    public var v: Vec2 = Vec2(0.0, 0.0)
+
+    init() {
+        _state_stack = []
+        _context_stack = []
+        self.__compartment = Bag.__prepareEnter("S", [], [])
+        self.__next_compartment = nil
+    }
+
+    func __frame_init() {
+        let __e = BagFrameEvent(message: "$>", parameters: __compartment.enter_args)
+        let __ctx = BagFrameContext(event: __e)
+        _context_stack.append(__ctx)
+        __kernel(__e)
+        _context_stack.removeLast()
+    }
+
+    static func __create() -> Bag {
+        let c = Bag()
+        c.__frame_init()
+        return c
+    }
+
+    private static func hsm_chain() -> [String: [String]] {
+        return [
+            "S": ["S"],
+        ]
+    }
+    private static func __prepareEnter(_ leaf: String, _ state_args: [Any], _ enter_args: [Any]) -> BagCompartment {
+        var comp: BagCompartment? = nil
+        for name in Bag.hsm_chain()[leaf]! {
+            let new_comp = BagCompartment(state: name)
+            new_comp.state_args = state_args
+            new_comp.enter_args = enter_args
+            new_comp.parent_compartment = comp
+            comp = new_comp
+        }
+        return comp!
+    }
+    private func __prepareExit(_ exit_args: [Any]) {
+        var comp: BagCompartment? = __compartment
+        while comp != nil {
+            comp!.exit_args = exit_args
+            comp = comp!.parent_compartment
+        }
+    }
+
+    private func __kernel(_ __e: BagFrameEvent) {
+        // Route event to current state.
+        __router(__e)
+        // Drain any transitions queued by the handler.
+        while __next_compartment != nil {
+            let next_compartment: BagCompartment = __next_compartment!
+            __next_compartment = nil
+            // Exit the current (leaf) state.
+            let exit_event = BagFrameEvent(message: "<$", parameters: __compartment.exit_args)
+            __router(exit_event)
+            // Switch to the new compartment.
+            __compartment = next_compartment
+            // Three-branch forward-event handling.
+            let forward_event: BagFrameEvent? = next_compartment.forward_event
+            next_compartment.forward_event = nil
+            if forward_event == nil {
+                // No forwarded event — synthesize a fresh $>.
+                let enter_event = BagFrameEvent(message: "$>", parameters: __compartment.enter_args)
+                __router(enter_event)
+            } else if forward_event!._message == "$>" {
+                // Forwarded event IS $> — dispatch directly so the
+                // destination's $> handler receives the caller's payload.
+                __router(forward_event!)
+            } else {
+                // Forwarded event is not $> — initialize the destination
+                // with a fresh $>, then dispatch the forward.
+                let enter_event = BagFrameEvent(message: "$>", parameters: __compartment.enter_args)
+                __router(enter_event)
+                __router(forward_event!)
+            }
+            for ctx in _context_stack {
+                ctx._transitioned = true
+            }
+        }
+    }
+
+    private func __router(_ __e: BagFrameEvent) {
+        if __compartment.state == "S" {
+            _state_S(__e, __compartment)
+        }
+    }
+
+    private func __transition(_ next: BagCompartment) {
+        __next_compartment = next
+    }
+
+    public func setv(_ x: Double, _ y: Double) {
+        let __e = BagFrameEvent(message: "setv", parameters: [x, y])
+        let __ctx = BagFrameContext(event: __e)
+        _context_stack.append(__ctx)
+        defer { _context_stack.removeLast() }
+        __kernel(_context_stack[_context_stack.count - 1]._event)
+    }
+
+    public func getx() -> Double {
+        let __e = BagFrameEvent(message: "getx", parameters: [])
+        let __ctx = BagFrameContext(event: __e, defaultReturn: 0.0)
+        _context_stack.append(__ctx)
+        defer { _context_stack.removeLast() }
+        __kernel(_context_stack[_context_stack.count - 1]._event)
+        let __result = _context_stack[_context_stack.count - 1]._return as! Double
+        return __result
+    }
+
+    private func _state_S(_ __e: BagFrameEvent, _ compartment: BagCompartment) {
+        if __e._message == "getx" {
+            self._s_S_hdl_user_getx(__e, compartment)
+            return
+        }
+        if __e._message == "setv" {
+            self._s_S_hdl_user_setv(__e, compartment)
+            return
+        }
+    }
+
+    private func _s_S_hdl_user_getx(_ __e: BagFrameEvent, _ compartment: BagCompartment) {
+        _context_stack[_context_stack.count - 1]._return = Double(self.v.x)
+    }
+
+    private func _s_S_hdl_user_setv(_ __e: BagFrameEvent, _ compartment: BagCompartment) {
+        let x = __e._parameters[0] as! Double
+        let y = __e._parameters[1] as! Double
+        self.v = Vec2(x, y)
+    }
+
+    private func __serComp(_ comp: BagCompartment?) -> [String: Any]? {
+        if comp == nil { return nil }
+        var j: [String: Any] = [:]
+        j["state"] = comp!.state
+        var sv: [String: Any] = [:]
+        for (k, v) in comp!.state_vars { sv[k] = v }
+        j["state_vars"] = sv
+        j["state_args"] = comp!.state_args
+        j["enter_args"] = comp!.enter_args
+        j["parent"] = __serComp(comp!.parent_compartment) as Any
+        return j
+    }
+
+    private func __deserComp(_ dict: [String: Any]?) -> BagCompartment? {
+        guard let d = dict else { return nil }
+        guard let state = d["state"] as? String else { return nil }
+        let c = BagCompartment(state: state)
+        if let sv = d["state_vars"] as? [String: Any] {
+            for (k, v) in sv { c.state_vars[k] = v }
+        }
+        if let sa = d["state_args"] as? [Any] {
+            c.state_args = sa
+        }
+        if let ea = d["enter_args"] as? [Any] {
+            c.enter_args = ea
+        }
+        if let parent = d["parent"] as? [String: Any] {
+            c.parent_compartment = __deserComp(parent)
+        }
+        return c
+    }
+
+    public func save_state() -> String {
+        if !_context_stack.isEmpty { fatalError("E700: system not quiescent") }
+        var j: [String: Any] = [:]
+        j["_compartment"] = __serComp(__compartment) as Any
+        var stack: [[String: Any]] = []
+        for c in _state_stack { if let s = __serComp(c) { stack.append(s) } }
+        j["_state_stack"] = stack
+        if let __enc_v = try? JSONEncoder().encode([v]), let __arr_v = try? JSONSerialization.jsonObject(with: __enc_v) as? [Any], let __first_v = __arr_v.first { j["v"] = __first_v }
+        let data = try! JSONSerialization.data(withJSONObject: j)
+        return String(data: data, encoding: .utf8)!
+    }
+
+    public func restore_state(_ json: String) {
+        let data = json.data(using: .utf8)!
+        let _parsed = try! JSONSerialization.jsonObject(with: data) as! [String: Any]
+        self.__compartment = self.__deserComp(_parsed["_compartment"] as? [String: Any])!
+        if let stack = _parsed["_state_stack"] as? [[String: Any]] {
+            self._state_stack = []
+            for sc in stack { if let c = self.__deserComp(sc) { self._state_stack.append(c) } }
+        }
+        if let __raw = _parsed["v"], let __data = try? JSONSerialization.data(withJSONObject: [__raw]), let __arr = try? JSONDecoder().decode([Vec2].self, from: __data), let __v = __arr.first { self.v = __v }
+    }
+}

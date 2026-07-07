@@ -88,3 +88,13 @@ fn async_attribute() {
 fn keyword_ident() {
     insta::assert_snapshot!(compile_fixture("15_keyword_ident", "swift"));
 }
+
+/// #178 — `@@[persist]` save of a user `Codable`-typed domain field must encode
+/// it through `JSONEncoder` (symmetric with the `JSONDecoder` restore), not drop
+/// the raw struct into a `[String: Any]` for `JSONSerialization` (which throws
+/// `Invalid type in JSON write (__SwiftValue)` at runtime). Scalar fields keep
+/// the raw `j[x] = x` fast-path — golden coverage of both branches.
+#[test]
+fn persist_class() {
+    insta::assert_snapshot!(compile_fixture("16_persist_class", "swift"));
+}
