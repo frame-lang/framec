@@ -182,10 +182,11 @@ shape is specified by [RFC-0017](rfcs/rfc-0017.md). See [RFC-0015](rfcs/rfc-0015
 
 The **foundational requirement** of the [persist contract](#persist-contract):
 a [save](#save) immediately followed by a [restore](#restore) reproduces a
-system's [domain](#domain) state *exactly* — for any value, including instances
-of user-defined types and graphs of them — identically on every target that
-supports [`@@[persist]`](#persisttype), with no silent lossiness and no
-per-target surprise. It is a *fidelity* requirement; the additional requirements
+system's [domain](#domain) state *exactly* — for any *tree-shaped* value with a
+reflectable field map (a value and its owned sub-values, including instances of
+user-defined types) — identically across every target on which the program's
+values are reconstructable, with no per-target surprise. It is a *fidelity*
+requirement; the additional requirements
 a persistence feature eventually wants — a security posture for untrusted
 snapshots ([closed-world reconstruction](#closed-world-reconstruction)), a
 compile-time guarantee, coverage of cyclic / field-map-less values, an owned
@@ -352,8 +353,9 @@ the [`@@[persist(<type>)]`](#persisttype) entry), `@@[save(<name>)]` and
 `@@[load(<name>)]` name the two operations, and framec generates both bodies.
 [Load](#load) bypasses [construction](#construction). Domain fields tagged
 [`@@[no_persist]`](#no_persist) are excluded from the blob. Restore is
-[faithful](#faithful-restore): it reproduces any domain value exactly, including
-user-typed and nested values. See
+[faithful](#faithful-restore): it reproduces a program's persisted values exactly
+— tree-shaped user-typed and nested values — identically on every target that can
+reconstruct them. See
 [language reference § Persistence](frame_language.md#persistence),
 [RFC-0012](rfcs/rfc-0012.md), [RFC-0015](rfcs/rfc-0015.md), and
 [RFC-0053](rfcs/rfc-0053.md).
