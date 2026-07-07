@@ -64,6 +64,21 @@ without the gate. The casing is the only surface external callers and
 [composition](#composed-system) touch. Introduced in
 [RFC-0043](rfcs/rfc-0043.md). See [language reference § Async](frame_language.md#async).
 
+### closed-world reconstruction
+
+The security posture of [faithful restore](#faithful-restore): on
+[restore](#restore), a snapshot's type identity is resolved **only** against
+types defined in the generated program's own compilation unit (its own module /
+namespace / file, including framec's runtime types and the user's in-source
+types) — never against the ambient global environment and never an imported or
+library type — and an instance is rebuilt **without invoking its constructor**
+(fields are set directly). A corrupt or hostile snapshot can therefore allocate
+one of the program's *own* persistable types with attacker-chosen field values,
+but cannot execute arbitrary code, import a module, or name a type the program
+does not itself define. A deliberate, bounded relaxation of the earlier property
+that restore instantiates nothing a snapshot names — categorically narrower than
+a code-executing serializer. See [RFC-0053](rfcs/rfc-0053.md).
+
 ### compartment
 
 The runtime object holding everything specific to one *occupancy* of a
@@ -161,6 +176,19 @@ initializers / [state-args](#state-args) / [enter-args](#enter-args)), runs the
 [start state](#start-state)'s `$Start(...)` body and `$>` handler, and returns
 the initialized instance. Named with `@@[create(<name>)]`; its per-backend call
 shape is specified by [RFC-0017](rfcs/rfc-0017.md). See [RFC-0015](rfcs/rfc-0015.md).
+
+### faithful restore
+
+The guarantee of the [persist contract](#persist-contract) that a
+[save](#save) immediately followed by a [restore](#restore) reproduces a
+system's [domain](#domain) state *exactly* — for any value, including instances
+of user-defined types and arbitrarily nested graphs of them — with no silent
+lossiness and no per-target surprise. It is the default and only behavior: a
+target that cannot meet it for a given program fails at compile time rather than
+at runtime or by restoring a type-erased shape. Achieved by
+[reflection-driven typed restore](#reflection-driven-typed-restore) under the
+[closed-world reconstruction](#closed-world-reconstruction) posture. See
+[RFC-0053](rfcs/rfc-0053.md).
 
 ### forward
 
@@ -319,9 +347,12 @@ The set of rules and generated code that makes a [system](#system) serializable:
 the [`@@[persist(<type>)]`](#persisttype) entry), `@@[save(<name>)]` and
 `@@[load(<name>)]` name the two operations, and framec generates both bodies.
 [Load](#load) bypasses [construction](#construction). Domain fields tagged
-[`@@[no_persist]`](#no_persist) are excluded from the blob. See
+[`@@[no_persist]`](#no_persist) are excluded from the blob. Restore is
+[faithful](#faithful-restore): it reproduces any domain value exactly, including
+user-typed and nested values. See
 [language reference § Persistence](frame_language.md#persistence),
-[RFC-0012](rfcs/rfc-0012.md), and [RFC-0015](rfcs/rfc-0015.md).
+[RFC-0012](rfcs/rfc-0012.md), [RFC-0015](rfcs/rfc-0015.md), and
+[RFC-0053](rfcs/rfc-0053.md).
 
 ### push / pop
 
@@ -331,6 +362,19 @@ transitions to a new one; `-> pop$` discards the current compartment and resumes
 the one on top of the stack. The mechanism behind modal sub-flows. See
 [language reference § Stack Push](frame_language.md#stack-push--push) and
 [§ Stack Pop](frame_language.md#stack-pop--pop).
+
+### reflection-driven typed restore
+
+The mechanism that delivers [faithful restore](#faithful-restore) on targets
+whose serialization library does not reconstruct user types from a schema. On
+[save](#save), the generated code reads each non-native value's *type identity*
+and *fields* from the live object using the target's runtime reflection, and
+writes the type identity into the snapshot alongside the fields; on
+[restore](#restore) it reads the type identity, resolves it under
+[closed-world reconstruction](#closed-world-reconstruction), and rebuilds the
+instance. It is a single generic pass — it introspects whatever object it is
+given and contains no branch per user type — so it preserves the principle that
+framec emits no per-user-type persistence code. See [RFC-0053](rfcs/rfc-0053.md).
 
 ### restore
 

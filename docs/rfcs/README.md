@@ -67,6 +67,9 @@ numbers are not re-used.
 | [0048](rfc-0048.md) | Self-describing argument marshalling for type-blind push sites | Accepted; implemented for C (#83) | builds on [0020](rfc-0020.md), [0008](rfc-0008.md) |
 | [0049](rfc-0049.md) | Exception philosophy — errors vs. queries, cross-language fallback | Accepted | builds on [0043](rfc-0043.md), [0044](rfc-0044.md) |
 | [0050](rfc-0050.md) | Frame statement syntax — assignment, call, `if/else`, expressions, comments | Draft | precursor to [0042](rfc-0042.md); strictly additive to existing Frame statement vocabulary |
+| [0051](rfc-0051.md) | Structured handler-body lowering for transforming backends | Draft | — |
+| [0052](rfc-0052.md) | Maximal per-language coverage fixtures + attribute affinity | Draft | — |
+| [0053](rfc-0053.md) | Faithful persistence — reflection-driven typed restore | Draft | builds on [0012](rfc-0012.md), [0016.1](rfc-0016-1.md), [0049](rfc-0049.md); first instance #174 (Python), precedent #176 (Dart) |
 
 ## Other documents in this directory
 
