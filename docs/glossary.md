@@ -66,18 +66,19 @@ without the gate. The casing is the only surface external callers and
 
 ### closed-world reconstruction
 
-The security posture of [faithful restore](#faithful-restore): on
-[restore](#restore), a snapshot's type identity is resolved **only** against
-types defined in the generated program's own compilation unit (its own module /
-namespace / file, including framec's runtime types and the user's in-source
-types) — never against the ambient global environment and never an imported or
-library type — and an instance is rebuilt **without invoking its constructor**
-(fields are set directly). A corrupt or hostile snapshot can therefore allocate
-one of the program's *own* persistable types with attacker-chosen field values,
-but cannot execute arbitrary code, import a module, or name a type the program
-does not itself define. A deliberate, bounded relaxation of the earlier property
-that restore instantiates nothing a snapshot names — categorically narrower than
-a code-executing serializer. See [RFC-0053](rfcs/rfc-0053.md).
+The preferred *direction* for the untrusted-snapshot security requirement that
+layers on top of [faithful restore](#faithful-restore) — a deferred requirement,
+not yet normative. Under it, on [restore](#restore) a snapshot's type identity is
+resolved **only** against types the program itself defines (via an explicit,
+identity-checked allow-set built from its own type definitions — not a name
+lookup against a module namespace, which would readmit imports), and an instance
+is rebuilt **without invoking its constructor** (fields are set directly). A
+corrupt or hostile snapshot could then allocate one of the program's *own* types
+with attacker-chosen field values, but could not execute arbitrary code, import a
+module, or name a type the program does not itself define — a bounded relaxation
+of the earlier property that restore instantiates nothing a snapshot names,
+categorically narrower than a code-executing serializer. The concrete per-target
+enforcement is an open question. See [RFC-0053](rfcs/rfc-0053.md).
 
 ### compartment
 
@@ -179,16 +180,19 @@ shape is specified by [RFC-0017](rfcs/rfc-0017.md). See [RFC-0015](rfcs/rfc-0015
 
 ### faithful restore
 
-The guarantee of the [persist contract](#persist-contract) that a
-[save](#save) immediately followed by a [restore](#restore) reproduces a
+The **foundational requirement** of the [persist contract](#persist-contract):
+a [save](#save) immediately followed by a [restore](#restore) reproduces a
 system's [domain](#domain) state *exactly* — for any value, including instances
-of user-defined types and arbitrarily nested graphs of them — with no silent
-lossiness and no per-target surprise. It is the default and only behavior: a
-target that cannot meet it for a given program fails at compile time rather than
-at runtime or by restoring a type-erased shape. Achieved by
-[reflection-driven typed restore](#reflection-driven-typed-restore) under the
-[closed-world reconstruction](#closed-world-reconstruction) posture. See
-[RFC-0053](rfcs/rfc-0053.md).
+of user-defined types and graphs of them — identically on every target that
+supports [`@@[persist]`](#persisttype), with no silent lossiness and no
+per-target surprise. It is a *fidelity* requirement; the additional requirements
+a persistence feature eventually wants — a security posture for untrusted
+snapshots ([closed-world reconstruction](#closed-world-reconstruction)), a
+compile-time guarantee, coverage of cyclic / field-map-less values, an owned
+wire format — are layered on top deliberately, not part of the foundation.
+Reflective dynamic targets reach it via
+[reflection-driven typed restore](#reflection-driven-typed-restore); statically
+typed targets via their schema deserializer. See [RFC-0053](rfcs/rfc-0053.md).
 
 ### forward
 
@@ -365,16 +369,20 @@ the one on top of the stack. The mechanism behind modal sub-flows. See
 
 ### reflection-driven typed restore
 
-The mechanism that delivers [faithful restore](#faithful-restore) on targets
-whose serialization library does not reconstruct user types from a schema. On
-[save](#save), the generated code reads each non-native value's *type identity*
-and *fields* from the live object using the target's runtime reflection, and
-writes the type identity into the snapshot alongside the fields; on
-[restore](#restore) it reads the type identity, resolves it under
-[closed-world reconstruction](#closed-world-reconstruction), and rebuilds the
-instance. It is a single generic pass — it introspects whatever object it is
-given and contains no branch per user type — so it preserves the principle that
-framec emits no per-user-type persistence code. See [RFC-0053](rfcs/rfc-0053.md).
+One of the *routes* to [faithful restore](#faithful-restore), for reflective
+dynamic targets (Python, JavaScript, Ruby) whose serialization library does not
+reconstruct user types from a schema. On [save](#save), the generated code reads
+each non-native value's *type identity* and *fields* from the live object using
+the target's runtime reflection, and writes the type identity into the snapshot
+alongside the fields; on [restore](#restore) it reads the type identity, resolves
+it, and rebuilds the instance. It is a single generic pass — it introspects
+whatever object it is given and contains no branch per user type — so it
+preserves the principle that framec emits no per-user-type persistence code. A
+statically typed target that carries the type at codegen instead (e.g. Dart's
+`fromJson` reviver) reaches faithful restore by a different route. When the
+security layer applies, resolution is bounded by
+[closed-world reconstruction](#closed-world-reconstruction). See
+[RFC-0053](rfcs/rfc-0053.md).
 
 ### restore
 
