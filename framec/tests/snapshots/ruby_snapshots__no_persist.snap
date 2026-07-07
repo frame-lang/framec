@@ -1,6 +1,5 @@
 ---
 source: framec/tests/ruby_snapshots.rs
-assertion_line: 89
 expression: "compile_fixture(\"12_no_persist\", \"ruby\")"
 ---
 class NoPersistFrameEvent
@@ -264,6 +263,59 @@ class NoPersist
         c
     end
 
+    def self._frame_persist_encode(o)
+        case o
+        when nil, true, false, Integer, Float, String
+          o
+        when Array
+          o.map { |e| _frame_persist_encode(e) }
+        when Hash
+          o.each_with_object({}) { |(k, v), h| h[k] = _frame_persist_encode(v) }
+        else
+          h = { "__frame_type__" => o.class.name }
+          o.instance_variables.each { |iv| h[iv.to_s.delete_prefix("@")] = _frame_persist_encode(o.instance_variable_get(iv)) }
+          h
+        end
+    end
+
+    def self._frame_persist_registry
+        excluded = ["NoPersist", "NoPersistCompartment", "NoPersistFrameEvent", "NoPersistFrameContext"]
+        reg = {}
+        ObjectSpace.each_object(Class) do |c|
+          begin
+            nm = c.name
+            next if nm.nil? || excluded.include?(nm)
+            here = (c.instance_methods(false) + c.private_instance_methods(false)).any? do |m|
+              loc = c.instance_method(m).source_location
+              loc && loc[0] == __FILE__
+            end
+            reg[nm] = c if here
+          rescue StandardError
+          end
+        end
+        reg
+    end
+
+    def self._frame_persist_revive(o, reg)
+        case o
+        when Array
+          o.map { |e| _frame_persist_revive(e, reg) }
+        when Hash
+          if o.key?("__frame_type__")
+            t = o["__frame_type__"]
+            cls = reg[t]
+            raise "E750: persist restore refused a type not defined in this module: #{t.inspect}" if cls.nil?
+            obj = cls.allocate
+            o.each { |k, v| obj.instance_variable_set("@#{k}", _frame_persist_revive(v, reg)) unless k == "__frame_type__" }
+            obj
+          else
+            o.each_with_object({}) { |(k, v), h| h[k] = _frame_persist_revive(v, reg) }
+          end
+        else
+          o
+        end
+    end
+
     def snapshot
         require 'json'
         raise "E700: system not quiescent" unless @_context_stack.empty?
@@ -273,12 +325,12 @@ class NoPersist
         @_state_stack.each { |c| stack.push(__ser_comp(c)) }
         j["_state_stack"] = stack
         j["count"] = @count
-        JSON.generate(j)
+        JSON.generate(NoPersist._frame_persist_encode(j))
     end
 
     def restore(json)
         require 'json'
-        _parsed = JSON.parse(json)
+        _parsed = NoPersist._frame_persist_revive(JSON.parse(json), NoPersist._frame_persist_registry)
         @_context_stack = []
         @__next_compartment = nil
         @__compartment = __deser_comp(_parsed["_compartment"])

@@ -91,6 +91,116 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         decorators: vec![],
     });
 
+    // #174 / RFC-0053 reflective route (Ruby). Ruby's JSON has no `default=` /
+    // object-hook, so the reflective tag/revive is done as two recursive passes
+    // over the WHOLE serialized tree — reaching user-typed values nested inside
+    // the compartment chain (state vars / state args), not just domain fields —
+    // emitted as class methods so both the instance `save`/`restore` and the
+    // legacy static factory can reach them.
+
+    // Save-side: replace any non-JSON-native object with a tagged hash carrying
+    // its class name + instance vars. One generic pass, no per-type branch.
+    let mut encode_body = String::new();
+    encode_body.push_str("case o\n");
+    encode_body.push_str("when nil, true, false, Integer, Float, String\n  o\n");
+    encode_body.push_str("when Array\n  o.map { |e| _frame_persist_encode(e) }\n");
+    encode_body.push_str(
+        "when Hash\n  o.each_with_object({}) { |(k, v), h| h[k] = _frame_persist_encode(v) }\n",
+    );
+    encode_body.push_str("else\n");
+    encode_body.push_str("  h = { \"__frame_type__\" => o.class.name }\n");
+    encode_body.push_str("  o.instance_variables.each { |iv| h[iv.to_s.delete_prefix(\"@\")] = _frame_persist_encode(o.instance_variable_get(iv)) }\n");
+    encode_body.push_str("  h\n");
+    encode_body.push_str("end");
+    methods.push(CodegenNode::Method {
+        name: "self._frame_persist_encode".to_string(),
+        params: vec![Param::new("o")],
+        return_type: None,
+        body: vec![CodegenNode::NativeBlock {
+            code: encode_body,
+            span: None,
+        }],
+        is_async: false,
+        is_static: false,
+        visibility: Visibility::Public,
+        decorators: vec![],
+    });
+
+    // Closed-world registry: only classes defining a method IN THIS FILE (Ruby
+    // exposes no class-level source_location, so this is the closest safe proxy
+    // to "defined in this program"), and never framec's own generated runtime
+    // classes. Everything else — stdlib, gems, imports — is excluded, so a
+    // hostile snapshot cannot name a foreign type.
+    let mut registry_body = String::new();
+    registry_body.push_str(&format!(
+        "excluded = [\"{0}\", \"{0}Compartment\", \"{0}FrameEvent\", \"{0}FrameContext\"]\n",
+        sys
+    ));
+    registry_body.push_str("reg = {}\n");
+    registry_body.push_str("ObjectSpace.each_object(Class) do |c|\n");
+    registry_body.push_str("  begin\n");
+    registry_body.push_str("    nm = c.name\n");
+    registry_body.push_str("    next if nm.nil? || excluded.include?(nm)\n");
+    registry_body.push_str(
+        "    here = (c.instance_methods(false) + c.private_instance_methods(false)).any? do |m|\n",
+    );
+    registry_body.push_str("      loc = c.instance_method(m).source_location\n");
+    registry_body.push_str("      loc && loc[0] == __FILE__\n");
+    registry_body.push_str("    end\n");
+    registry_body.push_str("    reg[nm] = c if here\n");
+    registry_body.push_str("  rescue StandardError\n");
+    registry_body.push_str("  end\n");
+    registry_body.push_str("end\n");
+    registry_body.push_str("reg");
+    methods.push(CodegenNode::Method {
+        name: "self._frame_persist_registry".to_string(),
+        params: vec![],
+        return_type: None,
+        body: vec![CodegenNode::NativeBlock {
+            code: registry_body,
+            span: None,
+        }],
+        is_async: false,
+        is_static: false,
+        visibility: Visibility::Public,
+        decorators: vec![],
+    });
+
+    // Restore-side: rebuild a tagged hash into its class via `allocate` (no
+    // constructor) + `instance_variable_set`, resolving only against `reg`. A
+    // tagged type absent from the registry is refused (E750). Untagged
+    // hashes/arrays recurse; scalars pass through.
+    let mut revive_body = String::new();
+    revive_body.push_str("case o\n");
+    revive_body.push_str("when Array\n  o.map { |e| _frame_persist_revive(e, reg) }\n");
+    revive_body.push_str("when Hash\n");
+    revive_body.push_str("  if o.key?(\"__frame_type__\")\n");
+    revive_body.push_str("    t = o[\"__frame_type__\"]\n");
+    revive_body.push_str("    cls = reg[t]\n");
+    revive_body.push_str("    raise \"E750: persist restore refused a type not defined in this module: #{t.inspect}\" if cls.nil?\n");
+    revive_body.push_str("    obj = cls.allocate\n");
+    revive_body.push_str("    o.each { |k, v| obj.instance_variable_set(\"@#{k}\", _frame_persist_revive(v, reg)) unless k == \"__frame_type__\" }\n");
+    revive_body.push_str("    obj\n");
+    revive_body.push_str("  else\n");
+    revive_body.push_str(
+        "    o.each_with_object({}) { |(k, v), h| h[k] = _frame_persist_revive(v, reg) }\n",
+    );
+    revive_body.push_str("  end\n");
+    revive_body.push_str("else\n  o\nend");
+    methods.push(CodegenNode::Method {
+        name: "self._frame_persist_revive".to_string(),
+        params: vec![Param::new("o"), Param::new("reg")],
+        return_type: None,
+        body: vec![CodegenNode::NativeBlock {
+            code: revive_body,
+            span: None,
+        }],
+        is_async: false,
+        is_static: false,
+        visibility: Visibility::Public,
+        decorators: vec![],
+    });
+
     // save_state()
     let mut save_body = String::new();
     // #166: the serializer uses `JSON.generate`; Ruby does not auto-load the
@@ -119,7 +229,8 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
             save_body.push_str(&format!("j[\"{}\"] = @{}\n", var.name, var.name));
         }
     }
-    save_body.push_str("JSON.generate(j)");
+    // #174: tag any user-typed value (anywhere in the tree) before generating.
+    save_body.push_str(&format!("JSON.generate({}._frame_persist_encode(j))", sys));
 
     methods.push(CodegenNode::Method {
         name: save_method_name.clone(),
@@ -138,7 +249,12 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     let mut restore_body = String::new();
     // #166: `JSON.parse` needs the stdlib json module loaded.
     restore_body.push_str("require 'json'\n");
-    restore_body.push_str(&format!("_parsed = JSON.parse({})\n", load_param_name));
+    // #174: revive tagged user-typed values (tree-wide) under the closed-world
+    // registry, before the compartment/domain extraction reads them.
+    restore_body.push_str(&format!(
+        "_parsed = {0}._frame_persist_revive(JSON.parse({1}), {0}._frame_persist_registry)\n",
+        sys, load_param_name
+    ));
     if uses_new_contract {
         restore_body.push_str("@_context_stack = []\n");
         restore_body.push_str("@__next_compartment = nil\n");
