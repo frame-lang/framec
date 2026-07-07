@@ -122,12 +122,23 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     // attributes directly, so an untrusted snapshot cannot run user `__init__`
     // code or name a foreign type. A tagged type absent from this module is
     // refused. Untagged dicts (compartments, plain user dicts) pass through.
+    //
+    // framec's own generated runtime classes (the system, its Compartment,
+    // FrameEvent, FrameContext) are also defined in this module but are NEVER
+    // reflectively reconstructed — the compartment chain round-trips through the
+    // explicit `_deser_comp` path, and nested systems through their own restore.
+    // Excluding them from the registry tightens the closed-world blast radius so
+    // a hostile snapshot can't even allocate a malformed framework object.
+    restore_body.push_str(&format!(
+        "_frame_excluded = {{\"{0}\", \"{0}Compartment\", \"{0}FrameEvent\", \"{0}FrameContext\"}}\n",
+        system.name
+    ));
     restore_body.push_str("_frame_types = {}\n");
     restore_body.push_str("import sys as _sys\n");
     restore_body.push_str("_mod = _sys.modules.get(__name__)\n");
     restore_body.push_str("if _mod is not None:\n");
     restore_body.push_str("    for _n, _c in vars(_mod).items():\n");
-    restore_body.push_str("        if isinstance(_c, type) and getattr(_c, \"__module__\", None) == getattr(_mod, \"__name__\", None):\n");
+    restore_body.push_str("        if isinstance(_c, type) and getattr(_c, \"__module__\", None) == getattr(_mod, \"__name__\", None) and _c.__qualname__ not in _frame_excluded:\n");
     restore_body.push_str("            _frame_types[_c.__qualname__] = _c\n");
     restore_body.push_str("def _frame_persist_revive(_d):\n");
     restore_body.push_str("    _t = _d.get(\"__frame_type__\")\n");

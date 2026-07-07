@@ -197,12 +197,13 @@ class NoPersist:
         _blob = data
         import json
         _raw = _blob.decode("utf-8") if isinstance(_blob, (bytes, bytearray)) else _blob
+        _frame_excluded = {"NoPersist", "NoPersistCompartment", "NoPersistFrameEvent", "NoPersistFrameContext"}
         _frame_types = {}
         import sys as _sys
         _mod = _sys.modules.get(__name__)
         if _mod is not None:
             for _n, _c in vars(_mod).items():
-                if isinstance(_c, type) and getattr(_c, "__module__", None) == getattr(_mod, "__name__", None):
+                if isinstance(_c, type) and getattr(_c, "__module__", None) == getattr(_mod, "__name__", None) and _c.__qualname__ not in _frame_excluded:
                     _frame_types[_c.__qualname__] = _c
         def _frame_persist_revive(_d):
             _t = _d.get("__frame_type__")
