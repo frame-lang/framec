@@ -73,7 +73,17 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
             save_body.push_str(&format!("state_data[\"{0}\"] = self.{0}\n", var.name));
         }
     }
-    save_body.push_str("return json.dumps(state_data).encode(\"utf-8\")");
+    // #174 / RFC-0053 faithful restore: a domain field (or a value nested in
+    // one) may hold a user-typed object that is not JSON-native. Tag it with its
+    // type name + fields on the way out — reflection, one generic hook, no
+    // per-type branch — so `restore_state` can reconstruct it. Plain
+    // scalars/lists/dicts are serialized natively and never reach this hook.
+    save_body.push_str(
+        "def _frame_persist_default(_o):\n    return {\"__frame_type__\": type(_o).__qualname__, **vars(_o)}\n",
+    );
+    save_body.push_str(
+        "return json.dumps(state_data, default=_frame_persist_default).encode(\"utf-8\")",
+    );
     methods.push(CodegenNode::Method {
         name: save_method_name.clone(),
         params: vec![],
@@ -105,7 +115,29 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     restore_body.push_str(
         "_raw = _blob.decode(\"utf-8\") if isinstance(_blob, (bytes, bytearray)) else _blob\n",
     );
-    restore_body.push_str("_parsed = json.loads(_raw)\n");
+    // #174 / RFC-0053 faithful restore: rebuild user-typed values that `save`
+    // tagged with `__frame_type__`. Closed-world security posture — resolve only
+    // against classes DEFINED IN THIS MODULE (never imports or ambient globals),
+    // and rebuild by allocating without calling the constructor and setting
+    // attributes directly, so an untrusted snapshot cannot run user `__init__`
+    // code or name a foreign type. A tagged type absent from this module is
+    // refused. Untagged dicts (compartments, plain user dicts) pass through.
+    restore_body.push_str("_frame_types = {}\n");
+    restore_body.push_str("import sys as _sys\n");
+    restore_body.push_str("_mod = _sys.modules.get(__name__)\n");
+    restore_body.push_str("if _mod is not None:\n");
+    restore_body.push_str("    for _n, _c in vars(_mod).items():\n");
+    restore_body.push_str("        if isinstance(_c, type) and getattr(_c, \"__module__\", None) == getattr(_mod, \"__name__\", None):\n");
+    restore_body.push_str("            _frame_types[_c.__qualname__] = _c\n");
+    restore_body.push_str("def _frame_persist_revive(_d):\n");
+    restore_body.push_str("    _t = _d.get(\"__frame_type__\")\n");
+    restore_body.push_str("    if _t is None:\n        return _d\n");
+    restore_body.push_str("    _cls = _frame_types.get(_t)\n");
+    restore_body.push_str("    if _cls is None:\n        raise RuntimeError(\"E750: persist restore refused a type not defined in this module: \" + repr(_t))\n");
+    restore_body.push_str("    _obj = _cls.__new__(_cls)\n");
+    restore_body.push_str("    for _k, _v in _d.items():\n        if _k != \"__frame_type__\":\n            setattr(_obj, _k, _v)\n");
+    restore_body.push_str("    return _obj\n");
+    restore_body.push_str("_parsed = json.loads(_raw, object_hook=_frame_persist_revive)\n");
     restore_body.push_str("def _deser_comp(d):\n");
     restore_body.push_str("    if d is None:\n        return None\n");
     restore_body.push_str(&format!("    comp = {}(d[\"state\"])\n", comp_cls));

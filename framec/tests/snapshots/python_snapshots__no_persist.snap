@@ -189,13 +189,34 @@ class NoPersist:
             return {"state": c.state, "state_args": list(c.state_args), "state_vars": dict(c.state_vars), "enter_args": list(c.enter_args), "exit_args": list(c.exit_args), "parent_compartment": _ser_comp(c.parent_compartment)}
         state_data = {"_compartment": _ser_comp(self.__compartment), "_state_stack": [_ser_comp(c) for c in self._state_stack]}
         state_data["count"] = self.count
-        return json.dumps(state_data).encode("utf-8")
+        def _frame_persist_default(_o):
+            return {"__frame_type__": type(_o).__qualname__, **vars(_o)}
+        return json.dumps(state_data, default=_frame_persist_default).encode("utf-8")
 
     def restore(self, data: bytes):
         _blob = data
         import json
         _raw = _blob.decode("utf-8") if isinstance(_blob, (bytes, bytearray)) else _blob
-        _parsed = json.loads(_raw)
+        _frame_types = {}
+        import sys as _sys
+        _mod = _sys.modules.get(__name__)
+        if _mod is not None:
+            for _n, _c in vars(_mod).items():
+                if isinstance(_c, type) and getattr(_c, "__module__", None) == getattr(_mod, "__name__", None):
+                    _frame_types[_c.__qualname__] = _c
+        def _frame_persist_revive(_d):
+            _t = _d.get("__frame_type__")
+            if _t is None:
+                return _d
+            _cls = _frame_types.get(_t)
+            if _cls is None:
+                raise RuntimeError("E750: persist restore refused a type not defined in this module: " + repr(_t))
+            _obj = _cls.__new__(_cls)
+            for _k, _v in _d.items():
+                if _k != "__frame_type__":
+                    setattr(_obj, _k, _v)
+            return _obj
+        _parsed = json.loads(_raw, object_hook=_frame_persist_revive)
         def _deser_comp(d):
             if d is None:
                 return None
