@@ -408,8 +408,13 @@ fn generate_thin_dispatcher_generic(
                     ctx.system_name, parent
                 ));
             } else {
+                // The default-forward to the parent state must carry the same
+                // await as a handler dispatch (line ~371): in async mode
+                // `_state_<Parent>` is itself async, so an un-awaited forward
+                // drops the parent's return value (Python: coroutine never
+                // awaited -> None) and breaks brace-lang typing (a bare future).
                 code.push_str(&format!(
-                    "{self_prefix}_state_{}({var_sigil}__e, {var_sigil}compartment{deref}{parent_field}{}){semi}\n",
+                    "{aw}{self_prefix}_state_{}({var_sigil}__e, {var_sigil}compartment{deref}{parent_field}{}){semi}\n",
                     parent, bang
                 ));
             }
@@ -789,6 +794,7 @@ pub(crate) fn generate_state_handlers_via_arcanum(
             arcanum,
             source,
             has_state_vars,
+            system_is_async,
             &defined_systems,
             &state_param_names,
             &state_enter_param_names,
@@ -824,6 +830,7 @@ pub(crate) fn generate_state_handlers_via_arcanum(
             arcanum,
             source,
             has_state_vars,
+            system_is_async,
             &defined_systems,
             &state_param_effective_names,
             &state_enter_param_names,
@@ -889,6 +896,7 @@ pub(crate) fn generate_per_handler_methods(
     arcanum: &Arcanum,
     source: &[u8],
     has_state_vars: bool,
+    system_is_async: bool,
     defined_systems: &std::collections::HashSet<String>,
     state_param_names: &std::collections::HashMap<String, Vec<String>>,
     state_enter_param_names: &std::collections::HashMap<String, Vec<String>>,
@@ -1027,6 +1035,7 @@ pub(crate) fn generate_per_handler_methods(
                 state_vars_for_init,
                 source,
                 has_state_vars,
+                system_is_async,
                 defined_systems,
                 &actions,
                 &empty,
@@ -1064,6 +1073,7 @@ pub(crate) fn generate_per_handler_methods(
                 state_vars_for_init,
                 source,
                 has_state_vars,
+                system_is_async,
                 defined_systems,
                 &actions,
                 &empty,
@@ -1114,6 +1124,7 @@ fn generate_per_handler_method_for_lang(
     state_vars_for_init: &[StateVarAst],
     source: &[u8],
     has_state_vars: bool,
+    system_is_async: bool,
     defined_systems: &std::collections::HashSet<String>,
     actions: &std::collections::HashSet<String>,
     sys_param_locals: &[String],
@@ -1138,6 +1149,7 @@ fn generate_per_handler_method_for_lang(
             state_vars_for_init,
             source,
             has_state_vars,
+            system_is_async,
             defined_systems,
             actions,
             sys_param_locals,
@@ -1159,6 +1171,7 @@ fn generate_per_handler_method_for_lang(
                 state_vars_for_init,
                 source,
                 has_state_vars,
+                system_is_async,
                 defined_systems,
                 &actions,
                 sys_param_locals,
@@ -1179,6 +1192,7 @@ fn generate_per_handler_method_for_lang(
             state_vars_for_init,
             source,
             has_state_vars,
+            system_is_async,
             defined_systems,
             actions,
             sys_param_locals,
@@ -1198,6 +1212,7 @@ fn generate_per_handler_method_for_lang(
             state_vars_for_init,
             source,
             has_state_vars,
+            system_is_async,
             defined_systems,
             actions,
             sys_param_locals,
@@ -1218,6 +1233,7 @@ fn generate_per_handler_method_for_lang(
             state_vars_for_init,
             source,
             has_state_vars,
+            system_is_async,
             defined_systems,
             domain_field_types,
             actions,
@@ -1238,6 +1254,7 @@ fn generate_per_handler_method_for_lang(
             state_vars_for_init,
             source,
             has_state_vars,
+            system_is_async,
             defined_systems,
             actions,
             sys_param_locals,
@@ -1258,6 +1275,7 @@ fn generate_per_handler_method_for_lang(
             state_vars_for_init,
             source,
             has_state_vars,
+            system_is_async,
             defined_systems,
             actions,
             sys_param_locals,
@@ -1277,6 +1295,7 @@ fn generate_per_handler_method_for_lang(
             state_vars_for_init,
             source,
             has_state_vars,
+            system_is_async,
             defined_systems,
             actions,
             sys_param_locals,
@@ -1298,6 +1317,7 @@ fn generate_per_handler_method_for_lang(
             state_vars_for_init,
             source,
             has_state_vars,
+            system_is_async,
             defined_systems,
             actions,
             sys_param_locals,
@@ -1318,6 +1338,7 @@ fn generate_per_handler_method_for_lang(
             state_vars_for_init,
             source,
             has_state_vars,
+            system_is_async,
             defined_systems,
             actions,
             sys_param_locals,
@@ -1338,6 +1359,7 @@ fn generate_per_handler_method_for_lang(
             state_vars_for_init,
             source,
             has_state_vars,
+            system_is_async,
             defined_systems,
             actions,
             sys_param_locals,
@@ -1358,6 +1380,7 @@ fn generate_per_handler_method_for_lang(
             state_vars_for_init,
             source,
             has_state_vars,
+            system_is_async,
             defined_systems,
             actions,
             sys_param_locals,
@@ -1379,6 +1402,7 @@ fn generate_per_handler_method_for_lang(
             state_vars_for_init,
             source,
             has_state_vars,
+            system_is_async,
             defined_systems,
             actions,
             sys_param_locals,
@@ -1399,6 +1423,7 @@ fn generate_per_handler_method_for_lang(
             state_vars_for_init,
             source,
             has_state_vars,
+            system_is_async,
             defined_systems,
             actions,
             sys_param_locals,
@@ -1666,6 +1691,7 @@ pub(crate) fn generate_handler_from_arcanum(
     source: &[u8],
     lang: TargetLanguage,
     _has_state_vars: bool,
+    system_is_async: bool,
     defined_systems: &std::collections::HashSet<String>,
     actions: &std::collections::HashSet<String>,
     sys_param_locals: &[String],
@@ -1724,8 +1750,7 @@ pub(crate) fn generate_handler_from_arcanum(
     // Without this, Rust's typed enum-of-structs StateContext would
     // emit `ctx.0 = val` (positional) instead of `ctx.initial = val`.
     let ctx = HandlerContext {
-        // #158 remainder: thread real asyncness through this path too.
-        system_is_async: false,
+        system_is_async,
         system_name: system_name.to_string(),
         state_name: state_name.to_string(),
         event_name: handler.event.clone(),

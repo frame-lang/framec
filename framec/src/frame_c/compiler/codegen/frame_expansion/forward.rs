@@ -46,9 +46,31 @@ pub(super) fn expand_forward(
     let segment_text = String::from_utf8_lossy(&body_bytes[span.start..span.end]);
     let indent_str = " ".repeat(indent);
 
+    // An explicit `=> $^` forward inside an async handler must be awaited just
+    // like a handler dispatch — an un-awaited parent forward drops the return
+    // value (Python: coroutine never awaited -> None) and mistypes in brace
+    // langs. Prefix-await set mirrors state_dispatch's `aw`; Rust uses a
+    // `.await` suffix (applied in rust_parent_forward); Kotlin (bare suspend) /
+    // Java / Go and the non-async targets take no await keyword.
+    let aw = if ctx.system_is_async {
+        match lang {
+            TargetLanguage::Cpp => "co_await ",
+            TargetLanguage::Python3
+            | TargetLanguage::TypeScript
+            | TargetLanguage::JavaScript
+            | TargetLanguage::Swift
+            | TargetLanguage::CSharp
+            | TargetLanguage::Dart
+            | TargetLanguage::GDScript => "await ",
+            _ => "",
+        }
+    } else {
+        ""
+    };
+
     // HSM forward: call parent state's handler for the same event
     let body = if let Some(ref parent) = ctx.parent_state {
-        match lang {
+        let forward = match lang {
             // Python/TypeScript: call _state_Parent(__e) to dispatch via unified state method
             TargetLanguage::Python3 | TargetLanguage::GDScript => {
                 if ctx.per_handler {
@@ -84,9 +106,11 @@ pub(super) fn expand_forward(
                 }
             }
             // Rust: call parent state router (not specific handler) to dispatch via match
-            TargetLanguage::Rust => {
-                super::super::rust_system::rust_parent_forward(&indent_str, parent)
-            }
+            TargetLanguage::Rust => super::super::rust_system::rust_parent_forward(
+                &indent_str,
+                parent,
+                ctx.system_is_async,
+            ),
             // C: call System_state_Parent(self, __e, parent_compartment)
             // — per-handler architecture shifts the compartment up
             // one level at the forward site.
@@ -224,6 +248,13 @@ pub(super) fn expand_forward(
                 }
             }
             TargetLanguage::Graphviz => unreachable!(),
+        };
+        // Prefix-await langs: splice the await in after the leading indent (Rust
+        // took its `.await` suffix in the helper above; empty aw is a no-op).
+        if aw.is_empty() {
+            forward
+        } else {
+            format!("{}{}{}", indent_str, aw, &forward[indent_str.len()..])
         }
     } else {
         // No parent state - just return (shouldn't happen in valid HSM)

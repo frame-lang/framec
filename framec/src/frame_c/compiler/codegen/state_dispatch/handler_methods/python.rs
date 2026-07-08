@@ -33,6 +33,7 @@ pub(crate) fn generate_python_handler_method(
     state_vars_for_init: &[StateVarAst],
     source: &[u8],
     _has_state_vars: bool,
+    system_is_async: bool,
     defined_systems: &std::collections::HashSet<String>,
     actions: &std::collections::HashSet<String>,
     _sys_param_locals: &[String],
@@ -48,7 +49,7 @@ pub(crate) fn generate_python_handler_method(
 
     let ctx = HandlerContext {
         // #158 remainder: thread real asyncness for handler-body self-calls.
-        system_is_async: false,
+        system_is_async,
         system_name: system_name.to_string(),
         state_name: state_name.to_string(),
         event_name: handler.event.clone(),

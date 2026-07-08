@@ -785,7 +785,12 @@ pub(crate) fn generate_rust_state_dispatch(
 
     if default_forward {
         if let Some(parent) = parent_state {
-            code.push_str(&format!("    _ => self._state_{}(__e),\n", parent));
+            // The default-forward to the parent state must carry the same
+            // `.await` as a handler dispatch (line ~782). In async mode
+            // `_state_<Parent>` is itself `async`, so an un-awaited forward is a
+            // bare future — the match arm then mismatches the awaited-`()` sibling
+            // arms (E0308) and the parent's return value is lost.
+            code.push_str(&format!("    _ => self._state_{}(__e){},\n", parent, aw));
         } else {
             code.push_str("    _ => {}\n");
         }
@@ -808,6 +813,7 @@ pub(crate) fn generate_rust_handler_methods(
     arcanum: &Arcanum,
     source: &[u8],
     has_state_vars: bool,
+    system_is_async: bool,
     defined_systems: &std::collections::HashSet<String>,
     state_param_names: &std::collections::HashMap<String, Vec<String>>,
     state_enter_param_names: &std::collections::HashMap<String, Vec<String>>,
@@ -897,6 +903,7 @@ pub(crate) fn generate_rust_handler_methods(
                 source,
                 TargetLanguage::Rust,
                 has_state_vars,
+                system_is_async,
                 defined_systems,
                 &rust_actions,
                 sys_param_locals,
@@ -1674,9 +1681,11 @@ pub(crate) fn rust_system_instantiation_error(system_name: &str) -> String {
 // Rust-specific statements used by frame_expansion.rs match arms.
 // Each returns a String with indent_str prefix.
 
-/// HSM parent forward: `self._state_Parent(__e);`
-pub(crate) fn rust_parent_forward(indent_str: &str, parent: &str) -> String {
-    format!("{}self._state_{}(__e);", indent_str, parent)
+/// HSM parent forward: `self._state_Parent(__e);` — awaited in async mode
+/// (an un-awaited forward is a bare future and drops the parent's return).
+pub(crate) fn rust_parent_forward(indent_str: &str, parent: &str, is_async: bool) -> String {
+    let aw = if is_async { ".await" } else { "" };
+    format!("{}self._state_{}(__e){};", indent_str, parent, aw)
 }
 
 /// Push-with-transition: clone current compartment onto the state
