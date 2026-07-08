@@ -208,7 +208,11 @@ pub(crate) fn extract_state_var_name(text: &str) -> String {
 /// - Brace/semicolon targets exit with `return;`.
 /// - Expression/newline targets (Python, GDScript, Kotlin, Swift, Go, Ruby,
 ///   Lua) exit with a bare `return`.
-/// - Rust / Erlang / Graphviz use their own control flow and append nothing.
+/// - Rust exits with `return;` (the terminator must be SEPARATE from the
+///   transition body so the handler orchestrator can hoist a same-scope
+///   `@@:return` between them — see #179; baking `return;` into the rust body
+///   skipped the hoist and dropped the return value).
+/// - Erlang / Graphviz use their own control flow and append nothing.
 pub(super) fn transition_terminator(
     lang: crate::frame_c::visitors::TargetLanguage,
 ) -> &'static str {
@@ -221,6 +225,7 @@ pub(super) fn transition_terminator(
         | TargetLanguage::Php
         | TargetLanguage::TypeScript
         | TargetLanguage::JavaScript
+        | TargetLanguage::Rust
         | TargetLanguage::Dart => "return;",
         TargetLanguage::Python3
         | TargetLanguage::GDScript
@@ -229,7 +234,7 @@ pub(super) fn transition_terminator(
         | TargetLanguage::Go
         | TargetLanguage::Ruby
         | TargetLanguage::Lua => "return",
-        TargetLanguage::Rust | TargetLanguage::Erlang | TargetLanguage::Graphviz => "",
+        TargetLanguage::Erlang | TargetLanguage::Graphviz => "",
     }
 }
 

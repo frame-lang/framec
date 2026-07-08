@@ -1320,10 +1320,10 @@ pub(crate) fn rust_expand_transition(
         ));
     }
 
-    code.push_str(&format!(
-        "{}self.__transition(__compartment);\n{}return;",
-        indent_str, indent_str
-    ));
+    // The handler-exit `return;` is the structural terminator
+    // (transition_terminator(Rust)) emitted by the orchestrator AFTER any
+    // hoisted same-scope `@@:return` — do not bake it into the body here (#179).
+    code.push_str(&format!("{}self.__transition(__compartment);", indent_str));
     code
 }
 
@@ -1698,11 +1698,12 @@ pub(crate) fn rust_push_transition(
     ctx: &super::codegen_utils::HandlerContext,
     target: &str,
 ) -> String {
+    // `return;` is the structural terminator (transition_terminator(Rust)),
+    // emitted by the orchestrator after any hoisted `@@:return` — not baked here (#179).
     format!(
         "{0}self._state_stack.push(self.__compartment.clone());\n\
          {0}let __compartment = self.__prepareEnter(\"{1}\");\n\
-         {0}self.__transition(__compartment);\n\
-         {0}return;",
+         {0}self.__transition(__compartment);",
         indent_str, target
     )
 }
@@ -1833,11 +1834,10 @@ pub(crate) fn rust_pop_transition_full(
         ));
     }
 
-    // 5. transition + return.
-    code.push_str(&format!(
-        "{}self.__transition(__popped);\n{}return;",
-        indent, indent
-    ));
+    // 5. transition. The handler-exit `return;` is the structural terminator
+    // (transition_terminator(Rust)), emitted by the orchestrator after any
+    // hoisted `@@:return` — not baked into the body here (#179).
+    code.push_str(&format!("{}self.__transition(__popped);", indent));
     code
 }
 
