@@ -216,7 +216,7 @@ class NoPersist:
             stack_arr.append(_ser_chain.call(c))
         state_data["_state_stack"] = stack_arr
         state_data["count"] = self.count
-        return var_to_bytes(state_data)
+        return var_to_bytes(self._frame_encode(state_data))
 
     func restore(data: PackedByteArray):
         var state_data = bytes_to_var(data)
@@ -233,10 +233,10 @@ class NoPersist:
             var result = null
             for cd in chain:
                 var comp = NoPersistCompartment.new(cd["state"])
-                comp.state_args = cd.get("state_args", {})
-                comp.state_vars = cd.get("state_vars", {})
-                comp.enter_args = cd.get("enter_args", {})
-                comp.exit_args = cd.get("exit_args", {})
+                comp.state_args = self._frame_revive(cd.get("state_args", {}))
+                comp.state_vars = self._frame_revive(cd.get("state_vars", {}))
+                comp.enter_args = self._frame_revive(cd.get("enter_args", {}))
+                comp.exit_args = self._frame_revive(cd.get("exit_args", {}))
                 comp.parent_compartment = result
                 result = comp
             return result
@@ -246,4 +246,61 @@ class NoPersist:
         for c in state_data.get("_state_stack", []):
             self._state_stack.append(_deser_chain.call(c))
         self._context_stack = []
-        self.count = state_data.get("count", null)
+        self.count = self._frame_revive(state_data.get("count", null))
+
+    var __persist_types =     {}
+    func register_persist_type(nm, cls):
+        self.__persist_types[nm] = cls
+
+    func _frame_encode(o):
+        var t = typeof(o)
+        if t == TYPE_DICTIONARY:
+            var r = {}
+            for k in o:
+                r[k] = self._frame_encode(o[k])
+            return r
+        if t == TYPE_ARRAY:
+            var ra = []
+            for e in o:
+                ra.append(self._frame_encode(e))
+            return ra
+        if t == TYPE_OBJECT and o != null:
+            var nm = ""
+            for _n in self.__persist_types:
+                if self.__persist_types[_n] == o.get_script():
+                    nm = _n
+                    break
+            if nm == "":
+                push_error("E750: persist save refused an unregistered type")
+                return null
+            var h = {"__frame_type__": nm}
+            for p in o.get_property_list():
+                if p.usage & PROPERTY_USAGE_SCRIPT_VARIABLE:
+                    h[p.name] = self._frame_encode(o.get(p.name))
+            return h
+        return o
+
+    func _frame_revive(o):
+        var t = typeof(o)
+        if t == TYPE_DICTIONARY:
+            if o.has("__frame_type__"):
+                var nm = o["__frame_type__"]
+                var cls = self.__persist_types.get(nm, null)
+                if cls == null:
+                    push_error("E750: persist restore refused a type not defined in this module: " + str(nm))
+                    return null
+                var obj = cls.new()
+                for k in o:
+                    if k != "__frame_type__":
+                        obj.set(k, self._frame_revive(o[k]))
+                return obj
+            var r = {}
+            for k in o:
+                r[k] = self._frame_revive(o[k])
+            return r
+        if t == TYPE_ARRAY:
+            var ra = []
+            for e in o:
+                ra.append(self._frame_revive(e))
+            return ra
+        return o

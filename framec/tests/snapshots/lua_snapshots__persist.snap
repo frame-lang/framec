@@ -221,20 +221,54 @@ function Counter:snapshot()
     result._compartment = serialize_comp(self.__compartment)
     result._state_stack = stack
     result.count = self.count
-    return serpent.dump(result)
+    local function _frame_encode(o)
+        if type(o) ~= "table" then return o end
+        local mt = getmetatable(o)
+        if mt and mt.__name then
+            local h = { __frame_type__ = mt.__name }
+            for k, v in pairs(o) do h[k] = _frame_encode(v) end
+            return h
+    end
+        local r = {}
+        for k, v in pairs(o) do r[k] = _frame_encode(v) end
+        return r
+    end
+    return serpent.dump(_frame_encode(result))
 end
 
 function Counter:restore(json_str)
     local serpent = require("serpent")
     local ok, _parsed = serpent.load(json_str)
     if not ok then error("persist load failed: " .. tostring(_parsed)) end
+    local _reg = {}
+    local function _frame_seed(o, d)
+        if type(o) ~= "table" or d > 64 then return end
+        local mt = getmetatable(o)
+        if mt and mt.__name and _reg[mt.__name] == nil then _reg[mt.__name] = mt end
+        for _, v in pairs(o) do _frame_seed(v, d + 1) end
+    end
+    _frame_seed(self, 0)
+    if Counter.__persistUserTypes then for k, v in pairs(Counter.__persistUserTypes) do _reg[k] = v end end
+    local function _frame_revive(o)
+        if type(o) ~= "table" then return o end
+        if o.__frame_type__ ~= nil then
+            local mt = _reg[o.__frame_type__]
+            if mt == nil then error("E750: persist restore refused a type not defined in this module: " .. tostring(o.__frame_type__)) end
+            local obj = {}
+            for k, v in pairs(o) do if k ~= "__frame_type__" then obj[k] = _frame_revive(v) end end
+            return setmetatable(obj, mt)
+    end
+        local r = {}
+        for k, v in pairs(o) do r[k] = _frame_revive(v) end
+        return r
+    end
     local function deserialize_comp(d)
         if not d then return nil end
         local comp = CounterCompartment.new(d.state)
-        comp.state_args = d.state_args or {}
-        comp.state_vars = d.state_vars or {}
-        comp.enter_args = d.enter_args or {}
-        comp.exit_args = d.exit_args or {}
+        comp.state_args = _frame_revive(d.state_args or {})
+        comp.state_vars = _frame_revive(d.state_vars or {})
+        comp.enter_args = _frame_revive(d.enter_args or {})
+        comp.exit_args = _frame_revive(d.exit_args or {})
         comp.forward_event = d.forward_event
         comp.parent_compartment = deserialize_comp(d.parent_compartment)
         return comp
@@ -248,7 +282,12 @@ function Counter:restore(json_str)
             self._state_stack[#self._state_stack + 1] = deserialize_comp(c)
         end
     end
-    self.count = _parsed.count
+    self.count = _frame_revive(_parsed.count)
+end
+
+function Counter.register_persist_type(mt)
+    if Counter.__persistUserTypes == nil then Counter.__persistUserTypes = thenend end
+    Counter.__persistUserTypes[mt.__name] = mt
 end
 
 return {

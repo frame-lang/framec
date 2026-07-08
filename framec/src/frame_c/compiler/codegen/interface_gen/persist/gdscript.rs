@@ -93,7 +93,13 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
             ));
         }
     }
-    save_body.push_str("return var_to_bytes(state_data)");
+    // RFC-0053 reflective route (GDScript): plain `var_to_bytes` encodes a user
+    // Object as a dead object-id (silent loss), and `var_to_bytes_with_objects`
+    // can't encode a scriptless inner class at all. So tag each user Object as a
+    // Dictionary {__frame_type__, ...script vars} — now everything is a built-in
+    // Variant `var_to_bytes` round-trips faithfully. Generic, no per-type branch;
+    // runs tree-wide so a value in a compartment state_var is tagged too.
+    save_body.push_str("return var_to_bytes(self._frame_encode(state_data))");
 
     methods.push(CodegenNode::Method {
         name: save_method_name.clone(),
@@ -136,10 +142,14 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         "        var comp = {}.new(cd[\"state\"])\n",
         compartment_type
     ));
-    restore_body.push_str("        comp.state_args = cd.get(\"state_args\", {})\n");
-    restore_body.push_str("        comp.state_vars = cd.get(\"state_vars\", {})\n");
-    restore_body.push_str("        comp.enter_args = cd.get(\"enter_args\", {})\n");
-    restore_body.push_str("        comp.exit_args = cd.get(\"exit_args\", {})\n");
+    restore_body
+        .push_str("        comp.state_args = self._frame_revive(cd.get(\"state_args\", {}))\n");
+    restore_body
+        .push_str("        comp.state_vars = self._frame_revive(cd.get(\"state_vars\", {}))\n");
+    restore_body
+        .push_str("        comp.enter_args = self._frame_revive(cd.get(\"enter_args\", {}))\n");
+    restore_body
+        .push_str("        comp.exit_args = self._frame_revive(cd.get(\"exit_args\", {}))\n");
     restore_body.push_str("        comp.parent_compartment = result\n");
     restore_body.push_str("        result = comp\n");
     restore_body.push_str("    return result\n");
@@ -182,7 +192,7 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
             }
         } else {
             restore_body.push_str(&format!(
-                "{}.{} = state_data.get(\"{}\", null)\n",
+                "{}.{} = self._frame_revive(state_data.get(\"{}\", null))\n",
                 target, var.name, var.name
             ));
         }
@@ -216,6 +226,119 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         is_async: false,
         is_static: load_static,
         visibility: Visibility::Public,
+        decorators: vec![],
+    });
+
+    // Closed-world type registry. GDScript inner classes have no
+    // resource_path/global_name and a method can't reach the file's constant
+    // map, so the name->class map is supplied by the program via
+    // `register_persist_type(name, cls)` (called from file scope, where the
+    // sibling classes ARE in scope). Reconstruction resolves only against this
+    // map — a snapshot naming an unregistered type is refused (E750), never
+    // instantiated. `set()` populates fields without invoking `_init`'s logic.
+    methods.push(CodegenNode::VarDecl {
+        name: "__persist_types".to_string(),
+        type_annotation: None,
+        init: Some(Box::new(CodegenNode::NativeBlock {
+            code: "{}".to_string(),
+            span: None,
+        })),
+        is_const: false,
+    });
+    methods.push(CodegenNode::Method {
+        name: "register_persist_type".to_string(),
+        params: vec![Param::new("nm"), Param::new("cls")],
+        return_type: None,
+        body: vec![CodegenNode::NativeBlock {
+            code: "self.__persist_types[nm] = cls".to_string(),
+            span: None,
+        }],
+        is_async: false,
+        is_static: false,
+        visibility: Visibility::Public,
+        decorators: vec![],
+    });
+
+    let mut encode_body = String::new();
+    encode_body.push_str("var t = typeof(o)\n");
+    encode_body.push_str("if t == TYPE_DICTIONARY:\n");
+    encode_body.push_str("    var r = {}\n");
+    encode_body.push_str("    for k in o:\n");
+    encode_body.push_str("        r[k] = self._frame_encode(o[k])\n");
+    encode_body.push_str("    return r\n");
+    encode_body.push_str("if t == TYPE_ARRAY:\n");
+    encode_body.push_str("    var ra = []\n");
+    encode_body.push_str("    for e in o:\n");
+    encode_body.push_str("        ra.append(self._frame_encode(e))\n");
+    encode_body.push_str("    return ra\n");
+    encode_body.push_str("if t == TYPE_OBJECT and o != null:\n");
+    encode_body.push_str("    var nm = \"\"\n");
+    encode_body.push_str("    for _n in self.__persist_types:\n");
+    encode_body.push_str("        if self.__persist_types[_n] == o.get_script():\n");
+    encode_body.push_str("            nm = _n\n");
+    encode_body.push_str("            break\n");
+    encode_body.push_str("    if nm == \"\":\n");
+    encode_body
+        .push_str("        push_error(\"E750: persist save refused an unregistered type\")\n");
+    encode_body.push_str("        return null\n");
+    encode_body.push_str("    var h = {\"__frame_type__\": nm}\n");
+    encode_body.push_str("    for p in o.get_property_list():\n");
+    encode_body.push_str("        if p.usage & PROPERTY_USAGE_SCRIPT_VARIABLE:\n");
+    encode_body.push_str("            h[p.name] = self._frame_encode(o.get(p.name))\n");
+    encode_body.push_str("    return h\n");
+    encode_body.push_str("return o");
+    methods.push(CodegenNode::Method {
+        name: "_frame_encode".to_string(),
+        params: vec![Param::new("o")],
+        return_type: None,
+        body: vec![CodegenNode::NativeBlock {
+            code: encode_body,
+            span: None,
+        }],
+        is_async: false,
+        is_static: false,
+        visibility: Visibility::Private,
+        decorators: vec![],
+    });
+
+    let mut revive_body = String::new();
+    revive_body.push_str("var t = typeof(o)\n");
+    revive_body.push_str("if t == TYPE_DICTIONARY:\n");
+    revive_body.push_str("    if o.has(\"__frame_type__\"):\n");
+    revive_body.push_str("        var nm = o[\"__frame_type__\"]\n");
+    revive_body.push_str("        var cls = self.__persist_types.get(nm, null)\n");
+    // Refuse a foreign/unregistered type WITHOUT instantiating it — GDScript has
+    // no exceptions to abort the restore, so the closed-world guarantee is "never
+    // call .new() on an unresolved type" + a logged E750; the field is left null.
+    revive_body.push_str("        if cls == null:\n");
+    revive_body.push_str("            push_error(\"E750: persist restore refused a type not defined in this module: \" + str(nm))\n");
+    revive_body.push_str("            return null\n");
+    revive_body.push_str("        var obj = cls.new()\n");
+    revive_body.push_str("        for k in o:\n");
+    revive_body.push_str("            if k != \"__frame_type__\":\n");
+    revive_body.push_str("                obj.set(k, self._frame_revive(o[k]))\n");
+    revive_body.push_str("        return obj\n");
+    revive_body.push_str("    var r = {}\n");
+    revive_body.push_str("    for k in o:\n");
+    revive_body.push_str("        r[k] = self._frame_revive(o[k])\n");
+    revive_body.push_str("    return r\n");
+    revive_body.push_str("if t == TYPE_ARRAY:\n");
+    revive_body.push_str("    var ra = []\n");
+    revive_body.push_str("    for e in o:\n");
+    revive_body.push_str("        ra.append(self._frame_revive(e))\n");
+    revive_body.push_str("    return ra\n");
+    revive_body.push_str("return o");
+    methods.push(CodegenNode::Method {
+        name: "_frame_revive".to_string(),
+        params: vec![Param::new("o")],
+        return_type: None,
+        body: vec![CodegenNode::NativeBlock {
+            code: revive_body,
+            span: None,
+        }],
+        is_async: false,
+        is_static: false,
+        visibility: Visibility::Private,
         decorators: vec![],
     });
 

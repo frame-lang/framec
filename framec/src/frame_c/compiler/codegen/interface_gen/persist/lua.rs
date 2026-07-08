@@ -81,7 +81,26 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
             save_body.push_str(&format!("result.{} = self.{}\n", var.name, var.name));
         }
     }
-    save_body.push_str("return serpent.dump(result)");
+    // RFC-0053 reflective route (Lua): serpent serializes a table's DATA, never
+    // its metatable — so a "class instance" (table + method-bearing metatable)
+    // would lose its type. Tag any table whose metatable carries a `__name` with
+    // that name + its fields; restore rebuilds the type by re-attaching the
+    // metatable. Generic, no per-type branch; runs tree-wide so a user value in a
+    // compartment state_var/arg is tagged too. Plain tables (compartment
+    // scaffolding) pass through untouched.
+    save_body.push_str("local function _frame_encode(o)\n");
+    save_body.push_str("    if type(o) ~= \"table\" then return o end\n");
+    save_body.push_str("    local mt = getmetatable(o)\n");
+    save_body.push_str("    if mt and mt.__name then\n");
+    save_body.push_str("        local h = { __frame_type__ = mt.__name }\n");
+    save_body.push_str("        for k, v in pairs(o) do h[k] = _frame_encode(v) end\n");
+    save_body.push_str("        return h\n");
+    save_body.push_str("    end\n");
+    save_body.push_str("    local r = {}\n");
+    save_body.push_str("    for k, v in pairs(o) do r[k] = _frame_encode(v) end\n");
+    save_body.push_str("    return r\n");
+    save_body.push_str("end\n");
+    save_body.push_str("return serpent.dump(_frame_encode(result))");
 
     methods.push(CodegenNode::Method {
         name: save_method_name.clone(),
@@ -105,16 +124,54 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     ));
     restore_body
         .push_str("if not ok then error(\"persist load failed: \" .. tostring(_parsed)) end\n");
+
+    // RFC-0053 reflective route (Lua) — closed-world metatable registry, hybrid.
+    // Lua has no class enumeration, so the name->metatable map is built from two
+    // zero-ambient sources: (1) graph-seed — walk the receiving instance's own
+    // initialized graph, keying each metatable by its `__name` (every Frame
+    // variable has an initializer, so its type is present); (2) an optional
+    // `register_persist_type(mt)` hook for a type with no initializer or the
+    // legacy path (no live graph). A tag resolving to neither is refused (E750).
+    restore_body.push_str("local _reg = {}\n");
+    restore_body.push_str("local function _frame_seed(o, d)\n");
+    restore_body.push_str("    if type(o) ~= \"table\" or d > 64 then return end\n");
+    restore_body.push_str("    local mt = getmetatable(o)\n");
+    restore_body.push_str(
+        "    if mt and mt.__name and _reg[mt.__name] == nil then _reg[mt.__name] = mt end\n",
+    );
+    restore_body.push_str("    for _, v in pairs(o) do _frame_seed(v, d + 1) end\n");
+    restore_body.push_str("end\n");
+    if uses_new_contract {
+        restore_body.push_str("_frame_seed(self, 0)\n");
+    }
+    restore_body.push_str(&format!(
+        "if {0}.__persistUserTypes then for k, v in pairs({0}.__persistUserTypes) do _reg[k] = v end end\n",
+        system.name
+    ));
+    restore_body.push_str("local function _frame_revive(o)\n");
+    restore_body.push_str("    if type(o) ~= \"table\" then return o end\n");
+    restore_body.push_str("    if o.__frame_type__ ~= nil then\n");
+    restore_body.push_str("        local mt = _reg[o.__frame_type__]\n");
+    restore_body.push_str("        if mt == nil then error(\"E750: persist restore refused a type not defined in this module: \" .. tostring(o.__frame_type__)) end\n");
+    restore_body.push_str("        local obj = {}\n");
+    restore_body.push_str("        for k, v in pairs(o) do if k ~= \"__frame_type__\" then obj[k] = _frame_revive(v) end end\n");
+    restore_body.push_str("        return setmetatable(obj, mt)\n");
+    restore_body.push_str("    end\n");
+    restore_body.push_str("    local r = {}\n");
+    restore_body.push_str("    for k, v in pairs(o) do r[k] = _frame_revive(v) end\n");
+    restore_body.push_str("    return r\n");
+    restore_body.push_str("end\n");
+
     restore_body.push_str("local function deserialize_comp(d)\n");
     restore_body.push_str("    if not d then return nil end\n");
     restore_body.push_str(&format!(
         "    local comp = {}.new(d.state)\n",
         compartment_type
     ));
-    restore_body.push_str("    comp.state_args = d.state_args or {}\n");
-    restore_body.push_str("    comp.state_vars = d.state_vars or {}\n");
-    restore_body.push_str("    comp.enter_args = d.enter_args or {}\n");
-    restore_body.push_str("    comp.exit_args = d.exit_args or {}\n");
+    restore_body.push_str("    comp.state_args = _frame_revive(d.state_args or {})\n");
+    restore_body.push_str("    comp.state_vars = _frame_revive(d.state_vars or {})\n");
+    restore_body.push_str("    comp.enter_args = _frame_revive(d.enter_args or {})\n");
+    restore_body.push_str("    comp.exit_args = _frame_revive(d.exit_args or {})\n");
     restore_body.push_str("    comp.forward_event = d.forward_event\n");
     restore_body.push_str("    comp.parent_compartment = deserialize_comp(d.parent_compartment)\n");
     restore_body.push_str("    return comp\n");
@@ -161,7 +218,10 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
             }
             continue;
         }
-        restore_body.push_str(&format!("{}.{} = _parsed.{}\n", target, var.name, var.name));
+        restore_body.push_str(&format!(
+            "{}.{} = _frame_revive(_parsed.{})\n",
+            target, var.name, var.name
+        ));
     }
     if !uses_new_contract {
         restore_body.push_str("return instance");
@@ -182,6 +242,33 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         }],
         is_async: false,
         is_static: load_static,
+        visibility: Visibility::Public,
+        decorators: vec![],
+    });
+
+    // Hybrid-registry completion hook (Lua): register a metatable the graph-seed
+    // can't reach (a type with no initializer, or the legacy path with no live
+    // graph). Keyed by the metatable's own `__name`; still closed-world — the
+    // caller hands over the metatable, no name/global lookup.
+    let mut hook_body = String::new();
+    hook_body.push_str(&format!(
+        "if {0}.__persistUserTypes == nil then {0}.__persistUserTypes = {{}} end\n",
+        system.name
+    ));
+    hook_body.push_str(&format!(
+        "{}.__persistUserTypes[mt.__name] = mt",
+        system.name
+    ));
+    methods.push(CodegenNode::Method {
+        name: "register_persist_type".to_string(),
+        params: vec![Param::new("mt")],
+        return_type: None,
+        body: vec![CodegenNode::NativeBlock {
+            code: hook_body,
+            span: None,
+        }],
+        is_async: false,
+        is_static: true,
         visibility: Visibility::Public,
         decorators: vec![],
     });
