@@ -261,6 +261,44 @@ class NoPersist {
         return $c;
     }
 
+    private static function _frame_persist_encode($o) {
+        if ($o === null || is_scalar($o)) return $o;
+        if (is_array($o)) { $r = []; foreach ($o as $k => $v) { $r[$k] = self::_frame_persist_encode($v); } return $r; }
+        $h = ['__frame_type__' => get_class($o)];
+        $ro = new \ReflectionObject($o);
+        foreach ($ro->getProperties() as $p) { if (PHP_VERSION_ID < 80100) { $p->setAccessible(true); } $h[$p->getName()] = self::_frame_persist_encode($p->getValue($o)); }
+        return $h;
+    }
+
+    private static function _frame_persist_registry() {
+        $excluded = ['NoPersist', 'NoPersistCompartment', 'NoPersistFrameEvent', 'NoPersistFrameContext'];
+        $reg = [];
+        foreach (get_declared_classes() as $cn) {
+            if (in_array($cn, $excluded, true)) continue;
+            try { $rc = new \ReflectionClass($cn); if ($rc->getFileName() === __FILE__) { $reg[$cn] = true; } } catch (\Throwable $e) {}
+        }
+        return $reg;
+    }
+
+    private static function _frame_persist_revive($o, $reg) {
+        if (!is_array($o)) return $o;
+        if (array_key_exists('__frame_type__', $o)) {
+            $t = $o['__frame_type__'];
+            if (!isset($reg[$t])) throw new \Exception("E750: persist restore refused a type not defined in this module: " . $t);
+            $obj = (new \ReflectionClass($t))->newInstanceWithoutConstructor();
+            $ro = new \ReflectionObject($obj);
+            foreach ($o as $k => $v) {
+                if ($k === '__frame_type__') continue;
+                $rv = self::_frame_persist_revive($v, $reg);
+                if ($ro->hasProperty($k)) { $p = $ro->getProperty($k); if (PHP_VERSION_ID < 80100) { $p->setAccessible(true); } $p->setValue($obj, $rv); } else { $obj->$k = $rv; }
+            }
+            return $obj;
+        }
+        $r = [];
+        foreach ($o as $k => $v) { $r[$k] = self::_frame_persist_revive($v, $reg); }
+        return $r;
+    }
+
     public function snapshot() {
         if (!empty($this->_context_stack)) throw new \Exception("E700: system not quiescent");
         $j = [];
@@ -269,11 +307,11 @@ class NoPersist {
         foreach ($this->_state_stack as $c) { $stack[] = $this->__serComp($c); }
         $j['_state_stack'] = $stack;
         $j['count'] = $this->count;
-        return json_encode($j);
+        return json_encode(self::_frame_persist_encode($j));
     }
 
     public function restore($json) {
-        $_parsed = json_decode($json, true);
+        $_parsed = self::_frame_persist_revive(json_decode($json, true), self::_frame_persist_registry());
         $this->_state_stack = [];
         $this->_context_stack = [];
         $this->__compartment = $this->__deserComp($_parsed['_compartment']);

@@ -87,6 +87,102 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         decorators: vec![],
     });
 
+    // #174 / RFC-0053 reflective route (PHP). `json_encode` drops class identity
+    // (an object serializes to its public props) and `json_decode(..., true)`
+    // yields arrays, so the reflective tag/revive is two recursive passes over the
+    // whole tree — reaching user-typed values nested in the compartment chain, not
+    // just domain fields. Static methods so both the instance save/restore and the
+    // legacy static factory reach them via `self::`.
+
+    // Save-side: tag any object with its class + all properties (reflection, so
+    // private/protected round-trip too). One generic pass, no per-type branch.
+    let mut encode_body = String::new();
+    encode_body.push_str("if ($o === null || is_scalar($o)) return $o;\n");
+    encode_body.push_str("if (is_array($o)) { $r = []; foreach ($o as $k => $v) { $r[$k] = self::_frame_persist_encode($v); } return $r; }\n");
+    encode_body.push_str("$h = ['__frame_type__' => get_class($o)];\n");
+    encode_body.push_str("$ro = new \\ReflectionObject($o);\n");
+    encode_body.push_str("foreach ($ro->getProperties() as $p) { if (PHP_VERSION_ID < 80100) { $p->setAccessible(true); } $h[$p->getName()] = self::_frame_persist_encode($p->getValue($o)); }\n");
+    encode_body.push_str("return $h;");
+    methods.push(CodegenNode::Method {
+        name: "_frame_persist_encode".to_string(),
+        params: vec![Param::new("o")],
+        return_type: None,
+        body: vec![CodegenNode::NativeBlock {
+            code: encode_body,
+            span: None,
+        }],
+        is_async: false,
+        is_static: true,
+        visibility: Visibility::Private,
+        decorators: vec![],
+    });
+
+    // Closed-world registry: classes whose ReflectionClass file is THIS file
+    // (PHP exposes it directly), minus framec's own generated runtime classes.
+    // Stdlib / composer / imported classes are excluded, so a hostile snapshot
+    // cannot name a foreign type.
+    let mut registry_body = String::new();
+    registry_body.push_str(&format!(
+        "$excluded = ['{0}', '{0}Compartment', '{0}FrameEvent', '{0}FrameContext'];\n",
+        sys
+    ));
+    registry_body.push_str("$reg = [];\n");
+    registry_body.push_str("foreach (get_declared_classes() as $cn) {\n");
+    registry_body.push_str("    if (in_array($cn, $excluded, true)) continue;\n");
+    registry_body.push_str("    try { $rc = new \\ReflectionClass($cn); if ($rc->getFileName() === __FILE__) { $reg[$cn] = true; } } catch (\\Throwable $e) {}\n");
+    registry_body.push_str("}\n");
+    registry_body.push_str("return $reg;");
+    methods.push(CodegenNode::Method {
+        name: "_frame_persist_registry".to_string(),
+        params: vec![],
+        return_type: None,
+        body: vec![CodegenNode::NativeBlock {
+            code: registry_body,
+            span: None,
+        }],
+        is_async: false,
+        is_static: true,
+        visibility: Visibility::Private,
+        decorators: vec![],
+    });
+
+    // Restore-side: rebuild a tagged array into its class via
+    // `newInstanceWithoutConstructor()` (no `__construct`) + reflection property
+    // set, resolving only against `$reg`. A tagged type absent from the registry
+    // is refused (E750). Untagged arrays recurse; scalars pass through.
+    let mut revive_body = String::new();
+    revive_body.push_str("if (!is_array($o)) return $o;\n");
+    revive_body.push_str("if (array_key_exists('__frame_type__', $o)) {\n");
+    revive_body.push_str("    $t = $o['__frame_type__'];\n");
+    revive_body.push_str("    if (!isset($reg[$t])) throw new \\Exception(\"E750: persist restore refused a type not defined in this module: \" . $t);\n");
+    revive_body
+        .push_str("    $obj = (new \\ReflectionClass($t))->newInstanceWithoutConstructor();\n");
+    revive_body.push_str("    $ro = new \\ReflectionObject($obj);\n");
+    revive_body.push_str("    foreach ($o as $k => $v) {\n");
+    revive_body.push_str("        if ($k === '__frame_type__') continue;\n");
+    revive_body.push_str("        $rv = self::_frame_persist_revive($v, $reg);\n");
+    revive_body.push_str("        if ($ro->hasProperty($k)) { $p = $ro->getProperty($k); if (PHP_VERSION_ID < 80100) { $p->setAccessible(true); } $p->setValue($obj, $rv); } else { $obj->$k = $rv; }\n");
+    revive_body.push_str("    }\n");
+    revive_body.push_str("    return $obj;\n");
+    revive_body.push_str("}\n");
+    revive_body.push_str("$r = [];\n");
+    revive_body
+        .push_str("foreach ($o as $k => $v) { $r[$k] = self::_frame_persist_revive($v, $reg); }\n");
+    revive_body.push_str("return $r;");
+    methods.push(CodegenNode::Method {
+        name: "_frame_persist_revive".to_string(),
+        params: vec![Param::new("o"), Param::new("reg")],
+        return_type: None,
+        body: vec![CodegenNode::NativeBlock {
+            code: revive_body,
+            span: None,
+        }],
+        is_async: false,
+        is_static: true,
+        visibility: Visibility::Private,
+        decorators: vec![],
+    });
+
     let mut save_body = String::new();
     save_body.push_str("if (!empty($this->_context_stack)) throw new \\Exception(\"E700: system not quiescent\");\n");
     save_body.push_str("$j = [];\n");
@@ -110,7 +206,8 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
             save_body.push_str(&format!("$j['{}'] = $this->{};\n", var.name, var.name));
         }
     }
-    save_body.push_str("return json_encode($j);");
+    // #174: tag any user-typed value (anywhere in the tree) before encoding.
+    save_body.push_str("return json_encode(self::_frame_persist_encode($j));");
 
     methods.push(CodegenNode::Method {
         name: save_method_name.clone(),
@@ -127,8 +224,10 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     });
 
     let mut restore_body = String::new();
+    // #174: revive tagged user-typed values (tree-wide) under the closed-world
+    // registry, before the compartment/domain extraction reads them.
     restore_body.push_str(&format!(
-        "$_parsed = json_decode(${}, true);\n",
+        "$_parsed = self::_frame_persist_revive(json_decode(${}, true), self::_frame_persist_registry());\n",
         load_param_name
     ));
     if !uses_new_contract {
