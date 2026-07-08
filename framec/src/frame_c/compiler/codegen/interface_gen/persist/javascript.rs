@@ -49,6 +49,14 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     } else {
         "instance"
     };
+    // `Sys` for JS, `(Sys as any)` for TS — lets us hang the optional
+    // `__persistUserTypes` registration map off the class without a declared
+    // static field (which `--strict` would otherwise require).
+    let sys_ref = if is_ts {
+        format!("({} as any)", system.name)
+    } else {
+        system.name.clone()
+    };
 
     // Generate saveState method
     let mut save_body = String::new();
@@ -69,6 +77,17 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     save_body.push_str("        parent_compartment: serializeComp(c.parent_compartment),\n");
     save_body.push_str("    };\n");
     save_body.push_str("};\n");
+    // #174 / RFC-0053 reflective route (JS/TS): tag any non-plain object with its
+    // class name so restore can rebuild the real type — generic, no per-type
+    // branch. JSON.stringify applies the replacer recursively, so user values
+    // nested in compartment state_vars/args and domain fields are all tagged;
+    // plain objects (compartment scaffolding, embedded child-system blobs) are
+    // left untouched.
+    if is_ts {
+        save_body.push_str("const _tag = (_k: string, _v: any): any => (_v && typeof _v === \"object\" && !Array.isArray(_v) && _v.constructor && _v.constructor !== Object) ? Object.assign({ __frame_type__: _v.constructor.name }, _v) : _v;\n");
+    } else {
+        save_body.push_str("const _tag = (_k, _v) => (_v && typeof _v === \"object\" && !Array.isArray(_v) && _v.constructor && _v.constructor !== Object) ? Object.assign({ __frame_type__: _v.constructor.name }, _v) : _v;\n");
+    }
     save_body.push_str("return JSON.stringify({\n");
     save_body.push_str("    _compartment: serializeComp(this.__compartment),\n");
     if is_ts {
@@ -94,7 +113,7 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         }
     }
 
-    save_body.push_str("});\n");
+    save_body.push_str("}, _tag);\n");
 
     methods.push(CodegenNode::Method {
         name: save_method_name.clone(),
@@ -112,6 +131,69 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
 
     // Generate restoreState method
     let mut restore_body = String::new();
+
+    // #174 / RFC-0053 reflective route (JS/TS) — HYBRID closed-world registry.
+    // ES modules expose no class enumeration, so the name->constructor map is
+    // built from two zero-ambient sources: (1) graph-seed — walk the receiving
+    // instance's own initialized object graph (every Frame variable has an
+    // initializer, so its runtime type is already present); (2) an optional user
+    // hook `registerPersistType` for a type with no initializer, or the legacy
+    // Object.create path (no live graph). framec's own runtime classes are
+    // excluded. A tag resolving to neither is refused (E750): a hostile snapshot
+    // cannot name a foreign type, and globalThis is never consulted.
+    if is_ts {
+        restore_body.push_str("const _reg: Map<string, any> = new Map();\n");
+    } else {
+        restore_body.push_str("const _reg = new Map();\n");
+    }
+    restore_body.push_str(&format!(
+        "const _excl = new Set([\"{0}\", \"{0}Compartment\", \"{0}FrameEvent\", \"{0}FrameContext\"]);\n",
+        system.name
+    ));
+    if is_ts {
+        restore_body.push_str("const _seed = (_o: any, _d: number): void => {\n");
+    } else {
+        restore_body.push_str("const _seed = (_o, _d) => {\n");
+    }
+    restore_body.push_str("    if (!_o || typeof _o !== \"object\" || _d > 64) return;\n");
+    restore_body.push_str(
+        "    if (Array.isArray(_o)) { for (const _e of _o) _seed(_e, _d + 1); return; }\n",
+    );
+    restore_body.push_str("    const _cn = _o.constructor && _o.constructor.name;\n");
+    restore_body.push_str(
+        "    if (_cn && _o.constructor !== Object && !_excl.has(_cn)) _reg.set(_cn, _o.constructor);\n",
+    );
+    restore_body.push_str("    for (const _k in _o) { if (Object.prototype.hasOwnProperty.call(_o, _k)) _seed(_o[_k], _d + 1); }\n");
+    restore_body.push_str("};\n");
+    if uses_new_contract {
+        restore_body.push_str("_seed(this, 0);\n");
+    }
+    restore_body.push_str(&format!(
+        "if ({0}.__persistUserTypes) {{ for (const [_k, _v] of {0}.__persistUserTypes) _reg.set(_k, _v); }}\n",
+        sys_ref
+    ));
+    if is_ts {
+        restore_body.push_str("const _revive = (_o: any): any => {\n");
+    } else {
+        restore_body.push_str("const _revive = (_o) => {\n");
+    }
+    restore_body.push_str("    if (!_o || typeof _o !== \"object\") return _o;\n");
+    restore_body.push_str(
+        "    if (Array.isArray(_o)) { for (let _i = 0; _i < _o.length; _i++) _o[_i] = _revive(_o[_i]); return _o; }\n",
+    );
+    restore_body
+        .push_str("    if (Object.prototype.hasOwnProperty.call(_o, \"__frame_type__\")) {\n");
+    restore_body.push_str("        const _t = _o.__frame_type__;\n");
+    restore_body.push_str("        const _c = _reg.get(_t);\n");
+    restore_body.push_str("        if (!_c) throw new Error(\"E750: persist restore refused a type not defined in this module: \" + _t);\n");
+    restore_body.push_str("        const _obj = Object.create(_c.prototype);\n");
+    restore_body.push_str("        for (const _k in _o) { if (_k !== \"__frame_type__\" && Object.prototype.hasOwnProperty.call(_o, _k)) _obj[_k] = _revive(_o[_k]); }\n");
+    restore_body.push_str("        return _obj;\n");
+    restore_body.push_str("    }\n");
+    restore_body.push_str("    for (const _k in _o) { if (Object.prototype.hasOwnProperty.call(_o, _k)) _o[_k] = _revive(_o[_k]); }\n");
+    restore_body.push_str("    return _o;\n");
+    restore_body.push_str("};\n");
+
     if is_ts {
         restore_body.push_str(&format!(
             "const deserializeComp = (data: any): {}Compartment | null => {{\n",
@@ -125,10 +207,12 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         "    const comp = new {}Compartment(data.state);\n",
         system.name
     ));
-    restore_body.push_str("    comp.state_args = {...(data.state_args || {})};\n");
-    restore_body.push_str("    comp.state_vars = {...(data.state_vars || {})};\n");
-    restore_body.push_str("    comp.enter_args = {...(data.enter_args || {})};\n");
-    restore_body.push_str("    comp.exit_args = {...(data.exit_args || {})};\n");
+    // Revive tree-wide over compartment-held values so a user-typed value in a
+    // state_var / state_arg / enter_arg is rebuilt, not just domain fields.
+    restore_body.push_str("    comp.state_args = _revive(data.state_args || {});\n");
+    restore_body.push_str("    comp.state_vars = _revive(data.state_vars || {});\n");
+    restore_body.push_str("    comp.enter_args = _revive(data.enter_args || {});\n");
+    restore_body.push_str("    comp.exit_args = _revive(data.exit_args || {});\n");
     restore_body.push_str("    comp.forward_event = data.forward_event;\n");
     restore_body
         .push_str("    comp.parent_compartment = deserializeComp(data.parent_compartment);\n");
@@ -193,7 +277,7 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
             }
         } else {
             restore_body.push_str(&format!(
-                "{}.{} = _parsed.{};\n",
+                "{}.{} = _revive(_parsed.{});\n",
                 target, var.name, var.name
             ));
         }
@@ -226,6 +310,33 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         }],
         is_async: false,
         is_static: load_static,
+        visibility: Visibility::Public,
+        decorators: vec![],
+    });
+
+    // Hybrid-registry completion hook: register a user type that the graph-seed
+    // can't reach (no initializer, or the legacy Object.create restore path).
+    // Never consulted for a type the seed already found; still closed-world (the
+    // caller hands over a class reference — no name/global lookup).
+    let mut hook_body = String::new();
+    hook_body.push_str(&format!(
+        "if (!{0}.__persistUserTypes) {0}.__persistUserTypes = new Map();\n",
+        sys_ref
+    ));
+    hook_body.push_str(&format!(
+        "{0}.__persistUserTypes.set(_cls.name, _cls);\n",
+        sys_ref
+    ));
+    methods.push(CodegenNode::Method {
+        name: "registerPersistType".to_string(),
+        params: vec![Param::new("_cls").with_type("any")],
+        return_type: None,
+        body: vec![CodegenNode::NativeBlock {
+            code: hook_body,
+            span: None,
+        }],
+        is_async: false,
+        is_static: true,
         visibility: Visibility::Public,
         decorators: vec![],
     });

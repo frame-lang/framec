@@ -261,21 +261,47 @@ export class NoPersist {
                 parent_compartment: serializeComp(c.parent_compartment),
             };
         };
+        const _tag = (_k, _v) => (_v && typeof _v === "object" && !Array.isArray(_v) && _v.constructor && _v.constructor !== Object) ? Object.assign({ __frame_type__: _v.constructor.name }, _v) : _v;
         return JSON.stringify({
             _compartment: serializeComp(this.__compartment),
             _state_stack: this._state_stack.map((c) => serializeComp(c)),
             count: this.count,
-        });
+        }, _tag);
     }
 
     restore(json) {
+        const _reg = new Map();
+        const _excl = new Set(["NoPersist", "NoPersistCompartment", "NoPersistFrameEvent", "NoPersistFrameContext"]);
+        const _seed = (_o, _d) => {
+            if (!_o || typeof _o !== "object" || _d > 64) return;
+            if (Array.isArray(_o)) { for (const _e of _o) _seed(_e, _d + 1); return; }
+            const _cn = _o.constructor && _o.constructor.name;
+            if (_cn && _o.constructor !== Object && !_excl.has(_cn)) _reg.set(_cn, _o.constructor);
+            for (const _k in _o) { if (Object.prototype.hasOwnProperty.call(_o, _k)) _seed(_o[_k], _d + 1); }
+        };
+        _seed(this, 0);
+        if (NoPersist.__persistUserTypes) { for (const [_k, _v] of NoPersist.__persistUserTypes) _reg.set(_k, _v); }
+        const _revive = (_o) => {
+            if (!_o || typeof _o !== "object") return _o;
+            if (Array.isArray(_o)) { for (let _i = 0; _i < _o.length; _i++) _o[_i] = _revive(_o[_i]); return _o; }
+            if (Object.prototype.hasOwnProperty.call(_o, "__frame_type__")) {
+                const _t = _o.__frame_type__;
+                const _c = _reg.get(_t);
+                if (!_c) throw new Error("E750: persist restore refused a type not defined in this module: " + _t);
+                const _obj = Object.create(_c.prototype);
+                for (const _k in _o) { if (_k !== "__frame_type__" && Object.prototype.hasOwnProperty.call(_o, _k)) _obj[_k] = _revive(_o[_k]); }
+                return _obj;
+            }
+            for (const _k in _o) { if (Object.prototype.hasOwnProperty.call(_o, _k)) _o[_k] = _revive(_o[_k]); }
+            return _o;
+        };
         const deserializeComp = (data) => {
             if (!data) return null;
             const comp = new NoPersistCompartment(data.state);
-            comp.state_args = {...(data.state_args || {})};
-            comp.state_vars = {...(data.state_vars || {})};
-            comp.enter_args = {...(data.enter_args || {})};
-            comp.exit_args = {...(data.exit_args || {})};
+            comp.state_args = _revive(data.state_args || {});
+            comp.state_vars = _revive(data.state_vars || {});
+            comp.enter_args = _revive(data.enter_args || {});
+            comp.exit_args = _revive(data.exit_args || {});
             comp.forward_event = data.forward_event;
             comp.parent_compartment = deserializeComp(data.parent_compartment);
             return comp;
@@ -285,6 +311,11 @@ export class NoPersist {
         this.__next_compartment = null;
         this._state_stack = (_parsed._state_stack || []).map((c) => deserializeComp(c));
         this._context_stack = [];
-        this.count = _parsed.count;
+        this.count = _revive(_parsed.count);
+    }
+
+    static registerPersistType(_cls) {
+        if (!NoPersist.__persistUserTypes) NoPersist.__persistUserTypes = new Map();
+        NoPersist.__persistUserTypes.set(_cls.name, _cls);
     }
 }
