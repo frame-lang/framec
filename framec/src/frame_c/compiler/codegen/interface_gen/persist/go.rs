@@ -154,6 +154,28 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
              \x20   }}\n"
         )
     };
+    // State VARS carry user types too, but live in a `map[string]any` keyed by
+    // name (not an indexed slot), so `json.Unmarshal` restores them as
+    // `map[string]interface{}` and a later `.(Vec2)` assertion panics. Re-decode
+    // each declared state var into its Go type by NAME. Runs inside
+    // deserializeComp, so every layer of the restored HSM chain is retyped by
+    // its own state — the parent-chain rewiring stays type-faithful.
+    let go_typed_conv_named = |declared_type: &str, name: &str| -> String {
+        let t = declared_type.trim();
+        if t.is_empty() {
+            return String::new();
+        }
+        format!(
+            "    if __v, __ok := comp.stateVars[\"{name}\"]; __ok {{\n\
+             \x20       if __raw, __err := json.Marshal(__v); __err == nil {{\n\
+             \x20           var __typed {t}\n\
+             \x20           if json.Unmarshal(__raw, &__typed) == nil {{\n\
+             \x20               comp.stateVars[\"{name}\"] = __typed\n\
+             \x20           }}\n\
+             \x20       }}\n\
+             \x20   }}\n"
+        )
+    };
     let go_state_arg_decls: Vec<(String, Vec<String>)> = system
         .machine
         .as_ref()
@@ -233,6 +255,94 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
             ));
         }
     }
+    // Exit args feed the source state's `<$` handler and can be user-typed too —
+    // type them by index per state, exactly like state_args / enter_args above.
+    let go_exit_arg_decls: Vec<(String, Vec<String>)> = system
+        .machine
+        .as_ref()
+        .map(|m| {
+            m.states
+                .iter()
+                .map(|s| {
+                    let types: Vec<String> = s
+                        .exit
+                        .as_ref()
+                        .map(|e| {
+                            e.params
+                                .iter()
+                                .map(|p| match &p.param_type {
+                                    crate::frame_c::compiler::frame_ast::Type::Custom(s) => {
+                                        s.clone()
+                                    }
+                                    crate::frame_c::compiler::frame_ast::Type::Unknown => {
+                                        String::new()
+                                    }
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    (s.name.clone(), types)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    for (state_name, types) in &go_exit_arg_decls {
+        let mut branch = String::new();
+        for (i, t) in types.iter().enumerate() {
+            let conv = go_typed_conv(t, i, "exitArgs");
+            if !conv.is_empty() {
+                branch.push_str(&conv);
+            }
+        }
+        if !branch.is_empty() {
+            restore_body.push_str(&format!(
+                "    if comp.state == \"{}\" {{\n{}    }}\n",
+                state_name, branch
+            ));
+        }
+    }
+
+    // State vars: retype each declared var by name per state (see
+    // go_typed_conv_named).
+    let go_state_var_decls: Vec<(String, Vec<(String, String)>)> = system
+        .machine
+        .as_ref()
+        .map(|m| {
+            m.states
+                .iter()
+                .map(|s| {
+                    let vars: Vec<(String, String)> = s
+                        .state_vars
+                        .iter()
+                        .map(|sv| {
+                            let t = match &sv.var_type {
+                                crate::frame_c::compiler::frame_ast::Type::Custom(s) => s.clone(),
+                                crate::frame_c::compiler::frame_ast::Type::Unknown => String::new(),
+                            };
+                            (sv.name.clone(), t)
+                        })
+                        .collect();
+                    (s.name.clone(), vars)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    for (state_name, vars) in &go_state_var_decls {
+        let mut branch = String::new();
+        for (name, t) in vars {
+            let conv = go_typed_conv_named(t, name);
+            if !conv.is_empty() {
+                branch.push_str(&conv);
+            }
+        }
+        if !branch.is_empty() {
+            restore_body.push_str(&format!(
+                "    if comp.state == \"{}\" {{\n{}    }}\n",
+                state_name, branch
+            ));
+        }
+    }
+
     restore_body.push_str("    // forward_event is typically nil in persisted state\n");
     restore_body
         .push_str("    comp.parentCompartment = deserializeComp(m[\"parent_compartment\"])\n");
