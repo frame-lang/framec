@@ -134,6 +134,9 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     // RFC-0054 Phase A: per-state typed slots come from ONE manifest of raw Frame
     // type strings; C#'s mapping stays at consumption (cs_typed_conv{,_named}).
     let manifest = super::manifest::build_persist_manifest(system);
+    // B1: manifest fingerprint — save writes `_manifest`, restore refuses (E751)
+    // on drift (string compare after a plain parse, before any typed decode).
+    let manifest_fp = super::emit::escape_double_quoted(&manifest.fingerprint());
     use super::emit::{emit_per_state_blocks, indexed_branch, named_branch};
     // A2: shared per-state guarded-block scaffold. C#'s arg guard carries the
     // one-time `// D10` header as a first-block side-effect (hence FnMut, reused
@@ -238,6 +241,7 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     let mut save_body = String::new();
     save_body.push_str("if (_context_stack.Count > 0) throw new System.Exception(\"E700: system not quiescent\");\n");
     save_body.push_str("var __j = new Dictionary<string, object>();\n");
+    save_body.push_str(&format!("__j[\"_manifest\"] = \"{}\";\n", manifest_fp));
     save_body.push_str("__j[\"_compartment\"] = __SerComp(__compartment);\n");
     save_body.push_str("var __stack = new List<object>();\n");
     save_body.push_str("foreach (var c in _state_stack) { __stack.Add(__SerComp(c)); }\n");
@@ -286,6 +290,11 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         load_param_name
     ));
     restore_body.push_str("var __root = __doc.RootElement;\n");
+    // B1: refuse a drifted snapshot before any typed decode.
+    restore_body.push_str(&format!(
+        "if (!__root.TryGetProperty(\"_manifest\", out var __m) || __m.GetString() != \"{}\") throw new System.Exception(\"E751: persist restore refused - snapshot schema does not match this program\");\n",
+        manifest_fp
+    ));
     if !uses_new_contract {
         restore_body.push_str(&format!(
             "var __instance = ({0})System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(typeof({0}));\n",

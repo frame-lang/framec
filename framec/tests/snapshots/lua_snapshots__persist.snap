@@ -218,6 +218,7 @@ function Counter:snapshot()
         stack[#stack + 1] = serialize_comp(c)
     end
     local result = {}
+    result._manifest = "frame-persist-manifest:1|S8:Counting|V|A|E|X|D5:count6:number"
     result._compartment = serialize_comp(self.__compartment)
     result._state_stack = stack
     result.count = self.count
@@ -240,6 +241,7 @@ function Counter:restore(json_str)
     local serpent = require("serpent")
     local ok, _parsed = serpent.load(json_str)
     if not ok then error("persist load failed: " .. tostring(_parsed)) end
+    if _parsed._manifest ~= "frame-persist-manifest:1|S8:Counting|V|A|E|X|D5:count6:number" then error("E751: persist restore refused - snapshot schema does not match this program") end
     local _reg = {}
     local function _frame_seed(o, d)
         if type(o) ~= "table" or d > 64 then return end

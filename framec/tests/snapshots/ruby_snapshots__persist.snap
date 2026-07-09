@@ -279,6 +279,7 @@ class Counter
         require 'json'
         raise "E700: system not quiescent" unless @_context_stack.empty?
         j = {}
+        j["_manifest"] = "frame-persist-manifest:1|S8:Counting|V|A|E|X|D5:count7:Integer"
         j["_compartment"] = __ser_comp(@__compartment)
         stack = []
         @_state_stack.each { |c| stack.push(__ser_comp(c)) }
@@ -289,7 +290,9 @@ class Counter
 
     def restore(json)
         require 'json'
-        _parsed = Counter._frame_persist_revive(JSON.parse(json), Counter._frame_persist_registry)
+        __raw = JSON.parse(json)
+        raise "E751: persist restore refused - snapshot schema does not match this program" unless __raw["_manifest"] == "frame-persist-manifest:1|S8:Counting|V|A|E|X|D5:count7:Integer"
+        _parsed = Counter._frame_persist_revive(__raw, Counter._frame_persist_registry)
         @_context_stack = []
         @__next_compartment = nil
         @__compartment = __deser_comp(_parsed["_compartment"])

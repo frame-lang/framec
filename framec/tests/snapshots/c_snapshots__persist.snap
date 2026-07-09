@@ -729,6 +729,7 @@ static Counter_Compartment* Counter_deserialize_compartment(cJSON* data) {
 char* Counter_snapshot(Counter* self) {
     if (Counter_FrameVec_size(self->_context_stack) > 0) { fprintf(stderr, "E700: system not quiescent\n"); abort(); }
     cJSON* root = cJSON_CreateObject();
+    cJSON_AddItemToObject(root, "_manifest", cJSON_CreateString("frame-persist-manifest:1|S8:Counting|V|A|E|X|D5:count3:int"));
     cJSON_AddItemToObject(root, "_compartment", Counter_serialize_compartment(self->__compartment));
     cJSON* stack_arr = cJSON_CreateArray();
     for (int i = 0; i < Counter_FrameVec_size(self->_state_stack); i++) {
@@ -744,6 +745,7 @@ char* Counter_snapshot(Counter* self) {
 
 void Counter_restore(Counter* self, const char* json) {
     cJSON* root = cJSON_Parse(json);
+    { cJSON* __m = cJSON_GetObjectItem(root, "_manifest"); if (!cJSON_IsString(__m) || strcmp(__m->valuestring, "frame-persist-manifest:1|S8:Counting|V|A|E|X|D5:count3:int") != 0) { fprintf(stderr, "E751: persist restore refused - snapshot schema does not match this program\n"); abort(); } }
     if (!root) return;
 
     self->__next_compartment = NULL;

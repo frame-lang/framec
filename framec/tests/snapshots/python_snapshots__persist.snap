@@ -156,6 +156,7 @@ class Counter:
                 return None
             return {"state": c.state, "state_args": list(c.state_args), "state_vars": dict(c.state_vars), "enter_args": list(c.enter_args), "exit_args": list(c.exit_args), "parent_compartment": _ser_comp(c.parent_compartment)}
         state_data = {"_compartment": _ser_comp(self.__compartment), "_state_stack": [_ser_comp(c) for c in self._state_stack]}
+        state_data["_manifest"] = "frame-persist-manifest:1|S8:Counting|V|A|E|X|D5:count3:int"
         state_data["count"] = self.count
         def _frame_persist_default(_o):
             return {"__frame_type__": type(_o).__qualname__, **vars(_o)}
@@ -185,6 +186,8 @@ class Counter:
                 if _k != "__frame_type__":
                     setattr(_obj, _k, _v)
             return _obj
+        if json.loads(_raw).get("_manifest") != "frame-persist-manifest:1|S8:Counting|V|A|E|X|D5:count3:int":
+            raise RuntimeError("E751: persist restore refused - snapshot schema does not match this program")
         _parsed = json.loads(_raw, object_hook=_frame_persist_revive)
         def _deser_comp(d):
             if d is None:

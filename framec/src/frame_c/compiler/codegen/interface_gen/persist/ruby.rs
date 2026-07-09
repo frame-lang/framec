@@ -22,6 +22,12 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     let sys = &system.name;
     let compartment_class = format!("{}Compartment", sys);
 
+    // RFC-0054 Phase B1: bake the compartment-type-shape fingerprint; save writes
+    // `_manifest`, restore refuses (E751) on drift BEFORE reviving (a plain parse,
+    // no type resolution). Untouches the closed-world revive/E750 path.
+    let manifest_fp =
+        super::emit::escape_double_quoted(&super::manifest::build_persist_manifest(system).fingerprint());
+
     let uses_new_contract = system.uses_new_persist_contract();
     let save_method_name = system
         .save_op_name()
@@ -210,6 +216,7 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     save_body.push_str("require 'json'\n");
     save_body.push_str("raise \"E700: system not quiescent\" unless @_context_stack.empty?\n");
     save_body.push_str("j = {}\n");
+    save_body.push_str(&format!("j[\"_manifest\"] = \"{}\"\n", manifest_fp));
     save_body.push_str("j[\"_compartment\"] = __ser_comp(@__compartment)\n");
     save_body.push_str("stack = []\n");
     save_body.push_str("@_state_stack.each { |c| stack.push(__ser_comp(c)) }\n");
@@ -251,9 +258,16 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     restore_body.push_str("require 'json'\n");
     // #174: revive tagged user-typed values (tree-wide) under the closed-world
     // registry, before the compartment/domain extraction reads them.
+    // B1: plain-parse and refuse drift BEFORE reviving, so a drifted/foreign
+    // snapshot never enters the revive path.
+    restore_body.push_str(&format!("__raw = JSON.parse({})\n", load_param_name));
     restore_body.push_str(&format!(
-        "_parsed = {0}._frame_persist_revive(JSON.parse({1}), {0}._frame_persist_registry)\n",
-        sys, load_param_name
+        "raise \"E751: persist restore refused - snapshot schema does not match this program\" unless __raw[\"_manifest\"] == \"{}\"\n",
+        manifest_fp
+    ));
+    restore_body.push_str(&format!(
+        "_parsed = {0}._frame_persist_revive(__raw, {0}._frame_persist_registry)\n",
+        sys
     ));
     if uses_new_contract {
         restore_body.push_str("@_context_stack = []\n");

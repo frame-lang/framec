@@ -44,6 +44,13 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
 
     let comp_cls = format!("{}Compartment", system.name);
 
+    // RFC-0054 Phase B1: bake the compartment-type-shape fingerprint; save writes
+    // it to `_manifest`, restore refuses (E751) on drift. String compare only —
+    // no type resolved from the blob (the reflective revive path and its E750
+    // closed-world guard are untouched).
+    let manifest_fp =
+        super::emit::escape_double_quoted(&super::manifest::build_persist_manifest(system).fingerprint());
+
     // ---- save body ----
     let mut save_body = String::new();
     save_body.push_str(
@@ -54,6 +61,7 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     save_body.push_str("    if c is None:\n        return None\n");
     save_body.push_str("    return {\"state\": c.state, \"state_args\": list(c.state_args), \"state_vars\": dict(c.state_vars), \"enter_args\": list(c.enter_args), \"exit_args\": list(c.exit_args), \"parent_compartment\": _ser_comp(c.parent_compartment)}\n");
     save_body.push_str("state_data = {\"_compartment\": _ser_comp(self.__compartment), \"_state_stack\": [_ser_comp(c) for c in self._state_stack]}\n");
+    save_body.push_str(&format!("state_data[\"_manifest\"] = \"{}\"\n", manifest_fp));
     for var in &system.domain {
         // RFC-0016.1: `@@[no_persist]` fields are transient — skip.
         if var.attributes.iter().any(|a| a.name == "no_persist") {
@@ -148,6 +156,14 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     restore_body.push_str("    _obj = _cls.__new__(_cls)\n");
     restore_body.push_str("    for _k, _v in _d.items():\n        if _k != \"__frame_type__\":\n            setattr(_obj, _k, _v)\n");
     restore_body.push_str("    return _obj\n");
+    // B1: refuse a drifted snapshot BEFORE any revival. A plain parse (no
+    // object_hook ⇒ no type resolution, safe on a hostile blob) reads `_manifest`
+    // and hard-refuses on mismatch (drift, or a pre-B1 snapshot with no manifest),
+    // so a drifted/foreign snapshot never enters the revive path.
+    restore_body.push_str(&format!(
+        "if json.loads(_raw).get(\"_manifest\") != \"{}\":\n    raise RuntimeError(\"E751: persist restore refused - snapshot schema does not match this program\")\n",
+        manifest_fp
+    ));
     restore_body.push_str("_parsed = json.loads(_raw, object_hook=_frame_persist_revive)\n");
     restore_body.push_str("def _deser_comp(d):\n");
     restore_body.push_str("    if d is None:\n        return None\n");

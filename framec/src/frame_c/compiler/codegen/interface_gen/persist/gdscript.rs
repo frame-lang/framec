@@ -28,6 +28,13 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     let mut methods = Vec::new();
     let compartment_type = format!("{}Compartment", system.name);
 
+    // RFC-0054 Phase B1: manifest fingerprint — save writes `_manifest`, restore
+    // refuses (E751) on drift. GDScript is exceptionless, so refuse = push_error +
+    // early return (matching the E700/E750 idiom). `state_data` (bytes_to_var) is
+    // plain; revive is per-field, never touching `_manifest`.
+    let manifest_fp =
+        super::emit::escape_double_quoted(&super::manifest::build_persist_manifest(system).fingerprint());
+
     let uses_new_contract = system.uses_new_persist_contract();
     let save_method_name = system
         .save_op_name()
@@ -67,6 +74,7 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     save_body.push_str("        result = d\n");
     save_body.push_str("    return result\n");
     save_body.push_str("var state_data = {}\n");
+    save_body.push_str(&format!("state_data[\"_manifest\"] = \"{}\"\n", manifest_fp));
     save_body.push_str("state_data[\"_compartment\"] = _ser_chain.call(self.__compartment)\n");
     save_body.push_str("var stack_arr = []\n");
     save_body.push_str("for c in self._state_stack:\n");
@@ -125,6 +133,12 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     restore_body.push_str(&format!(
         "var state_data = bytes_to_var({})\n",
         load_param_name
+    ));
+    // B1: refuse a drifted snapshot before reviving any compartment values.
+    restore_body.push_str(&format!(
+        "if state_data == null or not (state_data is Dictionary) or state_data.get(\"_manifest\", \"\") != \"{}\":\n    push_error(\"E751: persist restore refused - snapshot schema does not match this program\")\n    return{}\n",
+        manifest_fp,
+        if uses_new_contract { "" } else { " null" }
     ));
     restore_body.push_str("var _deser_chain = func(d):\n");
     restore_body.push_str("    if d == null:\n");

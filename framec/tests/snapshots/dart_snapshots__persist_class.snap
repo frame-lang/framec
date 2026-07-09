@@ -254,6 +254,7 @@ class Bag {
             };
         }
         return jsonEncode({
+            '_manifest': "frame-persist-manifest:1|S1:S|V|A|E|X|D3:pts9:List<Vec>1:v3:Vec",
             '_compartment': serializeComp(this.__compartment),
             '_state_stack': this._state_stack.map((c) => serializeComp(c)).toList(),
             'v': this.v,
@@ -276,6 +277,7 @@ class Bag {
             return comp;
         }
         final _parsed = jsonDecode(json) as Map<String, dynamic>;
+        if (_parsed['_manifest'] != "frame-persist-manifest:1|S1:S|V|A|E|X|D3:pts9:List<Vec>1:v3:Vec") throw Exception("E751: persist restore refused - snapshot schema does not match this program");
         this.__compartment = deserializeComp(_parsed['_compartment'])!;
         this.__next_compartment = null;
         this._state_stack = (_parsed['_state_stack'] as List?)?.map((c) => deserializeComp(c)!).toList() ?? <BagCompartment>[];

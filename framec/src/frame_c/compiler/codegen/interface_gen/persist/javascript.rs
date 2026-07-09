@@ -58,6 +58,12 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         system.name.clone()
     };
 
+    // RFC-0054 Phase B1: manifest fingerprint — save writes `_manifest`, restore
+    // refuses (E751) on drift. `_parsed` is a plain JSON.parse (revive is applied
+    // per-field, never to `_manifest`), so the check reads a plain string.
+    let manifest_fp =
+        super::emit::escape_double_quoted(&super::manifest::build_persist_manifest(system).fingerprint());
+
     // Generate saveState method
     let mut save_body = String::new();
     save_body.push_str("if (this._context_stack.length > 0) { throw new Error(\"E700: system not quiescent\"); }\n");
@@ -89,6 +95,7 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         save_body.push_str("const _tag = (_k, _v) => (_v && typeof _v === \"object\" && !Array.isArray(_v) && _v.constructor && _v.constructor !== Object) ? Object.assign({ __frame_type__: _v.constructor.name }, _v) : _v;\n");
     }
     save_body.push_str("return JSON.stringify({\n");
+    save_body.push_str(&format!("    _manifest: \"{}\",\n", manifest_fp));
     save_body.push_str("    _compartment: serializeComp(this.__compartment),\n");
     if is_ts {
         save_body
@@ -224,6 +231,11 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     restore_body.push_str(&format!(
         "const _parsed = JSON.parse({});\n",
         load_param_name
+    ));
+    // B1: refuse a drifted snapshot before reviving any compartment values.
+    restore_body.push_str(&format!(
+        "if (!_parsed || _parsed._manifest !== \"{}\") throw new Error(\"E751: persist restore refused - snapshot schema does not match this program\");\n",
+        manifest_fp
     ));
     // Legacy only: construct via Object.create (skips constructor —
     // no initial-state enter side effects). The new contract

@@ -56,6 +56,9 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     // type strings; Java's own mapping (empty ⇒ Unknown ⇒ `Object`, else
     // java_box∘java_map_type) and its non-empty filter stay here at consumption.
     let manifest = super::manifest::build_persist_manifest(system);
+    // B1: bake the compartment-type-shape fingerprint; save writes `_manifest`,
+    // restore refuses (E751) on drift. String compare only — nothing resolved.
+    let manifest_fp = super::emit::escape_double_quoted(&manifest.fingerprint());
     let java_ty = |raw: &str| -> String {
         if raw.is_empty() {
             "Object".to_string()
@@ -215,6 +218,7 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     save_body.push_str("var __stack = new java.util.ArrayList<Object>();\n");
     save_body.push_str("for (var c : _state_stack) __stack.add(__serComp(c));\n");
     save_body.push_str("__j.put(\"_state_stack\", __stack);\n");
+    save_body.push_str(&format!("__j.put(\"_manifest\", \"{}\");\n", manifest_fp));
     for var in &system.domain {
         if var.attributes.iter().any(|a| a.name == "no_persist") {
             continue;
@@ -252,6 +256,12 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     restore_body.push_str(&format!(
         "try {{ __j = mapper.readTree({}); }} catch (Exception e) {{ throw new RuntimeException(e); }}\n",
         load_param_name
+    ));
+    // B1: refuse a snapshot whose baked manifest fingerprint differs from this
+    // program's (drifted schema, or a pre-B1 snapshot with no `_manifest`).
+    restore_body.push_str(&format!(
+        "if (__j.get(\"_manifest\") == null || !__j.get(\"_manifest\").asText().equals(\"{}\")) throw new RuntimeException(\"E751: persist restore refused - snapshot schema does not match this program\");\n",
+        manifest_fp
     ));
     let _ = (uses_new_contract, sys);
     restore_body.push_str(&format!(

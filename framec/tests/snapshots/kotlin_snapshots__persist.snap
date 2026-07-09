@@ -186,6 +186,7 @@ class Counter {
         if (_context_stack.isNotEmpty()) throw RuntimeException("E700: system not quiescent")
         val mapper = com.fasterxml.jackson.databind.ObjectMapper()
         val j = java.util.LinkedHashMap<String, Any?>()
+        j["_manifest"] = "frame-persist-manifest:1|S8:Counting|V|A|E|X|D5:count3:Int"
         j["_compartment"] = __serComp(__compartment)
         val stack = java.util.ArrayList<Any?>()
         for (c in _state_stack) stack.add(__serComp(c))
@@ -197,6 +198,7 @@ class Counter {
     fun restore(json: String) {
         val mapper = com.fasterxml.jackson.databind.ObjectMapper()
         val _parsed = mapper.readTree(json)
+        if (!_parsed.has("_manifest") || _parsed.get("_manifest").asText() != "frame-persist-manifest:1|S8:Counting|V|A|E|X|D5:count3:Int") throw RuntimeException("E751: persist restore refused - snapshot schema does not match this program")
         this.__compartment = __deserComp(_parsed.get("_compartment"), mapper)!!
         if (_parsed.has("_state_stack")) {
             this._state_stack = mutableListOf()

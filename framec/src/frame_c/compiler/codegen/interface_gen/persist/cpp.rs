@@ -50,6 +50,10 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     // at consumption: an empty raw (Frame `Unknown`) becomes `int` for a state var
     // (the C++ default) and the empty string for an arg, exactly as before.
     let manifest = super::manifest::build_persist_manifest(system);
+    // B1: manifest fingerprint — save writes `_manifest`, restore refuses (E751)
+    // on drift (string compare after a plain parse, before decode; dual-mode throw
+    // / abort under -fno-exceptions, mirroring E700).
+    let manifest_fp = super::emit::escape_double_quoted(&manifest.fingerprint());
     let all_state_vars: Vec<(&str, &str, &str)> = manifest
         .states
         .iter()
@@ -165,6 +169,7 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     save_body.push_str("};\n");
 
     save_body.push_str("nlohmann::json __j;\n");
+    save_body.push_str(&format!("__j[\"_manifest\"] = \"{}\";\n", manifest_fp));
     save_body.push_str("__j[\"_compartment\"] = __ser(__compartment.get());\n");
 
     save_body.push_str("nlohmann::json __stack = nlohmann::json::array();\n");
@@ -301,6 +306,17 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     restore_body.push_str(&format!(
         "auto __j = nlohmann::json::parse({});\n",
         load_param_name
+    ));
+    // B1: refuse a drifted snapshot before any typed decode (dual-mode like E700).
+    restore_body.push_str(&format!(
+        "if (!__j.contains(\"_manifest\") || __j[\"_manifest\"] != \"{}\") {{\n\
+         #if defined(__cpp_exceptions) || defined(__EXCEPTIONS)\n\
+         throw std::runtime_error(\"E751: persist restore refused - snapshot schema does not match this program\");\n\
+         #else\n\
+         std::fprintf(stderr, \"E751: persist restore refused - snapshot schema does not match this program\\n\"); std::abort();\n\
+         #endif\n\
+         }}\n",
+        manifest_fp
     ));
     let _ = uses_new_contract;
     restore_body.push_str(&format!(

@@ -43,6 +43,12 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         "instance"
     };
 
+    // RFC-0054 Phase B1: manifest fingerprint — save writes `_manifest`, restore
+    // refuses (E751) on drift. `_parsed` (serpent.load) is plain; revive is applied
+    // per-field, never to `_manifest`, so the check reads a plain string.
+    let manifest_fp =
+        super::emit::escape_double_quoted(&super::manifest::build_persist_manifest(system).fingerprint());
+
     let mut save_body = String::new();
     save_body
         .push_str("if #self._context_stack > 0 then error(\"E700: system not quiescent\") end\n");
@@ -64,6 +70,7 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     save_body.push_str("    stack[#stack + 1] = serialize_comp(c)\n");
     save_body.push_str("end\n");
     save_body.push_str("local result = {}\n");
+    save_body.push_str(&format!("result._manifest = \"{}\"\n", manifest_fp));
     save_body.push_str("result._compartment = serialize_comp(self.__compartment)\n");
     save_body.push_str("result._state_stack = stack\n");
     for var in &system.domain {
@@ -124,6 +131,11 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     ));
     restore_body
         .push_str("if not ok then error(\"persist load failed: \" .. tostring(_parsed)) end\n");
+    // B1: refuse a drifted snapshot before reviving any compartment values.
+    restore_body.push_str(&format!(
+        "if _parsed._manifest ~= \"{}\" then error(\"E751: persist restore refused - snapshot schema does not match this program\") end\n",
+        manifest_fp
+    ));
 
     // RFC-0053 reflective route (Lua) — closed-world metatable registry, hybrid.
     // Lua has no class enumeration, so the name->metatable map is built from two

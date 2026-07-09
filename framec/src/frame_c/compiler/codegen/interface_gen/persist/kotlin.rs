@@ -54,6 +54,9 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     // type strings; Kotlin's own mapping (empty ⇒ Unknown ⇒ `Any`, else
     // kt_box∘kotlin_map_type) and its non-empty filter stay here at consumption.
     let manifest = super::manifest::build_persist_manifest(system);
+    // B1: manifest fingerprint — save writes `_manifest`, restore refuses (E751)
+    // on drift (string compare after a plain readTree, before any typed decode).
+    let manifest_fp = super::emit::escape_double_quoted(&manifest.fingerprint());
     let kt_ty = |raw: &str| -> String {
         if raw.is_empty() {
             "Any".to_string()
@@ -212,6 +215,7 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     );
     save_body.push_str("val mapper = com.fasterxml.jackson.databind.ObjectMapper()\n");
     save_body.push_str("val j = java.util.LinkedHashMap<String, Any?>()\n");
+    save_body.push_str(&format!("j[\"_manifest\"] = \"{}\"\n", manifest_fp));
     save_body.push_str("j[\"_compartment\"] = __serComp(__compartment)\n");
     save_body.push_str("val stack = java.util.ArrayList<Any?>()\n");
     save_body.push_str("for (c in _state_stack) stack.add(__serComp(c))\n");
@@ -252,6 +256,11 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     restore_body.push_str(&format!(
         "val _parsed = mapper.readTree({})\n",
         load_param_name
+    ));
+    // B1: refuse a drifted snapshot before any typed decode.
+    restore_body.push_str(&format!(
+        "if (!_parsed.has(\"_manifest\") || _parsed.get(\"_manifest\").asText() != \"{}\") throw RuntimeException(\"E751: persist restore refused - snapshot schema does not match this program\")\n",
+        manifest_fp
     ));
     let _ = uses_new_contract;
     restore_body.push_str(&format!(

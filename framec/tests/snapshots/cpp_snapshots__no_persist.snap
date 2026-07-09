@@ -263,6 +263,7 @@ public:
             return __cj;
         };
         nlohmann::json __j;
+        __j["_manifest"] = "frame-persist-manifest:1|S6:Active|V|A|E|X|D5:count3:int";
         __j["_compartment"] = __ser(__compartment.get());
         nlohmann::json __stack = nlohmann::json::array();
         for (auto& c : _state_stack) { __stack.push_back(__ser(c.get())); }
@@ -303,6 +304,13 @@ public:
             return c;
         };
         auto __j = nlohmann::json::parse(json);
+        if (!__j.contains("_manifest") || __j["_manifest"] != "frame-persist-manifest:1|S6:Active|V|A|E|X|D5:count3:int") {
+        #if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
+        throw std::runtime_error("E751: persist restore refused - snapshot schema does not match this program");
+        #else
+        std::fprintf(stderr, "E751: persist restore refused - snapshot schema does not match this program\n"); std::abort();
+        #endif
+        }
         (*this).__compartment = __deser(__j["_compartment"]);
         if (__j.contains("_state_stack")) {
             for (auto& __sc : __j["_state_stack"]) {

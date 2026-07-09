@@ -242,6 +242,7 @@ public class Counter {
         var __stack = new java.util.ArrayList<Object>();
         for (var c : _state_stack) __stack.add(__serComp(c));
         __j.put("_state_stack", __stack);
+        __j.put("_manifest", "frame-persist-manifest:1|S8:Counting|V|A|E|X|D5:count3:int");
         __j.put("count", count);
         try { return mapper.writeValueAsString(__j); } catch (Exception e) { throw new RuntimeException(e); }
     }
@@ -250,6 +251,7 @@ public class Counter {
         var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
         com.fasterxml.jackson.databind.JsonNode __j;
         try { __j = mapper.readTree(json); } catch (Exception e) { throw new RuntimeException(e); }
+        if (__j.get("_manifest") == null || !__j.get("_manifest").asText().equals("frame-persist-manifest:1|S8:Counting|V|A|E|X|D5:count3:int")) throw new RuntimeException("E751: persist restore refused - snapshot schema does not match this program");
         this.__compartment = __deserComp(__j.get("_compartment"), mapper);
         if (__j.has("_state_stack")) {
             this._state_stack = new java.util.ArrayList<>();

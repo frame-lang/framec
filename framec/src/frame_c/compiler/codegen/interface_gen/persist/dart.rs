@@ -46,6 +46,13 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         "instance"
     };
 
+    // B1: manifest fingerprint — save writes `_manifest`, restore refuses (E751)
+    // on drift (string compare after a plain jsonDecode, before any typed decode).
+    // Built here (before save_body) so both save and restore can reference it.
+    let manifest_fp = super::emit::escape_double_quoted(
+        &super::manifest::build_persist_manifest(system).fingerprint(),
+    );
+
     // save_state
     let mut save_body = String::new();
     save_body.push_str(
@@ -67,6 +74,7 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     save_body.push_str("    };\n");
     save_body.push_str("}\n");
     save_body.push_str("return jsonEncode({\n");
+    save_body.push_str(&format!("    '_manifest': \"{}\",\n", manifest_fp));
     save_body.push_str("    '_compartment': serializeComp(this.__compartment),\n");
     save_body
         .push_str("    '_state_stack': this._state_stack.map((c) => serializeComp(c)).toList(),\n");
@@ -229,6 +237,11 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     restore_body.push_str(&format!(
         "final _parsed = jsonDecode({}) as Map<String, dynamic>;\n",
         load_param_name
+    ));
+    // B1: refuse a drifted snapshot before any typed decode.
+    restore_body.push_str(&format!(
+        "if (_parsed['_manifest'] != \"{}\") throw Exception(\"E751: persist restore refused - snapshot schema does not match this program\");\n",
+        manifest_fp
     ));
     if !uses_new_contract {
         restore_body.push_str(&format!("final instance = {}._restore();\n", system.name));

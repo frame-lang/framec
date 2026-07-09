@@ -183,9 +183,15 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         decorators: vec![],
     });
 
+    // RFC-0054 Phase B1: manifest fingerprint — save writes `_manifest`, restore
+    // refuses (E751) on drift BEFORE reviving (plain decode, no type resolution).
+    let manifest_fp =
+        super::emit::escape_double_quoted(&super::manifest::build_persist_manifest(system).fingerprint());
+
     let mut save_body = String::new();
     save_body.push_str("if (!empty($this->_context_stack)) throw new \\Exception(\"E700: system not quiescent\");\n");
     save_body.push_str("$j = [];\n");
+    save_body.push_str(&format!("$j['_manifest'] = \"{}\";\n", manifest_fp));
     save_body.push_str("$j['_compartment'] = $this->__serComp($this->__compartment);\n");
     save_body.push_str("$stack = [];\n");
     save_body
@@ -226,10 +232,18 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     let mut restore_body = String::new();
     // #174: revive tagged user-typed values (tree-wide) under the closed-world
     // registry, before the compartment/domain extraction reads them.
+    // B1: plain-decode and refuse drift BEFORE reviving.
     restore_body.push_str(&format!(
-        "$_parsed = self::_frame_persist_revive(json_decode(${}, true), self::_frame_persist_registry());\n",
+        "$__raw = json_decode(${}, true);\n",
         load_param_name
     ));
+    restore_body.push_str(&format!(
+        "if (!isset($__raw['_manifest']) || $__raw['_manifest'] !== \"{}\") throw new \\Exception(\"E751: persist restore refused - snapshot schema does not match this program\");\n",
+        manifest_fp
+    ));
+    restore_body.push_str(
+        "$_parsed = self::_frame_persist_revive($__raw, self::_frame_persist_registry());\n",
+    );
     if !uses_new_contract {
         restore_body.push_str(&format!(
             "$instance = (new \\ReflectionClass({}::class))->newInstanceWithoutConstructor();\n",

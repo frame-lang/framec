@@ -263,6 +263,7 @@ export class NoPersist {
         };
         const _tag = (_k, _v) => (_v && typeof _v === "object" && !Array.isArray(_v) && _v.constructor && _v.constructor !== Object) ? Object.assign({ __frame_type__: _v.constructor.name }, _v) : _v;
         return JSON.stringify({
+            _manifest: "frame-persist-manifest:1|S6:Active|V|A|E|X|D5:count6:number",
             _compartment: serializeComp(this.__compartment),
             _state_stack: this._state_stack.map((c) => serializeComp(c)),
             count: this.count,
@@ -307,6 +308,7 @@ export class NoPersist {
             return comp;
         };
         const _parsed = JSON.parse(json);
+        if (!_parsed || _parsed._manifest !== "frame-persist-manifest:1|S6:Active|V|A|E|X|D5:count6:number") throw new Error("E751: persist restore refused - snapshot schema does not match this program");
         this.__compartment = deserializeComp(_parsed._compartment);
         this.__next_compartment = null;
         this._state_stack = (_parsed._state_stack || []).map((c) => deserializeComp(c));

@@ -39,6 +39,12 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         .unwrap_or_else(|| "jsonStr".to_string());
     let target = if uses_new_contract { "s" } else { "instance" };
 
+    // RFC-0054 Phase B1: bake the compartment-type-shape fingerprint once; save
+    // writes it into `_manifest`, restore compares to it (string equality) and
+    // refuses on drift (E751). No type is resolved from the blob.
+    let manifest = super::manifest::build_persist_manifest(system);
+    let manifest_fp = super::emit::escape_double_quoted(&manifest.fingerprint());
+
     let mut save_body = String::new();
     save_body.push_str("if len(s._context_stack) > 0 { panic(\"E700: system not quiescent\") }\n");
     save_body.push_str(&format!(
@@ -61,6 +67,7 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     save_body.push_str("    }\n");
     save_body.push_str("}\n");
     save_body.push_str("data := map[string]interface{}{\n");
+    save_body.push_str(&format!("    \"_manifest\": \"{}\",\n", manifest_fp));
     save_body.push_str("    \"_compartment\": serializeComp(s.__compartment),\n");
     save_body.push_str("    \"_state_stack\": func() []interface{} {\n");
     save_body.push_str("        var arr []interface{}\n");
@@ -111,6 +118,14 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     restore_body.push_str(&format!(
         "json.Unmarshal([]byte({}), &_parsed)\n",
         load_param_name
+    ));
+    // B1: refuse a snapshot whose baked manifest fingerprint does not match this
+    // program's (a slot type changed, a state renamed, or a pre-B1 snapshot with
+    // no `_manifest` at all). Hard-refuse — a drifted snapshot cannot silently
+    // mis-decode. String compare only; nothing resolved from the blob.
+    restore_body.push_str(&format!(
+        "if __m, __ok := _parsed[\"_manifest\"].(string); !__ok || __m != \"{}\" {{ panic(\"E751: persist restore refused - snapshot schema does not match this program\") }}\n",
+        manifest_fp
     ));
     restore_body.push_str(&format!(
         "var deserializeComp func(d interface{{}}) *{}\n",
@@ -181,7 +196,7 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     // AST, not four hand-written AST-walks re-derived (and drifting) per backend.
     // Emission below is unchanged: each backend still maps the raw Frame type
     // string to its own decode primitive (go_typed_conv / go_typed_conv_named).
-    let manifest = super::manifest::build_persist_manifest(system);
+    // (`manifest` is built once at the top of generate() and reused here.)
     // A2: the per-state guarded-block control flow is the shared scaffold
     // (super::emit); go supplies only its guard text and its per-slot conv.
     let go_guard = |state: &str, branch: &str| {

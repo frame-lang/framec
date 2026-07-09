@@ -222,6 +222,7 @@ public class Counter {
     public func snapshot() -> String {
         if !_context_stack.isEmpty { fatalError("E700: system not quiescent") }
         var j: [String: Any] = [:]
+        j["_manifest"] = "frame-persist-manifest:1|S8:Counting|V|A|E|X|D5:count3:Int" as Any
         j["_compartment"] = __serComp(__compartment) as Any
         var stack: [[String: Any]] = []
         for c in _state_stack { if let s = __serComp(c) { stack.append(s) } }
@@ -234,6 +235,7 @@ public class Counter {
     public func restore(_ json: String) {
         let data = json.data(using: .utf8)!
         let _parsed = try! JSONSerialization.jsonObject(with: data) as! [String: Any]
+        guard let __m = _parsed["_manifest"] as? String, __m == "frame-persist-manifest:1|S8:Counting|V|A|E|X|D5:count3:Int" else { fatalError("E751: persist restore refused - snapshot schema does not match this program") }
         self.__compartment = self.__deserComp(_parsed["_compartment"] as? [String: Any])!
         if let stack = _parsed["_state_stack"] as? [[String: Any]] {
             self._state_stack = []

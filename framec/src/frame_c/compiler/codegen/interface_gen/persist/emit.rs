@@ -57,6 +57,27 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn indexed_branch(
     branch
 }
 
+/// Escape a string for embedding in a **double-quoted string literal** in any of
+/// the 14 targets — all accept `\"` and `\\`, and the control-char escapes below
+/// are likewise universal. Used to bake the manifest fingerprint (RFC-0054 B1) as
+/// a constant into generated code; the fingerprint is opaque ASCII framing over
+/// raw (theoretically quote-bearing) Frame type strings, so it must be escaped
+/// even though realistic type names never need it.
+pub(in crate::frame_c::compiler::codegen::interface_gen) fn escape_double_quoted(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            other => out.push(other),
+        }
+    }
+    out
+}
+
 /// Build a decode branch for the **named** `state_vars` category: concatenate
 /// `conv(name, type)` over the declared vars, skipping empties.
 pub(in crate::frame_c::compiler::codegen::interface_gen) fn named_branch(

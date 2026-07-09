@@ -209,6 +209,7 @@ func (s *Counter) Snapshot() string {
         }
     }
     data := map[string]interface{}{
+        "_manifest": "frame-persist-manifest:1|S8:Counting|V|A|E|X|D5:count3:int",
         "_compartment": serializeComp(s.__compartment),
         "_state_stack": func() []interface{} {
             var arr []interface{}
@@ -224,6 +225,7 @@ func (s *Counter) Snapshot() string {
 func (s *Counter) Restore(jsonStr string) {
     var _parsed map[string]interface{}
     json.Unmarshal([]byte(jsonStr), &_parsed)
+    if __m, __ok := _parsed["_manifest"].(string); !__ok || __m != "frame-persist-manifest:1|S8:Counting|V|A|E|X|D5:count3:int" { panic("E751: persist restore refused - snapshot schema does not match this program") }
     var deserializeComp func(d interface{}) *CounterCompartment
     deserializeComp = func(d interface{}) *CounterCompartment {
         if d == nil { return nil }

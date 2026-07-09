@@ -84,6 +84,9 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     // mapping (empty ⇒ Unknown ⇒ `Any`, else swift_map_type) and its drop of
     // Any/JSON-native vars stay here at consumption.
     let manifest = super::manifest::build_persist_manifest(system);
+    // B1: manifest fingerprint — save writes `_manifest`, restore refuses (E751)
+    // on drift (string compare after a plain jsonObject parse, before decode).
+    let manifest_fp = super::emit::escape_double_quoted(&manifest.fingerprint());
     let swift_state_var_types: Vec<(String, Vec<(String, String)>)> = manifest
         .states
         .iter()
@@ -205,6 +208,7 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     save_body
         .push_str("if !_context_stack.isEmpty { fatalError(\"E700: system not quiescent\") }\n");
     save_body.push_str("var j: [String: Any] = [:]\n");
+    save_body.push_str(&format!("j[\"_manifest\"] = \"{}\" as Any\n", manifest_fp));
     save_body.push_str("j[\"_compartment\"] = __serComp(__compartment) as Any\n");
     save_body.push_str("var stack: [[String: Any]] = []\n");
     save_body.push_str("for c in _state_stack { if let s = __serComp(c) { stack.append(s) } }\n");
@@ -270,6 +274,11 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     restore_body.push_str(
         "let _parsed = try! JSONSerialization.jsonObject(with: data) as! [String: Any]\n",
     );
+    // B1: refuse a drifted snapshot before any typed decode.
+    restore_body.push_str(&format!(
+        "guard let __m = _parsed[\"_manifest\"] as? String, __m == \"{}\" else {{ fatalError(\"E751: persist restore refused - snapshot schema does not match this program\") }}\n",
+        manifest_fp
+    ));
     let _ = (uses_new_contract, sys);
     restore_body.push_str(&format!(
         "{}.__compartment = {}.__deserComp(_parsed[\"_compartment\"] as? [String: Any])!\n",

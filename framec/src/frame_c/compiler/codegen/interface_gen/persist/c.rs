@@ -59,6 +59,10 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     // type strings. C maps an empty raw (Frame `Unknown`) to `int` — matching
     // `type_to_string` above — at consumption; everything downstream is unchanged.
     let manifest = super::manifest::build_persist_manifest(system);
+    // B1: manifest fingerprint — save writes `_manifest`, restore refuses (E751)
+    // on drift (strcmp after a plain cJSON_Parse, before decode; abort on drift,
+    // matching the E700 idiom).
+    let manifest_fp = super::emit::escape_double_quoted(&manifest.fingerprint());
     let c_ty = |raw: &str| -> String {
         if raw.is_empty() {
             "int".to_string()
@@ -384,6 +388,10 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         system.name
     ));
     save_body.push_str("cJSON* root = cJSON_CreateObject();\n");
+    save_body.push_str(&format!(
+        "cJSON_AddItemToObject(root, \"_manifest\", cJSON_CreateString(\"{}\"));\n",
+        manifest_fp
+    ));
     save_body.push_str(&format!("cJSON_AddItemToObject(root, \"_compartment\", {}_serialize_compartment(self->__compartment));\n", system.name));
 
     save_body.push_str("cJSON* stack_arr = cJSON_CreateArray();\n");
@@ -456,6 +464,12 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     restore_body.push_str(&format!(
         "cJSON* root = cJSON_Parse({});\n",
         load_param_name
+    ));
+    // B1: refuse a drifted snapshot before any typed decode. cJSON_GetObjectItem
+    // is NULL-safe on a NULL root (bad parse), so this also refuses garbage input.
+    restore_body.push_str(&format!(
+        "{{ cJSON* __m = cJSON_GetObjectItem(root, \"_manifest\"); if (!cJSON_IsString(__m) || strcmp(__m->valuestring, \"{}\") != 0) {{ fprintf(stderr, \"E751: persist restore refused - snapshot schema does not match this program\\n\"); abort(); }} }}\n",
+        manifest_fp
     ));
     if uses_new_contract {
         restore_body.push_str("if (!root) return;\n\n");

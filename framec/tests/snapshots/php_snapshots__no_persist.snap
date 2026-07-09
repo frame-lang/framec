@@ -302,6 +302,7 @@ class NoPersist {
     public function snapshot() {
         if (!empty($this->_context_stack)) throw new \Exception("E700: system not quiescent");
         $j = [];
+        $j['_manifest'] = "frame-persist-manifest:1|S6:Active|V|A|E|X|D5:count3:int";
         $j['_compartment'] = $this->__serComp($this->__compartment);
         $stack = [];
         foreach ($this->_state_stack as $c) { $stack[] = $this->__serComp($c); }
@@ -311,7 +312,9 @@ class NoPersist {
     }
 
     public function restore($json) {
-        $_parsed = self::_frame_persist_revive(json_decode($json, true), self::_frame_persist_registry());
+        $__raw = json_decode($json, true);
+        if (!isset($__raw['_manifest']) || $__raw['_manifest'] !== "frame-persist-manifest:1|S6:Active|V|A|E|X|D5:count3:int") throw new \Exception("E751: persist restore refused - snapshot schema does not match this program");
+        $_parsed = self::_frame_persist_revive($__raw, self::_frame_persist_registry());
         $this->_state_stack = [];
         $this->_context_stack = [];
         $this->__compartment = $this->__deserComp($_parsed['_compartment']);

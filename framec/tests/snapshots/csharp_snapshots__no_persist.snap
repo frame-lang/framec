@@ -319,6 +319,7 @@ public class NoPersist {
     public string snapshot() {
         if (_context_stack.Count > 0) throw new System.Exception("E700: system not quiescent");
         var __j = new Dictionary<string, object>();
+        __j["_manifest"] = "frame-persist-manifest:1|S6:Active|V|A|E|X|D5:count3:int";
         __j["_compartment"] = __SerComp(__compartment);
         var __stack = new List<object>();
         foreach (var c in _state_stack) { __stack.Add(__SerComp(c)); }
@@ -331,6 +332,7 @@ public class NoPersist {
     public void restore(string json) {
         var __doc = System.Text.Json.JsonDocument.Parse(json);
         var __root = __doc.RootElement;
+        if (!__root.TryGetProperty("_manifest", out var __m) || __m.GetString() != "frame-persist-manifest:1|S6:Active|V|A|E|X|D5:count3:int") throw new System.Exception("E751: persist restore refused - snapshot schema does not match this program");
         this.__compartment = __DeserComp(__root.GetProperty("_compartment"));
         if (__root.TryGetProperty("_state_stack", out var __stack)) {
             this._state_stack = new List<NoPersistCompartment>();

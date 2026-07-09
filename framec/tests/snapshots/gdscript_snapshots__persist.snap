@@ -184,6 +184,7 @@ class Counter:
                 result = d
             return result
         var state_data = {}
+        state_data["_manifest"] = "frame-persist-manifest:1|S8:Counting|V|A|E|X|D5:count3:int"
         state_data["_compartment"] = _ser_chain.call(self.__compartment)
         var stack_arr = []
         for c in self._state_stack:
@@ -194,6 +195,9 @@ class Counter:
 
     func restore(data: PackedByteArray):
         var state_data = bytes_to_var(data)
+        if state_data == null or not (state_data is Dictionary) or state_data.get("_manifest", "") != "frame-persist-manifest:1|S8:Counting|V|A|E|X|D5:count3:int":
+            push_error("E751: persist restore refused - snapshot schema does not match this program")
+            return
         var _deser_chain = func(d):
             if d == null:
                 return null
