@@ -76,6 +76,37 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         })
         .unwrap_or_default();
 
+    // State VARS carry user types too but restore into a `Map<String,Object>`,
+    // so Jackson decodes an object as a LinkedHashMap and a later cast to the
+    // user type throws (ClassCastException). Re-decode each declared state var
+    // into its type BY NAME per state (mirrors the state_args typing below).
+    let state_var_types: Vec<(String, Vec<(String, String)>)> = system
+        .machine
+        .as_ref()
+        .map(|m| {
+            m.states
+                .iter()
+                .filter(|s| !s.state_vars.is_empty())
+                .map(|s| {
+                    let vars: Vec<(String, String)> = s
+                        .state_vars
+                        .iter()
+                        .map(|sv| {
+                            let ty = match &sv.var_type {
+                                crate::frame_c::compiler::frame_ast::Type::Custom(t) => {
+                                    java_box(&java_map_type(t))
+                                }
+                                _ => "Object".to_string(),
+                            };
+                            (sv.name.clone(), ty)
+                        })
+                        .collect();
+                    (s.name.clone(), vars)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
     let mut ser_body = String::new();
     ser_body.push_str("if (comp == null) return null;\n");
     ser_body.push_str("var j = new java.util.LinkedHashMap<String, Object>();\n");
@@ -117,17 +148,39 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     deser_body.push_str("}\n");
     deser_body.push_str("var __sa = node.has(\"state_args\") ? node.get(\"state_args\") : null;\n");
     deser_body.push_str("var __ea = node.has(\"enter_args\") ? node.get(\"enter_args\") : null;\n");
-    if !state_param_types.is_empty() {
+    if !state_param_types.is_empty() || !state_var_types.is_empty() {
+        // Union of states that declare typed args or typed state vars.
+        let mut state_names: Vec<String> = Vec::new();
+        for (s, _) in &state_param_types {
+            if !state_names.contains(s) {
+                state_names.push(s.clone());
+            }
+        }
+        for (s, _) in &state_var_types {
+            if !state_names.contains(s) {
+                state_names.push(s.clone());
+            }
+        }
         deser_body.push_str("switch (c.state) {\n");
-        for (state_name, param_types) in &state_param_types {
+        for state_name in &state_names {
             deser_body.push_str(&format!("    case \"{}\":\n", state_name));
-            for (i, ty) in param_types.iter().enumerate() {
-                deser_body.push_str(&format!(
-                    "        if (__sa != null && __sa.size() > {i}) c.state_args.add(mapper.convertValue(__sa.get({i}), new com.fasterxml.jackson.core.type.TypeReference<{ty}>(){{}}));\n"
-                ));
-                deser_body.push_str(&format!(
-                    "        if (__ea != null && __ea.size() > {i}) c.enter_args.add(mapper.convertValue(__ea.get({i}), new com.fasterxml.jackson.core.type.TypeReference<{ty}>(){{}}));\n"
-                ));
+            if let Some((_, param_types)) = state_param_types.iter().find(|(s, _)| s == state_name)
+            {
+                for (i, ty) in param_types.iter().enumerate() {
+                    deser_body.push_str(&format!(
+                        "        if (__sa != null && __sa.size() > {i}) c.state_args.add(mapper.convertValue(__sa.get({i}), new com.fasterxml.jackson.core.type.TypeReference<{ty}>(){{}}));\n"
+                    ));
+                    deser_body.push_str(&format!(
+                        "        if (__ea != null && __ea.size() > {i}) c.enter_args.add(mapper.convertValue(__ea.get({i}), new com.fasterxml.jackson.core.type.TypeReference<{ty}>(){{}}));\n"
+                    ));
+                }
+            }
+            if let Some((_, vars)) = state_var_types.iter().find(|(s, _)| s == state_name) {
+                for (name, ty) in vars {
+                    deser_body.push_str(&format!(
+                        "        if (c.state_vars.containsKey(\"{name}\")) c.state_vars.put(\"{name}\", mapper.convertValue(c.state_vars.get(\"{name}\"), new com.fasterxml.jackson.core.type.TypeReference<{ty}>(){{}}));\n"
+                    ));
+                }
             }
             deser_body.push_str("        break;\n");
         }
