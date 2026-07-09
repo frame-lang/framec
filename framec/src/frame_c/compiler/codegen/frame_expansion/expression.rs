@@ -313,21 +313,20 @@ fn expand_state_vars_in_expr(expr: &str, lang: TargetLanguage, ctx: &HandlerCont
                         .get(&var_name)
                         .map(|t| csharp_map_type(t))
                         .unwrap_or_else(|| "int".to_string());
-                    let cast = if cs_type == "object" {
-                        String::new()
-                    } else {
-                        format!("({}) ", cs_type)
-                    };
-                    if ctx.per_handler {
-                        result
-                            .push_str(&format!("{}compartment.state_vars[\"{}\"]", cast, var_name))
+                    let access = if ctx.per_handler {
+                        format!("compartment.state_vars[\"{}\"]", var_name)
                     } else if ctx.use_sv_comp {
-                        result.push_str(&format!("{}__sv_comp.state_vars[\"{}\"]", cast, var_name))
+                        format!("__sv_comp.state_vars[\"{}\"]", var_name)
                     } else {
-                        result.push_str(&format!(
-                            "{}__compartment.state_vars[\"{}\"]",
-                            cast, var_name
-                        ))
+                        format!("__compartment.state_vars[\"{}\"]", var_name)
+                    };
+                    if cs_type == "object" {
+                        result.push_str(&access);
+                    } else {
+                        // Wrap the cast in parens so a following member access
+                        // binds to the cast result: `((Vec2) map["k"]).MagSq()`,
+                        // not `(Vec2) (map["k"].MagSq())`.
+                        result.push_str(&format!("(({}) {})", cs_type, access));
                     }
                 }
                 TargetLanguage::Go => {

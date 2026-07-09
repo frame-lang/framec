@@ -217,7 +217,9 @@ public class Counter {
         if (comp == null) return null;
         var j = new Dictionary<string, object>();
         j["state"] = comp.state;
-        var sv = new Dictionary<string, object>(comp.state_vars);
+        var __svopts = new System.Text.Json.JsonSerializerOptions { IncludeFields = true };
+        var sv = new Dictionary<string, object>();
+        foreach (var __kv in comp.state_vars) { sv[__kv.Key] = __kv.Value == null ? null : System.Text.Json.JsonSerializer.SerializeToElement(__kv.Value, __kv.Value.GetType(), __svopts); }
         j["state_vars"] = sv;
         j["state_args"] = new List<object>(comp.state_args);
         j["enter_args"] = new List<object>(comp.enter_args);
@@ -232,7 +234,7 @@ public class Counter {
             foreach (var kv in sv.EnumerateObject()) {
                 if (kv.Value.ValueKind == System.Text.Json.JsonValueKind.Number) { if (kv.Value.TryGetInt32(out int __ii)) c.state_vars[kv.Name] = __ii; else if (kv.Value.TryGetInt64(out long __il)) c.state_vars[kv.Name] = __il; else c.state_vars[kv.Name] = kv.Value.GetDouble(); }
                 else if (kv.Value.ValueKind == System.Text.Json.JsonValueKind.String) c.state_vars[kv.Name] = kv.Value.GetString();
-                else c.state_vars[kv.Name] = kv.Value.ToString();
+                else c.state_vars[kv.Name] = kv.Value.Clone();
             }
         }
         if (el.TryGetProperty("state_args", out var sa) && sa.ValueKind == System.Text.Json.JsonValueKind.Array) {

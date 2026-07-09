@@ -47,7 +47,15 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     ser_body.push_str("if (comp == null) return null;\n");
     ser_body.push_str("var j = new Dictionary<string, object>();\n");
     ser_body.push_str("j[\"state\"] = comp.state;\n");
-    ser_body.push_str("var sv = new Dictionary<string, object>(comp.state_vars);\n");
+    // System.Text.Json serializes a `Dictionary<string, object>` value by its
+    // DECLARED type (object) → an empty `{}` for a user struct, losing it on save.
+    // Pre-serialize each value by its RUNTIME type into a JsonElement so the
+    // concrete fields survive (restore re-decodes by the declared type).
+    ser_body.push_str(
+        "var __svopts = new System.Text.Json.JsonSerializerOptions { IncludeFields = true };\n",
+    );
+    ser_body.push_str("var sv = new Dictionary<string, object>();\n");
+    ser_body.push_str("foreach (var __kv in comp.state_vars) { sv[__kv.Key] = __kv.Value == null ? null : System.Text.Json.JsonSerializer.SerializeToElement(__kv.Value, __kv.Value.GetType(), __svopts); }\n");
     ser_body.push_str("j[\"state_vars\"] = sv;\n");
     ser_body.push_str("j[\"state_args\"] = new List<object>(comp.state_args);\n");
     ser_body.push_str("j[\"enter_args\"] = new List<object>(comp.enter_args);\n");
@@ -78,7 +86,7 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     deser_body.push_str("    foreach (var kv in sv.EnumerateObject()) {\n");
     deser_body.push_str("        if (kv.Value.ValueKind == System.Text.Json.JsonValueKind.Number) { if (kv.Value.TryGetInt32(out int __ii)) c.state_vars[kv.Name] = __ii; else if (kv.Value.TryGetInt64(out long __il)) c.state_vars[kv.Name] = __il; else c.state_vars[kv.Name] = kv.Value.GetDouble(); }\n");
     deser_body.push_str("        else if (kv.Value.ValueKind == System.Text.Json.JsonValueKind.String) c.state_vars[kv.Name] = kv.Value.GetString();\n");
-    deser_body.push_str("        else c.state_vars[kv.Name] = kv.Value.ToString();\n");
+    deser_body.push_str("        else c.state_vars[kv.Name] = kv.Value.Clone();\n");
     deser_body.push_str("    }\n");
     deser_body.push_str("}\n");
     deser_body.push_str("if (el.TryGetProperty(\"state_args\", out var sa) && sa.ValueKind == System.Text.Json.JsonValueKind.Array) {\n");
@@ -103,6 +111,23 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
              \x20           var __raw = System.Text.Json.JsonSerializer.Serialize(c.{slot}[{idx}]);\n\
              \x20           c.{slot}[{idx}] = System.Text.Json.JsonSerializer.Deserialize<{t}>(__raw);\n\
              \x20       }} catch {{ /* leave generic value in place */ }}\n\
+             \x20   }}\n"
+        )
+    };
+    // State vars restore into a `Dictionary<string, object>`; an object value is
+    // kept as a raw JsonElement (above), so re-serialize + Deserialize<T> into
+    // the declared type BY NAME (scalars round-trip idempotently).
+    let cs_typed_conv_named = |declared_type: &str, name: &str| -> String {
+        let t = declared_type.trim();
+        if t.is_empty() {
+            return String::new();
+        }
+        format!(
+            "    if (c.state_vars.ContainsKey(\"{name}\") && c.state_vars[\"{name}\"] != null) {{\n\
+             \x20       try {{\n\
+             \x20           var __raw = System.Text.Json.JsonSerializer.Serialize(c.state_vars[\"{name}\"], __svopts);\n\
+             \x20           c.state_vars[\"{name}\"] = System.Text.Json.JsonSerializer.Deserialize<{t}>(__raw, __svopts);\n\
+             \x20       }} catch {{ }}\n\
              \x20   }}\n"
         )
     };
@@ -194,6 +219,49 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
             ));
         }
     }
+    // State vars: retype each declared var by name per state (see
+    // cs_typed_conv_named). Runs per compartment, so every HSM-chain layer is
+    // retyped by its own state.
+    let state_var_decls: Vec<(String, Vec<(String, String)>)> = system
+        .machine
+        .as_ref()
+        .map(|m| {
+            m.states
+                .iter()
+                .map(|s| {
+                    let vars: Vec<(String, String)> = s
+                        .state_vars
+                        .iter()
+                        .map(|sv| {
+                            let t = match &sv.var_type {
+                                crate::frame_c::compiler::frame_ast::Type::Custom(s) => s.clone(),
+                                crate::frame_c::compiler::frame_ast::Type::Unknown => String::new(),
+                            };
+                            (sv.name.clone(), t)
+                        })
+                        .collect();
+                    (s.name.clone(), vars)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    for (state_name, vars) in &state_var_decls {
+        let mut branch = String::new();
+        for (name, t) in vars {
+            let conv = cs_typed_conv_named(t, name);
+            if !conv.is_empty() {
+                branch.push_str(&conv);
+            }
+        }
+        if !branch.is_empty() {
+            // IncludeFields so a user struct with public fields round-trips.
+            deser_body.push_str(&format!(
+                "if (c.state == \"{}\") {{\n    var __svopts = new System.Text.Json.JsonSerializerOptions {{ IncludeFields = true }};\n{}}}\n",
+                state_name, branch
+            ));
+        }
+    }
+
     deser_body.push_str("if (el.TryGetProperty(\"parent\", out var p) && p.ValueKind != System.Text.Json.JsonValueKind.Null) {\n");
     deser_body.push_str("    c.parent_compartment = __DeserComp(p);\n");
     deser_body.push_str("}\n");

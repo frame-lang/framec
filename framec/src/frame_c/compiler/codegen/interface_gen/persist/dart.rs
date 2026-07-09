@@ -141,6 +141,37 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         })
         .unwrap_or_default();
 
+    // State vars carry user types but restore into `Map<String, dynamic>`, so a
+    // user value stays a plain Map and a method call on it throws at runtime.
+    // Re-decode each declared state var into its type BY NAME per state (via
+    // dart_conv_expr → the type's fromJson route).
+    let dart_state_var_types: Vec<(String, Vec<(String, String)>)> = system
+        .machine
+        .as_ref()
+        .map(|m| {
+            m.states
+                .iter()
+                .filter(|s| !s.state_vars.is_empty())
+                .map(|s| {
+                    let vars: Vec<(String, String)> = s
+                        .state_vars
+                        .iter()
+                        .map(|sv| {
+                            let t = match &sv.var_type {
+                                crate::frame_c::compiler::frame_ast::Type::Custom(t) => {
+                                    t.trim().to_string()
+                                }
+                                _ => "dynamic".to_string(),
+                            };
+                            (sv.name.clone(), t)
+                        })
+                        .collect();
+                    (s.name.clone(), vars)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
     let mut restore_body = String::new();
     restore_body.push_str(&format!(
         "{}? deserializeComp(dynamic data) {{\n",
@@ -157,20 +188,44 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     restore_body.push_str("    final __eaRaw = (data['enter_args'] as List?) ?? <dynamic>[];\n");
     restore_body
         .push_str("    comp.exit_args = List<dynamic>.from(data['exit_args'] ?? <dynamic>[]);\n");
-    if !dart_state_param_types.is_empty() {
+    if !dart_state_param_types.is_empty() || !dart_state_var_types.is_empty() {
+        let mut state_names: Vec<String> = Vec::new();
+        for (s, _) in &dart_state_param_types {
+            if !state_names.contains(s) {
+                state_names.push(s.clone());
+            }
+        }
+        for (s, _) in &dart_state_var_types {
+            if !state_names.contains(s) {
+                state_names.push(s.clone());
+            }
+        }
         restore_body.push_str("    switch (comp.state) {\n");
-        for (state_name, param_types) in &dart_state_param_types {
+        for state_name in &state_names {
             restore_body.push_str(&format!("        case '{}':\n", state_name));
-            for (i, ty_str) in param_types.iter().enumerate() {
-                let parsed = parse_dart_type(ty_str);
-                let conv_sa = dart_conv_expr(&parsed, &format!("__saRaw[{i}]"));
-                let conv_ea = dart_conv_expr(&parsed, &format!("__eaRaw[{i}]"));
-                restore_body.push_str(&format!(
-                    "            if (__saRaw.length > {i}) comp.state_args.add({conv_sa});\n"
-                ));
-                restore_body.push_str(&format!(
-                    "            if (__eaRaw.length > {i}) comp.enter_args.add({conv_ea});\n"
-                ));
+            if let Some((_, param_types)) =
+                dart_state_param_types.iter().find(|(s, _)| s == state_name)
+            {
+                for (i, ty_str) in param_types.iter().enumerate() {
+                    let parsed = parse_dart_type(ty_str);
+                    let conv_sa = dart_conv_expr(&parsed, &format!("__saRaw[{i}]"));
+                    let conv_ea = dart_conv_expr(&parsed, &format!("__eaRaw[{i}]"));
+                    restore_body.push_str(&format!(
+                        "            if (__saRaw.length > {i}) comp.state_args.add({conv_sa});\n"
+                    ));
+                    restore_body.push_str(&format!(
+                        "            if (__eaRaw.length > {i}) comp.enter_args.add({conv_ea});\n"
+                    ));
+                }
+            }
+            if let Some((_, vars)) = dart_state_var_types.iter().find(|(s, _)| s == state_name) {
+                for (name, ty_str) in vars {
+                    let parsed = parse_dart_type(ty_str);
+                    let conv = dart_conv_expr(&parsed, &format!("comp.state_vars['{name}']"));
+                    restore_body.push_str(&format!(
+                        "            if (comp.state_vars.containsKey('{name}')) comp.state_vars['{name}'] = {conv};\n"
+                    ));
+                }
             }
             restore_body.push_str("            break;\n");
         }
