@@ -202,12 +202,17 @@ fn expand_state_vars_in_expr(expr: &str, lang: TargetLanguage, ctx: &HandlerCont
                         ctx.system_name, comp, var_name
                     );
                     use super::super::c_marshal::{c_marshal_of, CMarshal};
+                    let ct = c_type.trim();
                     let read = match c_marshal_of(c_type) {
+                        CMarshal::Dbl => format!("{}_unpack_double({})", ctx.system_name, slot),
+                        CMarshal::Int => format!("({})(intptr_t){}", ct, slot),
+                        CMarshal::Str if ct.ends_with('*') => format!("({}){}", ct, slot),
                         CMarshal::Str => format!("(const char*){}", slot),
-                        CMarshal::Dbl => {
-                            format!("{}_unpack_double({})", ctx.system_name, slot)
-                        }
-                        _ => format!("(int)(intptr_t){}", slot),
+                        CMarshal::Ptr => format!("({}){}", ct, slot),
+                        CMarshal::Vec => format!("({}_FrameVec*){}", ctx.system_name, slot),
+                        CMarshal::Dict => format!("({}_FrameDict*){}", ctx.system_name, slot),
+                        // A boxed user struct: the slot holds a T* (the heap box) — deref.
+                        CMarshal::Boxed => format!("*({}*){}", ct, slot),
                     };
                     result.push_str(&read);
                 }

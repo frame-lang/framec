@@ -60,9 +60,11 @@ fn generate_c_runtime_types(system: &SystemAst) -> String {
     code.push_str("    char* key;\n");
     code.push_str("    void* value;\n");
     code.push_str("    // 1 when `value` is a heap box this dict owns (a malloc'd\n");
-    code.push_str("    // double from pack_double — #81): freed on overwrite and in\n");
-    code.push_str("    // destroy, deep-copied by FrameDict_copy.\n");
+    code.push_str("    // double from pack_double — #81 — or a malloc'd user-struct\n");
+    code.push_str("    // box): freed on overwrite and in destroy, deep-copied by\n");
+    code.push_str("    // FrameDict_copy using value_size (0 for non-owned entries).\n");
     code.push_str("    int owned;\n");
+    code.push_str("    size_t value_size;\n");
     code.push_str(&format!("    struct {}_FrameDictEntry* next;\n", sys));
     code.push_str(&format!("}} {}_FrameDictEntry;\n\n", sys));
 
@@ -108,19 +110,21 @@ fn generate_c_runtime_types(system: &SystemAst) -> String {
     // are freed when overwritten and in destroy, and deep-copied by
     // FrameDict_copy. Plain set stores caller-owned/non-pointer values.
     code.push_str(&format!(
-        "static void {}_FrameDict_set_({}_FrameDict* d, const char* key, void* value, int owned);\n",
+        "static void {}_FrameDict_set_({}_FrameDict* d, const char* key, void* value, int owned, size_t value_size);\n",
         sys, sys
     ));
     code.push_str(&format!(
-        "static void {}_FrameDict_set({}_FrameDict* d, const char* key, void* value) {{\n    {}_FrameDict_set_(d, key, value, 0);\n}}\n\n",
+        "static void {}_FrameDict_set({}_FrameDict* d, const char* key, void* value) {{\n    {}_FrameDict_set_(d, key, value, 0, 0);\n}}\n\n",
+        sys, sys, sys
+    ));
+    // Owned boxes carry their byte size so FrameDict_copy can deep-copy an
+    // arbitrary value type (not just an 8-byte double). Callers pass sizeof(T).
+    code.push_str(&format!(
+        "static void {}_FrameDict_set_owned({}_FrameDict* d, const char* key, void* value, size_t value_size) {{\n    {}_FrameDict_set_(d, key, value, 1, value_size);\n}}\n\n",
         sys, sys, sys
     ));
     code.push_str(&format!(
-        "static void {}_FrameDict_set_owned({}_FrameDict* d, const char* key, void* value) {{\n    {}_FrameDict_set_(d, key, value, 1);\n}}\n\n",
-        sys, sys, sys
-    ));
-    code.push_str(&format!(
-        "static void {}_FrameDict_set_({}_FrameDict* d, const char* key, void* value, int owned) {{\n",
+        "static void {}_FrameDict_set_({}_FrameDict* d, const char* key, void* value, int owned, size_t value_size) {{\n",
         sys, sys
     ));
     code.push_str(&format!(
@@ -136,6 +140,7 @@ fn generate_c_runtime_types(system: &SystemAst) -> String {
     code.push_str("            if (entry->owned && entry->value) free(entry->value);\n");
     code.push_str("            entry->value = value;\n");
     code.push_str("            entry->owned = owned;\n");
+    code.push_str("            entry->value_size = value_size;\n");
     code.push_str("            return;\n");
     code.push_str("        }\n");
     code.push_str("        entry = entry->next;\n");
@@ -147,6 +152,7 @@ fn generate_c_runtime_types(system: &SystemAst) -> String {
     code.push_str(&format!("    new_entry->key = {}_strdup_(key);\n", sys));
     code.push_str("    new_entry->value = value;\n");
     code.push_str("    new_entry->owned = owned;\n");
+    code.push_str("    new_entry->value_size = value_size;\n");
     code.push_str("    new_entry->next = d->buckets[idx];\n");
     code.push_str("    d->buckets[idx] = new_entry;\n");
     code.push_str("    d->size++;\n");
@@ -212,18 +218,21 @@ fn generate_c_runtime_types(system: &SystemAst) -> String {
     ));
     code.push_str("        while (entry) {\n");
     code.push_str("            if (entry->owned && entry->value) {\n");
-    code.push_str("                // Owned values are heap-boxed doubles (#81): deep-copy\n");
-    code.push_str("                // so src and dst never alias (a shallow copy would\n");
-    code.push_str("                // dangle when either side frees on overwrite/destroy).\n");
-    code.push_str("                void* nb = malloc(sizeof(double));\n");
-    code.push_str("                memcpy(nb, entry->value, sizeof(double));\n");
+    code.push_str("                // Owned values are heap boxes (#81 doubles or user-struct\n");
+    code.push_str("                // boxes): deep-copy value_size bytes so src and dst never\n");
+    code.push_str("                // alias (a shallow copy would dangle when either side frees\n");
+    code.push_str("                // on overwrite/destroy). Bitwise copy — boxed value types\n");
+    code.push_str("                // must be trivially copyable (POD); a struct owning inner\n");
+    code.push_str("                // heap is the user's contract to avoid.\n");
+    code.push_str("                void* nb = malloc(entry->value_size);\n");
+    code.push_str("                memcpy(nb, entry->value, entry->value_size);\n");
     code.push_str(&format!(
-        "                {}_FrameDict_set_(dst, entry->key, nb, 1);\n",
+        "                {}_FrameDict_set_(dst, entry->key, nb, 1, entry->value_size);\n",
         sys
     ));
     code.push_str("            } else {\n");
     code.push_str(&format!(
-        "                {}_FrameDict_set_(dst, entry->key, entry->value, 0);\n",
+        "                {}_FrameDict_set_(dst, entry->key, entry->value, 0, 0);\n",
         sys
     ));
     code.push_str("            }\n");

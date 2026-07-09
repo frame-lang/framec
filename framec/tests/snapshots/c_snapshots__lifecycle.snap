@@ -23,9 +23,11 @@ typedef struct Lifecycle_FrameDictEntry {
     char* key;
     void* value;
     // 1 when `value` is a heap box this dict owns (a malloc'd
-    // double from pack_double — #81): freed on overwrite and in
-    // destroy, deep-copied by FrameDict_copy.
+    // double from pack_double — #81 — or a malloc'd user-struct
+    // box): freed on overwrite and in destroy, deep-copied by
+    // FrameDict_copy using value_size (0 for non-owned entries).
     int owned;
+    size_t value_size;
     struct Lifecycle_FrameDictEntry* next;
 } Lifecycle_FrameDictEntry;
 
@@ -52,16 +54,16 @@ static Lifecycle_FrameDict* Lifecycle_FrameDict_new(void) {
     return d;
 }
 
-static void Lifecycle_FrameDict_set_(Lifecycle_FrameDict* d, const char* key, void* value, int owned);
+static void Lifecycle_FrameDict_set_(Lifecycle_FrameDict* d, const char* key, void* value, int owned, size_t value_size);
 static void Lifecycle_FrameDict_set(Lifecycle_FrameDict* d, const char* key, void* value) {
-    Lifecycle_FrameDict_set_(d, key, value, 0);
+    Lifecycle_FrameDict_set_(d, key, value, 0, 0);
 }
 
-static void Lifecycle_FrameDict_set_owned(Lifecycle_FrameDict* d, const char* key, void* value) {
-    Lifecycle_FrameDict_set_(d, key, value, 1);
+static void Lifecycle_FrameDict_set_owned(Lifecycle_FrameDict* d, const char* key, void* value, size_t value_size) {
+    Lifecycle_FrameDict_set_(d, key, value, 1, value_size);
 }
 
-static void Lifecycle_FrameDict_set_(Lifecycle_FrameDict* d, const char* key, void* value, int owned) {
+static void Lifecycle_FrameDict_set_(Lifecycle_FrameDict* d, const char* key, void* value, int owned, size_t value_size) {
     unsigned int idx = Lifecycle_hash_string(key) % d->bucket_count;
     Lifecycle_FrameDictEntry* entry = d->buckets[idx];
     while (entry) {
@@ -69,6 +71,7 @@ static void Lifecycle_FrameDict_set_(Lifecycle_FrameDict* d, const char* key, vo
             if (entry->owned && entry->value) free(entry->value);
             entry->value = value;
             entry->owned = owned;
+            entry->value_size = value_size;
             return;
         }
         entry = entry->next;
@@ -77,6 +80,7 @@ static void Lifecycle_FrameDict_set_(Lifecycle_FrameDict* d, const char* key, vo
     new_entry->key = Lifecycle_strdup_(key);
     new_entry->value = value;
     new_entry->owned = owned;
+    new_entry->value_size = value_size;
     new_entry->next = d->buckets[idx];
     d->buckets[idx] = new_entry;
     d->size++;
@@ -112,14 +116,17 @@ static Lifecycle_FrameDict* Lifecycle_FrameDict_copy(Lifecycle_FrameDict* src) {
         Lifecycle_FrameDictEntry* entry = src->buckets[i];
         while (entry) {
             if (entry->owned && entry->value) {
-                // Owned values are heap-boxed doubles (#81): deep-copy
-                // so src and dst never alias (a shallow copy would
-                // dangle when either side frees on overwrite/destroy).
-                void* nb = malloc(sizeof(double));
-                memcpy(nb, entry->value, sizeof(double));
-                Lifecycle_FrameDict_set_(dst, entry->key, nb, 1);
+                // Owned values are heap boxes (#81 doubles or user-struct
+                // boxes): deep-copy value_size bytes so src and dst never
+                // alias (a shallow copy would dangle when either side frees
+                // on overwrite/destroy). Bitwise copy — boxed value types
+                // must be trivially copyable (POD); a struct owning inner
+                // heap is the user's contract to avoid.
+                void* nb = malloc(entry->value_size);
+                memcpy(nb, entry->value, entry->value_size);
+                Lifecycle_FrameDict_set_(dst, entry->key, nb, 1, entry->value_size);
             } else {
-                Lifecycle_FrameDict_set_(dst, entry->key, entry->value, 0);
+                Lifecycle_FrameDict_set_(dst, entry->key, entry->value, 0, 0);
             }
             entry = entry->next;
         }

@@ -188,23 +188,40 @@ pub(crate) fn generate_c_handler_method(
     if handler.is_enter {
         for var in state_vars_for_init {
             let init_val = state_var_initializer(var);
-            let (packed, setter) = {
-                use crate::frame_c::compiler::codegen::c_marshal::{c_marshal_of, CMarshal};
-                let declared = match &var.var_type {
-                    crate::frame_c::compiler::frame_ast::Type::Custom(t) => t.as_str(),
-                    _ => "",
-                };
-                match c_marshal_of(declared) {
-                    CMarshal::Dbl => (
-                        format!("{}_pack_double({})", system_name, init_val),
-                        "FrameDict_set_owned",
-                    ),
-                    _ => (format!("(void*)(intptr_t)({})", init_val), "FrameDict_set"),
-                }
+            use crate::frame_c::compiler::codegen::c_marshal::{c_marshal_of, CMarshal};
+            let declared = match &var.var_type {
+                crate::frame_c::compiler::frame_ast::Type::Custom(t) => t.trim(),
+                _ => "",
+            };
+            let cat = if declared.is_empty() {
+                CMarshal::Int
+            } else {
+                c_marshal_of(declared)
+            };
+            let set_stmt = match cat {
+                CMarshal::Dbl => format!(
+                    "{sys}_FrameDict_set_owned(compartment->state_vars, \"{name}\", {sys}_pack_double({init}), sizeof(double));",
+                    sys = system_name, name = var.name, init = init_val
+                ),
+                // Typed temp handles a brace-init / compound-literal / expression
+                // initializer uniformly (`*box = ({..})` is invalid); then heap-box
+                // (ISO-C block, #81) stored owned + sizeof(T) for deep-copy.
+                CMarshal::Boxed => format!(
+                    "{{ {t} __svinit = {init}; {t}* __svbox = ({t}*)malloc(sizeof({t})); *__svbox = __svinit; {sys}_FrameDict_set_owned(compartment->state_vars, \"{name}\", __svbox, sizeof({t})); }}",
+                    t = declared, init = init_val, sys = system_name, name = var.name
+                ),
+                CMarshal::Int
+                | CMarshal::Str
+                | CMarshal::Ptr
+                | CMarshal::Vec
+                | CMarshal::Dict => format!(
+                    "{sys}_FrameDict_set(compartment->state_vars, \"{name}\", (void*)(intptr_t)({init}));",
+                    sys = system_name, name = var.name, init = init_val
+                ),
             };
             body.push_str(&format!(
-                "if (!{}_FrameDict_has(compartment->state_vars, \"{}\")) {{\n    {}_{}(compartment->state_vars, \"{}\", {});\n}}\n",
-                system_name, var.name, system_name, setter, var.name, packed
+                "if (!{}_FrameDict_has(compartment->state_vars, \"{}\")) {{\n    {}\n}}\n",
+                system_name, var.name, set_stmt
             ));
         }
     }

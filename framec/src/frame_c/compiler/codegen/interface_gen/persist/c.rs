@@ -178,11 +178,25 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         ));
         for (var_name, t) in vars {
             let val_expr = format!("{}_FrameDict_get(sv, \"{}\")", system.name, var_name);
+            use crate::frame_c::compiler::codegen::c_marshal::{c_marshal_of, CMarshal};
+            // A Boxed state var's dict slot holds a `T*` heap box — reuse the
+            // DOMAIN field helper (`pack_field_<T>(void* p)` reads `*(T*)p`), so a
+            // user with both a `T` domain field and a `T` state var writes ONE
+            // pack/unpack pair instead of two under divergent names.
+            let pack = if matches!(c_marshal_of(t), CMarshal::Boxed) {
+                format!(
+                    "{}_persist_pack_field_{}({})",
+                    system.name,
+                    c_mangle_type(t),
+                    val_expr
+                )
+            } else {
+                c_pack_for(t, &val_expr, &system.name)
+            };
             serialize_helper.push_str(&format!(
                 "            if ({sys}_FrameDict_has(sv, \"{name}\")) cJSON_AddItemToObject(vars, \"{name}\", {pack});\n",
                 sys = system.name,
                 name = var_name,
-                pack = c_pack_for(t, &val_expr, &system.name)
             ));
         }
         serialize_helper.push_str("        }\n");
@@ -263,22 +277,39 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
             state_name
         ));
         for (var_name, t) in vars {
-            let setter = if c_mangle_type(t) == "double" {
-                "FrameDict_set_owned"
-            } else {
-                "FrameDict_set"
-            };
+            use crate::frame_c::compiler::codegen::c_marshal::{c_marshal_of, CMarshal};
             deserialize_helper.push_str(&format!(
                 "            cJSON* var_{name} = cJSON_GetObjectItem(vars, \"{name}\");\n",
                 name = var_name
             ));
-            deserialize_helper.push_str(&format!(
-                "            if (var_{name}) {sys}_{setter}(comp->state_vars, \"{name}\", {unpack});\n",
-                sys = system.name,
-                setter = setter,
-                name = var_name,
-                unpack = c_unpack_for(t, &format!("var_{var_name}"), &system.name)
-            ));
+            let stmt = match c_marshal_of(t) {
+                // Boxed: malloc a T-box, fill it in place via the domain field
+                // unpack helper, store owned + sizeof(T) so the dict frees it and
+                // FrameDict_copy deep-copies all its bytes. Fixes the prior leak
+                // (a boxed unpack was stored NON-owned).
+                CMarshal::Boxed => format!(
+                    "if (var_{name}) {{ {ct}* __ub = ({ct}*)malloc(sizeof({ct})); {sys}_persist_unpack_field_{m}(var_{name}, __ub); {sys}_FrameDict_set_owned(comp->state_vars, \"{name}\", __ub, sizeof({ct})); }}",
+                    ct = t.trim(),
+                    sys = system.name,
+                    m = c_mangle_type(t),
+                    name = var_name
+                ),
+                // Dbl: persist_unpack_double returns a malloc'd double box — owned + sized.
+                CMarshal::Dbl => format!(
+                    "if (var_{name}) {sys}_FrameDict_set_owned(comp->state_vars, \"{name}\", {unpack}, sizeof(double));",
+                    sys = system.name,
+                    name = var_name,
+                    unpack = c_unpack_for(t, &format!("var_{var_name}"), &system.name)
+                ),
+                // Int/Str/Ptr/Vec/Dict: the void* IS the value — plain non-owned set.
+                _ => format!(
+                    "if (var_{name}) {sys}_FrameDict_set(comp->state_vars, \"{name}\", {unpack});",
+                    sys = system.name,
+                    name = var_name,
+                    unpack = c_unpack_for(t, &format!("var_{var_name}"), &system.name)
+                ),
+            };
+            deserialize_helper.push_str(&format!("            {}\n", stmt));
         }
         deserialize_helper.push_str("        }\n");
     }

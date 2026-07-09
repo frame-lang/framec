@@ -128,10 +128,17 @@ pub(super) fn expand_state_var(
                 ctx.system_name, comp, var_name
             );
             use super::super::c_marshal::{c_marshal_of, CMarshal};
+            let ct = c_type.trim();
             match c_marshal_of(c_type) {
-                CMarshal::Str => format!("(const char*){}", slot),
                 CMarshal::Dbl => format!("{}_unpack_double({})", ctx.system_name, slot),
-                _ => format!("(int)(intptr_t){}", slot),
+                CMarshal::Int => format!("({})(intptr_t){}", ct, slot),
+                CMarshal::Str if ct.ends_with('*') => format!("({}){}", ct, slot),
+                CMarshal::Str => format!("(const char*){}", slot),
+                CMarshal::Ptr => format!("({}){}", ct, slot),
+                CMarshal::Vec => format!("({}_FrameVec*){}", ctx.system_name, slot),
+                CMarshal::Dict => format!("({}_FrameDict*){}", ctx.system_name, slot),
+                // A boxed user struct: the slot holds a T* (the heap box) — deref.
+                CMarshal::Boxed => format!("*({}*){}", ct, slot),
             }
         }
         TargetLanguage::Cpp => {
@@ -494,40 +501,45 @@ pub(super) fn expand_state_var_assign(
             &expanded_expr,
         ),
         TargetLanguage::C => {
-            // Category-aware pack via c_marshal (#77, #81): float/double
-            // state-vars heap-box via pack_double — `(void*)(intptr_t)`
-            // truncates them, and bit-punning corrupts on 32-bit pointers.
-            // The box is stored OWNED so the dict frees it on overwrite
-            // and destroy, and deep-copies it on compartment copy. The
-            // matching read-side unpack lives in `expand_state_var` above.
-            let (packed, setter) = {
-                use super::super::c_marshal::{c_marshal_of, CMarshal};
-                match c_marshal_of(declared) {
-                    CMarshal::Dbl => (
-                        format!("{}_pack_double({})", ctx.system_name, expanded_expr),
-                        "FrameDict_set_owned",
-                    ),
-                    _ => (
-                        format!("(void*)(intptr_t)({})", expanded_expr),
-                        "FrameDict_set",
-                    ),
-                }
-            };
-            if ctx.per_handler {
-                format!(
-                    "{}{}_{}(compartment->state_vars, \"{}\", {});",
-                    indent_str, ctx.system_name, setter, var_name, packed
-                )
+            // Category-aware pack via c_marshal (#77, #81). float/double heap-box
+            // via pack_double; a user STRUCT is larger than void* so it heap-boxes
+            // too (a raw `(void*)(intptr_t)(struct)` is a hard compile error, and a
+            // pointer-sized-typedef cast truncates). Boxes are stored OWNED + sized
+            // so the dict frees them and FrameDict_copy deep-copies all their bytes.
+            // Int/Str/Ptr/Vec/Dict travel as (or in) the void* — plain non-owned set.
+            use super::super::c_marshal::{c_marshal_of, CMarshal};
+            let sys = &ctx.system_name;
+            let t = declared.trim();
+            let dict = if ctx.per_handler {
+                "compartment->state_vars"
             } else if ctx.use_sv_comp {
-                format!(
-                    "{}{}_{}(__sv_comp->state_vars, \"{}\", {});",
-                    indent_str, ctx.system_name, setter, var_name, packed
-                )
+                "__sv_comp->state_vars"
             } else {
-                format!(
-                    "{}{}_{}(self->__compartment->state_vars, \"{}\", {});",
-                    indent_str, ctx.system_name, setter, var_name, packed
-                )
+                "self->__compartment->state_vars"
+            };
+            // An unknown/untyped state var (empty declared) travels in the void*
+            // like an Int — never box it (sizeof() on an empty type is invalid).
+            let cat = if t.is_empty() {
+                CMarshal::Int
+            } else {
+                c_marshal_of(declared)
+            };
+            match cat {
+                CMarshal::Dbl => format!(
+                    "{indent_str}{sys}_FrameDict_set_owned({dict}, \"{var_name}\", {sys}_pack_double({expanded_expr}), sizeof(double));"
+                ),
+                // ISO-C block (NOT a GNU statement-expression, #81 emcc constraint):
+                // malloc a T-box, copy the value in, store owned + sizeof(T).
+                CMarshal::Boxed => format!(
+                    "{indent_str}{{ {t}* __svbox = ({t}*)malloc(sizeof({t})); *__svbox = ({expanded_expr}); {sys}_FrameDict_set_owned({dict}, \"{var_name}\", __svbox, sizeof({t})); }}"
+                ),
+                CMarshal::Int
+                | CMarshal::Str
+                | CMarshal::Ptr
+                | CMarshal::Vec
+                | CMarshal::Dict => format!(
+                    "{indent_str}{sys}_FrameDict_set({dict}, \"{var_name}\", (void*)(intptr_t)({expanded_expr}));"
+                ),
             }
         }
         TargetLanguage::Cpp => {
