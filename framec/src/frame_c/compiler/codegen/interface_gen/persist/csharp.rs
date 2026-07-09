@@ -131,136 +131,50 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
              \x20   }}\n"
         )
     };
-    let state_arg_decls: Vec<(String, Vec<String>)> = system
-        .machine
-        .as_ref()
-        .map(|m| {
-            m.states
-                .iter()
-                .map(|s| {
-                    let types: Vec<String> = s
-                        .params
-                        .iter()
-                        .map(|p| match &p.param_type {
-                            crate::frame_c::compiler::frame_ast::Type::Custom(s) => s.clone(),
-                            crate::frame_c::compiler::frame_ast::Type::Unknown => String::new(),
-                        })
-                        .collect();
-                    (s.name.clone(), types)
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let enter_arg_decls: Vec<(String, Vec<String>)> = system
-        .machine
-        .as_ref()
-        .map(|m| {
-            m.states
-                .iter()
-                .map(|s| {
-                    let types: Vec<String> = s
-                        .enter
-                        .as_ref()
-                        .map(|e| {
-                            e.params
-                                .iter()
-                                .map(|p| match &p.param_type {
-                                    crate::frame_c::compiler::frame_ast::Type::Custom(s) => {
-                                        s.clone()
-                                    }
-                                    crate::frame_c::compiler::frame_ast::Type::Unknown => {
-                                        String::new()
-                                    }
-                                })
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                    (s.name.clone(), types)
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+    // RFC-0054 Phase A: per-state typed slots come from ONE manifest of raw Frame
+    // type strings; C#'s mapping stays at consumption (cs_typed_conv{,_named}).
+    let manifest = super::manifest::build_persist_manifest(system);
+    use super::emit::{emit_per_state_blocks, indexed_branch, named_branch};
+    // A2: shared per-state guarded-block scaffold. C#'s arg guard carries the
+    // one-time `// D10` header as a first-block side-effect (hence FnMut, reused
+    // across the state_args + enter_args calls so the header emits exactly once).
     let mut any_per_state = false;
-    for (state_name, types) in &state_arg_decls {
-        let mut branch = String::new();
-        for (i, t) in types.iter().enumerate() {
-            let conv = cs_typed_conv(t, i, "state_args");
-            if !conv.is_empty() {
-                branch.push_str(&conv);
-            }
-        }
-        if !branch.is_empty() {
-            if !any_per_state {
-                deser_body.push_str("// D10 per-state typed list conversion\n");
-                any_per_state = true;
-            }
-            deser_body.push_str(&format!(
-                "if (c.state == \"{}\") {{\n{}}}\n",
-                state_name, branch
-            ));
-        }
-    }
-    for (state_name, types) in &enter_arg_decls {
-        let mut branch = String::new();
-        for (i, t) in types.iter().enumerate() {
-            let conv = cs_typed_conv(t, i, "enter_args");
-            if !conv.is_empty() {
-                branch.push_str(&conv);
-            }
-        }
-        if !branch.is_empty() {
-            if !any_per_state {
-                deser_body.push_str("// D10 per-state typed list conversion\n");
-                any_per_state = true;
-            }
-            deser_body.push_str(&format!(
-                "if (c.state == \"{}\") {{\n{}}}\n",
-                state_name, branch
-            ));
-        }
-    }
+    let mut arg_guard = |state: &str, branch: &str| {
+        let prefix = if !any_per_state {
+            any_per_state = true;
+            "// D10 per-state typed list conversion\n"
+        } else {
+            ""
+        };
+        format!("{}if (c.state == \"{}\") {{\n{}}}\n", prefix, state, branch)
+    };
+    emit_per_state_blocks(
+        &mut deser_body,
+        &manifest.states,
+        |s| indexed_branch(&s.state_args, |t, i| cs_typed_conv(t, i, "state_args")),
+        &mut arg_guard,
+    );
+    emit_per_state_blocks(
+        &mut deser_body,
+        &manifest.states,
+        |s| indexed_branch(&s.enter_args, |t, i| cs_typed_conv(t, i, "enter_args")),
+        &mut arg_guard,
+    );
     // State vars: retype each declared var by name per state (see
     // cs_typed_conv_named). Runs per compartment, so every HSM-chain layer is
-    // retyped by its own state.
-    let state_var_decls: Vec<(String, Vec<(String, String)>)> = system
-        .machine
-        .as_ref()
-        .map(|m| {
-            m.states
-                .iter()
-                .map(|s| {
-                    let vars: Vec<(String, String)> = s
-                        .state_vars
-                        .iter()
-                        .map(|sv| {
-                            let t = match &sv.var_type {
-                                crate::frame_c::compiler::frame_ast::Type::Custom(s) => s.clone(),
-                                crate::frame_c::compiler::frame_ast::Type::Unknown => String::new(),
-                            };
-                            (sv.name.clone(), t)
-                        })
-                        .collect();
-                    (s.name.clone(), vars)
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    for (state_name, vars) in &state_var_decls {
-        let mut branch = String::new();
-        for (name, t) in vars {
-            let conv = cs_typed_conv_named(t, name);
-            if !conv.is_empty() {
-                branch.push_str(&conv);
-            }
-        }
-        if !branch.is_empty() {
-            // IncludeFields so a user struct with public fields round-trips.
-            deser_body.push_str(&format!(
+    // retyped by its own state. Own guard: IncludeFields so a user struct with
+    // public fields round-trips (and no D10 header).
+    emit_per_state_blocks(
+        &mut deser_body,
+        &manifest.states,
+        |s| named_branch(&s.state_vars, |name, t| cs_typed_conv_named(t, name)),
+        |state, branch| {
+            format!(
                 "if (c.state == \"{}\") {{\n    var __svopts = new System.Text.Json.JsonSerializerOptions {{ IncludeFields = true }};\n{}}}\n",
-                state_name, branch
-            ));
-        }
-    }
+                state, branch
+            )
+        },
+    );
 
     deser_body.push_str("if (el.TryGetProperty(\"parent\", out var p) && p.ValueKind != System.Text.Json.JsonValueKind.Null) {\n");
     deser_body.push_str("    c.parent_compartment = __DeserComp(p);\n");

@@ -52,60 +52,44 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
             other => other.to_string(),
         }
     };
-    let state_param_types: Vec<(String, Vec<String>)> = system
-        .machine
-        .as_ref()
-        .map(|m| {
-            m.states
-                .iter()
-                .filter(|s| !s.params.is_empty())
-                .map(|s| {
-                    let types: Vec<String> = s
-                        .params
-                        .iter()
-                        .map(|p| match &p.param_type {
-                            crate::frame_c::compiler::frame_ast::Type::Custom(t) => {
-                                java_box(&java_map_type(t))
-                            }
-                            _ => "Object".to_string(),
-                        })
-                        .collect();
-                    (s.name.clone(), types)
-                })
-                .collect()
+    // RFC-0054 Phase A: per-state typed slots come from ONE manifest of raw Frame
+    // type strings; Java's own mapping (empty ⇒ Unknown ⇒ `Object`, else
+    // java_box∘java_map_type) and its non-empty filter stay here at consumption.
+    let manifest = super::manifest::build_persist_manifest(system);
+    let java_ty = |raw: &str| -> String {
+        if raw.is_empty() {
+            "Object".to_string()
+        } else {
+            java_box(&java_map_type(raw))
+        }
+    };
+    let state_param_types: Vec<(String, Vec<String>)> = manifest
+        .states
+        .iter()
+        .filter(|s| !s.state_args.is_empty())
+        .map(|s| {
+            let types: Vec<String> = s.state_args.iter().map(|raw| java_ty(raw)).collect();
+            (s.name.clone(), types)
         })
-        .unwrap_or_default();
+        .collect();
 
     // State VARS carry user types too but restore into a `Map<String,Object>`,
     // so Jackson decodes an object as a LinkedHashMap and a later cast to the
     // user type throws (ClassCastException). Re-decode each declared state var
     // into its type BY NAME per state (mirrors the state_args typing below).
-    let state_var_types: Vec<(String, Vec<(String, String)>)> = system
-        .machine
-        .as_ref()
-        .map(|m| {
-            m.states
+    let state_var_types: Vec<(String, Vec<(String, String)>)> = manifest
+        .states
+        .iter()
+        .filter(|s| !s.state_vars.is_empty())
+        .map(|s| {
+            let vars: Vec<(String, String)> = s
+                .state_vars
                 .iter()
-                .filter(|s| !s.state_vars.is_empty())
-                .map(|s| {
-                    let vars: Vec<(String, String)> = s
-                        .state_vars
-                        .iter()
-                        .map(|sv| {
-                            let ty = match &sv.var_type {
-                                crate::frame_c::compiler::frame_ast::Type::Custom(t) => {
-                                    java_box(&java_map_type(t))
-                                }
-                                _ => "Object".to_string(),
-                            };
-                            (sv.name.clone(), ty)
-                        })
-                        .collect();
-                    (s.name.clone(), vars)
-                })
-                .collect()
+                .map(|(name, raw)| (name.clone(), java_ty(raw)))
+                .collect();
+            (s.name.clone(), vars)
         })
-        .unwrap_or_default();
+        .collect();
 
     let mut ser_body = String::new();
     ser_body.push_str("if (comp == null) return null;\n");

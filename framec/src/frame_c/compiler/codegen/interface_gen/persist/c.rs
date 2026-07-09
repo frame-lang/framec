@@ -55,67 +55,54 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
             crate::frame_c::compiler::frame_ast::Type::Unknown => "int".to_string(),
         }
     };
-    let state_arg_types: Vec<(String, Vec<String>)> = system
-        .machine
-        .as_ref()
-        .map(|m| {
-            m.states
-                .iter()
-                .map(|s| {
-                    let types: Vec<String> = s
-                        .params
-                        .iter()
-                        .map(|p| type_to_string(&p.param_type))
-                        .collect();
-                    (s.name.clone(), types)
-                })
-                .collect()
+    // RFC-0054 Phase A: per-state typed slots come from ONE manifest of raw Frame
+    // type strings. C maps an empty raw (Frame `Unknown`) to `int` — matching
+    // `type_to_string` above — at consumption; everything downstream is unchanged.
+    let manifest = super::manifest::build_persist_manifest(system);
+    let c_ty = |raw: &str| -> String {
+        if raw.is_empty() {
+            "int".to_string()
+        } else {
+            raw.to_string()
+        }
+    };
+    let state_arg_types: Vec<(String, Vec<String>)> = manifest
+        .states
+        .iter()
+        .map(|s| {
+            (
+                s.name.clone(),
+                s.state_args.iter().map(|r| c_ty(r)).collect(),
+            )
         })
-        .unwrap_or_default();
-    let state_enter_arg_types: Vec<(String, Vec<String>)> = system
-        .machine
-        .as_ref()
-        .map(|m| {
-            m.states
-                .iter()
-                .map(|s| {
-                    let types: Vec<String> = s
-                        .enter
-                        .as_ref()
-                        .map(|e| {
-                            e.params
-                                .iter()
-                                .map(|p| type_to_string(&p.param_type))
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                    (s.name.clone(), types)
-                })
-                .collect()
+        .collect();
+    let state_enter_arg_types: Vec<(String, Vec<String>)> = manifest
+        .states
+        .iter()
+        .map(|s| {
+            (
+                s.name.clone(),
+                s.enter_args.iter().map(|r| c_ty(r)).collect(),
+            )
         })
-        .unwrap_or_default();
+        .collect();
     // (state_name, [(var_name, declared_type)]) for `$.var` declarations —
     // state_vars round-trip through the same typed persist_pack/_unpack
     // dispatch as state_args (#81: the old generic dict walk int-punned
     // every entry, which serialized a heap-box POINTER for doubles and a
     // char* for strings; only ints ever round-tripped).
-    let state_var_types: Vec<(String, Vec<(String, String)>)> = system
-        .machine
-        .as_ref()
-        .map(|m| {
-            m.states
+    let state_var_types: Vec<(String, Vec<(String, String)>)> = manifest
+        .states
+        .iter()
+        .map(|s| {
+            let vars: Vec<(String, String)> = s
+                .state_vars
                 .iter()
-                .map(|s| {
-                    let vars: Vec<(String, String)> = s
-                        .state_vars
-                        .iter()
-                        .map(|v| (v.name.clone(), type_to_string(&v.var_type)))
-                        .collect();
-                    (s.name.clone(), vars)
-                })
-                .collect()
+                .map(|(name, raw)| (name.clone(), c_ty(raw)))
+                .collect();
+            (s.name.clone(), vars)
         })
-        .unwrap_or_default();
+        .collect();
     let c_mangle_type = |t: &str| -> String {
         let t = t.trim();
         let canonical = match t {

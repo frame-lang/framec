@@ -45,74 +45,32 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         "__instance"
     };
 
-    let all_state_vars: Vec<(&str, &str, &str)> = system
-        .machine
-        .as_ref()
-        .map(|m| {
-            m.states
-                .iter()
-                .flat_map(|s| {
-                    s.state_vars.iter().map(move |sv| {
-                        let type_str = match &sv.var_type {
-                            crate::frame_c::compiler::frame_ast::Type::Custom(t) => t.as_str(),
-                            crate::frame_c::compiler::frame_ast::Type::Unknown => "int",
-                        };
-                        (s.name.as_str(), sv.name.as_str(), type_str)
-                    })
-                })
-                .collect()
+    // RFC-0054 Phase A: the per-state typed slots (state vars, state args, enter
+    // args) come from ONE manifest of raw Frame type strings. C++'s mapping stays
+    // at consumption: an empty raw (Frame `Unknown`) becomes `int` for a state var
+    // (the C++ default) and the empty string for an arg, exactly as before.
+    let manifest = super::manifest::build_persist_manifest(system);
+    let all_state_vars: Vec<(&str, &str, &str)> = manifest
+        .states
+        .iter()
+        .flat_map(|s| {
+            s.state_vars.iter().map(move |(name, raw)| {
+                let type_str = if raw.is_empty() { "int" } else { raw.as_str() };
+                (s.name.as_str(), name.as_str(), type_str)
+            })
         })
-        .unwrap_or_default();
+        .collect();
 
-    let cpp_state_arg_decls: Vec<(String, Vec<String>)> = system
-        .machine
-        .as_ref()
-        .map(|m| {
-            m.states
-                .iter()
-                .map(|s| {
-                    let types: Vec<String> = s
-                        .params
-                        .iter()
-                        .map(|p| match &p.param_type {
-                            crate::frame_c::compiler::frame_ast::Type::Custom(s) => s.clone(),
-                            crate::frame_c::compiler::frame_ast::Type::Unknown => String::new(),
-                        })
-                        .collect();
-                    (s.name.clone(), types)
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let cpp_enter_arg_decls: Vec<(String, Vec<String>)> = system
-        .machine
-        .as_ref()
-        .map(|m| {
-            m.states
-                .iter()
-                .map(|s| {
-                    let types: Vec<String> = s
-                        .enter
-                        .as_ref()
-                        .map(|e| {
-                            e.params
-                                .iter()
-                                .map(|p| match &p.param_type {
-                                    crate::frame_c::compiler::frame_ast::Type::Custom(s) => {
-                                        s.clone()
-                                    }
-                                    crate::frame_c::compiler::frame_ast::Type::Unknown => {
-                                        String::new()
-                                    }
-                                })
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                    (s.name.clone(), types)
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+    let cpp_state_arg_decls: Vec<(String, Vec<String>)> = manifest
+        .states
+        .iter()
+        .map(|s| (s.name.clone(), s.state_args.clone()))
+        .collect();
+    let cpp_enter_arg_decls: Vec<(String, Vec<String>)> = manifest
+        .states
+        .iter()
+        .map(|s| (s.name.clone(), s.enter_args.clone()))
+        .collect();
 
     // save_state
     let mut save_body = String::new();

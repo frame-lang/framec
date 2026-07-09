@@ -116,61 +116,44 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         });
     }
 
-    // Per-state typed restore data.
-    let dart_state_param_types: Vec<(String, Vec<String>)> = system
-        .machine
-        .as_ref()
-        .map(|m| {
-            m.states
-                .iter()
-                .filter(|s| !s.params.is_empty())
-                .map(|s| {
-                    let types: Vec<String> = s
-                        .params
-                        .iter()
-                        .map(|p| match &p.param_type {
-                            crate::frame_c::compiler::frame_ast::Type::Custom(t) => {
-                                t.trim().to_string()
-                            }
-                            _ => "dynamic".to_string(),
-                        })
-                        .collect();
-                    (s.name.clone(), types)
-                })
-                .collect()
+    // Per-state typed restore data. RFC-0054 Phase A: raw Frame type strings come
+    // from ONE manifest; Dart's mapping (empty ⇒ Unknown ⇒ `dynamic`, else the
+    // trimmed type string) and its non-empty filter stay here at consumption.
+    let manifest = super::manifest::build_persist_manifest(system);
+    let dart_ty = |raw: &str| -> String {
+        if raw.is_empty() {
+            "dynamic".to_string()
+        } else {
+            raw.trim().to_string()
+        }
+    };
+    let dart_state_param_types: Vec<(String, Vec<String>)> = manifest
+        .states
+        .iter()
+        .filter(|s| !s.state_args.is_empty())
+        .map(|s| {
+            let types: Vec<String> = s.state_args.iter().map(|raw| dart_ty(raw)).collect();
+            (s.name.clone(), types)
         })
-        .unwrap_or_default();
+        .collect();
 
     // State vars carry user types but restore into `Map<String, dynamic>`, so a
     // user value stays a plain Map and a method call on it throws at runtime.
     // Re-decode each declared state var into its type BY NAME per state (via
     // dart_conv_expr → the type's fromJson route).
-    let dart_state_var_types: Vec<(String, Vec<(String, String)>)> = system
-        .machine
-        .as_ref()
-        .map(|m| {
-            m.states
+    let dart_state_var_types: Vec<(String, Vec<(String, String)>)> = manifest
+        .states
+        .iter()
+        .filter(|s| !s.state_vars.is_empty())
+        .map(|s| {
+            let vars: Vec<(String, String)> = s
+                .state_vars
                 .iter()
-                .filter(|s| !s.state_vars.is_empty())
-                .map(|s| {
-                    let vars: Vec<(String, String)> = s
-                        .state_vars
-                        .iter()
-                        .map(|sv| {
-                            let t = match &sv.var_type {
-                                crate::frame_c::compiler::frame_ast::Type::Custom(t) => {
-                                    t.trim().to_string()
-                                }
-                                _ => "dynamic".to_string(),
-                            };
-                            (sv.name.clone(), t)
-                        })
-                        .collect();
-                    (s.name.clone(), vars)
-                })
-                .collect()
+                .map(|(name, raw)| (name.clone(), dart_ty(raw)))
+                .collect();
+            (s.name.clone(), vars)
         })
-        .unwrap_or_default();
+        .collect();
 
     let mut restore_body = String::new();
     restore_body.push_str(&format!(

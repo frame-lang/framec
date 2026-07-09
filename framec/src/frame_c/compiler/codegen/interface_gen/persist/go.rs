@@ -176,172 +176,45 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
              \x20   }}\n"
         )
     };
-    let go_state_arg_decls: Vec<(String, Vec<String>)> = system
-        .machine
-        .as_ref()
-        .map(|m| {
-            m.states
-                .iter()
-                .map(|s| {
-                    let types: Vec<String> = s
-                        .params
-                        .iter()
-                        .map(|p| match &p.param_type {
-                            crate::frame_c::compiler::frame_ast::Type::Custom(s) => s.clone(),
-                            crate::frame_c::compiler::frame_ast::Type::Unknown => String::new(),
-                        })
-                        .collect();
-                    (s.name.clone(), types)
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let go_enter_arg_decls: Vec<(String, Vec<String>)> = system
-        .machine
-        .as_ref()
-        .map(|m| {
-            m.states
-                .iter()
-                .map(|s| {
-                    let types: Vec<String> = s
-                        .enter
-                        .as_ref()
-                        .map(|e| {
-                            e.params
-                                .iter()
-                                .map(|p| match &p.param_type {
-                                    crate::frame_c::compiler::frame_ast::Type::Custom(s) => {
-                                        s.clone()
-                                    }
-                                    crate::frame_c::compiler::frame_ast::Type::Unknown => {
-                                        String::new()
-                                    }
-                                })
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                    (s.name.clone(), types)
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    for (state_name, types) in &go_state_arg_decls {
-        let mut branch = String::new();
-        for (i, t) in types.iter().enumerate() {
-            let conv = go_typed_conv(t, i, "stateArgs");
-            if !conv.is_empty() {
-                branch.push_str(&conv);
-            }
-        }
-        if !branch.is_empty() {
-            restore_body.push_str(&format!(
-                "    if comp.state == \"{}\" {{\n{}    }}\n",
-                state_name, branch
-            ));
-        }
-    }
-    for (state_name, types) in &go_enter_arg_decls {
-        let mut branch = String::new();
-        for (i, t) in types.iter().enumerate() {
-            let conv = go_typed_conv(t, i, "enterArgs");
-            if !conv.is_empty() {
-                branch.push_str(&conv);
-            }
-        }
-        if !branch.is_empty() {
-            restore_body.push_str(&format!(
-                "    if comp.state == \"{}\" {{\n{}    }}\n",
-                state_name, branch
-            ));
-        }
-    }
+    // RFC-0054 Phase A: the per-state typed compartment slots (state args, enter
+    // args, exit args, state vars) come from ONE manifest derived from the machine
+    // AST, not four hand-written AST-walks re-derived (and drifting) per backend.
+    // Emission below is unchanged: each backend still maps the raw Frame type
+    // string to its own decode primitive (go_typed_conv / go_typed_conv_named).
+    let manifest = super::manifest::build_persist_manifest(system);
+    // A2: the per-state guarded-block control flow is the shared scaffold
+    // (super::emit); go supplies only its guard text and its per-slot conv.
+    let go_guard = |state: &str, branch: &str| {
+        format!("    if comp.state == \"{}\" {{\n{}    }}\n", state, branch)
+    };
+    use super::emit::{emit_per_state_blocks, indexed_branch, named_branch};
+    emit_per_state_blocks(
+        &mut restore_body,
+        &manifest.states,
+        |s| indexed_branch(&s.state_args, |t, i| go_typed_conv(t, i, "stateArgs")),
+        go_guard,
+    );
+    emit_per_state_blocks(
+        &mut restore_body,
+        &manifest.states,
+        |s| indexed_branch(&s.enter_args, |t, i| go_typed_conv(t, i, "enterArgs")),
+        go_guard,
+    );
     // Exit args feed the source state's `<$` handler and can be user-typed too —
-    // type them by index per state, exactly like state_args / enter_args above.
-    let go_exit_arg_decls: Vec<(String, Vec<String>)> = system
-        .machine
-        .as_ref()
-        .map(|m| {
-            m.states
-                .iter()
-                .map(|s| {
-                    let types: Vec<String> = s
-                        .exit
-                        .as_ref()
-                        .map(|e| {
-                            e.params
-                                .iter()
-                                .map(|p| match &p.param_type {
-                                    crate::frame_c::compiler::frame_ast::Type::Custom(s) => {
-                                        s.clone()
-                                    }
-                                    crate::frame_c::compiler::frame_ast::Type::Unknown => {
-                                        String::new()
-                                    }
-                                })
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                    (s.name.clone(), types)
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    for (state_name, types) in &go_exit_arg_decls {
-        let mut branch = String::new();
-        for (i, t) in types.iter().enumerate() {
-            let conv = go_typed_conv(t, i, "exitArgs");
-            if !conv.is_empty() {
-                branch.push_str(&conv);
-            }
-        }
-        if !branch.is_empty() {
-            restore_body.push_str(&format!(
-                "    if comp.state == \"{}\" {{\n{}    }}\n",
-                state_name, branch
-            ));
-        }
-    }
-
-    // State vars: retype each declared var by name per state (see
-    // go_typed_conv_named).
-    let go_state_var_decls: Vec<(String, Vec<(String, String)>)> = system
-        .machine
-        .as_ref()
-        .map(|m| {
-            m.states
-                .iter()
-                .map(|s| {
-                    let vars: Vec<(String, String)> = s
-                        .state_vars
-                        .iter()
-                        .map(|sv| {
-                            let t = match &sv.var_type {
-                                crate::frame_c::compiler::frame_ast::Type::Custom(s) => s.clone(),
-                                crate::frame_c::compiler::frame_ast::Type::Unknown => String::new(),
-                            };
-                            (sv.name.clone(), t)
-                        })
-                        .collect();
-                    (s.name.clone(), vars)
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    for (state_name, vars) in &go_state_var_decls {
-        let mut branch = String::new();
-        for (name, t) in vars {
-            let conv = go_typed_conv_named(t, name);
-            if !conv.is_empty() {
-                branch.push_str(&conv);
-            }
-        }
-        if !branch.is_empty() {
-            restore_body.push_str(&format!(
-                "    if comp.state == \"{}\" {{\n{}    }}\n",
-                state_name, branch
-            ));
-        }
-    }
+    // typed by index per state, exactly like state_args / enter_args above.
+    emit_per_state_blocks(
+        &mut restore_body,
+        &manifest.states,
+        |s| indexed_branch(&s.exit_args, |t, i| go_typed_conv(t, i, "exitArgs")),
+        go_guard,
+    );
+    // State vars: retype each declared var by name per state (go_typed_conv_named).
+    emit_per_state_blocks(
+        &mut restore_body,
+        &manifest.states,
+        |s| named_branch(&s.state_vars, |name, t| go_typed_conv_named(t, name)),
+        go_guard,
+    );
 
     restore_body.push_str("    // forward_event is typically nil in persisted state\n");
     restore_body

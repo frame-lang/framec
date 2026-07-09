@@ -80,37 +80,35 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     // Non-native (Codable user type) state vars, per state — used by BOTH save
     // (encode through JSONEncoder so JSONSerialization doesn't crash on a
     // __SwiftValue, #178) and restore (decode back into the Swift type).
-    let swift_state_var_types: Vec<(String, Vec<(String, String)>)> = system
-        .machine
-        .as_ref()
-        .map(|m| {
-            m.states
+    // RFC-0054 Phase A: raw Frame type strings come from ONE manifest; Swift's
+    // mapping (empty ⇒ Unknown ⇒ `Any`, else swift_map_type) and its drop of
+    // Any/JSON-native vars stay here at consumption.
+    let manifest = super::manifest::build_persist_manifest(system);
+    let swift_state_var_types: Vec<(String, Vec<(String, String)>)> = manifest
+        .states
+        .iter()
+        .filter(|s| !s.state_vars.is_empty())
+        .map(|s| {
+            let vars: Vec<(String, String)> = s
+                .state_vars
                 .iter()
-                .filter(|s| !s.state_vars.is_empty())
-                .map(|s| {
-                    let vars: Vec<(String, String)> = s
-                        .state_vars
-                        .iter()
-                        .filter_map(|sv| {
-                            let t = match &sv.var_type {
-                                crate::frame_c::compiler::frame_ast::Type::Custom(t) => {
-                                    swift_map_type(t)
-                                }
-                                _ => "Any".to_string(),
-                            };
-                            if t == "Any" || is_swift_json_native(&t) {
-                                None
-                            } else {
-                                Some((sv.name.clone(), t))
-                            }
-                        })
-                        .collect();
-                    (s.name.clone(), vars)
+                .filter_map(|(name, raw)| {
+                    let t = if raw.is_empty() {
+                        "Any".to_string()
+                    } else {
+                        swift_map_type(raw)
+                    };
+                    if t == "Any" || is_swift_json_native(&t) {
+                        None
+                    } else {
+                        Some((name.clone(), t))
+                    }
                 })
-                .filter(|(_, v)| !v.is_empty())
-                .collect()
+                .collect();
+            (s.name.clone(), vars)
         })
-        .unwrap_or_default();
+        .filter(|(_, v)| !v.is_empty())
+        .collect();
 
     let mut ser_body = String::new();
     ser_body.push_str("if comp == nil { return nil }\n");

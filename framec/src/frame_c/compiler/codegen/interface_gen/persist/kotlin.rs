@@ -50,59 +50,43 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
             other => other.to_string(),
         }
     };
-    let state_param_types: Vec<(String, Vec<String>)> = system
-        .machine
-        .as_ref()
-        .map(|m| {
-            m.states
-                .iter()
-                .filter(|s| !s.params.is_empty())
-                .map(|s| {
-                    let types: Vec<String> = s
-                        .params
-                        .iter()
-                        .map(|p| match &p.param_type {
-                            crate::frame_c::compiler::frame_ast::Type::Custom(t) => {
-                                kt_box(&kotlin_map_type(t))
-                            }
-                            _ => "Any".to_string(),
-                        })
-                        .collect();
-                    (s.name.clone(), types)
-                })
-                .collect()
+    // RFC-0054 Phase A: per-state typed slots come from ONE manifest of raw Frame
+    // type strings; Kotlin's own mapping (empty ⇒ Unknown ⇒ `Any`, else
+    // kt_box∘kotlin_map_type) and its non-empty filter stay here at consumption.
+    let manifest = super::manifest::build_persist_manifest(system);
+    let kt_ty = |raw: &str| -> String {
+        if raw.is_empty() {
+            "Any".to_string()
+        } else {
+            kt_box(&kotlin_map_type(raw))
+        }
+    };
+    let state_param_types: Vec<(String, Vec<String>)> = manifest
+        .states
+        .iter()
+        .filter(|s| !s.state_args.is_empty())
+        .map(|s| {
+            let types: Vec<String> = s.state_args.iter().map(|raw| kt_ty(raw)).collect();
+            (s.name.clone(), types)
         })
-        .unwrap_or_default();
+        .collect();
 
     // State vars carry user types but restore into `Map<String, Any?>`, so
     // Jackson decodes an object as a LinkedHashMap and a later cast throws.
     // Re-decode each declared state var into its type BY NAME per state.
-    let state_var_types: Vec<(String, Vec<(String, String)>)> = system
-        .machine
-        .as_ref()
-        .map(|m| {
-            m.states
+    let state_var_types: Vec<(String, Vec<(String, String)>)> = manifest
+        .states
+        .iter()
+        .filter(|s| !s.state_vars.is_empty())
+        .map(|s| {
+            let vars: Vec<(String, String)> = s
+                .state_vars
                 .iter()
-                .filter(|s| !s.state_vars.is_empty())
-                .map(|s| {
-                    let vars: Vec<(String, String)> = s
-                        .state_vars
-                        .iter()
-                        .map(|sv| {
-                            let ty = match &sv.var_type {
-                                crate::frame_c::compiler::frame_ast::Type::Custom(t) => {
-                                    kt_box(&kotlin_map_type(t))
-                                }
-                                _ => "Any".to_string(),
-                            };
-                            (sv.name.clone(), ty)
-                        })
-                        .collect();
-                    (s.name.clone(), vars)
-                })
-                .collect()
+                .map(|(name, raw)| (name.clone(), kt_ty(raw)))
+                .collect();
+            (s.name.clone(), vars)
         })
-        .unwrap_or_default();
+        .collect();
 
     let mut ser_body = String::new();
     ser_body.push_str("if (comp == null) return null\n");
