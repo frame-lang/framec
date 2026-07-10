@@ -302,6 +302,15 @@ language is specified by [RFC-0017](rfcs/rfc-0017.md); the design is in
 *(Earlier drafts called this "blank allocation"; the current name is
 "no-initialization".)*
 
+### manifest
+
+A fingerprint of a persisted [system](#system)'s *type shape* — which
+[states](#state) carry which typed [state variables](#state-variable) and
+[state-args](#state-args) / [enter-args](#enter-args) / [exit-args](#exit-args), and
+which [domain](#domain) fields have which types. Carried in the
+[snapshot](#snapshot) as the `_manifest` member and compared on restore to detect
+schema drift; it holds type identity, never state data. Introduced in RFC-0054.
+
 ### Oceans Model
 
 Frame's principle that anything in a source file outside an `@@system` block —
@@ -401,6 +410,15 @@ state's [dispatcher](#dispatcher) — one `if/elif` branch per state. Invoked by
 the [kernel](#kernel). See
 [runtime walkthrough § Step 2](frame_runtime.md#step-2--adding-a-state).
 
+### regime
+
+One of three classes a target language falls into for [persistence](#persist-contract),
+by where a persisted value's type identity comes from: **static** (framec bakes the
+declared type; no in-blob tag), **dynamic reflective** (the runtime names the value's
+type, carried as an in-blob tag), and **dynamic non-reflective** (the runtime cannot
+name the type, so identity comes from the declared type plus a marshalling route).
+See RFC-0055.
+
 ### save
 
 The serialization half of the [persist contract](#persist-contract): an instance
@@ -408,6 +426,14 @@ method that returns a blob containing the [system](#system)'s [domain](#domain)
 fields, [compartment](#compartment), and [state stack](#state-stack) (and any
 nested `@@system` domain fields). Named with `@@[save(<name>)]`. See
 [language reference § Persistence](frame_language.md#persistence).
+
+### snapshot
+
+The whole persisted data structure a [save](#save) operation returns and a
+[load](#load) consumes — the [compartment](#compartment) tree, the
+[state stack](#state-stack), the persisted [domain](#domain) fields, and the
+[manifest](#manifest). Its host type is set by `@@[persist(<type>)]`. Distinct from
+the manifest, which is one non-data member within it.
 
 ### start state
 
