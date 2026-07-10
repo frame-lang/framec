@@ -86,8 +86,22 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     // type name + fields on the way out — reflection, one generic hook, no
     // per-type branch — so `restore_state` can reconstruct it. Plain
     // scalars/lists/dicts are serialized natively and never reach this hook.
+    // Gather instance fields generically (one hook, no per-type branch): a class
+    // may use `__dict__`, `__slots__`, or both. `vars(_o)` alone raises TypeError on
+    // a __slots__-only class, so also walk the MRO's `__slots__` (a str slot counts
+    // as one name), excluding `__dict__`/`__weakref__` slots. Type-ignorant: reads
+    // whatever attributes the object actually has, never inspecting a declared type.
     save_body.push_str(
-        "def _frame_persist_default(_o):\n    return {\"__frame_type__\": type(_o).__qualname__, **vars(_o)}\n",
+        "def _frame_persist_default(_o):\n\
+        \x20   _f = dict(getattr(_o, \"__dict__\", None) or {})\n\
+        \x20   for _c in type(_o).__mro__:\n\
+        \x20       _sl = getattr(_c, \"__slots__\", ())\n\
+        \x20       if isinstance(_sl, str):\n\
+        \x20           _sl = (_sl,)\n\
+        \x20       for _s in _sl:\n\
+        \x20           if _s not in (\"__dict__\", \"__weakref__\") and hasattr(_o, _s):\n\
+        \x20               _f[_s] = getattr(_o, _s)\n\
+        \x20   return {\"__frame_type__\": type(_o).__qualname__, **_f}\n",
     );
     save_body.push_str(
         "return json.dumps(state_data, default=_frame_persist_default).encode(\"utf-8\")",

@@ -191,7 +191,15 @@ class NoPersist:
         state_data["_manifest"] = "frame-persist-manifest:1|S6:Active|V|A|E|X|D5:count3:int"
         state_data["count"] = self.count
         def _frame_persist_default(_o):
-            return {"__frame_type__": type(_o).__qualname__, **vars(_o)}
+            _f = dict(getattr(_o, "__dict__", None) or {})
+            for _c in type(_o).__mro__:
+                _sl = getattr(_c, "__slots__", ())
+                if isinstance(_sl, str):
+                    _sl = (_sl,)
+                for _s in _sl:
+                    if _s not in ("__dict__", "__weakref__") and hasattr(_o, _s):
+                        _f[_s] = getattr(_o, _s)
+            return {"__frame_type__": type(_o).__qualname__, **_f}
         return json.dumps(state_data, default=_frame_persist_default).encode("utf-8")
 
     def restore(self, data: bytes):
