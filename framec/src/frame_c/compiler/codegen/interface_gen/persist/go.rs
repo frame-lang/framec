@@ -96,7 +96,15 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         }
     }
     save_body.push_str("}\n");
-    save_body.push_str("jsonBytes, _ := json.Marshal(data)\n");
+    // #182-adjacent / RFC-0055 §Migration: fail LOUD on a serialisation error
+    // instead of dropping it (silent data loss). `encoding/json` errors on
+    // unsupported kinds (chan/func/complex, an unmarshalable Marshaler, a cyclic
+    // value). NOTE: a struct with only *unexported* fields marshals to `{}` with
+    // err == nil — that residual is NOT an error and cannot be detected without
+    // reflecting over the user type (forbidden by the Oceans boundary); it is an
+    // R2 documentation requirement, not a runtime check.
+    save_body.push_str("jsonBytes, __saveErr := json.Marshal(data)\n");
+    save_body.push_str("if __saveErr != nil { panic(\"E753: persist save failed to serialize - \" + __saveErr.Error()) }\n");
     save_body.push_str("return string(jsonBytes)");
 
     methods.push(CodegenNode::Method {

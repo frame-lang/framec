@@ -218,7 +218,8 @@ func (s *Counter) Snapshot() string {
         }(),
         "count": s.count,
     }
-    jsonBytes, _ := json.Marshal(data)
+    jsonBytes, __saveErr := json.Marshal(data)
+    if __saveErr != nil { panic("E753: persist save failed to serialize - " + __saveErr.Error()) }
     return string(jsonBytes)
 }
 
