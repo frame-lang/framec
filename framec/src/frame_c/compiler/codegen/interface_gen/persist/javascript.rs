@@ -179,6 +179,60 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         "if ({0}.__persistUserTypes) {{ for (const [_k, _v] of {0}.__persistUserTypes) _reg.set(_k, _v); }}\n",
         sys_ref
     ));
+    // #182: also seed the registry from DECLARED field / state-var / arg types. The
+    // live-graph seed above misses a persisted user type that is not reachable from
+    // the fresh restore target's initial graph (e.g. a field that defaults to null
+    // but held a user object at save), and ES modules cannot enumerate classes — so
+    // register every declared type that resolves to a class at run time. The
+    // `typeof === "function"` guard keeps framec type-ignorant: it never asserts a
+    // name IS a class, only checks; primitives / undeclared names skip themselves.
+    // (An UNtyped field, `w = null`, has no declared type here — it still relies on
+    // the live graph or `registerPersistType`; declaring the field's type is the fix.)
+    {
+        use crate::frame_c::compiler::frame_ast::Type;
+        use std::collections::BTreeSet;
+        let mut decl_types: BTreeSet<&str> = BTreeSet::new();
+        for var in &system.domain {
+            if let Type::Custom(t) = &var.var_type {
+                decl_types.insert(t.as_str());
+            }
+        }
+        let manifest = super::manifest::build_persist_manifest(system);
+        for st in &manifest.states {
+            for (_n, t) in &st.state_vars {
+                decl_types.insert(t.as_str());
+            }
+            for t in st
+                .state_args
+                .iter()
+                .chain(&st.enter_args)
+                .chain(&st.exit_args)
+            {
+                decl_types.insert(t.as_str());
+            }
+        }
+        // A simple identifier whose first char is UPPERCASE — the JS/TS convention
+        // for a class. This is a lexical hint, not type inspection: it skips
+        // lowercase primitives (`number`, `string`, `boolean`) and anything with
+        // generics / brackets / qualifiers. A lowercase-named class is unconventional
+        // and safely falls back to the live-graph seed, so this never regresses; it
+        // only *adds* pre-seeding for the conventional case. The runtime `typeof`
+        // guard is the real safety net (a non-class name skips itself).
+        let is_class_ident = |s: &str| {
+            let mut cs = s.chars();
+            matches!(cs.next(), Some(c) if c.is_ascii_uppercase())
+                && s.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '$')
+        };
+        for t in &decl_types {
+            if t.is_empty() || !is_class_ident(t) {
+                continue;
+            }
+            restore_body.push_str(&format!(
+                "if (typeof {0} === \"function\") _reg.set(\"{0}\", {0});\n",
+                t
+            ));
+        }
+    }
     if is_ts {
         restore_body.push_str("const _revive = (_o: any): any => {\n");
     } else {

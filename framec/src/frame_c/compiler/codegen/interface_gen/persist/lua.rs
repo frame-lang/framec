@@ -160,6 +160,58 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         "if {0}.__persistUserTypes then for k, v in pairs({0}.__persistUserTypes) do _reg[k] = v end end\n",
         system.name
     ));
+    // #182: also seed the registry from DECLARED field / state-var / arg types. The
+    // live-graph seed misses a persisted user type not reachable from the fresh
+    // restore target's graph (e.g. a field defaulting to nil). Lua has no class
+    // enumeration and — unlike JS's lexical class resolution — no canonical mapping
+    // from a declared type NAME to its metatable when the metatable is a separate
+    // local (the `Vec2Meta` idiom). We can seed only the **class-is-metatable**
+    // convention (`Vec2 = {}; Vec2.__index = Vec2; Vec2.__name = "..."`), where the
+    // declared name resolves (lexically or as a global) to a table carrying
+    // `__name` — keyed by that `__name` (the same key the save-side tag uses).
+    // A separate-metatable type still needs `register_persist_type`. Reading an
+    // undefined name yields nil in Lua, and the `type(...) == "table"` guard skips
+    // primitives / functions / nil, so this never errors and never registers a
+    // non-class name. framec stays type-ignorant: it emits a runtime probe, not an
+    // assertion that the name IS a class.
+    {
+        use crate::frame_c::compiler::frame_ast::Type;
+        use std::collections::BTreeSet;
+        let mut decl_types: BTreeSet<&str> = BTreeSet::new();
+        for var in &system.domain {
+            if let Type::Custom(t) = &var.var_type {
+                decl_types.insert(t.as_str());
+            }
+        }
+        let manifest = super::manifest::build_persist_manifest(system);
+        for st in &manifest.states {
+            for (_n, t) in &st.state_vars {
+                decl_types.insert(t.as_str());
+            }
+            for t in st
+                .state_args
+                .iter()
+                .chain(&st.enter_args)
+                .chain(&st.exit_args)
+            {
+                decl_types.insert(t.as_str());
+            }
+        }
+        let is_class_ident = |s: &str| {
+            let mut cs = s.chars();
+            matches!(cs.next(), Some(c) if c.is_ascii_uppercase())
+                && s.chars().all(|c| c.is_alphanumeric() || c == '_')
+        };
+        for t in &decl_types {
+            if t.is_empty() || !is_class_ident(t) {
+                continue;
+            }
+            restore_body.push_str(&format!(
+                "if type({0}) == \"table\" and {0}.__name then _reg[{0}.__name] = {0} end\n",
+                t
+            ));
+        }
+    }
     restore_body.push_str("local function _frame_revive(o)\n");
     restore_body.push_str("    if type(o) ~= \"table\" then return o end\n");
     restore_body.push_str("    if o.__frame_type__ ~= nil then\n");
