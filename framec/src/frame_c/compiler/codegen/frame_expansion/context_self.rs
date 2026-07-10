@@ -444,7 +444,7 @@ pub(super) fn expand_context_self_call(
     let args_with_parens = expanded_args.as_str();
 
     // Generate the native self-call
-    let call_expr = match lang {
+    let mut call_expr = match lang {
         TargetLanguage::Python3 | TargetLanguage::GDScript => {
             format!("self.{}{}", method_name, args_with_parens)
         }
@@ -550,6 +550,32 @@ pub(super) fn expand_context_self_call(
         }
         TargetLanguage::Graphviz => unreachable!(),
     };
+
+    // #181: a reentrant self-INTERFACE call re-enters async dispatch in an
+    // `@@[async]` system and returns an awaitable, exactly like a handler
+    // dispatch or a `=> $^` forward — so it MUST be awaited, or the coroutine /
+    // future / task is discarded and the call is a silent no-op. framec awaits
+    // dispatch everywhere else (the casing gate, the router); only the body's
+    // reentrant self-call was missed. Await set mirrors `forward.rs`: prefix on
+    // Python/TS/JS/Swift/C#/Dart/GDScript, `co_await` on C++, a `.await` suffix
+    // on Rust (valid on both the plain call and the nested-arg hoist block);
+    // Kotlin (bare suspend), Java, Go and the non-async targets take no keyword.
+    // Action self-calls (`@@:self._action()`) are native — the user writes any
+    // await — so they are left untouched.
+    if ctx.system_is_async && !ctx.actions.contains(method_name) {
+        match lang {
+            TargetLanguage::Rust => call_expr = format!("{}.await", call_expr),
+            TargetLanguage::Cpp => call_expr = format!("co_await {}", call_expr),
+            TargetLanguage::Python3
+            | TargetLanguage::TypeScript
+            | TargetLanguage::JavaScript
+            | TargetLanguage::Swift
+            | TargetLanguage::CSharp
+            | TargetLanguage::Dart
+            | TargetLanguage::GDScript => call_expr = format!("await {}", call_expr),
+            _ => {}
+        }
+    }
 
     // @@:self.method() — check if standalone (only whitespace before @@:
     // in the source) or inline (preceded by native code like `x = `).
