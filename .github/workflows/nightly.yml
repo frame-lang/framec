@@ -43,7 +43,7 @@ jobs:
         with:
           repository: frame-lang/framec-test-env
           path: framec-test-env
-          ref: main
+          ref: staging
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -112,7 +112,7 @@ jobs:
         with:
           repository: frame-lang/framec-test-env
           path: framec-test-env
-          ref: main
+          ref: staging
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable

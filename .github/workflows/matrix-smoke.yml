@@ -27,9 +27,9 @@ name: matrix-smoke
 
 "on":
   push:
-    branches: [main]
+    branches: [main, staging]
   pull_request:
-    branches: [main]
+    branches: [main, staging]
 
 permissions:
   contents: read
