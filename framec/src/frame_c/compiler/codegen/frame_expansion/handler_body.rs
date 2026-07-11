@@ -621,6 +621,7 @@ pub(crate) fn emit_handler_body_via_statements(
                                     *indent,
                                     lang,
                                     &ctx.system_name,
+                                    ctx.system_is_async,
                                 );
                                 if !guard.is_empty() {
                                     pending_guard = Some(guard);

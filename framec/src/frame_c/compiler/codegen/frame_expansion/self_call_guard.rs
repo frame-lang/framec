@@ -33,10 +33,17 @@ use crate::frame_c::visitors::TargetLanguage;
 /// cascade's own `__process_transition_loop`, not by this guard). See RFC-0018
 /// for the open question of what re-entrant interface dispatch from a lifecycle
 /// handler *should* mean.
+/// `is_async` is true when the enclosing system is `@@[async]`. It matters for
+/// exactly one target: C++ lowers an async handler to a coroutine (`FrameTask`),
+/// where a bare `return;` is a compile error — the guard must be `co_return;` to
+/// match the handler's other exits (#184). Every other async backend uses a plain
+/// `async` function whose ordinary `return;` is already correct, so the flag is
+/// inert for them.
 pub(crate) fn generate_self_call_guard(
     indent: usize,
     lang: TargetLanguage,
     system_name: &str,
+    is_async: bool,
 ) -> String {
     let ind = " ".repeat(indent);
     match lang {
@@ -61,8 +68,9 @@ pub(crate) fn generate_self_call_guard(
             ind, system_name, system_name
         ),
         TargetLanguage::Cpp => format!(
-            "{}if (!_context_stack.empty() && _context_stack.back()._transitioned) return;",
-            ind
+            "{}if (!_context_stack.empty() && _context_stack.back()._transitioned) {};",
+            ind,
+            if is_async { "co_return" } else { "return" }
         ),
         TargetLanguage::Java => format!(
             "{}if (!_context_stack.isEmpty() && _context_stack.get(_context_stack.size() - 1)._transitioned) return;",
