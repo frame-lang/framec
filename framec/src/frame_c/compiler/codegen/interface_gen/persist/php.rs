@@ -154,7 +154,7 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     revive_body.push_str("if (!is_array($o)) return $o;\n");
     revive_body.push_str("if (array_key_exists('__frame_type__', $o)) {\n");
     revive_body.push_str("    $t = $o['__frame_type__'];\n");
-    revive_body.push_str("    if (!isset($reg[$t])) throw new \\Exception(\"E750: persist restore refused a type not defined in this module: \" . $t);\n");
+    revive_body.push_str("    if (!isset($reg[$t])) throw new \\Exception(\"E750: persist restore cannot resolve type (declare it as a field type or register it for restore): \" . $t);\n");
     revive_body
         .push_str("    $obj = (new \\ReflectionClass($t))->newInstanceWithoutConstructor();\n");
     revive_body.push_str("    $ro = new \\ReflectionObject($obj);\n");

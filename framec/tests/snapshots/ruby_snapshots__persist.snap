@@ -263,7 +263,7 @@ class Counter
           if o.key?("__frame_type__")
             t = o["__frame_type__"]
             cls = reg[t]
-            raise "E750: persist restore refused a type not defined in this module: #{t.inspect}" if cls.nil?
+            raise "E750: persist restore cannot resolve type (declare it as a field type or register it for restore): #{t.inspect}" if cls.nil?
             obj = cls.allocate
             o.each { |k, v| obj.instance_variable_set("@#{k}", _frame_persist_revive(v, reg)) unless k == "__frame_type__" }
             obj

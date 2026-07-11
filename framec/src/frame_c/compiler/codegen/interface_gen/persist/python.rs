@@ -170,7 +170,7 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     restore_body.push_str("    _t = _d.get(\"__frame_type__\")\n");
     restore_body.push_str("    if _t is None:\n        return _d\n");
     restore_body.push_str("    _cls = _frame_types.get(_t)\n");
-    restore_body.push_str("    if _cls is None:\n        raise RuntimeError(\"E750: persist restore refused a type not defined in this module: \" + repr(_t))\n");
+    restore_body.push_str("    if _cls is None:\n        raise RuntimeError(\"E750: persist restore cannot resolve type (declare it as a field type or register it for restore): \" + repr(_t))\n");
     restore_body.push_str("    _obj = _cls.__new__(_cls)\n");
     restore_body.push_str("    for _k, _v in _d.items():\n        if _k != \"__frame_type__\":\n            setattr(_obj, _k, _v)\n");
     restore_body.push_str("    return _obj\n");

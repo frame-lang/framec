@@ -140,15 +140,20 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     // Generate restoreState method
     let mut restore_body = String::new();
 
-    // #174 / RFC-0053 reflective route (JS/TS) — HYBRID closed-world registry.
-    // ES modules expose no class enumeration, so the name->constructor map is
-    // built from two zero-ambient sources: (1) graph-seed — walk the receiving
-    // instance's own initialized object graph (every Frame variable has an
-    // initializer, so its runtime type is already present); (2) an optional user
-    // hook `registerPersistType` for a type with no initializer, or the legacy
-    // Object.create path (no live graph). framec's own runtime classes are
-    // excluded. A tag resolving to neither is refused (E750): a hostile snapshot
-    // cannot name a foreign type, and globalThis is never consulted.
+    // #174 / RFC-0055 reflective route (JS/TS) — name->constructor RESOLUTION table.
+    // A snapshot stores each object's type as a string tag; ES modules expose no
+    // class enumeration and there is no `classForName`, so restore can only rebuild
+    // a type it has a lexical reference to. The table is populated from three
+    // sources, in increasing generality: (1) declared field types (R1/#182) — framec
+    // emits `_reg.set("T", T)` for each persisted field's declared type, which makes
+    // every directly-persisted monomorphic field resolve with zero user effort;
+    // (2) graph-seed — walk the receiving instance's own initialized object graph, to
+    // catch nested types reachable from an initializer; (3) an optional user hook
+    // `registerPersistType` for the residual framec cannot name at compile time —
+    // a polymorphic subtype (declared base, saved subtype) or a nested type unreachable
+    // in a fresh instance. framec's own runtime classes are excluded. A tag resolving
+    // to none of these fails loud (E750 — cannot resolve the type; this is a fidelity
+    // signal, not a security check), and globalThis is never consulted.
     if is_ts {
         restore_body.push_str("const _reg: Map<string, any> = new Map();\n");
     } else {
@@ -248,7 +253,7 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         .push_str("    if (Object.prototype.hasOwnProperty.call(_o, \"__frame_type__\")) {\n");
     restore_body.push_str("        const _t = _o.__frame_type__;\n");
     restore_body.push_str("        const _c = _reg.get(_t);\n");
-    restore_body.push_str("        if (!_c) throw new Error(\"E750: persist restore refused a type not defined in this module: \" + _t);\n");
+    restore_body.push_str("        if (!_c) throw new Error(\"E750: persist restore cannot resolve type (declare it as a field type or register it for restore): \" + _t);\n");
     restore_body.push_str("        const _obj = Object.create(_c.prototype);\n");
     restore_body.push_str("        for (const _k in _o) { if (_k !== \"__frame_type__\" && Object.prototype.hasOwnProperty.call(_o, _k)) _obj[_k] = _revive(_o[_k]); }\n");
     restore_body.push_str("        return _obj;\n");

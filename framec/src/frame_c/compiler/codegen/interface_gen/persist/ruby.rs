@@ -184,7 +184,7 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     revive_body.push_str("  if o.key?(\"__frame_type__\")\n");
     revive_body.push_str("    t = o[\"__frame_type__\"]\n");
     revive_body.push_str("    cls = reg[t]\n");
-    revive_body.push_str("    raise \"E750: persist restore refused a type not defined in this module: #{t.inspect}\" if cls.nil?\n");
+    revive_body.push_str("    raise \"E750: persist restore cannot resolve type (declare it as a field type or register it for restore): #{t.inspect}\" if cls.nil?\n");
     revive_body.push_str("    obj = cls.allocate\n");
     revive_body.push_str("    o.each { |k, v| obj.instance_variable_set(\"@#{k}\", _frame_persist_revive(v, reg)) unless k == \"__frame_type__\" }\n");
     revive_body.push_str("    obj\n");

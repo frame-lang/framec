@@ -188,7 +188,7 @@ class Counter:
                 return _d
             _cls = _frame_types.get(_t)
             if _cls is None:
-                raise RuntimeError("E750: persist restore refused a type not defined in this module: " + repr(_t))
+                raise RuntimeError("E750: persist restore cannot resolve type (declare it as a field type or register it for restore): " + repr(_t))
             _obj = _cls.__new__(_cls)
             for _k, _v in _d.items():
                 if _k != "__frame_type__":

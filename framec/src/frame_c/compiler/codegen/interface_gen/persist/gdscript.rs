@@ -329,7 +329,7 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     // no exceptions to abort the restore, so the closed-world guarantee is "never
     // call .new() on an unresolved type" + a logged E750; the field is left null.
     revive_body.push_str("        if cls == null:\n");
-    revive_body.push_str("            push_error(\"E750: persist restore refused a type not defined in this module: \" + str(nm))\n");
+    revive_body.push_str("            push_error(\"E750: persist restore cannot resolve type (declare it as a field type or register it for restore): \" + str(nm))\n");
     revive_body.push_str("            return null\n");
     revive_body.push_str("        var obj = cls.new()\n");
     revive_body.push_str("        for k in o:\n");

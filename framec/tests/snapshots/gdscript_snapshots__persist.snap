@@ -265,7 +265,7 @@ class Counter:
                 var nm = o["__frame_type__"]
                 var cls = self.__persist_types.get(nm, null)
                 if cls == null:
-                    push_error("E750: persist restore refused a type not defined in this module: " + str(nm))
+                    push_error("E750: persist restore cannot resolve type (declare it as a field type or register it for restore): " + str(nm))
                     return null
                 var obj = cls.new()
                 for k in o:

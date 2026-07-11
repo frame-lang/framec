@@ -217,7 +217,7 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     restore_body.push_str("    if type(o) ~= \"table\" then return o end\n");
     restore_body.push_str("    if o.__frame_type__ ~= nil then\n");
     restore_body.push_str("        local mt = _reg[o.__frame_type__]\n");
-    restore_body.push_str("        if mt == nil then error(\"E750: persist restore refused a type not defined in this module: \" .. tostring(o.__frame_type__)) end\n");
+    restore_body.push_str("        if mt == nil then error(\"E750: persist restore cannot resolve type (declare it as a field type or register it for restore): \" .. tostring(o.__frame_type__)) end\n");
     restore_body.push_str("        local obj = {}\n");
     restore_body.push_str("        for k, v in pairs(o) do if k ~= \"__frame_type__\" then obj[k] = _frame_revive(v) end end\n");
     restore_body.push_str("        return setmetatable(obj, mt)\n");

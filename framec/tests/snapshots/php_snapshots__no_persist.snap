@@ -284,7 +284,7 @@ class NoPersist {
         if (!is_array($o)) return $o;
         if (array_key_exists('__frame_type__', $o)) {
             $t = $o['__frame_type__'];
-            if (!isset($reg[$t])) throw new \Exception("E750: persist restore refused a type not defined in this module: " . $t);
+            if (!isset($reg[$t])) throw new \Exception("E750: persist restore cannot resolve type (declare it as a field type or register it for restore): " . $t);
             $obj = (new \ReflectionClass($t))->newInstanceWithoutConstructor();
             $ro = new \ReflectionObject($obj);
             foreach ($o as $k => $v) {

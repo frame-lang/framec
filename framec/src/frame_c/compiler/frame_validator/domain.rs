@@ -510,10 +510,29 @@ impl FrameValidator {
         if system.persist_attr.is_none() {
             return;
         }
-        // Regime A (static) + Regime C (Lua/GDScript) — where R1 is MUST.
+        // R1 is MUST wherever the target CANNOT enumerate its own module's
+        // classes at restore, so the declared field type is the only
+        // reflection-free registry seed / drift-fingerprint source:
+        //   - static targets (Rust/Go/Java/Kotlin/C#/Swift/Dart/C/C++)
+        //   - Lua/GDScript (dynamic, but no module-class enumeration)
+        //   - JS/TS (ES modules don't expose top-level class decls; #182)
+        // Python/Ruby/PHP are EXEMPT — they enumerate module classes at
+        // restore (e.g. Python walks `vars(_mod)`), so a declared type is
+        // genuinely optional there (RFC-0055 R1 RECOMMENDED, not MUST).
         if !matches!(
             target,
-            Rust | Go | Java | Kotlin | CSharp | Swift | Dart | C | Cpp | Lua | GDScript
+            Rust | Go
+                | Java
+                | Kotlin
+                | CSharp
+                | Swift
+                | Dart
+                | C
+                | Cpp
+                | Lua
+                | GDScript
+                | JavaScript
+                | TypeScript
         ) {
             return;
         }
@@ -527,7 +546,8 @@ impl FrameValidator {
                     format!(
                         "persisted {} '{}' in system '{}' is missing a type annotation. \
                          For target '{:?}' the declared type is the type-identity source for \
-                         faithful restore and drift detection (RFC-0055 R1, Regime A/C) — framec \
+                         faithful restore and drift detection (RFC-0055 R1) — this target \
+                         cannot enumerate its own module's classes at restore, so framec \
                          cannot reconstruct or fingerprint an untyped persisted field. \
                          Write `{}: <type>`. See docs/rfcs/rfc-0055.md § The contract.",
                         kind, owner, system.name, target, owner

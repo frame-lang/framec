@@ -244,7 +244,7 @@ export class Counter {
             if (Object.prototype.hasOwnProperty.call(_o, "__frame_type__")) {
                 const _t = _o.__frame_type__;
                 const _c = _reg.get(_t);
-                if (!_c) throw new Error("E750: persist restore refused a type not defined in this module: " + _t);
+                if (!_c) throw new Error("E750: persist restore cannot resolve type (declare it as a field type or register it for restore): " + _t);
                 const _obj = Object.create(_c.prototype);
                 for (const _k in _o) { if (_k !== "__frame_type__" && Object.prototype.hasOwnProperty.call(_o, _k)) _obj[_k] = _revive(_o[_k]); }
                 return _obj;
