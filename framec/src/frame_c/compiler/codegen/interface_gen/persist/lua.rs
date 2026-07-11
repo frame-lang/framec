@@ -46,8 +46,9 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     // RFC-0054 Phase B1: manifest fingerprint — save writes `_manifest`, restore
     // refuses (E751) on drift. `_parsed` (serpent.load) is plain; revive is applied
     // per-field, never to `_manifest`, so the check reads a plain string.
-    let manifest_fp =
-        super::emit::escape_double_quoted(&super::manifest::build_persist_manifest(system).fingerprint());
+    let manifest_fp = super::emit::escape_double_quoted(
+        &super::manifest::build_persist_manifest(system).fingerprint(),
+    );
 
     let mut save_body = String::new();
     save_body

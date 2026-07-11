@@ -48,8 +48,9 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     // it to `_manifest`, restore refuses (E751) on drift. String compare only —
     // no type resolved from the blob (the reflective revive path and its E750
     // closed-world guard are untouched).
-    let manifest_fp =
-        super::emit::escape_double_quoted(&super::manifest::build_persist_manifest(system).fingerprint());
+    let manifest_fp = super::emit::escape_double_quoted(
+        &super::manifest::build_persist_manifest(system).fingerprint(),
+    );
 
     // ---- save body ----
     let mut save_body = String::new();
@@ -61,7 +62,10 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     save_body.push_str("    if c is None:\n        return None\n");
     save_body.push_str("    return {\"state\": c.state, \"state_args\": list(c.state_args), \"state_vars\": dict(c.state_vars), \"enter_args\": list(c.enter_args), \"exit_args\": list(c.exit_args), \"parent_compartment\": _ser_comp(c.parent_compartment)}\n");
     save_body.push_str("state_data = {\"_compartment\": _ser_comp(self.__compartment), \"_state_stack\": [_ser_comp(c) for c in self._state_stack]}\n");
-    save_body.push_str(&format!("state_data[\"_manifest\"] = \"{}\"\n", manifest_fp));
+    save_body.push_str(&format!(
+        "state_data[\"_manifest\"] = \"{}\"\n",
+        manifest_fp
+    ));
     for var in &system.domain {
         // RFC-0016.1: `@@[no_persist]` fields are transient — skip.
         if var.attributes.iter().any(|a| a.name == "no_persist") {

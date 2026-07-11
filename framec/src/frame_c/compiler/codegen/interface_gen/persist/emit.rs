@@ -63,7 +63,9 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn indexed_branch(
 /// a constant into generated code; the fingerprint is opaque ASCII framing over
 /// raw (theoretically quote-bearing) Frame type strings, so it must be escaped
 /// even though realistic type names never need it.
-pub(in crate::frame_c::compiler::codegen::interface_gen) fn escape_double_quoted(s: &str) -> String {
+pub(in crate::frame_c::compiler::codegen::interface_gen) fn escape_double_quoted(
+    s: &str,
+) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         match c {

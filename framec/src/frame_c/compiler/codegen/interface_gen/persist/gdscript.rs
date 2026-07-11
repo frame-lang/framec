@@ -32,8 +32,9 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     // refuses (E751) on drift. GDScript is exceptionless, so refuse = push_error +
     // early return (matching the E700/E750 idiom). `state_data` (bytes_to_var) is
     // plain; revive is per-field, never touching `_manifest`.
-    let manifest_fp =
-        super::emit::escape_double_quoted(&super::manifest::build_persist_manifest(system).fingerprint());
+    let manifest_fp = super::emit::escape_double_quoted(
+        &super::manifest::build_persist_manifest(system).fingerprint(),
+    );
 
     let uses_new_contract = system.uses_new_persist_contract();
     let save_method_name = system
@@ -74,7 +75,10 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     save_body.push_str("        result = d\n");
     save_body.push_str("    return result\n");
     save_body.push_str("var state_data = {}\n");
-    save_body.push_str(&format!("state_data[\"_manifest\"] = \"{}\"\n", manifest_fp));
+    save_body.push_str(&format!(
+        "state_data[\"_manifest\"] = \"{}\"\n",
+        manifest_fp
+    ));
     save_body.push_str("state_data[\"_compartment\"] = _ser_chain.call(self.__compartment)\n");
     save_body.push_str("var stack_arr = []\n");
     save_body.push_str("for c in self._state_stack:\n");

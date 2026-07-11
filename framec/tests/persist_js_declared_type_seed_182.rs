@@ -75,7 +75,9 @@ Widget.__name = "Widget"
 fn lua_class_is_metatable_type_is_seeded() {
     let c = compile_source(LUA_SRC, "lua");
     assert!(
-        c.contains(r#"if type(Widget) == "table" and Widget.__name then _reg[Widget.__name] = Widget end"#),
+        c.contains(
+            r#"if type(Widget) == "table" and Widget.__name then _reg[Widget.__name] = Widget end"#
+        ),
         "[#182/lua] declared class-is-metatable type Widget not seeded\n{c}"
     );
 }

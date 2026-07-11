@@ -185,8 +185,9 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
 
     // RFC-0054 Phase B1: manifest fingerprint — save writes `_manifest`, restore
     // refuses (E751) on drift BEFORE reviving (plain decode, no type resolution).
-    let manifest_fp =
-        super::emit::escape_double_quoted(&super::manifest::build_persist_manifest(system).fingerprint());
+    let manifest_fp = super::emit::escape_double_quoted(
+        &super::manifest::build_persist_manifest(system).fingerprint(),
+    );
 
     let mut save_body = String::new();
     save_body.push_str("if (!empty($this->_context_stack)) throw new \\Exception(\"E700: system not quiescent\");\n");

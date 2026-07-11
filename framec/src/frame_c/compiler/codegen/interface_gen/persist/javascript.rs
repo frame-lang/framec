@@ -61,8 +61,9 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     // RFC-0054 Phase B1: manifest fingerprint — save writes `_manifest`, restore
     // refuses (E751) on drift. `_parsed` is a plain JSON.parse (revive is applied
     // per-field, never to `_manifest`), so the check reads a plain string.
-    let manifest_fp =
-        super::emit::escape_double_quoted(&super::manifest::build_persist_manifest(system).fingerprint());
+    let manifest_fp = super::emit::escape_double_quoted(
+        &super::manifest::build_persist_manifest(system).fingerprint(),
+    );
 
     // Generate saveState method
     let mut save_body = String::new();
@@ -221,7 +222,8 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         let is_class_ident = |s: &str| {
             let mut cs = s.chars();
             matches!(cs.next(), Some(c) if c.is_ascii_uppercase())
-                && s.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '$')
+                && s.chars()
+                    .all(|c| c.is_alphanumeric() || c == '_' || c == '$')
         };
         for t in &decl_types {
             if t.is_empty() || !is_class_ident(t) {

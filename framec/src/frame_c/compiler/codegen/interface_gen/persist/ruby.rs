@@ -25,8 +25,9 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
     // RFC-0054 Phase B1: bake the compartment-type-shape fingerprint; save writes
     // `_manifest`, restore refuses (E751) on drift BEFORE reviving (a plain parse,
     // no type resolution). Untouches the closed-world revive/E750 path.
-    let manifest_fp =
-        super::emit::escape_double_quoted(&super::manifest::build_persist_manifest(system).fingerprint());
+    let manifest_fp = super::emit::escape_double_quoted(
+        &super::manifest::build_persist_manifest(system).fingerprint(),
+    );
 
     let uses_new_contract = system.uses_new_persist_contract();
     let save_method_name = system
