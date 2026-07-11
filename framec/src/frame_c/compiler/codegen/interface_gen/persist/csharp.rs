@@ -290,9 +290,12 @@ pub(in crate::frame_c::compiler::codegen::interface_gen) fn generate(
         load_param_name
     ));
     restore_body.push_str("var __root = __doc.RootElement;\n");
-    // B1: refuse a drifted snapshot before any typed decode.
+    // B1: refuse a drifted snapshot before any typed decode. The check variable
+    // must NOT be `__m`: the per-field restore below names its temp `__<fieldname>`,
+    // so a persisted domain field named `m` would emit a second `__m` in this same
+    // method scope (CS0128). `__frameManifest` cannot collide with a field name.
     restore_body.push_str(&format!(
-        "if (!__root.TryGetProperty(\"_manifest\", out var __m) || __m.GetString() != \"{}\") throw new System.Exception(\"E751: persist restore refused - snapshot schema does not match this program\");\n",
+        "if (!__root.TryGetProperty(\"_manifest\", out var __frameManifest) || __frameManifest.GetString() != \"{}\") throw new System.Exception(\"E751: persist restore refused - snapshot schema does not match this program\");\n",
         manifest_fp
     ));
     if !uses_new_contract {
