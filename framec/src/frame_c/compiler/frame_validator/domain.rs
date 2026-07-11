@@ -484,4 +484,102 @@ impl FrameValidator {
             }
         }
     }
+
+    /// E752 (RFC-0055 R1): in a **persisted** system, every persisted field must
+    /// declare a type on the targets where R1 is MUST — Regime A (statically typed)
+    /// and Regime C (dynamic non-reflective: Lua, GDScript) — because there the
+    /// declared type is the type-identity source for faithful restore and for a
+    /// complete drift fingerprint. Regime B (Python/Ruby/PHP/JS/TS) supplies the
+    /// type from a runtime tag, so a declared type is only RECOMMENDED there and is
+    /// not checked here.
+    ///
+    /// Scoped to NOT overlap the codegen rules E605 (domain fields on
+    /// C/Cpp/Java/Go/Rust/CSharp/TypeScript) and E606 (all args on
+    /// C/Cpp/Java/Go/Rust/CSharp/Kotlin/Swift). The genuinely-uncovered persisted
+    /// fields this fills, persist-gated:
+    ///   - **state variables** (`$.x`) — no existing rule, on every Regime A/C target;
+    ///   - **domain fields** on Kotlin/Swift/Dart/Lua/GDScript (E605's Regime A/C gap);
+    ///   - **state / enter / exit args** on Dart/Lua/GDScript (E606's Regime A/C gap).
+    pub(super) fn validate_persist_field_types(
+        &mut self,
+        system: &SystemAst,
+        target: crate::frame_c::visitors::TargetLanguage,
+    ) {
+        use crate::frame_c::visitors::TargetLanguage::*;
+        // R1 governs *persisted* fields only.
+        if system.persist_attr.is_none() {
+            return;
+        }
+        // Regime A (static) + Regime C (Lua/GDScript) — where R1 is MUST.
+        if !matches!(
+            target,
+            Rust | Go | Java | Kotlin | CSharp | Swift | Dart | C | Cpp | Lua | GDScript
+        ) {
+            return;
+        }
+        let domain_covered = matches!(target, C | Cpp | Java | Go | Rust | CSharp | TypeScript);
+        let args_covered = matches!(target, C | Cpp | Java | Go | Rust | CSharp | Kotlin | Swift);
+
+        let flag = |kind: &str, owner: &str, span: &Span, errs: &mut Vec<ValidationError>| {
+            errs.push(
+                ValidationError::new(
+                    "E752",
+                    format!(
+                        "persisted {} '{}' in system '{}' is missing a type annotation. \
+                         For target '{:?}' the declared type is the type-identity source for \
+                         faithful restore and drift detection (RFC-0055 R1, Regime A/C) — framec \
+                         cannot reconstruct or fingerprint an untyped persisted field. \
+                         Write `{}: <type>`. See docs/rfcs/rfc-0055.md § The contract.",
+                        kind, owner, system.name, target, owner
+                    ),
+                )
+                .with_span(span.clone()),
+            );
+        };
+
+        // Domain fields — only where E605 does not already require them.
+        if !domain_covered {
+            for var in &system.domain {
+                if var.attributes.iter().any(|a| a.name == "no_persist") {
+                    continue;
+                }
+                if matches!(var.var_type, Type::Unknown) {
+                    flag("domain field", &var.name, &var.span, &mut self.errors);
+                }
+            }
+        }
+
+        if let Some(machine) = &system.machine {
+            for state in &machine.states {
+                // State variables ($.x) — no existing rule, every Regime A/C target.
+                for sv in &state.state_vars {
+                    if matches!(sv.var_type, Type::Unknown) {
+                        flag("state variable", &sv.name, &sv.span, &mut self.errors);
+                    }
+                }
+                // State / enter / exit args — only where E606 does not already cover them.
+                if !args_covered {
+                    for sp in &state.params {
+                        if matches!(sp.param_type, Type::Unknown) {
+                            flag("state arg", &sp.name, &sp.span, &mut self.errors);
+                        }
+                    }
+                    if let Some(enter) = &state.enter {
+                        for p in &enter.params {
+                            if matches!(p.param_type, Type::Unknown) {
+                                flag("enter arg", &p.name, &p.span, &mut self.errors);
+                            }
+                        }
+                    }
+                    if let Some(exit) = &state.exit {
+                        for p in &exit.params {
+                            if matches!(p.param_type, Type::Unknown) {
+                                flag("exit arg", &p.name, &p.span, &mut self.errors);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

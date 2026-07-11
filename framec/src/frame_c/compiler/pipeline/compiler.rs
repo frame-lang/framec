@@ -2425,7 +2425,7 @@ mod tests {
     machine:
         $S { bump_c() { self.c.bump() } }
     domain:
-        c = @@Counter(7)
+        c: Counter = @@Counter(7)
 }
 "#;
         let config = PipelineConfig::production(TargetLanguage::GDScript);

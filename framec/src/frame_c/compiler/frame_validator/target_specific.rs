@@ -52,6 +52,10 @@ impl FrameValidator {
         self.validate_domain_types(system, target);
         // E606: Static targets require explicit type on interface params
         self.validate_interface_param_types(system, target);
+        // E752 (RFC-0055 R1): persisted systems require a declared type on every
+        // persisted field on Regime A/C targets (fills the state-var + Dart/Lua/
+        // GDScript gaps E605/E606 leave; persist-gated; Regime B unaffected).
+        self.validate_persist_field_types(system, target);
 
         // E616 (rust): an interface parameter typed as a live system instance
         // (by value) cannot work — the event is Rc-shared (context stack +
