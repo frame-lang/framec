@@ -188,4 +188,61 @@ mod tests {
             "field after string dropped:\n{out}"
         );
     }
+
+    #[test]
+    fn trailing_operator_continuation_captured_whole() {
+        // #185: a line ending in a binary operator at depth 0 continues onto the
+        // next line (JS ASI, and most fluent syntaxes). The `2` must not be
+        // dropped, and the following field `y` must still parse.
+        let out = py("        x = 1 +\n            2\n        y = 99");
+        assert!(out.contains("class Repro"), "did not compile:\n{out}");
+        assert!(
+            out.contains("self.x = 1 +") && out.contains("2"),
+            "trailing-operator continuation truncated (the `2` was dropped):\n{out}"
+        );
+        assert!(
+            out.contains("self.y = 99"),
+            "field after a continued expression was swallowed:\n{out}"
+        );
+    }
+
+    #[test]
+    fn leading_dot_chain_continuation_captured_whole() {
+        // #185: the next line beginning with `.` continues a method chain even
+        // though the current line ends with `)` (not an operator).
+        let out = py("        x = foo()\n            .bar()\n        y = 7");
+        assert!(out.contains("class Repro"), "did not compile:\n{out}");
+        assert!(
+            out.contains(".bar()"),
+            "leading-dot chain was severed (`.bar()` dropped or stray):\n{out}"
+        );
+        assert!(out.contains("self.y = 7"), "following field swallowed:\n{out}");
+    }
+
+    #[test]
+    fn complete_expression_still_terminates_at_newline() {
+        // Regression guard: a complete single-line expression must still stop at
+        // the depth-0 newline — the continuation heuristic must not over-capture
+        // the next field.
+        let out = py("        a = 1\n        b = 2");
+        assert!(out.contains("class Repro"), "did not compile:\n{out}");
+        assert!(out.contains("self.a = 1"), "field a lost:\n{out}");
+        assert!(
+            out.contains("self.b = 2"),
+            "the next field was swallowed into a's initializer:\n{out}"
+        );
+    }
+
+    #[test]
+    fn trailing_generic_close_does_not_over_continue() {
+        // A line ending in a bare `>` closes a generic (`Map<K, V>`), NOT an
+        // arrow — it must terminate so the following field survives. (`=>` still
+        // continues; that is the arrow case, tested implicitly by other syntaxes.)
+        let out = py("        a = m<u8>\n        b = 2");
+        assert!(out.contains("class Repro"), "did not compile:\n{out}");
+        assert!(
+            out.contains("self.b = 2"),
+            "a bare trailing `>` over-continued and swallowed `b`:\n{out}"
+        );
+    }
 }

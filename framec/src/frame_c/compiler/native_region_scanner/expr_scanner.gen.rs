@@ -340,7 +340,66 @@ mod _expr_scanner_fsm_framec {
                         break;
                     }
                     b'\n' if depth == 0 && self.stop_newline => {
-                        break; // Don't include the newline
+                        // #185: a depth-0 newline ends the expression only if it
+                        // looks complete. Keep scanning when the current line ends
+                        // with a continuation operator, or the next non-blank line
+                        // begins with one (a leading `.` method chain, a leading
+                        // binary op). framec is type-ignorant, so this is a lexical
+                        // heuristic, not a native parse. Balanced `()[]{}` already
+                        // hold multi-line literals whole (depth > 0); this only
+                        // rescues *unbracketed* continuations.
+                        //
+                        // NOTE (#123): this scanner is a PDA (native depth counter),
+                        // so the heuristic lives in native Rust; converting the whole
+                        // scanner to a real @@fsm is tracked separately.
+                        //
+                        // Trailing test: last non-space byte at/before the newline
+                        // (skipping blank lines). Closers are NOT continuation —
+                        // only dangling operators are. `=>` (arrow) counts, but a
+                        // bare `>` does not (it closes a generic like `Vec<u8>`).
+                        let mut j = i;
+                        while j > self.pos {
+                            let c = bytes[j - 1];
+                            if c == b' ' || c == b'\t' || c == b'\r' || c == b'\n' {
+                                j -= 1;
+                            } else {
+                                break;
+                            }
+                        }
+                        // A complete statement/field never ends in a dangling
+                        // binary/member/assign operator, so these are safe
+                        // continuation signals. `=>` (arrow) continues; a bare
+                        // `>` does not (it closes a generic like `Vec<u8>`).
+                        // `,`/`:`/`<` are excluded — too easily a complete line.
+                        let trailing = if j > self.pos { bytes[j - 1] } else { 0u8 };
+                        let trailing_prev = if j > self.pos + 1 { bytes[j - 2] } else { 0u8 };
+                        let trailing_cont = matches!(
+                            trailing,
+                            b'+' | b'-' | b'*' | b'/' | b'%' | b'&' | b'|'
+                                | b'^' | b'.' | b'?' | b'='
+                        ) || (trailing == b'>' && trailing_prev == b'=');
+                        // Leading test: first non-space byte on the next non-blank
+                        // line. Only `.`/`?`/`:` are safe here: a leading binary
+                        // operator is ambiguous with a statement start (a native
+                        // `*p`/`&x` deref, a unary `-`/`+`, or a Frame `-> $S` /
+                        // `=> $^` control-flow line), which this scanner also
+                        // feeds — so those must NOT count as continuation. A
+                        // leading `.` method chain never starts a statement.
+                        let mut k = i + 1;
+                        while k < end {
+                            let c = bytes[k];
+                            if c == b' ' || c == b'\t' || c == b'\r' || c == b'\n' {
+                                k += 1;
+                            } else {
+                                break;
+                            }
+                        }
+                        let leading = if k < end { bytes[k] } else { 0u8 };
+                        let leading_cont = matches!(leading, b'.' | b'?' | b':');
+                        if !(trailing_cont || leading_cont) {
+                            break; // complete — terminate, newline excluded
+                        }
+                        // else: continuation — fall through to `i += 1`, keep scanning
                     }
                     _ => {}
                 }
