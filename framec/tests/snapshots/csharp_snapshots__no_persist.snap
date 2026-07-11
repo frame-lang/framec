@@ -332,7 +332,7 @@ public class NoPersist {
     public void restore(string json) {
         var __doc = System.Text.Json.JsonDocument.Parse(json);
         var __root = __doc.RootElement;
-        if (!__root.TryGetProperty("_manifest", out var __m) || __m.GetString() != "frame-persist-manifest:1|S6:Active|V|A|E|X|D5:count3:int") throw new System.Exception("E751: persist restore refused - snapshot schema does not match this program");
+        if (!__root.TryGetProperty("_manifest", out var __frameManifest) || __frameManifest.GetString() != "frame-persist-manifest:1|S6:Active|V|A|E|X|D5:count3:int") throw new System.Exception("E751: persist restore refused - snapshot schema does not match this program");
         this.__compartment = __DeserComp(__root.GetProperty("_compartment"));
         if (__root.TryGetProperty("_state_stack", out var __stack)) {
             this._state_stack = new List<NoPersistCompartment>();
