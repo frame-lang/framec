@@ -150,8 +150,15 @@ fn rust_dispatch_convert(t: &crate::frame_c::compiler::frame_ast::Type) -> &'sta
 ///
 /// - `&str` → `name.as_str()`  (variant holds `String`, hand back `&str`)
 /// - `&[T]` → `name.as_slice()` (variant holds `Vec<T>`, hand back `&[T]`)
-/// - non-Copy owned (`String`, `Vec<_>`, `HashMap<_, _>`) → `name.clone()`
-/// - other (Copy types) → `*name`
+/// - a built-in Copy scalar (`i32`, `bool`, `f64`, …) → `*name`
+/// - everything else → `name.clone()`
+///
+/// framec is type-ignorant: it cannot assume a param type is `Copy`, so the
+/// destructured variant field is cloned by default. Moving it out with `*name`
+/// out of the shared `&FrameEvent` is `error[E0507]` for any non-Copy type —
+/// `String`, `Vec`, `HashMap`, an `Rc`/`Arc` handle, or a user struct (#186).
+/// Only the built-in Copy scalars, where `*name` is a cheap bit-copy and
+/// `.clone()` would draw clippy's `clone_on_copy`, keep the deref.
 fn rust_handler_arg_expr(name: &str, source_type: &str, resolved_type: &str) -> String {
     if source_type == "&str" {
         return format!("{}.as_str()", name);
@@ -159,25 +166,37 @@ fn rust_handler_arg_expr(name: &str, source_type: &str, resolved_type: &str) -> 
     if source_type.starts_with("&[") && source_type.ends_with(']') {
         return format!("{}.as_slice()", name);
     }
-    let is_non_copy = resolved_type == "String"
-        || resolved_type.starts_with("Vec<")
-        || resolved_type.starts_with("HashMap<")
-        || resolved_type.starts_with("std::collections::HashMap")
-        || resolved_type.contains("BTreeMap")
-        // #161: shared handles clone by refcount bump. `Rc<RefCell<Sys>>` is
-        // the reference-semantics equivalent of passing a system instance on
-        // the OO targets — the supported spelling for system-valued params.
-        || resolved_type.starts_with("Rc<")
-        || resolved_type.starts_with("Arc<")
-        || resolved_type.starts_with("std::rc::Rc<")
-        || resolved_type.starts_with("std::sync::Arc<")
-        || resolved_type.starts_with("alloc::rc::Rc<")
-        || resolved_type.starts_with("alloc::sync::Arc<");
-    if is_non_copy {
-        format!("{}.clone()", name)
-    } else {
+    if is_rust_copy_scalar(resolved_type) {
         format!("*{}", name)
+    } else {
+        format!("{}.clone()", name)
     }
+}
+
+/// The built-in Rust scalar types that are `Copy` (so a variant field of this
+/// type can be moved out of `&FrameEvent` with `*name`). Frame passes type
+/// names through verbatim, so this matches the canonical spellings; any other
+/// type — including a user type that happens to be `Copy` — is cloned, which is
+/// always sound (`.clone()` works on Copy types too).
+fn is_rust_copy_scalar(t: &str) -> bool {
+    matches!(
+        t,
+        "i8" | "i16"
+            | "i32"
+            | "i64"
+            | "i128"
+            | "isize"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "u128"
+            | "usize"
+            | "f32"
+            | "f64"
+            | "bool"
+            | "char"
+    )
 }
 
 pub fn generate_rust_system(system: &SystemAst, arcanum: &Arcanum, source: &[u8]) -> CodegenNode {
