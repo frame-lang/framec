@@ -48,6 +48,10 @@ impl FrameValidator {
         target: crate::frame_c::visitors::TargetLanguage,
         system_names: &std::collections::HashSet<String>,
     ) {
+        // E620 (RFC-0056 P9 / #209): the borrowed input source is not yet ported
+        // to every backend. Surface the gap as a hard error rather than silently
+        // emitting code that references a field the backend never generated.
+        self.validate_input_source_supported(system, target);
         // E605: Static targets require explicit type on domain fields
         self.validate_domain_types(system, target);
         // E606: Static targets require explicit type on interface params
@@ -308,5 +312,50 @@ pub fn typescript_global_collision_rename(name: &str) -> Option<String> {
         Some(format!("{}Sys", name))
     } else {
         None
+    }
+}
+
+impl FrameValidator {
+    /// E620 (RFC-0056 P9 / #209): a system may declare a **borrowed input source**
+    /// — a header param typed with an alphabet type (`bytes` / `char` / `token`),
+    /// the same rule `@@fsm` uses — so it can scan a buffer it does not own.
+    ///
+    /// The capability is currently implemented on **Rust** (a real generic +
+    /// trait, so the borrow checker sees the lifetime) and **Python** (an adapter
+    /// holding the caller's buffer by reference).
+    ///
+    /// On the remaining backends the adapter table exists but the constructor is
+    /// not yet wired. Emitting there would produce code referencing a field the
+    /// backend never generated — a silent miscompile. So: a hard error, naming the
+    /// gap. **Surface the parity gap; never work around it.**
+    pub(super) fn validate_input_source_supported(
+        &mut self,
+        system: &SystemAst,
+        target: crate::frame_c::visitors::TargetLanguage,
+    ) {
+        use crate::frame_c::visitors::TargetLanguage as T;
+        let supported = matches!(target, T::Rust | T::Python3);
+        if supported {
+            return;
+        }
+        for p in &system.params {
+            if p.kind == ParamKind::Input {
+                self.errors.push(ValidationError::new(
+                    "E620",
+                    format!(
+                        "system '{}' declares a borrowed input source ('{}: {}'), which is not yet \
+                         supported on the {:?} target. Implemented on Rust and Python; the other \
+                         backends are pending (RFC-0056 P9 / #209). Remove the input param, or \
+                         target Rust/Python.",
+                        system.name,
+                        p.name,
+                        crate::frame_c::compiler::codegen::codegen_utils::type_to_string(
+                            &p.param_type
+                        ),
+                        target
+                    ),
+                ));
+            }
+        }
     }
 }

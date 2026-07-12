@@ -66,10 +66,26 @@ impl LanguageBackend for PythonBackend {
                 methods,
                 base_classes,
                 is_abstract: _,
+                input,
                 ..
             } => {
                 ctx.is_framework_helper = *is_framework_helper;
+                ctx.input = input.clone();
                 let mut result = String::new();
+
+                // RFC-0056 P9 (#209): a system that declares an alphabet-typed
+                // header param BORROWS its input. In a GC target a field is
+                // already a reference, so the adapter costs nothing — it only
+                // supplies the portable accessor spelling (`get(i)` / `len()`).
+                if let Some(spec) = input {
+                    result.push_str(
+                        &crate::frame_c::compiler::codegen::codegen_utils::input_adapter(
+                            TargetLanguage::Python3,
+                            name,
+                            &spec.elem,
+                        ),
+                    );
+                }
 
                 // Class declaration
                 let bases = if base_classes.is_empty() {
@@ -349,10 +365,30 @@ impl LanguageBackend for PythonBackend {
                 }
                 ctx.pop_indent();
 
-                // Emit `def __init__(self):` — bare framework
-                result.push_str(&format!("{}def __init__(self):\n", ctx.get_indent()));
+                // Emit `def __init__(self):` — bare framework.
+                // RFC-0056 P9: a borrowing system takes its buffer here. The
+                // adapter holds it BY REFERENCE — no copy.
+                let (in_arg, in_store) = match &ctx.input {
+                    Some(spec) => (
+                        format!(", {}", spec.field),
+                        Some(format!(
+                            "self.{f} = {a}({f})\n",
+                            f = spec.field,
+                            a = spec.adapter
+                        )),
+                    ),
+                    None => (String::new(), None),
+                };
+                result.push_str(&format!(
+                    "{}def __init__(self{}):\n",
+                    ctx.get_indent(),
+                    in_arg
+                ));
                 ctx.push_indent();
-                if init_lines.is_empty() {
+                if let Some(store) = &in_store {
+                    result.push_str(&format!("{}{}", ctx.get_indent(), store));
+                }
+                if init_lines.is_empty() && in_store.is_none() {
                     result.push_str(&format!("{}pass\n", ctx.get_indent()));
                 } else {
                     for line in &init_lines {

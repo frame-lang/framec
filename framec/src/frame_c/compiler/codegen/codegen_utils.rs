@@ -1055,6 +1055,128 @@ pub(crate) fn utf8_char_len(first_byte: u8) -> usize {
     }
 }
 
+/// RFC-0056 P9 (#209): the per-system **input adapter** — the borrowed input
+/// source, one table, single-sourced.
+///
+/// The adapter holds the caller's buffer **by reference** (no copy) and exposes
+/// two *indexed accessors*, `get(i)` and `len()`. That is the whole abstraction:
+/// **not a borrow concept** — an accessor. Which is why it ports at all.
+///
+/// * GC targets — a field is already a reference; the adapter only supplies the
+///   accessor spelling. Zero copy, no ceremony.
+/// * C / C++ — `ptr + len`.
+/// * Rust — does NOT use this: it needs a real generic + trait so the borrow
+///   checker can see the lifetime (emitted in `backends/rust.rs`). Same
+///   accessors, different mechanism.
+///
+/// Duplicating this across seventeen backend arms is exactly the drift generator
+/// RFC-0056 P11 warns about — five zero-literal tables and three disagreeing
+/// literal emitters already exist. One table.
+pub(crate) fn input_adapter(lang: TargetLanguage, sys: &str, elem: &str) -> String {
+    let _ = elem;
+    match lang {
+        TargetLanguage::Python3 => format!(
+            "class {sys}Input:\n    \
+             \"\"\"Borrowed input source (RFC-0056 P9). Holds the caller's buffer by reference.\"\"\"\n    \
+             __slots__ = ('_b',)\n    \
+             def __init__(self, b): self._b = b\n    \
+             def get(self, i): return self._b[i]\n    \
+             def len(self): return len(self._b)\n\n"
+        ),
+        TargetLanguage::TypeScript => format!(
+            "class {sys}Input {{\n    \
+             constructor(private readonly b: ArrayLike<number>) {{}}\n    \
+             get(i: number): number {{ return this.b[i]; }}\n    \
+             len(): number {{ return this.b.length; }}\n}}\n\n"
+        ),
+        TargetLanguage::JavaScript => format!(
+            "class {sys}Input {{\n    \
+             constructor(b) {{ this.b = b; }}\n    \
+             get(i) {{ return this.b[i]; }}\n    \
+             len() {{ return this.b.length; }}\n}}\n\n"
+        ),
+        TargetLanguage::Java => format!(
+            "final class {sys}Input {{\n    \
+             private final byte[] b;\n    \
+             {sys}Input(byte[] b) {{ this.b = b; }}\n    \
+             int get(int i) {{ return b[i] & 0xFF; }}\n    \
+             int len() {{ return b.length; }}\n}}\n\n"
+        ),
+        TargetLanguage::CSharp => format!(
+            "sealed class {sys}Input {{\n    \
+             private readonly byte[] b;\n    \
+             public {sys}Input(byte[] b) {{ this.b = b; }}\n    \
+             public int get(int i) => b[i];\n    \
+             public int len() => b.Length;\n}}\n\n"
+        ),
+        TargetLanguage::Kotlin => format!(
+            "class {sys}Input(private val b: ByteArray) {{\n    \
+             fun get(i: Int): Int = b[i].toInt() and 0xFF\n    \
+             fun len(): Int = b.size\n}}\n\n"
+        ),
+        TargetLanguage::Swift => format!(
+            "final class {sys}Input {{\n    \
+             private let b: [UInt8]\n    \
+             init(_ b: [UInt8]) {{ self.b = b }}\n    \
+             func get(_ i: Int) -> UInt8 {{ return b[i] }}\n    \
+             func len() -> Int {{ return b.count }}\n}}\n\n"
+        ),
+        TargetLanguage::Dart => format!(
+            "class {sys}Input {{\n    \
+             final List<int> _b;\n    \
+             {sys}Input(this._b);\n    \
+             int get(int i) => _b[i];\n    \
+             int len() => _b.length;\n}}\n\n"
+        ),
+        TargetLanguage::Go => format!(
+            "type {sys}Input struct {{ b []byte }}\n\
+             func (in {sys}Input) Get(i int) byte {{ return in.b[i] }}\n\
+             func (in {sys}Input) Len() int {{ return len(in.b) }}\n\n"
+        ),
+        TargetLanguage::Ruby => format!(
+            "class {sys}Input\n  \
+             def initialize(b); @b = b; end\n  \
+             def get(i); @b[i]; end\n  \
+             def len; @b.length; end\nend\n\n"
+        ),
+        TargetLanguage::Php => format!(
+            "final class {sys}Input {{\n    \
+             private $b;\n    \
+             public function __construct($b) {{ $this->b = $b; }}\n    \
+             public function get($i) {{ return $this->b[$i]; }}\n    \
+             public function len() {{ return count($this->b); }}\n}}\n\n"
+        ),
+        TargetLanguage::Lua => format!(
+            "local {sys}Input = {{}}\n\
+             {sys}Input.__index = {sys}Input\n\
+             function {sys}Input.new(b) return setmetatable({{ b = b }}, {sys}Input) end\n\
+             function {sys}Input:get(i) return self.b[i] end\n\
+             function {sys}Input:len() return #self.b end\n\n"
+        ),
+        TargetLanguage::GDScript => format!(
+            "class {sys}Input:\n    \
+             var _b\n    \
+             func _init(b): _b = b\n    \
+             func get(i): return _b[i]\n    \
+             func len(): return _b.size()\n\n"
+        ),
+        TargetLanguage::Cpp => format!(
+            "struct {sys}Input {{\n    \
+             const unsigned char* b; std::size_t n;\n    \
+             unsigned char get(std::size_t i) const {{ return b[i]; }}\n    \
+             std::size_t len() const {{ return n; }}\n}};\n\n"
+        ),
+        TargetLanguage::C => format!(
+            "typedef struct {{ const unsigned char* b; size_t n; }} {sys}Input;\n\
+             static unsigned char {sys}Input_get({sys}Input in, size_t i) {{ return in.b[i]; }}\n\
+             static size_t {sys}Input_len({sys}Input in) {{ return in.n; }}\n\n"
+        ),
+        // Rust emits a real generic + trait in its own backend (the borrow checker
+        // needs to see the lifetime). GraphViz has no runtime.
+        TargetLanguage::Rust | TargetLanguage::Graphviz => String::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
 

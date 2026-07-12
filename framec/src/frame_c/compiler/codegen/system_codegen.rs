@@ -359,7 +359,26 @@ pub fn generate_system_shared(
             Visibility::Public
         },
         is_framework_helper: false,
-        input: None,
+        // RFC-0056 P9 (#209): the shared pipeline's systems get the borrowed input
+        // source too. Same rule as @@fsm: a header param typed with an alphabet
+        // type IS the input, and the system holds it BY REFERENCE.
+        input: system
+            .params
+            .iter()
+            .find(|p| p.kind == crate::frame_c::compiler::frame_ast::ParamKind::Input)
+            .map(|p| super::ast::InputSpec {
+                field: p.name.clone(),
+                adapter: format!("{}Input", system.name),
+                elem: match crate::frame_c::compiler::codegen::codegen_utils::type_to_string(
+                    &p.param_type,
+                )
+                .trim()
+                {
+                    "char" => "char".to_string(),
+                    "token" => "String".to_string(),
+                    _ => "u8".to_string(),
+                },
+            }),
     };
 
     // Post-process: make dispatch chain async if any interface method is async.

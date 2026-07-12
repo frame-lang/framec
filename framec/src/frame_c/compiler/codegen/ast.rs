@@ -204,6 +204,12 @@ pub struct InputSpec {
     pub field: String,
     /// Element type in the target, e.g. `u8` for a `bytes` alphabet.
     pub elem: String,
+    /// The generated adapter type's name, e.g. `SysSkipStringInput`.
+    ///
+    /// Carried, not re-derived by concatenating the class name at each use site —
+    /// a generated name is a wire format, and RFC-0056 P5.4 is explicit that facts
+    /// belong on the node.
+    pub adapter: String,
 }
 
 #[derive(Debug, Clone)]

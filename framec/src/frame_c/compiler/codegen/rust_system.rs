@@ -311,6 +311,7 @@ pub fn generate_rust_system(system: &SystemAst, arcanum: &Arcanum, source: &[u8]
             .find(|p| p.kind == ParamKind::Input)
             .map(|p| InputSpec {
                 field: p.name.clone(),
+                adapter: format!("{}Input", system.name),
                 elem: match type_to_string(&p.param_type).trim() {
                     "char" => "char".to_string(),
                     "token" => "String".to_string(),
