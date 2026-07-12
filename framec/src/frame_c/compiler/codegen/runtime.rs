@@ -240,6 +240,7 @@ pub fn generate_frame_event_class(system: &SystemAst, lang: TargetLanguage) -> O
         derives: vec![],
         visibility: Visibility::Private,
         is_framework_helper: true,
+        input: None,
     })
 }
 
@@ -484,6 +485,7 @@ pub fn generate_frame_context_class(
         derives: vec![],
         visibility: Visibility::Private,
         is_framework_helper: true,
+        input: None,
     })
 }
 
@@ -819,6 +821,7 @@ pub fn generate_compartment_class(system: &SystemAst, lang: TargetLanguage) -> O
         derives: vec![],
         visibility: Visibility::Private,
         is_framework_helper: true,
+        input: None,
     })
 }
 

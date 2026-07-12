@@ -483,7 +483,10 @@ pub(crate) fn generate_constructor(system: &SystemAst, syntax: &ClassSyntax) -> 
                         CodegenNode::Ident(p.name.clone()),
                     ));
                 }
-                crate::frame_c::compiler::frame_ast::ParamKind::Domain => {}
+                crate::frame_c::compiler::frame_ast::// RFC-0056 P9: the input source is not a value param — it is the
+            // borrowed buffer, emitted as the generic `I`. Skip it here.
+            ParamKind::Input => {}
+            ParamKind::Domain => {}
             }
         }
     }
@@ -710,7 +713,10 @@ pub(crate) fn generate_constructor(system: &SystemAst, syntax: &ClassSyntax) -> 
                             crate::frame_c::compiler::frame_ast::ParamKind::EnterArg => {
                                 enter_args_vec.push(p.name.clone());
                             }
-                            crate::frame_c::compiler::frame_ast::ParamKind::Domain => {}
+                            crate::frame_c::compiler::frame_ast::// RFC-0056 P9: the input source is not a value param — it is the
+            // borrowed buffer, emitted as the generic `I`. Skip it here.
+            ParamKind::Input => {}
+            ParamKind::Domain => {}
                         }
                     }
                     let state_args_lit = format!("[{}]", state_args_vec.join(", "));
@@ -751,7 +757,10 @@ pub(crate) fn generate_constructor(system: &SystemAst, syntax: &ClassSyntax) -> 
                             crate::frame_c::compiler::frame_ast::ParamKind::EnterArg => {
                                 enter_args_vec.push(p.name.clone());
                             }
-                            crate::frame_c::compiler::frame_ast::ParamKind::Domain => {}
+                            crate::frame_c::compiler::frame_ast::// RFC-0056 P9: the input source is not a value param — it is the
+            // borrowed buffer, emitted as the generic `I`. Skip it here.
+            ParamKind::Input => {}
+            ParamKind::Domain => {}
                         }
                     }
                     let state_args_lit = format!("[{}]", state_args_vec.join(", "));
@@ -838,7 +847,10 @@ pub(crate) fn generate_constructor(system: &SystemAst, syntax: &ClassSyntax) -> 
                             crate::frame_c::compiler::frame_ast::ParamKind::EnterArg => {
                                 enter_args_vec.push(p.name.clone());
                             }
-                            crate::frame_c::compiler::frame_ast::ParamKind::Domain => {}
+                            crate::frame_c::compiler::frame_ast::// RFC-0056 P9: the input source is not a value param — it is the
+            // borrowed buffer, emitted as the generic `I`. Skip it here.
+            ParamKind::Input => {}
+            ParamKind::Domain => {}
                         }
                     }
                     let state_args_lit = format!("[{}]", state_args_vec.join(", "));

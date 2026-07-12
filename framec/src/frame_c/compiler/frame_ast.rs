@@ -157,6 +157,15 @@ pub enum ParamKind {
     Domain,
     StateArg,
     EnterArg,
+    /// The system's INPUT SOURCE (RFC-0056 P9).
+    ///
+    /// A header parameter whose type is an alphabet type (`bytes` / `char` /
+    /// `token`) — mirroring `@@fsm`'s rule. The system is generic over it, so it
+    /// can **borrow** the buffer instead of owning a copy.
+    ///
+    /// This is the fix for #209: without it a scanning system's domain field must
+    /// own its data, so a positioned probe copies the whole buffer on every call.
+    Input,
 }
 
 /// System parameter (for parameterized systems)

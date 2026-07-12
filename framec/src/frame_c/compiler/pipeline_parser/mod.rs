@@ -1736,13 +1736,28 @@ pub fn parse_system_header_params(
                 ParamKind::StateArg
             };
         } else if is_ident_start(source[i]) {
-            // Bare domain branch: `name: type [= default]` directly at
-            // the top level of the system header param list.
+            // Bare branch: `name: type [= default]` directly at the top level of
+            // the system header param list.
             let body = parse_typed_param_body(source, &mut i, end, /*close_at_paren=*/ false)?;
             name = body.0;
             param_type = body.1;
             default = body.2;
-            kind = ParamKind::Domain;
+
+            // RFC-0056 P9 (#209): a bare param whose type is an ALPHABET TYPE is
+            // the system's INPUT SOURCE, not a domain value — mirroring `@@fsm`'s
+            // rule exactly (one rule, two constructs).
+            //
+            // The system is then generic over its input, so it can BORROW the
+            // buffer instead of owning a copy. Without this a scanning system's
+            // domain field must own its data, and a positioned probe copies the
+            // whole buffer on every call — which is why framec's 15 SyntaxSkippers
+            // are O(n^2) and why their scan logic was hand-rolled into native
+            // loops in the first place.
+            kind = if is_alphabet_type(&param_type) {
+                ParamKind::Input
+            } else {
+                ParamKind::Domain
+            };
         } else {
             return Err(ParseError {
                 message: format!(
@@ -1785,6 +1800,8 @@ pub fn parse_system_header_params(
     let mut max_group = 0u8;
     for p in &params {
         let group = match p.kind {
+            // Input source sorts first — it is the buffer, not a value.
+            ParamKind::Input => continue,
             ParamKind::StateArg => 0,
             ParamKind::EnterArg => 1,
             ParamKind::Domain => 2,
@@ -1807,6 +1824,17 @@ pub fn parse_system_header_params(
     }
 
     Ok(params)
+}
+
+/// Is this type an `@@fsm` alphabet type (RFC-0042 §6.1)?
+///
+/// A system header param so typed is the system's **input source** (RFC-0056 P9)
+/// rather than a domain value: the system becomes generic over it and can borrow
+/// the buffer instead of owning a copy.
+///
+/// Deliberately the same three types `@@fsm` accepts — one rule, two constructs.
+fn is_alphabet_type(t: &Type) -> bool {
+    matches!(t, Type::Custom(name) if matches!(name.trim(), "bytes" | "char" | "token"))
 }
 
 /// Parse a typed parameter body of shape `name: type [= default]`.

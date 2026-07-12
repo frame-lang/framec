@@ -39,7 +39,7 @@ mod persistence;
 
 pub(crate) use persistence::generate_rust_persistence_methods;
 
-use super::ast::{CodegenNode, Field, Param, Visibility};
+use super::ast::{CodegenNode, Field, InputSpec, Param, Visibility};
 use super::codegen_utils::type_to_string;
 use super::state_dispatch::{generate_handler_from_arcanum, handler_method_name};
 use super::system_codegen::{expand_system_instantiation_in_domain, init_references_param};
@@ -302,6 +302,21 @@ pub fn generate_rust_system(system: &SystemAst, arcanum: &Arcanum, source: &[u8]
             Visibility::Public
         },
         is_framework_helper: false,
+        // RFC-0056 P9 (#209): if the system declares an alphabet-typed header
+        // param, it is the BORROWED INPUT SOURCE. Carried on the node — never
+        // re-derived from a name or a type string.
+        input: system
+            .params
+            .iter()
+            .find(|p| p.kind == ParamKind::Input)
+            .map(|p| InputSpec {
+                field: p.name.clone(),
+                elem: match type_to_string(&p.param_type).trim() {
+                    "char" => "char".to_string(),
+                    "token" => "String".to_string(),
+                    _ => "u8".to_string(), // `bytes`
+                },
+            }),
     };
 
     if needs_async {
@@ -413,6 +428,9 @@ fn generate_rust_fields(system: &SystemAst) -> Vec<Field> {
                         .with_type(&ts),
                 );
             }
+            // RFC-0056 P9: the input source is not a value param — it is the
+            // borrowed buffer, emitted as the generic `I`. Skip it here.
+            ParamKind::Input => {}
             ParamKind::Domain => {}
         }
     }
@@ -488,6 +506,9 @@ fn generate_rust_constructor(system: &SystemAst) -> CodegenNode {
                     CodegenNode::Ident(p.name.clone()),
                 ));
             }
+            // RFC-0056 P9: the input source is not a value param — it is the
+            // borrowed buffer, emitted as the generic `I`. Skip it here.
+            ParamKind::Input => {}
             ParamKind::Domain => {}
         }
     }

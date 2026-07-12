@@ -1,119 +1,5 @@
 [
  {
-  "task": "balanced_expr",
-  "error": null,
-  "rows": [
-   {
-    "task": "balanced_expr",
-    "candidate": "incumbent(native)",
-    "n": 4000,
-    "secs": 8.583e-06,
-    "ns_per_el": 9.16,
-    "bytes_copied": 0,
-    "agrees": true
-   },
-   {
-    "task": "balanced_expr",
-    "candidate": "@@fsm(unbounded counter)",
-    "n": 4000,
-    "secs": 0.000217541,
-    "ns_per_el": 232.17,
-    "bytes_copied": 0,
-    "agrees": true
-   },
-   {
-    "task": "balanced_expr",
-    "candidate": "@@fsm(bounded int(0..3))",
-    "n": 4000,
-    "secs": 0.00019175,
-    "ns_per_el": 204.64,
-    "bytes_copied": 0,
-    "agrees": false
-   },
-   {
-    "task": "balanced_expr",
-    "candidate": "incumbent(native)",
-    "n": 8000,
-    "secs": 1.6042e-05,
-    "ns_per_el": 8.56,
-    "bytes_copied": 0,
-    "agrees": true
-   },
-   {
-    "task": "balanced_expr",
-    "candidate": "@@fsm(unbounded counter)",
-    "n": 8000,
-    "secs": 0.0004355,
-    "ns_per_el": 232.27,
-    "bytes_copied": 0,
-    "agrees": true
-   },
-   {
-    "task": "balanced_expr",
-    "candidate": "@@fsm(bounded int(0..3))",
-    "n": 8000,
-    "secs": 0.0004045,
-    "ns_per_el": 215.73,
-    "bytes_copied": 0,
-    "agrees": false
-   },
-   {
-    "task": "balanced_expr",
-    "candidate": "incumbent(native)",
-    "n": 16000,
-    "secs": 3.0709e-05,
-    "ns_per_el": 8.2,
-    "bytes_copied": 0,
-    "agrees": true
-   },
-   {
-    "task": "balanced_expr",
-    "candidate": "@@fsm(unbounded counter)",
-    "n": 16000,
-    "secs": 0.000842083,
-    "ns_per_el": 224.86,
-    "bytes_copied": 0,
-    "agrees": true
-   },
-   {
-    "task": "balanced_expr",
-    "candidate": "@@fsm(bounded int(0..3))",
-    "n": 16000,
-    "secs": 0.000811959,
-    "ns_per_el": 216.81,
-    "bytes_copied": 0,
-    "agrees": false
-   },
-   {
-    "task": "balanced_expr",
-    "candidate": "incumbent(native)",
-    "n": 32000,
-    "secs": 6.0542e-05,
-    "ns_per_el": 8.08,
-    "bytes_copied": 0,
-    "agrees": true
-   },
-   {
-    "task": "balanced_expr",
-    "candidate": "@@fsm(unbounded counter)",
-    "n": 32000,
-    "secs": 0.0016815,
-    "ns_per_el": 224.47,
-    "bytes_copied": 0,
-    "agrees": true
-   },
-   {
-    "task": "balanced_expr",
-    "candidate": "@@fsm(bounded int(0..3))",
-    "n": 32000,
-    "secs": 0.001603959,
-    "ns_per_el": 214.12,
-    "bytes_copied": 0,
-    "agrees": false
-   }
-  ]
- },
- {
   "task": "skip_string",
   "error": null,
   "rows": [
@@ -121,7 +7,88 @@
     "task": "skip_string",
     "candidate": "incumbent(native)",
     "n": 2000,
-    "secs": 1.709e-06,
+    "secs": 3.708e-06,
+    "ns_per_el": 1.85,
+    "bytes_copied": 0,
+    "agrees": true
+   },
+   {
+    "task": "skip_string",
+    "candidate": "@@fsm(borrowed+positioned)",
+    "n": 2000,
+    "secs": 4.6709e-05,
+    "ns_per_el": 23.35,
+    "bytes_copied": 0,
+    "agrees": true
+   },
+   {
+    "task": "skip_string",
+    "candidate": "@@system(BORROWED - P9)",
+    "n": 2000,
+    "secs": 0.00019325,
+    "ns_per_el": 96.62,
+    "bytes_copied": 0,
+    "agrees": true
+   },
+   {
+    "task": "skip_string",
+    "candidate": "incumbent(native)",
+    "n": 4000,
+    "secs": 6.375e-06,
+    "ns_per_el": 1.59,
+    "bytes_copied": 0,
+    "agrees": true
+   },
+   {
+    "task": "skip_string",
+    "candidate": "@@fsm(borrowed+positioned)",
+    "n": 4000,
+    "secs": 9.8792e-05,
+    "ns_per_el": 24.7,
+    "bytes_copied": 0,
+    "agrees": true
+   },
+   {
+    "task": "skip_string",
+    "candidate": "@@system(BORROWED - P9)",
+    "n": 4000,
+    "secs": 0.000404375,
+    "ns_per_el": 101.09,
+    "bytes_copied": 0,
+    "agrees": true
+   },
+   {
+    "task": "skip_string",
+    "candidate": "incumbent(native)",
+    "n": 8000,
+    "secs": 6.917e-06,
+    "ns_per_el": 0.86,
+    "bytes_copied": 0,
+    "agrees": true
+   },
+   {
+    "task": "skip_string",
+    "candidate": "@@fsm(borrowed+positioned)",
+    "n": 8000,
+    "secs": 0.000107917,
+    "ns_per_el": 13.49,
+    "bytes_copied": 0,
+    "agrees": true
+   },
+   {
+    "task": "skip_string",
+    "candidate": "@@system(BORROWED - P9)",
+    "n": 8000,
+    "secs": 0.000411333,
+    "ns_per_el": 51.42,
+    "bytes_copied": 0,
+    "agrees": true
+   },
+   {
+    "task": "skip_string",
+    "candidate": "incumbent(native)",
+    "n": 16000,
+    "secs": 1.3583e-05,
     "ns_per_el": 0.85,
     "bytes_copied": 0,
     "agrees": true
@@ -129,100 +96,19 @@
    {
     "task": "skip_string",
     "candidate": "@@fsm(borrowed+positioned)",
-    "n": 2000,
-    "secs": 2.2042e-05,
-    "ns_per_el": 11.02,
-    "bytes_copied": 0,
-    "agrees": true
-   },
-   {
-    "task": "skip_string",
-    "candidate": "@@system(owns input)",
-    "n": 2000,
-    "secs": 0.000338375,
-    "ns_per_el": 169.19,
-    "bytes_copied": 4000000,
-    "agrees": true
-   },
-   {
-    "task": "skip_string",
-    "candidate": "incumbent(native)",
-    "n": 4000,
-    "secs": 3.584e-06,
-    "ns_per_el": 0.9,
-    "bytes_copied": 0,
-    "agrees": true
-   },
-   {
-    "task": "skip_string",
-    "candidate": "@@fsm(borrowed+positioned)",
-    "n": 4000,
-    "secs": 4.5166e-05,
-    "ns_per_el": 11.29,
-    "bytes_copied": 0,
-    "agrees": true
-   },
-   {
-    "task": "skip_string",
-    "candidate": "@@system(owns input)",
-    "n": 4000,
-    "secs": 0.000794,
-    "ns_per_el": 198.5,
-    "bytes_copied": 16000000,
-    "agrees": true
-   },
-   {
-    "task": "skip_string",
-    "candidate": "incumbent(native)",
-    "n": 8000,
-    "secs": 6.709e-06,
-    "ns_per_el": 0.84,
-    "bytes_copied": 0,
-    "agrees": true
-   },
-   {
-    "task": "skip_string",
-    "candidate": "@@fsm(borrowed+positioned)",
-    "n": 8000,
-    "secs": 9.4458e-05,
-    "ns_per_el": 11.81,
-    "bytes_copied": 0,
-    "agrees": true
-   },
-   {
-    "task": "skip_string",
-    "candidate": "@@system(owns input)",
-    "n": 8000,
-    "secs": 0.0021175,
-    "ns_per_el": 264.69,
-    "bytes_copied": 64000000,
-    "agrees": true
-   },
-   {
-    "task": "skip_string",
-    "candidate": "incumbent(native)",
     "n": 16000,
-    "secs": 1.3458e-05,
-    "ns_per_el": 0.84,
+    "secs": 0.000183959,
+    "ns_per_el": 11.5,
     "bytes_copied": 0,
     "agrees": true
    },
    {
     "task": "skip_string",
-    "candidate": "@@fsm(borrowed+positioned)",
+    "candidate": "@@system(BORROWED - P9)",
     "n": 16000,
-    "secs": 0.000187583,
-    "ns_per_el": 11.72,
+    "secs": 0.000807375,
+    "ns_per_el": 50.46,
     "bytes_copied": 0,
-    "agrees": true
-   },
-   {
-    "task": "skip_string",
-    "candidate": "@@system(owns input)",
-    "n": 16000,
-    "secs": 0.006701042,
-    "ns_per_el": 418.82,
-    "bytes_copied": 256000000,
     "agrees": true
    }
   ]

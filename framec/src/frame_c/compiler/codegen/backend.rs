@@ -22,6 +22,11 @@ pub struct EmitContext {
     /// replacing a class-name suffix probe that misclassified user systems
     /// whose name ended in one of those suffixes (#123).
     pub is_framework_helper: bool,
+    /// RFC-0056 P9 (#209): the enclosing class's borrowed input source, if any.
+    /// Threaded Class -> Constructor exactly as `is_framework_helper` is — the
+    /// constructor must take and store the buffer (`pub fn new(text: I)`), and it
+    /// cannot re-derive that fact from a name.
+    pub input: Option<crate::frame_c::compiler::codegen::ast::InputSpec>,
     /// Whether we're in a method body
     pub in_method: bool,
     /// Whether we're in a class
@@ -46,6 +51,7 @@ impl Default for EmitContext {
             indent_str: "    ".to_string(),
             system_name: None,
             is_framework_helper: false,
+            input: None,
             in_method: false,
             in_class: false,
             output: String::new(),

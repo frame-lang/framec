@@ -235,6 +235,8 @@ pub(crate) fn generate_fields(
     if matches!(syntax.language, TargetLanguage::Rust) {
         for p in &system.params {
             match p.kind {
+                // RFC-0056 P9: the input source is not a value param — it is the borrowed buffer (generic `I`).
+                crate::frame_c::compiler::frame_ast::ParamKind::Input => {}
                 crate::frame_c::compiler::frame_ast::ParamKind::StateArg
                 | crate::frame_c::compiler::frame_ast::ParamKind::EnterArg => {
                     let type_str = type_to_string(&p.param_type);

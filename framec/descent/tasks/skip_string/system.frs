@@ -9,18 +9,19 @@
 // local inside a `while` loop. (Contrast the 15 shipped skippers, which are
 // `$Init` + one state per interface method — a vtable, not a machine.)
 //
-// THE POINT OF THIS CANDIDATE: a Frame system's domain field must OWN its data.
-// There is no borrowed input type. So the driver must hand it a COPY of the
-// buffer on every probe:
+// The header param `text: bytes` is an ALPHABET TYPE, so it is the system's
+// BORROWED INPUT SOURCE (RFC-0056 P9) — the same rule `@@fsm` uses. The system is
+// generic over it (`SysSkipString<I: SysSkipStringInput>`), so it scans a buffer
+// it does NOT own, and reads it through the indexed accessors `get(i)` / `len()`.
 //
-//     m.bytes = bytes[..end].to_vec();     // <-- #209, 71 sites in the real skippers
+// This closes #209. Before P9, a Frame system's domain field had to own its data,
+// so a positioned probe copied the whole buffer on EVERY call — 71 such sites in
+// the real skippers, and the reason their scan logic was hand-rolled into native
+// loops (which is where the mode landed in a native local, which IS the
+// string-blindness bug family).
 //
-// A copy is O(n). The sweep makes n probes. The scan itself is trivial.
-// Therefore: O(n^2), and the battery should measure ~4x per input doubling.
-//
-// That is not a defect of this file. It is the language gap (RFC-0056 P9), and
-// measuring it is the whole reason this task exists.
-@@system SysSkipString {
+// The battery measures the difference.
+@@system SysSkipString(text: bytes) {
     interface:
         // Probe at `i`. Afterwards: `ok` says whether a string started there,
         // and `result` is the byte just past its closing quote.
@@ -33,7 +34,7 @@
                 @@:self.result = 0;
                 @@:self.pos = i;
                 if @@:self.pos >= @@:self.end { return; }
-                if @@:self.bytes[@@:self.pos] != b'"' { return; }
+                if @@:self.text.get(@@:self.pos) != b'"' { return; }
                 @@:self.pos = @@:self.pos + 1;
                 -> $InString
             }
@@ -43,7 +44,7 @@
         $InString {
             $>() {
                 while @@:self.pos < @@:self.end {
-                    let b = @@:self.bytes[@@:self.pos];
+                    let b = @@:self.text.get(@@:self.pos);
                     @@:self.pos = @@:self.pos + 1;
                     if b == b'\\' {
                         // Escape: consume the next byte, whatever it is.
@@ -61,7 +62,6 @@
         }
 
     domain:
-        bytes: Vec<u8> = Vec::new()
         end: usize = 0
         pos: usize = 0
         ok: bool = false

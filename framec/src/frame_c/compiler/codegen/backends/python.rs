@@ -945,6 +945,7 @@ mod tests {
             derives: vec![],
             visibility: Visibility::Public,
             is_framework_helper: false,
+            input: None,
         };
 
         let result = backend.emit(&node, &mut ctx);

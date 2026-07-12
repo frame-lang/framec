@@ -359,6 +359,7 @@ pub fn generate_system_shared(
             Visibility::Public
         },
         is_framework_helper: false,
+        input: None,
     };
 
     // Post-process: make dispatch chain async if any interface method is async.

@@ -64,17 +64,16 @@ fn efsm_sweep(bytes: &[u8]) -> (Vec<Option<usize>>, u64) {
 /// OWN its input. This is #209: there is no borrowed domain type, so the buffer
 /// is copied on EVERY probe — exactly as the 71 sites in the real skippers do.
 fn system_sweep(bytes: &[u8]) -> (Vec<Option<usize>>, u64) {
+    // RFC-0056 P9 (#209): the system BORROWS its input. Built once over `&[u8]`,
+    // then probed at every cursor. Zero copies for the whole sweep.
+    let mut m = system_gen::SysSkipString::new(bytes);
+    m.end = bytes.len();
     let mut out = Vec::with_capacity(bytes.len());
-    let mut copied: u64 = 0;
     for i in 0..bytes.len() {
-        let mut m = system_gen::SysSkipString::new();
-        m.bytes = bytes.to_vec(); // <-- #209. The copy. O(n), once per probe.
-        copied += bytes.len() as u64;
-        m.end = bytes.len();
         m.skip_at(i);
         out.push(if m.ok { Some(m.result) } else { None });
     }
-    (out, copied)
+    (out, 0)
 }
 
 // ---------------------------------------------------------------------------
@@ -129,7 +128,7 @@ fn main() {
 
         let (t_inc, c_inc, r_inc) = bench(|b| (b.iter().enumerate().map(|(i, _)| incumbent(b, i)).collect(), 0), &buf, reps);
         let (t_efsm, c_efsm, r_efsm) = bench(efsm_sweep, &buf, reps);
-        let (t_sys, c_sys, r_sys) = bench(system_sweep, &buf, reps.min(3));
+        let (t_sys, c_sys, r_sys) = bench(system_sweep, &buf, reps);
 
         // CORRECTNESS — the only gating axis (RFC-0056.1 D4).
         let efsm_ok = r_efsm == r_inc;
@@ -148,6 +147,6 @@ fn main() {
         };
         row("incumbent(native)", t_inc, c_inc, true);
         row("@@fsm(borrowed+positioned)", t_efsm, c_efsm, efsm_ok);
-        row("@@system(owns input)", t_sys, c_sys, sys_ok);
+        row("@@system(BORROWED - P9)", t_sys, c_sys, sys_ok);
     }
 }

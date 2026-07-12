@@ -446,6 +446,8 @@ fn resolve_positional(
 
     for sp in sys_params {
         let value = match sp.kind {
+            // RFC-0056 P9: the input is supplied to `over(src)`, not as a ctor value arg.
+            ParamKind::Input => continue,
             ParamKind::StateArg => {
                 if let Some(arg) = parsed_state.get(state_idx) {
                     state_idx += 1;
@@ -538,6 +540,7 @@ fn resolve_named(
             }
             Some(sp) => {
                 let expected_group = match sp.kind {
+                    ParamKind::Input => continue,
                     ParamKind::StateArg => CallArgGroup::State,
                     ParamKind::EnterArg => CallArgGroup::Enter,
                     ParamKind::Domain => CallArgGroup::Domain,

@@ -247,6 +247,7 @@ fn generate_casing(system: &SystemAst, machine_name: &str, lang: TargetLanguage)
             Visibility::Public
         },
         is_framework_helper: false,
+        input: None,
     }
 }
 

@@ -49,8 +49,29 @@ impl LanguageBackend for RustBackend {
                 derives,
                 visibility,
                 is_framework_helper: _,
+                input,
             } => {
                 let mut result = String::new();
+
+                // RFC-0056 P9 (#209): a system that declares an alphabet-typed
+                // header param BORROWS its input instead of owning a copy.
+                //
+                // Mirrors `@@fsm`'s mechanism exactly (RFC-0042.1): a per-system
+                // `<Name>Input` trait of INDEXED ACCESSORS (`get(i)` / `len()`),
+                // implemented for an owned buffer, a borrowed slice, and a host
+                // callback; the type is then generic over `I: <Name>Input`.
+                //
+                // Note what it is NOT: a borrow *concept*. It is an accessor, so
+                // it is portable — a no-op in GC targets, `ptr + len` in C, and in
+                // Rust a type parameter whose lifetime rides *inside* it, which is
+                // why Frame needs no lifetime syntax and no type system.
+                if let Some(spec) = input {
+                    let n = name;
+                    let e = &spec.elem;
+                    result.push_str(&format!(
+                        "pub trait {n}Input {{ fn get(&self, i: usize) -> {e}; fn len(&self) -> usize; }}\n                         impl {n}Input for Vec<{e}> {{ fn get(&self, i: usize) -> {e} {{ self[i] }} fn len(&self) -> usize {{ (**self).len() }} }}\n                         impl {n}Input for &[{e}] {{ fn get(&self, i: usize) -> {e} {{ self[i] }} fn len(&self) -> usize {{ (**self).len() }} }}\n                         pub struct {n}Fn<F: Fn(usize) -> {e}>(pub F, pub usize);\n                         impl<F: Fn(usize) -> {e}> {n}Input for {n}Fn<F> {{ fn get(&self, i: usize) -> {e} {{ (self.0)(i) }} fn len(&self) -> usize {{ self.1 }} }}\n\n"
+                    ));
+                }
 
                 // Suppress warnings for generated Frame infrastructure
                 result.push_str(&format!("{}#[allow(dead_code)]\n", ctx.get_indent()));
@@ -69,13 +90,21 @@ impl LanguageBackend for RustBackend {
                     Visibility::Public => "pub ",
                     _ => "",
                 };
+                let generics = match input {
+                    Some(_) => format!("<I: {}Input>", name),
+                    None => String::new(),
+                };
                 result.push_str(&format!(
-                    "{}{}struct {} {{\n",
+                    "{}{}struct {}{} {{\n",
                     ctx.get_indent(),
                     vis_kw,
-                    name
+                    name,
+                    generics
                 ));
                 ctx.push_indent();
+                if let Some(spec) = input {
+                    result.push_str(&format!("{}pub {}: I,\n", ctx.get_indent(), spec.field));
+                }
                 for field in fields {
                     result.push_str(&self.emit_field(field, ctx));
                 }
@@ -83,8 +112,16 @@ impl LanguageBackend for RustBackend {
                 result.push_str(&format!("{}}}\n\n", ctx.get_indent()));
 
                 // Impl block - suppress non_snake_case for Frame-generated method names
+                ctx.input = input.clone();
                 result.push_str(&format!("{}#[allow(non_snake_case)]\n", ctx.get_indent()));
-                result.push_str(&format!("{}impl {} {{\n", ctx.get_indent(), name));
+                match input {
+                    Some(_) => result.push_str(&format!(
+                        "{}impl<I: {n}Input> {n}<I> {{\n",
+                        ctx.get_indent(),
+                        n = name
+                    )),
+                    None => result.push_str(&format!("{}impl {} {{\n", ctx.get_indent(), name)),
+                }
                 ctx.push_indent();
                 for (i, method) in methods.iter().enumerate() {
                     if i > 0 {
@@ -315,9 +352,23 @@ impl LanguageBackend for RustBackend {
                 let mut result = String::new();
 
                 if !has_param_bound {
-                    result.push_str(&format!("{}pub fn new() -> Self {{\n", ctx.get_indent()));
+                    // RFC-0056 P9: a borrowing system takes its buffer at
+                    // construction — that IS the borrow.
+                    let (in_sig, in_init) = match &ctx.input {
+                        Some(spec) => (
+                            format!("{}: I", spec.field),
+                            format!("{}{}    {},\n", ctx.get_indent(), "", spec.field),
+                        ),
+                        None => (String::new(), String::new()),
+                    };
+                    result.push_str(&format!(
+                        "{}pub fn new({}) -> Self {{\n",
+                        ctx.get_indent(),
+                        in_sig
+                    ));
                     ctx.push_indent();
                     result.push_str(&format!("{}Self {{\n", ctx.get_indent()));
+                    result.push_str(&in_init);
                     ctx.push_indent();
                     for (field, value) in &framework_fields {
                         result.push_str(&format!("{}{}: {},\n", ctx.get_indent(), field, value));
@@ -331,7 +382,19 @@ impl LanguageBackend for RustBackend {
                 // Emit `pub fn __create(<params>) -> Self`. The `__frame_init`
                 // body is absorbed inline, with `self.` → `c.` rewrite to
                 // retarget the local instance.
-                let create_params = self.emit_params(params, false);
+                let mut create_params = self.emit_params(params, false);
+                // RFC-0056 P9: the input param is the borrowed buffer, so it is
+                // typed `I` (the generic), not its Frame alphabet name.
+                if let Some(spec) = &ctx.input {
+                    let rest: Vec<&str> = create_params
+                        .split(", ")
+                        .filter(|p| !p.trim_start().starts_with(&format!("{}:", spec.field)))
+                        .filter(|p| !p.trim().is_empty())
+                        .collect();
+                    let mut all = vec![format!("{}: I", spec.field)];
+                    all.extend(rest.iter().map(|s| s.to_string()));
+                    create_params = all.join(", ");
+                }
                 result.push_str(&format!(
                     "{}pub fn __create({}) -> Self {{\n",
                     ctx.get_indent(),
@@ -353,7 +416,15 @@ impl LanguageBackend for RustBackend {
                     ctx.pop_indent();
                     result.push_str(&format!("{}}};\n", ctx.get_indent()));
                 } else {
-                    result.push_str(&format!("{}let mut c = Self::new();\n", ctx.get_indent()));
+                    let new_arg = match &ctx.input {
+                        Some(spec) => spec.field.clone(),
+                        None => String::new(),
+                    };
+                    result.push_str(&format!(
+                        "{}let mut c = Self::new({});\n",
+                        ctx.get_indent(),
+                        new_arg
+                    ));
                 }
                 for stmt in &cascade_stmts {
                     let stmt_str = self.emit(stmt, ctx);

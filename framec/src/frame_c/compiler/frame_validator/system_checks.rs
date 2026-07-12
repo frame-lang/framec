@@ -50,8 +50,22 @@ impl FrameValidator {
         // RFC-0046: `@@:self.<field>` must resolve to a declared domain field
         // (or an interface method). Collect the domain field names so the
         // segment walker can reject unknown members with E609.
-        let domain_fields: std::collections::HashSet<String> =
-            system.domain.iter().map(|d| d.name.clone()).collect();
+        // RFC-0056 P9 (#209): the input-source header param is auto-promoted to a
+        // domain field, exactly as `@@fsm` promotes its parameters. It is a real
+        // field on the emitted type (`pub text: I`) — it is simply *borrowed*
+        // rather than owned, so `@@:self.text.get(i)` must resolve.
+        let domain_fields: std::collections::HashSet<String> = system
+            .domain
+            .iter()
+            .map(|d| d.name.clone())
+            .chain(
+                system
+                    .params
+                    .iter()
+                    .filter(|p| p.kind == crate::frame_c::compiler::frame_ast::ParamKind::Input)
+                    .map(|p| p.name.clone()),
+            )
+            .collect();
         // E617 (#159 round 3): field name → declared type string, for the
         // indexed cross-system call resolvability check on Lua.
         let domain_field_types: std::collections::HashMap<String, String> = system

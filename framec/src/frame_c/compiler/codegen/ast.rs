@@ -192,6 +192,20 @@ impl UnaryOp {
 ///
 /// This enum represents all possible code constructs that Frame can generate.
 /// Language-specific backends convert these nodes into target language code.
+/// A system's borrowed input source (RFC-0056 P9).
+///
+/// Mirrors `@@fsm`'s generated `<Name>Input` trait: an *indexed accessor*
+/// (`get(i)` / `len()`), not a borrow concept — so it is portable (a no-op in GC
+/// targets, `ptr + len` in C, a generic type parameter in Rust whose lifetime
+/// rides inside the parameter, meaning Frame needs no lifetime syntax).
+#[derive(Debug, Clone, PartialEq)]
+pub struct InputSpec {
+    /// Field name, e.g. `text`.
+    pub field: String,
+    /// Element type in the target, e.g. `u8` for a `bytes` alphabet.
+    pub elem: String,
+}
+
 #[derive(Debug, Clone)]
 pub enum CodegenNode {
     // ===== Structural =====
@@ -228,6 +242,12 @@ pub enum CodegenNode {
         /// name-suffix probe (`ends_with("Compartment")`) that misclassified a
         /// user system whose name ends in one of those suffixes (#123).
         is_framework_helper: bool,
+        /// The system's borrowed input source, if it declares one (RFC-0056 P9).
+        ///
+        /// When present the emitted type is generic over the input
+        /// (`struct S<I: SInput>`), so it can scan a buffer it does not own.
+        /// Carried on the node — never re-derived from a name or a type string.
+        input: Option<InputSpec>,
     },
 
     /// Enum definition

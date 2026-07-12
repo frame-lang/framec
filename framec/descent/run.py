@@ -23,7 +23,7 @@ import argparse, json, os, subprocess, sys, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 TASKS = os.path.join(HERE, "tasks")
 REPORT = os.path.join(HERE, "report")
-FRAMEC = os.path.expanduser("~/.frame/local/bin/framec")
+FRAMEC = os.environ.get("FRAMEC", os.path.expanduser("~/.frame/local/bin/framec"))
 
 
 def sh(cmd, cwd=None):
