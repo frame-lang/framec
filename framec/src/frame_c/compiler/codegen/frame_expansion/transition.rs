@@ -43,14 +43,12 @@ use crate::frame_c::visitors::TargetLanguage;
 /// orchestrator hoist a same-scope `@@:(expr)` between them (#123/#169), and
 /// `generate_frame_expansion` re-joins them for the plain-`String` API.
 pub(super) fn expand_transition(
-    body_bytes: &[u8],
-    span: &RegionSpan,
+    segment_text: &str,
     indent: usize,
     lang: TargetLanguage,
     ctx: &HandlerContext,
     metadata: &SegmentMetadata,
 ) -> (String, &'static str) {
-    let segment_text = String::from_utf8_lossy(&body_bytes[span.start..span.end]);
     let indent_str = " ".repeat(indent);
 
     // Parse transition: (exit_args)? -> (enter_args)? $State(state_args)?

@@ -23,14 +23,12 @@ use crate::frame_c::compiler::native_region_scanner::{RegionSpan, SegmentMetadat
 use crate::frame_c::visitors::TargetLanguage;
 
 pub(super) fn expand_context_event(
-    body_bytes: &[u8],
-    span: &RegionSpan,
+    segment_text: &str,
     indent: usize,
     lang: TargetLanguage,
     ctx: &HandlerContext,
     metadata: &SegmentMetadata,
 ) -> String {
-    let segment_text = String::from_utf8_lossy(&body_bytes[span.start..span.end]);
     let indent_str = " ".repeat(indent);
 
     // @@:event - interface event name
@@ -74,14 +72,12 @@ pub(super) fn expand_context_event(
 }
 
 pub(super) fn expand_context_data(
-    body_bytes: &[u8],
-    span: &RegionSpan,
+    segment_text: &str,
     indent: usize,
     lang: TargetLanguage,
     ctx: &HandlerContext,
     metadata: &SegmentMetadata,
 ) -> String {
-    let segment_text = String::from_utf8_lossy(&body_bytes[span.start..span.end]);
     let indent_str = " ".repeat(indent);
 
     // @@:data.key - call-scoped data (read)
@@ -141,14 +137,12 @@ pub(super) fn expand_context_data(
 }
 
 pub(super) fn expand_context_data_assign(
-    body_bytes: &[u8],
-    span: &RegionSpan,
+    segment_text: &str,
     indent: usize,
     lang: TargetLanguage,
     ctx: &HandlerContext,
     metadata: &SegmentMetadata,
 ) -> String {
-    let segment_text = String::from_utf8_lossy(&body_bytes[span.start..span.end]);
     let indent_str = " ".repeat(indent);
 
     // @@:data.key = expr — call-scoped data (assignment). #123: the scanner
@@ -243,14 +237,12 @@ pub(super) fn expand_context_data_assign(
 }
 
 pub(super) fn expand_context_params(
-    body_bytes: &[u8],
-    span: &RegionSpan,
+    segment_text: &str,
     indent: usize,
     lang: TargetLanguage,
     ctx: &HandlerContext,
     metadata: &SegmentMetadata,
 ) -> String {
-    let segment_text = String::from_utf8_lossy(&body_bytes[span.start..span.end]);
     let indent_str = " ".repeat(indent);
 
     // @@:params.<key> — handler-interface parameter access.
@@ -289,14 +281,12 @@ pub(super) fn expand_context_params(
 }
 
 pub(super) fn expand_context_system_bare(
-    body_bytes: &[u8],
-    span: &RegionSpan,
+    segment_text: &str,
     indent: usize,
     lang: TargetLanguage,
     ctx: &HandlerContext,
     metadata: &SegmentMetadata,
 ) -> String {
-    let segment_text = String::from_utf8_lossy(&body_bytes[span.start..span.end]);
     let indent_str = " ".repeat(indent);
 
     // Bare @@:system — should have been caught by validator (E604)

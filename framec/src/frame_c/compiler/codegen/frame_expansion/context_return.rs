@@ -22,14 +22,12 @@ use crate::frame_c::compiler::native_region_scanner::{RegionSpan, SegmentMetadat
 use crate::frame_c::visitors::TargetLanguage;
 
 pub(super) fn expand_context_return(
-    body_bytes: &[u8],
-    span: &RegionSpan,
+    segment_text: &str,
     indent: usize,
     lang: TargetLanguage,
     ctx: &HandlerContext,
     metadata: &SegmentMetadata,
 ) -> String {
-    let segment_text = String::from_utf8_lossy(&body_bytes[span.start..span.end]);
     let indent_str = " ".repeat(indent);
 
     // @@:return - return value slot (assignment or read)
@@ -176,14 +174,12 @@ pub(super) fn expand_context_return(
 }
 
 pub(super) fn expand_context_return_expr(
-    body_bytes: &[u8],
-    span: &RegionSpan,
+    segment_text: &str,
     indent: usize,
     lang: TargetLanguage,
     ctx: &HandlerContext,
     metadata: &SegmentMetadata,
 ) -> String {
-    let segment_text = String::from_utf8_lossy(&body_bytes[span.start..span.end]);
     let indent_str = " ".repeat(indent);
 
     // @@:(expr) - set context return value (concise form).

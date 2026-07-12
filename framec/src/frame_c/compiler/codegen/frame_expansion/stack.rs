@@ -22,14 +22,12 @@ use crate::frame_c::visitors::TargetLanguage;
 /// terminator is `""`; a `push$ $State` push-transition exits the handler with
 /// the language's [`transition_terminator`](super::utility::transition_terminator).
 pub(super) fn expand_stack_push(
-    body_bytes: &[u8],
-    span: &RegionSpan,
+    segment_text: &str,
     indent: usize,
     lang: TargetLanguage,
     ctx: &HandlerContext,
     metadata: &SegmentMetadata,
 ) -> (String, &'static str) {
-    let segment_text = String::from_utf8_lossy(&body_bytes[span.start..span.end]);
     let indent_str = " ".repeat(indent);
 
     // #211: the node now carries the WHOLE transition, not just its name.
@@ -65,8 +63,7 @@ pub(super) fn expand_stack_push(
         // compartment; the transition then does exactly what it does anywhere else.
         let push_only = push_compartment_line(&indent_str, lang, ctx);
         let (t_body, t_term) = super::transition::expand_transition(
-            body_bytes,
-            span,
+            segment_text,
             indent,
             lang,
             ctx,
@@ -280,14 +277,12 @@ pub(super) fn expand_stack_push(
 /// terminator is always `""`. (Transitioning to the popped state is `-> pop$`,
 /// handled by `generate_pop_transition`.)
 pub(super) fn expand_stack_pop(
-    body_bytes: &[u8],
-    span: &RegionSpan,
+    segment_text: &str,
     indent: usize,
     lang: TargetLanguage,
     ctx: &HandlerContext,
     metadata: &SegmentMetadata,
 ) -> (String, &'static str) {
-    let segment_text = String::from_utf8_lossy(&body_bytes[span.start..span.end]);
     let indent_str = " ".repeat(indent);
 
     // Standalone pop$ — pop the top of the stack and discard it.

@@ -32,14 +32,12 @@ use crate::frame_c::compiler::native_region_scanner::{RegionSpan, SegmentMetadat
 use crate::frame_c::visitors::TargetLanguage;
 
 pub(super) fn expand_state_var(
-    body_bytes: &[u8],
-    span: &RegionSpan,
+    segment_text: &str,
     indent: usize,
     lang: TargetLanguage,
     ctx: &HandlerContext,
     metadata: &SegmentMetadata,
 ) -> String {
-    let segment_text = String::from_utf8_lossy(&body_bytes[span.start..span.end]);
     let indent_str = " ".repeat(indent);
 
     // Extract variable name and optional interpolation quote context
@@ -332,14 +330,12 @@ pub(super) fn expand_state_var(
 }
 
 pub(super) fn expand_state_var_assign(
-    body_bytes: &[u8],
-    span: &RegionSpan,
+    segment_text: &str,
     indent: usize,
     lang: TargetLanguage,
     ctx: &HandlerContext,
     metadata: &SegmentMetadata,
 ) -> String {
-    let segment_text = String::from_utf8_lossy(&body_bytes[span.start..span.end]);
     let indent_str = " ".repeat(indent);
 
     // State variable assignment: $.varName = expr

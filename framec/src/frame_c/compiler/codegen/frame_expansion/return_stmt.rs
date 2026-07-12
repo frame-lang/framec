@@ -24,14 +24,12 @@ use crate::frame_c::compiler::native_region_scanner::{RegionSpan, SegmentMetadat
 use crate::frame_c::visitors::TargetLanguage;
 
 pub(super) fn expand_system_instantiation(
-    body_bytes: &[u8],
-    span: &RegionSpan,
+    segment_text: &str,
     indent: usize,
     lang: TargetLanguage,
     ctx: &HandlerContext,
     metadata: &SegmentMetadata,
 ) -> String {
-    let segment_text = String::from_utf8_lossy(&body_bytes[span.start..span.end]);
     let indent_str = " ".repeat(indent);
 
     // `@@SystemName(args)` (Factory): emitted VERBATIM here so the
@@ -59,14 +57,12 @@ pub(super) fn expand_system_instantiation(
 }
 
 pub(super) fn expand_return_call(
-    body_bytes: &[u8],
-    span: &RegionSpan,
+    segment_text: &str,
     indent: usize,
     lang: TargetLanguage,
     ctx: &HandlerContext,
     metadata: &SegmentMetadata,
 ) -> String {
-    let segment_text = String::from_utf8_lossy(&body_bytes[span.start..span.end]);
     let indent_str = " ".repeat(indent);
 
     // @@:return(expr) — set context return value AND exit handler.
@@ -215,14 +211,12 @@ pub(super) fn expand_return_call(
 }
 
 pub(super) fn expand_return_statement(
-    body_bytes: &[u8],
-    span: &RegionSpan,
+    segment_text: &str,
     indent: usize,
     lang: TargetLanguage,
     ctx: &HandlerContext,
     metadata: &SegmentMetadata,
 ) -> String {
-    let segment_text = String::from_utf8_lossy(&body_bytes[span.start..span.end]);
     let indent_str = " ".repeat(indent);
 
     // Native return keyword detected in handler body.

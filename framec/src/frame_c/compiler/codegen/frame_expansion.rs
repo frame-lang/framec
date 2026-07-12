@@ -86,62 +86,61 @@ pub(crate) fn generate_frame_expansion(
         | FrameSegmentKind::StackPop => {
             // Control-flow segments build their body and terminator separately
             // (#169); re-join them here for the plain-`String` expansion API.
-            let (body, terminator) = generate_frame_transition_parts(
-                body_bytes, span, kind, indent, lang, ctx, metadata,
-            );
+            let (body, terminator) =
+                generate_frame_transition_parts(&segment_text, kind, indent, lang, ctx, metadata);
             join_transition_terminator(body, terminator, &indent_str)
         }
         FrameSegmentKind::StateVar => {
-            state_var::expand_state_var(body_bytes, span, indent, lang, ctx, metadata)
+            state_var::expand_state_var(&segment_text, indent, lang, ctx, metadata)
         }
         FrameSegmentKind::StateVarAssign => {
-            state_var::expand_state_var_assign(body_bytes, span, indent, lang, ctx, metadata)
+            state_var::expand_state_var_assign(&segment_text, indent, lang, ctx, metadata)
         }
         FrameSegmentKind::ContextReturn => {
-            context_return::expand_context_return(body_bytes, span, indent, lang, ctx, metadata)
+            context_return::expand_context_return(&segment_text, indent, lang, ctx, metadata)
         }
-        FrameSegmentKind::ContextReturnExpr => context_return::expand_context_return_expr(
-            body_bytes, span, indent, lang, ctx, metadata,
-        ),
+        FrameSegmentKind::ContextReturnExpr => {
+            context_return::expand_context_return_expr(&segment_text, indent, lang, ctx, metadata)
+        }
         FrameSegmentKind::ContextEvent => {
-            context_data::expand_context_event(body_bytes, span, indent, lang, ctx, metadata)
+            context_data::expand_context_event(&segment_text, indent, lang, ctx, metadata)
         }
         FrameSegmentKind::ContextData => {
-            context_data::expand_context_data(body_bytes, span, indent, lang, ctx, metadata)
+            context_data::expand_context_data(&segment_text, indent, lang, ctx, metadata)
         }
         FrameSegmentKind::ContextDataAssign => {
-            context_data::expand_context_data_assign(body_bytes, span, indent, lang, ctx, metadata)
+            context_data::expand_context_data_assign(&segment_text, indent, lang, ctx, metadata)
         }
         FrameSegmentKind::ContextParams => {
-            context_data::expand_context_params(body_bytes, span, indent, lang, ctx, metadata)
+            context_data::expand_context_params(&segment_text, indent, lang, ctx, metadata)
         }
         FrameSegmentKind::SystemInstantiation => {
-            return_stmt::expand_system_instantiation(body_bytes, span, indent, lang, ctx, metadata)
+            return_stmt::expand_system_instantiation(&segment_text, indent, lang, ctx, metadata)
         }
         FrameSegmentKind::ReturnCall => {
-            return_stmt::expand_return_call(body_bytes, span, indent, lang, ctx, metadata)
+            return_stmt::expand_return_call(&segment_text, indent, lang, ctx, metadata)
         }
         FrameSegmentKind::ContextSystemBare => {
-            context_data::expand_context_system_bare(body_bytes, span, indent, lang, ctx, metadata)
+            context_data::expand_context_system_bare(&segment_text, indent, lang, ctx, metadata)
         }
         FrameSegmentKind::ContextSystemState => expand_system_state(lang),
         // Reserved (RFC-0045) — validation rejects bare `@@:system.state` with
         // E608 before codegen; this fallback only fires if validation is
         // bypassed, in which case it passes the text through like a bare member.
         FrameSegmentKind::ContextSystemStateReserved => {
-            context_data::expand_context_system_bare(body_bytes, span, indent, lang, ctx, metadata)
+            context_data::expand_context_system_bare(&segment_text, indent, lang, ctx, metadata)
         }
         FrameSegmentKind::ContextSelf => {
-            context_self::expand_context_self(body_bytes, span, indent, lang, ctx, metadata)
+            context_self::expand_context_self(&segment_text, indent, lang, ctx, metadata)
         }
         FrameSegmentKind::ContextSelfCall => {
-            context_self::expand_context_self_call(body_bytes, span, indent, lang, ctx, metadata)
+            context_self::expand_context_self_call(&segment_text, indent, lang, ctx, metadata)
         }
-        FrameSegmentKind::ContextSelfFieldCall => context_self::expand_context_self_field_call(
-            body_bytes, span, indent, lang, ctx, metadata,
-        ),
+        FrameSegmentKind::ContextSelfFieldCall => {
+            context_self::expand_context_self_field_call(&segment_text, indent, lang, ctx, metadata)
+        }
         FrameSegmentKind::ReturnStatement => {
-            return_stmt::expand_return_statement(body_bytes, span, indent, lang, ctx, metadata)
+            return_stmt::expand_return_statement(&segment_text, indent, lang, ctx, metadata)
         }
     }
 }
@@ -160,8 +159,7 @@ pub(crate) fn generate_frame_expansion(
 /// Only the four control-flow kinds are valid here (the orchestrator gates on
 /// them); any other kind is a caller bug.
 pub(crate) fn generate_frame_transition_parts(
-    body_bytes: &[u8],
-    span: &crate::frame_c::compiler::native_region_scanner::RegionSpan,
+    segment_text: &str,
     kind: FrameSegmentKind,
     indent: usize,
     lang: TargetLanguage,
@@ -170,16 +168,16 @@ pub(crate) fn generate_frame_transition_parts(
 ) -> (String, &'static str) {
     match kind {
         FrameSegmentKind::Transition => {
-            transition::expand_transition(body_bytes, span, indent, lang, ctx, metadata)
+            transition::expand_transition(&segment_text, indent, lang, ctx, metadata)
         }
         FrameSegmentKind::Forward => {
-            forward::expand_forward(body_bytes, span, indent, lang, ctx, metadata)
+            forward::expand_forward(&segment_text, indent, lang, ctx, metadata)
         }
         FrameSegmentKind::StackPush => {
-            stack::expand_stack_push(body_bytes, span, indent, lang, ctx, metadata)
+            stack::expand_stack_push(&segment_text, indent, lang, ctx, metadata)
         }
         FrameSegmentKind::StackPop => {
-            stack::expand_stack_pop(body_bytes, span, indent, lang, ctx, metadata)
+            stack::expand_stack_pop(&segment_text, indent, lang, ctx, metadata)
         }
         other => unreachable!(
             "generate_frame_transition_parts called for non-control-flow kind {other:?}"

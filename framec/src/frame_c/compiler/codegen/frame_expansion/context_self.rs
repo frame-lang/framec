@@ -81,8 +81,7 @@ fn cpp_element_is_pointer(type_str: &str, sys: &str) -> bool {
 }
 
 pub(super) fn expand_context_self(
-    _body_bytes: &[u8],
-    _span: &RegionSpan,
+    _segment_text: &str,
     _indent: usize,
     lang: TargetLanguage,
     _ctx: &HandlerContext,
@@ -145,8 +144,7 @@ pub(super) fn expand_context_self(
 /// method call on a scalar field's value. No caller-side transition guard is
 /// emitted (the call enters a *different* system's dispatch, if any).
 pub(super) fn expand_context_self_field_call(
-    _body_bytes: &[u8],
-    _span: &RegionSpan,
+    _segment_text: &str,
     _indent: usize,
     lang: TargetLanguage,
     ctx: &HandlerContext,
@@ -388,14 +386,12 @@ pub(super) fn expand_context_self_field_call(
 }
 
 pub(super) fn expand_context_self_call(
-    body_bytes: &[u8],
-    span: &RegionSpan,
+    segment_text: &str,
     indent: usize,
     lang: TargetLanguage,
     ctx: &HandlerContext,
     metadata: &SegmentMetadata,
 ) -> String {
-    let segment_text = String::from_utf8_lossy(&body_bytes[span.start..span.end]);
     let indent_str = " ".repeat(indent);
 
     // @@:self.method(args) — reentrant interface call with transition guard

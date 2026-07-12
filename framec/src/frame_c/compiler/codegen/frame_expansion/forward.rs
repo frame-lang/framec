@@ -36,14 +36,12 @@ use crate::frame_c::visitors::TargetLanguage;
 /// body with no separately-hoistable terminator. Returning `(body, "")`
 /// preserves that (#169): the orchestrator appends nothing.
 pub(super) fn expand_forward(
-    body_bytes: &[u8],
-    span: &RegionSpan,
+    segment_text: &str,
     indent: usize,
     lang: TargetLanguage,
     ctx: &HandlerContext,
     metadata: &SegmentMetadata,
 ) -> (String, &'static str) {
-    let segment_text = String::from_utf8_lossy(&body_bytes[span.start..span.end]);
     let indent_str = " ".repeat(indent);
 
     // An explicit `=> $^` forward inside an async handler must be awaited just

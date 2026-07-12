@@ -469,8 +469,10 @@ pub(crate) fn emit_handler_body_via_statements(
                             // without suffix-probing the emitted text. `trim_end`
                             // mirrors the trailing-whitespace trim the old
                             // `split_transition_return` applied.
+                            let seg_text =
+                                String::from_utf8_lossy(&body_bytes[seg_span.start..seg_span.end]);
                             let (raw_body, return_kw) = super::generate_frame_transition_parts(
-                                body_bytes, seg_span, *kind, *indent, lang, ctx, metadata,
+                                &seg_text, *kind, *indent, lang, ctx, metadata,
                             );
                             let body = raw_body.trim_end();
                             // Multi-line expansion on same line as native code
