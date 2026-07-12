@@ -334,22 +334,30 @@ impl FrameValidator {
         target: crate::frame_c::visitors::TargetLanguage,
     ) {
         use crate::frame_c::visitors::TargetLanguage as T;
-        let supported = matches!(
-            target,
+        // Every code-generating target now supports the borrowed input source.
+        // EXHAUSTIVE on purpose (RFC-0056 P11): adding a backend forces a decision
+        // here rather than letting it silently skip the port — which is exactly how
+        // the `__create` threading bug got dropped in four backends in a row.
+        let supported = match target {
             T::Rust
-                | T::Python3
-                | T::TypeScript
-                | T::JavaScript
-                | T::Java
-                | T::CSharp
-                | T::Swift
-                | T::Dart
-                | T::Ruby
-                | T::Php
-                | T::Lua
-                | T::GDScript
-                | T::Go
-        );
+            | T::Python3
+            | T::TypeScript
+            | T::JavaScript
+            | T::Java
+            | T::CSharp
+            | T::Swift
+            | T::Dart
+            | T::Ruby
+            | T::Php
+            | T::Lua
+            | T::GDScript
+            | T::Go
+            | T::Kotlin
+            | T::Cpp
+            | T::C => true,
+            // GraphViz emits a diagram, not a runtime — nothing to borrow.
+            T::Graphviz => false,
+        };
         if supported {
             return;
         }
@@ -359,8 +367,8 @@ impl FrameValidator {
                     "E620",
                     format!(
                         "system '{}' declares a borrowed input source ('{}: {}'), which is not yet \
-                         supported on the {:?} target. Implemented on Rust, Python, TypeScript, JavaScript, Java, C#, Swift and \
-                         Dart; Kotlin/Go/Ruby/PHP/Lua/GDScript/C/C++ are pending (RFC-0056 P9 / #209). Remove the input param, or \
+                         supported on the {:?} target. The GraphViz target emits a diagram, not a runtime — there is nothing \
+                         to borrow (RFC-0056 P9 / #209). Remove the input param, or \
                          target Rust/Python.",
                         system.name,
                         p.name,

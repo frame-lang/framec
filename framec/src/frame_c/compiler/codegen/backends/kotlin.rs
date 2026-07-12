@@ -98,8 +98,17 @@ impl LanguageBackend for KotlinBackend {
                 } else {
                     Vec::new()
                 };
-                let primary_ctor = if primary_params.is_empty() {
+                // RFC-0056 P9: a borrowing system takes its buffer in the PRIMARY
+                // constructor — Kotlin has no separate bare ctor to hang it on. The
+                // adapter wraps it in an `init` block below.
+                let in_primary = match input {
+                    Some(spec) => format!("{}Raw: ByteArray", spec.field),
+                    None => String::new(),
+                };
+                let primary_ctor = if primary_params.is_empty() && in_primary.is_empty() {
                     String::new()
+                } else if primary_params.is_empty() {
+                    format!("({})", in_primary)
                 } else {
                     // Collect domain field names/const-ness to detect collisions.
                     // - Param collides with const field → promote to `val` (the field
@@ -374,6 +383,15 @@ impl LanguageBackend for KotlinBackend {
                 // Emit `init { framework_lines }`
                 let mut result = format!("{}init {{\n", ctx.get_indent());
                 ctx.push_indent();
+                // RFC-0056 P9: wrap the primary-ctor buffer in the adapter.
+                if let Some(spec) = &ctx.input {
+                    result.push_str(&format!(
+                        "{}{f} = {a}({f}Raw)\n",
+                        ctx.get_indent(),
+                        f = spec.field,
+                        a = spec.adapter
+                    ));
+                }
                 for line in &framework_lines {
                     result.push_str(line);
                     if !line.ends_with('\n') {

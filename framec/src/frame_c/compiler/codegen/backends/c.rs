@@ -398,17 +398,33 @@ impl LanguageBackend for CBackend {
                 }
                 ctx.pop_indent();
 
-                // Emit `Counter* Counter_new(void)` — bare framework
+                // Emit `Counter* Counter_new(void)` — bare framework.
+                // RFC-0056 P9: a borrowing system takes its buffer as ptr + len.
+                let (in_sig, in_store) = match &ctx.input {
+                    Some(spec) => (
+                        format!("const unsigned char* {f}, size_t {f}_len", f = spec.field),
+                        format!(
+                            "{}self->{f} = ({a}){{{f}, {f}_len}};\n",
+                            body_indent,
+                            f = spec.field,
+                            a = spec.adapter
+                        ),
+                    ),
+                    None => ("void".to_string(), String::new()),
+                };
                 let mut result = format!(
-                    "{}{}* {}_new(void) {{\n",
+                    "{}{}* {}_new({}) {{\n",
                     ctx.get_indent(),
                     class_name,
-                    class_name
+                    class_name,
+                    in_sig
                 );
                 result.push_str(&format!(
                     "{}{}* self = calloc(1, sizeof({}));\n",
                     body_indent, class_name, class_name
                 ));
+                // Store AFTER `self` exists — the mistake Lua and Go both made.
+                result.push_str(&in_store);
                 result.push_str(&bare_body);
                 result.push_str(&format!("{}return self;\n", body_indent));
                 result.push_str(&format!("{}}}\n", ctx.get_indent()));
@@ -420,17 +436,28 @@ impl LanguageBackend for CBackend {
                 // needed — the local var `self` is the
                 // newly-allocated instance, exactly what `body_text`
                 // expects.
-                let create_params = if params.is_empty() {
-                    "void".to_string()
-                } else {
-                    params
-                        .iter()
-                        .map(|p| {
-                            let type_str = self.convert_type_to_c(&p.type_annotation, &class_name);
-                            format!("{} {}", type_str, p.name)
-                        })
-                        .collect::<Vec<_>>()
-                        .join(", ")
+                let value_params = params
+                    .iter()
+                    .map(|p| {
+                        let type_str = self.convert_type_to_c(&p.type_annotation, &class_name);
+                        format!("{} {}", type_str, p.name)
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                // RFC-0056 P9: the factory takes the buffer too, so it can hand it
+                // to `_new`.
+                let (in_create_sig, in_create_pass) = match &ctx.input {
+                    Some(spec) => (
+                        format!("const unsigned char* {f}, size_t {f}_len", f = spec.field),
+                        format!("{f}, {f}_len", f = spec.field),
+                    ),
+                    None => (String::new(), String::new()),
+                };
+                let create_params = match (in_create_sig.is_empty(), value_params.is_empty()) {
+                    (true, true) => "void".to_string(),
+                    (true, false) => value_params.clone(),
+                    (false, true) => in_create_sig.clone(),
+                    (false, false) => format!("{}, {}", in_create_sig, value_params),
                 };
                 result.push('\n');
                 result.push_str(&format!(
@@ -442,10 +469,11 @@ impl LanguageBackend for CBackend {
                 ));
                 ctx.push_indent();
                 result.push_str(&format!(
-                    "{}{}* self = {}_new();\n",
+                    "{}{}* self = {}_new({});\n",
                     ctx.get_indent(),
                     class_name,
-                    class_name
+                    class_name,
+                    in_create_pass
                 ));
                 result.push_str(&body_text);
                 result.push_str(&format!("{}return self;\n", ctx.get_indent()));

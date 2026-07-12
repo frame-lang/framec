@@ -580,7 +580,30 @@ impl LanguageBackend for CppBackend {
                     String::new()
                 };
 
-                // Emit `Counter()` — bare framework
+                // Emit `Counter()` — bare framework.
+                // RFC-0056 P9: a borrowing system takes its buffer (ptr + len).
+                let (in_sig, in_store) = match &ctx.input {
+                    Some(spec) => (
+                        format!(
+                            "const unsigned char* {f}, std::size_t {f}_len",
+                            f = spec.field
+                        ),
+                        format!(
+                            "{}    this->{f} = {a}{{{f}, {f}_len}};\n",
+                            ctx.get_indent(),
+                            f = spec.field,
+                            a = spec.adapter
+                        ),
+                    ),
+                    None => (String::new(), String::new()),
+                };
+                let bare_ctor_params = if in_sig.is_empty() {
+                    bare_ctor_params
+                } else if bare_ctor_params.is_empty() {
+                    in_sig.clone()
+                } else {
+                    format!("{}, {}", in_sig, bare_ctor_params)
+                };
                 let mut result = format!(
                     "{}{}({}){} {{\n",
                     ctx.get_indent(),
@@ -588,6 +611,7 @@ impl LanguageBackend for CppBackend {
                     bare_ctor_params,
                     init_list
                 );
+                result.push_str(&in_store);
                 for line in &framework_lines {
                     result.push_str(line);
                 }
@@ -606,6 +630,25 @@ impl LanguageBackend for CppBackend {
                 // `expand_system_instantiation_in_domain`.
                 result.push('\n');
                 let create_params = self.emit_params(params);
+                // RFC-0056 P9: the factory takes the buffer too, so it can construct
+                // the borrowing instance.
+                let (in_create_sig, in_create_pass) = match &ctx.input {
+                    Some(spec) => (
+                        format!(
+                            "const unsigned char* {f}, std::size_t {f}_len",
+                            f = spec.field
+                        ),
+                        format!("{f}, {f}_len", f = spec.field),
+                    ),
+                    None => (String::new(), String::new()),
+                };
+                let create_params = if in_create_sig.is_empty() {
+                    create_params
+                } else if create_params.is_empty() {
+                    in_create_sig.clone()
+                } else {
+                    format!("{}, {}", in_create_sig, create_params)
+                };
                 result.push_str(&format!(
                     "{}static {} __create({}) {{\n",
                     ctx.get_indent(),
@@ -622,7 +665,16 @@ impl LanguageBackend for CppBackend {
                         arg_pass.join(", ")
                     ));
                 } else {
-                    result.push_str(&format!("{}{} c;\n", ctx.get_indent(), class_name));
+                    result.push_str(&format!(
+                        "{}{} c{};\n",
+                        ctx.get_indent(),
+                        class_name,
+                        if in_create_pass.is_empty() {
+                            String::new()
+                        } else {
+                            format!("({})", in_create_pass)
+                        }
+                    ));
                 }
                 // Absorb the frame_init body inline, rewriting
                 // member references so they target the local `c` instead
