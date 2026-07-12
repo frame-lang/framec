@@ -81,8 +81,20 @@ transitions); **acceptor** (yes/no) vs **transducer** (emits output).
 - **Frame realization:** `@@fsm` (RFC-0042) — a regular lexer compiled to a Pike-VM
   (an NFA simulation with Assert opcodes for anchors/`\b`). Also every **flat
   `@@system`** whose behavior is finite-state.
-- **framec examples:** the 15 `SyntaxSkipper` (comment/string), 15 `BodyCloser`
-  (brace matching *by pattern*), `OutputBlockLexerFsm` (tokenizer).
+  > **But `@@fsm` is not *confined* to the regular tier in the shipped compiler.** Its
+  > `domain` vars + `when` guards are a general escape hatch — see §3.2.1 and §3.2.2.
+  > E720 forbids a backreference *inside a regex*; it does not forbid backreference
+  > *semantics*. Open question: **issue #208**.
+- **framec examples:** the 16 `BodyCloser` (per-language brace matching — these are
+  *genuine* machines: mode is a Frame state, the counter is a domain var),
+  `OutputBlockLexerFsm` (tokenizer), and the leaf scanners (`ident_scan`,
+  `string_scan`, `number_scan`) — which are real `@@fsm`s driven **zero-copy** via
+  `over()` / `scan_at()`.
+  > **Counter-example, and the cautionary tale:** the 15 `SyntaxSkipper` `.frs` files
+  > are **not** machines. They are `@@system` **vtable shells** — `$Init` plus one
+  > state per interface method, zero inter-state transitions, zero mode states — with
+  > the real scanning hand-rolled into native byte loops beneath them, and the mode
+  > held in a **native local** (`in_string: u8`). See §8's new red flag.
 
 ### 3.2 Pushdown automaton (PDA) — context-free languages
 FSM **+ a stack**. The stack gives unbounded memory with last-in-first-out
@@ -92,18 +104,35 @@ practical parsers target the deterministic subset.
 - **Can:** balanced `()[]{}`, arbitrary nesting depth, `aⁿbⁿ`, expression grammars,
   matched open/close.
 - **Cannot:** `aⁿbⁿcⁿ`, cross-serial dependencies (that is context-sensitive).
-- **Frame realizations — three, in increasing honesty:**
-  1. **A counter augment:** an `@@fsm`/`@@system` with a `depth` domain var
-     mutated in transition actions is a *counter automaton* — enough for
-     single-kind bracket matching. This is a deliberate step **beyond regular**;
-     call it out.
-  2. **A native stack/counter in a handler:** `ExprScannerFsm` is "FSM-shaped" but
-     its scan core is a native Rust `while` loop counting `()[]{}` depth — a PDA
-     whose stack is a native integer. Honest and pragmatic; not a "real `@@fsm`".
-  3. **Frame's own `push$`/`pop$` state stack:** this is a *genuine pushdown
-     mechanism* over compartments. A `@@system` that pushes and pops states **is a
-     PDA** — the state stack is the automaton's stack. Modal interrupts
-     (pause→resume, dialog→return) are the natural fit.
+**Know what actually needs a stack.** Balanced delimiters of **one kind** (a Dyck-1
+language) need only a **counter**, not a stack — that includes balanced parens, Ruby
+`%q(...)`, Rust raw strings `r###"…"###`, and **JS template literals**
+(`` `a ${ `b ${c}` } d` `` — one bracket kind). A genuine stack is required only to
+match **different delimiter kinds** against each other, or to build a **tree**.
+
+- **Frame realizations, in increasing power:**
+  1. **A counter augment (`@@fsm` + a `depth` domain var + a `when` guard):** a
+     *counter automaton* — enough for all single-kind bracket matching above. A
+     deliberate step **beyond regular**; call it out. This is expressible in `@@fsm`
+     **today**.
+  2. **A register augment (capture into a `domain` field, re-compare in a `when`
+     guard):** a *register automaton*. This recognizes `{w c x c w}` — e.g. a PHP
+     heredoc's `<<<ID … ID`, where an arbitrary identifier must be remembered and
+     re-matched later. **This is not even context-free** (a stack *reverses*; you would
+     need a queue), yet it is expressible in `@@fsm` today. It sits **outside** this
+     section's tier and is the reason `@@fsm` cannot be described as "regular"
+     (issue #208).
+  3. **Frame's own `push$`/`pop$` state stack:** a *genuine pushdown mechanism* over
+     compartments. A `@@system` that pushes and pops states **is a PDA** — the state
+     stack is the automaton's stack. Reach for it when delimiter **kinds** must match,
+     or for modal interrupts (pause→resume, dialog→return).
+
+> **Do not cite `ExprScannerFsm` as a PDA.** Its own doc-comment and issue #188 both do.
+> The code (`expr_scanner.frs:76,80`) reads `b'(' | b'[' | b'{' => depth += 1` — **any**
+> opener, **any** closer, delimiter kinds **never matched** (the `.max(0)` even swallows
+> unmatched closers). It is a **counter automaton** (realization 1), and therefore a real
+> `@@fsm` today. Its native `while` loop was never "native by necessity" — that claim was
+> false, and it blocked #188 for no reason.
 
 ### 3.3 Linear-bounded automaton — context-sensitive
 TM with tape bounded by input size. Recognizes `aⁿbⁿcⁿ`, cross-serial
@@ -231,9 +260,11 @@ Is the grammar…
 
 | Problem domain | Power | Role | Architecture | Frame |
 |---|---|---|---|---|
-| Comment/string skipping | Regular | Scanner | Flat | `@@fsm` skipper |
-| Brace/delimiter matching | Context-free | Recognizer | Counter/stack | `@@fsm`+counter or native |
-| Expression / nesting scan | Context-free | Transducer | Flat + native stack | `ExprScannerFsm` |
+| Comment/string skipping | Regular | Scanner | Flat | `@@fsm` (mode = state, **never** a native local) |
+| Brace matching, **one** delimiter kind | Counter (Dyck-1) | Recognizer | Flat + counter | `@@fsm` + a `depth` domain var |
+| Brace matching, **kinds must match** | Context-free | Recognizer | Stack | `@@system` + `push$`/`pop$` |
+| Expression / nesting scan | Counter (Dyck-1) | Transducer | Flat + counter | `ExprScannerFsm` — a **counter automaton**, not a PDA |
+| Remember-and-re-match a token (heredoc) | Context-**sensitive** | Recognizer | Flat + register | `@@fsm` + a captured `domain` field + a `when` guard (#208) |
 | Tokenize then structure | Reg → CF | Lexer → Parser | Two-stage | Lexer FSM → Parser FSM |
 | Network/session protocol | Regular* | Reactive | Flat or HSM | `@@system` (+HSM) |
 | Connection w/ nested sub-states | Regular | Reactive | HSM | `$Child => $Parent` |
@@ -266,6 +297,51 @@ unbounded nesting/return discipline (then use the state stack).
 
 State the rejection explicitly and name the better tool — recognizing a
 non-machine problem is as valuable as designing a machine.
+
+### 8.1 The costume — a machine that isn't (the failure mode framec actually had)
+
+Writing a `.frs` does not make something a machine. framec accumulated ~30 artifacts
+that pass every superficial test and are not machines. **Judge by where the *mode*
+lives, never by whether a native loop exists** — a native *cursor-advance* loop inside
+a single mode is fine; every genuine `BodyCloser` has one.
+
+- **The vtable shell.** `$Init` + one state per interface method, transitions only ever
+  *out* of `$Init`, never back. The "states" are **method names**; the mode lives in a
+  native local (`in_string: u8`) inside a `while` loop that *is* the actual machine.
+  All 15 `SyntaxSkipper`s. Frame used as a dispatch table.
+- **The sequencer shell.** Real states, real transitions, **zero** native loops — and
+  still not a machine: the "states" are **pass names** in a fixed order, and no state
+  depends on accumulated input history. It is `for check in [..] { … }` in a costume.
+  (`fsm_validator.frs`, `pipeline_supervisor.frs`.)
+- **The tarpit.** One state holding a 250-line native body — §3.4's warning, realized.
+  Also its cousin: a **table lookup** forced into machine form. `is_dynamic_target.frs`
+  had to encode a `bool` as the **string `"true"`**, and its own header records the
+  ergonomic damage. That is the in-repo argument against "a machine even at a single
+  state."
+
+**The test.** A pass is a machine iff **(a)** its behavior depends on *accumulated input
+history* — the same input means different things depending on what preceded it — **and
+(b)** that history quotients into a *finite, nameable* set of modes.
+
+- (a) fails → it is a **function**. The rest of §8 applies.
+- (a) and (b) hold → a **Frame machine**, and the **mode MUST be a Frame state, never a
+  native local.**
+- (a) holds, (b) fails (the mode is unbounded or tree-shaped) → a **parser**, not a
+  machine.
+
+### 8.2 Why the costumes appeared — and the trap to avoid repeating
+
+Not laziness. `@@system`'s domain field must **own** its input, so a positioned scanner
+copied the buffer on **every probe call** (71 sites) — **O(n²)**. Authors were therefore
+forced to choose between a *real machine* and an *acceptable cost*, and they rationally
+chose speed: the scan logic went into a native loop, and the mode went with it into a
+native local. **The performance limitation produced the string-blindness correctness
+bugs.**
+
+`@@fsm` has had **borrowed, positioned, restartable** input since RFC-0042.1
+(`over()` / `scan_at()` / `impl <Name>Input for &[u8]`) — zero copies. **A recognizer
+should be an `@@fsm`.** If a language ever forces a choice between machine-ness and
+performance again, expect costumes again — and fix the language, not the authors.
 
 ---
 
@@ -305,6 +381,9 @@ non-machine problem is as valuable as designing a machine.
 | Frame construct | Adds | Power / role |
 |---|---|---|
 | `@@fsm` (RFC-0042) | regular lexer (Pike-VM) | Regular scanner/recognizer |
+| `@@fsm` + `domain` counter + `when` | an unbounded counter | **Counter automaton** — beyond regular |
+| `@@fsm` + captured `domain` field + `when` | a register (remember & re-match) | **Register automaton** — beyond context-free (#208) |
+| `@@fsm` `over()` / `scan_at()` (RFC-0042.1) | borrowed, positioned, restartable input | Zero-copy scanning — **an `@@fsm` CAN be a positioned probe** |
 | flat `@@system` | finite states + events | Regular reactive transducer |
 | HSM (`=> $^`, `$Child => $Parent`) | state nesting/inheritance | Same power, compact structure |
 | `push$` / `pop$` | genuine stack of states | **Lifts to PDA** (context-free) |

@@ -58,24 +58,112 @@ you allotted).
 
 ## The formal reality you reason from (most important)
 
-- **`@@fsm` (RFC-0042) generates a REGULAR lexer** — a character-class DFA
-  (Pike-VM under the hood, with Assert opcodes for anchors/`\b`). It is perfect
-  for regular languages: the per-language `SyntaxSkipper` (comment/string
-  skipping), `BodyCloser` (brace matching *by pattern*), the `OutputBlockLexerFsm`
-  token stream. RFC-0042 also supports domain vars + transition actions, so an
-  `@@fsm` *can* carry a counter and thus express a **PDA-with-counter** — but that
-  is a deliberate step beyond regular, and you must call it out when a design
-  relies on it.
-- **A PDA (balanced-bracket nesting via a `depth` counter) is context-free**, not
-  regular. `ExprScannerFsm` (`native_region_scanner/expr_scanner.frs`) is exactly
-  this: one Frame state (`$Scanning`) whose enter-handler is a single native Rust
-  `while` loop counting `()[]{}` depth. It is "FSM-shaped" but the scan core is
-  native *by necessity*. When you propose converting such a scanner to a "real"
-  `@@fsm`, be honest that it means modeling `depth` as a domain var mutated in
-  actions — doable, but a full rewrite, not a reframe.
-- **Lookahead/lookback** (e.g. the #185 continuation heuristic) is not a natural
-  DFA transition; model it as a tentative-end state that defers the terminate
-  decision, or accept it lives in the native loop next to the counter.
+- **`@@fsm` (RFC-0042) is the recognizer construct** — a character-class DFA. But
+  **it is strictly more powerful than its own "regular-language only" commitment**,
+  because `domain` vars + `when` guards + actions are a general escape hatch (open
+  question: **#208**). Know the rungs, and **name the one you are standing on**:
+  1. **regular** — pure stage/regex, no domain state.
+  2. **counter automaton** — a `depth` domain var + a `when` conditional target.
+     Balanced delimiters of ONE kind (Dyck-1): parens, Ruby `%q(...)`, Rust raw
+     strings, **and JS template literals** (one bracket kind → a counter suffices;
+     it does NOT need a stack). *Beyond regular — say so.*
+  3. **register automaton** — capture into a domain field, re-compare in a `when`
+     guard. Recognizes `{w c x c w}` (a PHP heredoc's `<<<ID … ID`), which is **not
+     even context-free** — a stack reverses; you would need a queue. **Verified
+     working.**
+  4. **genuine pushdown** — nesting of *different* delimiter kinds, or a tree to
+     build. A counter cannot match kinds → `@@system` with `push$`/`pop$`. There is
+     no `@@pda` and none is needed.
+  5. **a real grammar** (ambiguity, precedence, a tree) → **not a machine** →
+     recursive descent. A hand-rolled DFA-with-counters here is the
+     *else-if-without-else* bug class; framec has paid for it twice (#122, #135).
+
+- **DO NOT call `ExprScannerFsm` a PDA.** Its own doc-comment and issue #188 both do;
+  the code (`expr_scanner.frs:76,80`) reads `b'(' | b'[' | b'{' => depth += 1` — any
+  opener, any closer, **kinds never matched** (the `.max(0)` even swallows unmatched
+  closers). It is a **counter automaton** (rung 2), and therefore **expressible as a
+  real `@@fsm` today**. Its native `while` loop is *not* "native by necessity" — that
+  claim was false and it blocked #188 for no reason.
+
+- **The skippers are `@@system`, and that is the whole story (#209).** All 15
+  `SyntaxSkipper`s and all 16 `BodyCloser`s are `@@system` — **not one is an `@@fsm`**.
+  An `@@system` domain field must **own** its data, so each probe does
+  `fsm.bytes = bytes[..end].to_vec()` (**71 sites**) — a full buffer-prefix copy per
+  call, in a `match` whose guard *and* arm both call it. **O(n²)**, measured.
+  `@@fsm` has had borrowed, positioned input since RFC-0042.1 (`over()` / `scan_at()` /
+  `impl <Name>Input for &[u8]`) — Accepted, implemented, and already used by framec's
+  own leaf scanners with zero copies. **Never repeat the claim that `@@fsm` "cannot be
+  a positioned probe."**
+
+  **This is the causal chain you must understand:** `@@system` scanning was quadratic →
+  so the real scan logic was hand-rolled into native loops → so the mode state landed in
+  **native locals** → which is exactly where the string-blindness bug family came from.
+  **The performance limitation produced the correctness bugs.**
+
+- **Lookahead/lookback** (e.g. the #185 continuation heuristic) is not a natural DFA
+  transition — but it does **not** force a native loop. Model it as a **tentative-end
+  state** (`$MaybeEnd`) that defers the terminate decision, with the answer in a domain
+  var (`mark`), not in `@@:cursor`. The monotonic cursor is then a non-issue: a tentative
+  overshoot needs no rewind. This has been built and is **byte-identical** to the native
+  loop it replaces.
+
+## The shape test — is this a machine, or a costume?
+
+Judge a `.frs` by **where the mode lives**, NOT by whether a native loop exists. A native
+*cursor-advance* loop inside a single mode is fine — every genuine `BodyCloser` has one.
+
+```frame
+// COSTUME 1 — the VTABLE SHELL (all 15 skippers).
+// 5 states, 4 transitions, ALL out of $Init. The "states" are METHOD NAMES.
+$Init {
+    do_skip_comment() { -> $SkipComment }
+    do_skip_string()  { -> $SkipString }
+}
+$SkipString {
+    $>() {
+        let mut in_string: u8 = 0;   // <-- MODE IN A NATIVE LOCAL. This is the tell.
+        while j < end { ... }        // <-- the machine IS this loop; the .frs is a wrapper
+    }
+}
+
+// COSTUME 2 — the SEQUENCER SHELL (fsm_validator.frs, pipeline_supervisor.frs).
+// Real states, real transitions, ZERO native loops — and still not a machine:
+// the "states" are PASS NAMES, and no state depends on accumulated input history.
+// It is `for check in [..] { diags.extend(check(ast)) }` wearing a costume.
+$CheckHeader { run() { -> $CheckStructure } }
+$CheckStructure { run() { -> $CheckTransitions } }
+
+// COSTUME 3 — the TARPIT (domain_scanner.frs sub-scans; is_dynamic_target.frs).
+// A single state holding a 250-line native body; or a table lookup in machine form
+// (is_dynamic_target.frs had to encode a bool as the STRING "true" — its own header
+// records the ergonomic damage. That is the in-repo refutation of "machines even at
+// a single state").
+
+// REAL MACHINE — mode IS the state; the counter IS a domain var.
+$Scanning { scan() { if ch == 34 { -> $InString } } }
+$InString { scan() { if ch == 34 { -> $Scanning } } }
+domain:
+    depth: int = 0
+```
+
+**The criterion (use this, not a loop-count rule):** a pass is a machine iff (a) its
+behavior depends on **accumulated input history** — the same input means different things
+depending on what preceded it — **and** (b) that history quotients into a **finite,
+nameable set of modes**.
+- (a) fails → it is a **function**. Say so. (§8 of the machine-architecture doc stands.)
+- (a) and (b) hold → a **Frame machine**, and the **mode MUST be a Frame state, never a
+  native local**. The cursor advance MAY be native.
+- (a) holds, (b) fails (mode is unbounded / tree-shaped) → a **parser**, not a machine.
+
+## The other half of #123: most oracles are NOT machine candidates
+
+The 2026-07 census classified ~130k LOC. The result: **~51 sites are "carry the
+structure"** (delete them), **~54 are incidental** (leave them), and only **~3 are
+genuinely new machines**. When a pass recovers structure from text **framec itself
+emitted**, the fix is **never an FSM** — it is to carry the fact on the node and delete
+the site. Building a machine there is ceremony over a self-inflicted wound. Reserve
+machines for **foreign** text (the user's native code, which framec never parsed).
+**Be the agent who says "delete this, don't convert it."**
 
 ## The dogfood scanner map (44 Frame-generated machines)
 
