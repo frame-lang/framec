@@ -98,8 +98,9 @@ pub(super) fn expand_expression(expr: &str, lang: TargetLanguage, ctx: &HandlerC
             ..
         } = region
         {
+            let seg_text = String::from_utf8_lossy(&body_bytes[span.start..span.end]);
             let expansion =
-                super::generate_frame_expansion(body_bytes, span, *kind, 0, lang, ctx, metadata);
+                super::generate_frame_expansion(&seg_text, *kind, 0, lang, ctx, metadata);
             expansions.push(expansion);
         }
     }

@@ -187,6 +187,42 @@ use unified::SyntaxSkipper;
 /// This is the bridge between the scanner (which produces `Vec<Region>` with byte spans
 /// and `SegmentMetadata`) and the AST (which uses `Vec<Statement>` with typed fields).
 /// The scanner does all the hard parsing work — this is a thin mechanical mapping.
+/// A handler-body statement, paired with the segment info its emitter needs.
+///
+/// Codegen used to walk the statement list and look the segment up in a PARALLEL
+/// region list **by ordinal** (`frame_idx += 1`) — the same positional index-pairing
+/// as `enrich_system_metadata`, sitting inside the emitter. Two views of one source,
+/// reconciled by counting.
+///
+/// Pairing them at CONSTRUCTION removes the counter. The typed `Statement` is
+/// untouched — collapsing the ~20 typed Frame constructs into one untyped blob
+/// would re-encode a node's identity as data, which is a milder strain of the
+/// disease this whole effort exists to cure (RFC-0056 P5.4).
+#[derive(Debug, Clone)]
+pub struct BodyStmt {
+    pub stmt: crate::frame_c::compiler::frame_ast::Statement,
+    /// `Some` iff this statement is a Frame segment.
+    pub seg: Option<SegInfo>,
+}
+
+/// What an expander needs about a Frame segment — carried, never re-derived.
+#[derive(Debug, Clone)]
+pub struct SegInfo {
+    /// The segment's own source text. Expanders take this; none of them needs the
+    /// raw buffer any more (B1b.1).
+    pub text: String,
+    pub kind: FrameSegmentKind,
+    pub indent: usize,
+    pub metadata: SegmentMetadata,
+    /// Byte span in the handler body.
+    ///
+    /// Only `call_segment_ends_statement` still needs it — a LOOKAHEAD over the
+    /// bytes that FOLLOW the segment, i.e. the statement-terminator oracle (#191).
+    /// It dies with the terminator rework; the span is carried so nothing has to
+    /// re-derive it in the meantime.
+    pub span: RegionSpan,
+}
+
 pub fn regions_to_statements(
     bytes: &[u8],
     regions: &[Region],
@@ -692,4 +728,42 @@ pub fn create_skipper(lang: TargetLanguage) -> Box<dyn SyntaxSkipper> {
         // depends on char-literal parsing here.
         TargetLanguage::Graphviz => Box::new(frame_structural::FrameStructuralSkipper),
     }
+}
+
+/// Like [`regions_to_statements`], but each statement is PAIRED with its segment
+/// info at construction — so no consumer has to reconcile two lists by counting.
+///
+/// This is the seam: after this, `handler_body` needs neither the raw bytes nor the
+/// region list. It walks one list of statements that already carry everything.
+pub fn regions_to_body_stmts(bytes: &[u8], regions: &[Region]) -> Vec<BodyStmt> {
+    let stmts = regions_to_statements(bytes, regions);
+    let mut segs = regions.iter().filter_map(|r| match r {
+        Region::FrameSegment {
+            span,
+            kind,
+            indent,
+            metadata,
+        } => Some(SegInfo {
+            text: String::from_utf8_lossy(&bytes[span.start..span.end]).to_string(),
+            kind: *kind,
+            indent: *indent,
+            metadata: metadata.clone(),
+            span: *span,
+        }),
+        Region::NativeText { .. } => None,
+    });
+    stmts
+        .into_iter()
+        .map(|stmt| {
+            let seg = if matches!(
+                stmt,
+                crate::frame_c::compiler::frame_ast::Statement::NativeCode(_)
+            ) {
+                None
+            } else {
+                segs.next()
+            };
+            BodyStmt { stmt, seg }
+        })
+        .collect()
 }

@@ -68,15 +68,13 @@ use crate::frame_c::visitors::TargetLanguage;
 /// whitespace lives. Since the splicer doesn't copy this gap, we MUST include the
 /// indentation in the expansion to preserve proper code structure.
 pub(crate) fn generate_frame_expansion(
-    body_bytes: &[u8],
-    span: &crate::frame_c::compiler::native_region_scanner::RegionSpan,
+    segment_text: &str,
     kind: FrameSegmentKind,
     indent: usize,
     lang: TargetLanguage,
     ctx: &HandlerContext,
     metadata: &SegmentMetadata,
 ) -> String {
-    let segment_text = String::from_utf8_lossy(&body_bytes[span.start..span.end]);
     let indent_str = " ".repeat(indent);
 
     match kind {
@@ -239,12 +237,7 @@ mod tests {
         lang: TargetLanguage,
         ctx: &HandlerContext,
     ) -> String {
-        let bytes = text.as_bytes();
-        let span = crate::frame_c::compiler::native_region_scanner::RegionSpan {
-            start: 0,
-            end: bytes.len(),
-        };
-        generate_frame_expansion(bytes, &span, kind, 0, lang, ctx, &SegmentMetadata::None)
+        generate_frame_expansion(text, kind, 0, lang, ctx, &SegmentMetadata::None)
     }
 
     // =========================================================

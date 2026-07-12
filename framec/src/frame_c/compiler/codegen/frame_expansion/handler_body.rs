@@ -306,7 +306,7 @@ pub(crate) fn emit_handler_body_via_statements(
     ctx: &HandlerContext,
 ) -> String {
     use crate::frame_c::compiler::frame_ast::Statement;
-    use crate::frame_c::compiler::native_region_scanner::regions_to_statements;
+    use crate::frame_c::compiler::native_region_scanner::regions_to_body_stmts;
 
     if span.start >= source.len() || span.end > source.len() || span.start >= span.end {
         return String::new();
@@ -326,13 +326,15 @@ pub(crate) fn emit_handler_body_via_statements(
     };
 
     // Convert regions to typed AST statements
-    let statements = regions_to_statements(body_bytes, &scan_result.regions);
+    // Each statement is PAIRED with its segment info at construction — no ordinal
+    // counter reconciling two parallel lists (RFC-0056 P1.5).
+    let body_stmts = regions_to_body_stmts(body_bytes, &scan_result.regions);
+    let statements: Vec<_> = body_stmts.iter().map(|b| b.stmt.clone()).collect();
 
     // Walk statements — NativeCode passes through, Frame constructs get expanded.
     // We still call generate_frame_expansion() for Frame constructs by looking up
     // the original Region to get the span/kind/metadata/indent it needs.
     let mut out = String::new();
-    let mut frame_idx = 0usize; // Index into FrameSegment regions
     let frame_regions: Vec<_> = scan_result
         .regions
         .iter()
@@ -347,11 +349,8 @@ pub(crate) fn emit_handler_body_via_statements(
 
     for (stmt_idx, stmt) in statements.iter().enumerate() {
         if skip_set.contains(&stmt_idx) {
-            // This statement was consumed by a prior lookahead — skip it
-            // but still advance frame_idx if it's a Frame statement
-            if !matches!(stmt, Statement::NativeCode(_)) {
-                frame_idx += 1;
-            }
+            // Consumed by a prior lookahead. No counter to advance any more — the
+            // segment travels WITH its statement.
             continue;
         }
         match stmt {
@@ -389,15 +388,11 @@ pub(crate) fn emit_handler_body_via_statements(
                 }
             }
             _ => {
-                // Look up the corresponding original Region for expansion parameters
-                if frame_idx < frame_regions.len() {
-                    if let Region::FrameSegment {
-                        span: seg_span,
-                        kind,
-                        indent,
-                        metadata,
-                    } = frame_regions[frame_idx]
+                // The segment info rides ON the statement — no lookup, no counter.
+                if let Some(seg) = &body_stmts[stmt_idx].seg {
                     {
+                        let (kind, indent, metadata) = (&seg.kind, &seg.indent, &seg.metadata);
+                        let seg_text: &str = &seg.text;
                         // ── Transition control flow ──────────────────────
                         // Transition expansions end with `return` to exit the
                         // handler after the state change. But if a return-expr
@@ -469,10 +464,8 @@ pub(crate) fn emit_handler_body_via_statements(
                             // without suffix-probing the emitted text. `trim_end`
                             // mirrors the trailing-whitespace trim the old
                             // `split_transition_return` applied.
-                            let seg_text =
-                                String::from_utf8_lossy(&body_bytes[seg_span.start..seg_span.end]);
                             let (raw_body, return_kw) = super::generate_frame_transition_parts(
-                                &seg_text, *kind, *indent, lang, ctx, metadata,
+                                seg_text, *kind, *indent, lang, ctx, metadata,
                             );
                             let body = raw_body.trim_end();
                             // Multi-line expansion on same line as native code
@@ -505,7 +498,6 @@ pub(crate) fn emit_handler_body_via_statements(
                                 // and the validator warns when the user's
                                 // pattern would silently leak a default value
                                 // (Issue #4 in FRAMEC_BUGS.md).
-                                let next_frame_idx = frame_idx + 1;
                                 for j in (stmt_idx + 1)..statements.len() {
                                     match &statements[j] {
                                         Statement::NativeCode(n) if n.text.trim().is_empty() => {
@@ -513,19 +505,20 @@ pub(crate) fn emit_handler_body_via_statements(
                                         }
                                         Statement::ContextReturnExpr { .. }
                                         | Statement::ReturnCall { .. } => {
-                                            if next_frame_idx < frame_regions.len() {
-                                                if let Region::FrameSegment {
-                                                    span: ret_span,
-                                                    kind: ret_kind,
-                                                    indent: ret_indent,
-                                                    metadata: ret_meta,
-                                                } = frame_regions[next_frame_idx]
+                                            // The return-expr's OWN segment — not
+                                            // "whatever region comes next" (#169's
+                                            // hoist used to guess by ordinal).
+                                            if let Some(ret_seg) = &body_stmts[j].seg {
                                                 {
+                                                    let (ret_kind, ret_indent, ret_meta) = (
+                                                        &ret_seg.kind,
+                                                        &ret_seg.indent,
+                                                        &ret_seg.metadata,
+                                                    );
                                                     if *ret_indent == *indent {
                                                         let ret_exp =
                                                             super::generate_frame_expansion(
-                                                                body_bytes,
-                                                                ret_span,
+                                                                &ret_seg.text,
                                                                 *ret_kind,
                                                                 *ret_indent,
                                                                 lang,
@@ -555,7 +548,7 @@ pub(crate) fn emit_handler_body_via_statements(
                             // the remaining kinds are expanded to a plain string
                             // here.)
                             let expansion = super::generate_frame_expansion(
-                                body_bytes, seg_span, *kind, *indent, lang, ctx, metadata,
+                                seg_text, *kind, *indent, lang, ctx, metadata,
                             );
                             if !out.is_empty() && !out.ends_with('\n') && expansion.contains('\n') {
                                 out.push('\n');
@@ -587,7 +580,7 @@ pub(crate) fn emit_handler_body_via_statements(
                                     kind,
                                     FrameSegmentKind::ContextSelfCall
                                         | FrameSegmentKind::ContextSelfFieldCall
-                                ) && call_segment_ends_statement(body_bytes, seg_span.end);
+                                ) && call_segment_ends_statement(body_bytes, seg.span.end);
                             if is_standalone_self_call {
                                 out.push_str(&" ".repeat(*indent));
                             }
@@ -630,7 +623,6 @@ pub(crate) fn emit_handler_body_via_statements(
                             }
                         }
                     }
-                    frame_idx += 1;
                 }
             }
         }
@@ -764,8 +756,9 @@ fn lower_self_in_code(body_bytes: &[u8], lang: TargetLanguage, ctx: &HandlerCont
                 FrameSegmentKind::ContextSelf
                 | FrameSegmentKind::ContextSelfFieldCall
                 | FrameSegmentKind::ContextSelfCall => {
+                    let seg_text = String::from_utf8_lossy(&body_bytes[rspan.start..rspan.end]);
                     let expansion = super::generate_frame_expansion(
-                        body_bytes, rspan, *kind, *indent, lang, ctx, metadata,
+                        &seg_text, *kind, *indent, lang, ctx, metadata,
                     );
                     edits.push((start, end, expansion));
                 }
