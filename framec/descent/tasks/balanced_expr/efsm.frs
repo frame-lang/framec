@@ -1,0 +1,30 @@
+@@[target("rust")]
+
+// TASK: balanced_expr — scan from a position to the end of a balanced expression.
+//
+//   balanced_expr(bytes, i) -> Option<usize>
+//   "starting at i, where does this bracketed expression close?"
+//
+// This is `ExprScannerFsm`'s job: the single balanced-delimiter primitive behind
+// domain initializers, state-var initializers, `@@:return = expr`, and call args.
+//
+// POWER: a COUNTER AUTOMATON — not a PDA.
+// The real scanner counts ANY opener and ANY closer and never matches delimiter
+// KINDS (`expr_scanner.frs:76`: `b'(' | b'[' | b'{' => depth += 1`). So a single
+// unbounded counter suffices, and a stack buys nothing.
+//
+// CANDIDATE: @@fsm + an unbounded `depth` domain var mutated in actions, branched
+// on with a `when` guard. That is a counter automaton — a deliberate step BEYOND
+// regular, and it must be named as such.
+@@fsm BalancedExpr(text: bytes) : int = 0 {
+    $Scan:
+        /[([{]/  { self.depth = self.depth + 1 }  -> $Scan
+      | /[)\]}]/ { self.depth = self.depth - 1 }
+                 -> ( $Done when self.depth == 0, $Scan when true )
+      | /[^()\[\]{}]+/ -> $Scan
+
+    $Done: @@:cursor
+
+    domain:
+        depth: int = 0
+}

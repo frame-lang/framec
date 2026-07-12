@@ -1,0 +1,38 @@
+@@[target("rust")]
+
+// TASK: balanced_expr. (Same task as efsm.frs.)
+//
+// CANDIDATE: @@fsm with a BOUNDED, SATURATING depth counter (K = 3).
+//
+// This is the candidate the Machine Family RFC's `int(lo..hi)` would produce: a
+// finite-domain counter, so the `when` guard observes only finite information, so
+// the whole machine is a genuine DFA — CERTIFIED REGULAR, with decidable
+// equivalence, O(1) memory, the lot.
+//
+// It is also WRONG, and that is the point of including it.
+//
+// `int(0..K)` does not exist yet, so the saturation is written by hand — the
+// semantics are identical: at the bound, `depth + 1 == depth`.
+//
+// EXPECTED VERDICT: FAIL(language-changed) — RFC-0056.1 D5.
+//
+// Bounding the depth does not APPROXIMATE the scanner; it CHANGES THE LANGUAGE IT
+// RECOGNIZES. Past depth K the counter cannot distinguish K from K+1, so the
+// closers unwind one bracket early and the region ends short — `accepted == true`,
+// no diagnostic, and the tail leaks into whatever is scanned next.
+//
+// It will be the FASTEST candidate here, and zero-copy, and certified. A battery
+// that ranked on cost would recommend it. That is exactly why correctness gates
+// and cost never does.
+@@fsm BalancedExprK3(text: bytes) : int = 0 {
+    $Scan:
+        /[([{]/  { if self.depth < 3 { self.depth = self.depth + 1 } }  -> $Scan
+      | /[)\]}]/ { if self.depth > 0 { self.depth = self.depth - 1 } }
+                 -> ( $Done when self.depth == 0, $Scan when true )
+      | /[^()\[\]{}]+/ -> $Scan
+
+    $Done: @@:cursor
+
+    domain:
+        depth: int = 0
+}
