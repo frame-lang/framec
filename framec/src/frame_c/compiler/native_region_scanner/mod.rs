@@ -85,7 +85,18 @@ pub enum SegmentMetadata {
     /// `@@:return = expr` or `@@:return` (bare read)
     ContextReturn { assign_expr: Option<String> },
     /// `push$` optionally followed by `-> $State` on the same line
-    StackPush { transition_target: Option<String> },
+    /// `push$`, optionally followed by a transition (`push$ -> $S(7)`).
+    ///
+    /// Carries the **whole** transition — args, label, pop/forward flags — not just
+    /// the target's name (#211). Previously this node held `Option<String>`, so the
+    /// scanner parsed `-> $S(7)` in full and then threw everything but the name
+    /// away: `push$ -> $S(7)` emitted `__prepareEnter("S", [], [])` and crashed at
+    /// runtime with an IndexError, while the identical `-> $S(7)` worked.
+    ///
+    /// A node that cannot hold what the parser found (RFC-0056 P1/P7).
+    StackPush {
+        transition: Option<Box<SegmentMetadata>>,
+    },
     /// Segments with no additional parsed content
     None,
 }
@@ -246,10 +257,18 @@ pub fn regions_to_statements(
                         }));
                     }
                     FrameSegmentKind::StackPush => {
+                        // #211: the AST node still carries only the target name.
+                        // Codegen reads the full transition from the segment's
+                        // metadata (which now keeps it), so nothing is lost.
                         let transition_target = match metadata {
-                            SegmentMetadata::StackPush { transition_target } => {
-                                transition_target.clone()
-                            }
+                            SegmentMetadata::StackPush {
+                                transition: Some(t),
+                            } => match &**t {
+                                SegmentMetadata::Transition { target_state, .. } => {
+                                    Some(target_state.clone())
+                                }
+                                _ => None,
+                            },
                             _ => None,
                         };
                         stmts.push(Statement::StackPush(StackPushAst {
@@ -571,10 +590,13 @@ pub fn enrich_handler_body_metadata(
     let mut push_idx = 0usize;
     for stmt in body.statements.iter_mut() {
         if let Statement::StackPush(p) = stmt {
-            if let Some(SegmentMetadata::StackPush { transition_target }) =
-                scanner_pushes.get(push_idx).copied()
+            if let Some(SegmentMetadata::StackPush {
+                transition: Some(t),
+            }) = scanner_pushes.get(push_idx).copied()
             {
-                p.transition_target = transition_target.clone();
+                if let SegmentMetadata::Transition { target_state, .. } = &**t {
+                    p.transition_target = Some(target_state.clone());
+                }
             }
             push_idx += 1;
         }

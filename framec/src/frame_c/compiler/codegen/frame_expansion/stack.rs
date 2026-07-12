@@ -32,12 +32,48 @@ pub(super) fn expand_stack_push(
     let segment_text = String::from_utf8_lossy(&body_bytes[span.start..span.end]);
     let indent_str = " ".repeat(indent);
 
-    let target = match metadata {
+    // #211: the node now carries the WHOLE transition, not just its name.
+    let transition: Option<&SegmentMetadata> = match metadata {
         SegmentMetadata::StackPush {
-            transition_target: Some(t),
-        } => t.clone(),
+            transition: Some(t),
+        } => Some(&**t),
+        _ => None,
+    };
+    let target = match transition {
+        Some(SegmentMetadata::Transition { target_state, .. }) => target_state.clone(),
         _ => String::new(),
     };
+    // Does the transition carry args? If so, this file cannot emit it — the
+    // transition expander already knows how to write state/enter/exit args on
+    // every target, and duplicating that here is what lost them in the first place
+    // (RFC-0056 P11: one emitter, not two).
+    let has_args = matches!(
+        transition,
+        Some(SegmentMetadata::Transition {
+            state_args: Some(_),
+            ..
+        }) | Some(SegmentMetadata::Transition {
+            enter_args: Some(_),
+            ..
+        }) | Some(SegmentMetadata::Transition {
+            exit_args: Some(_),
+            ..
+        })
+    );
+    if has_args {
+        // Emit the push, then DELEGATE the transition. `push$` saves the current
+        // compartment; the transition then does exactly what it does anywhere else.
+        let push_only = push_compartment_line(&indent_str, lang, ctx);
+        let (t_body, t_term) = super::transition::expand_transition(
+            body_bytes,
+            span,
+            indent,
+            lang,
+            ctx,
+            transition.expect("has_args implies Some"),
+        );
+        return (format!("{}\n{}", push_only, t_body), t_term);
+    }
 
     // push$ saves a REFERENCE to the current compartment on the
     // state stack — not a copy. In GC languages this is a direct
@@ -291,4 +327,49 @@ pub(super) fn expand_stack_pop(
     };
     // Standalone `pop$` is not terminal — it never exits the handler.
     (body, "")
+}
+
+/// The per-language "save the current compartment onto the state stack" line.
+///
+/// Extracted (#211) so an arg-bearing `push$ -> $S(7)` can emit the push and then
+/// DELEGATE the transition to the transition expander, instead of this file
+/// re-implementing transition emission per target — which is how the args got lost.
+fn push_compartment_line(indent_str: &str, lang: TargetLanguage, ctx: &HandlerContext) -> String {
+    match lang {
+        TargetLanguage::Rust => super::super::rust_system::rust_bare_push(indent_str),
+        TargetLanguage::C => format!(
+            "{}{}_FrameVec_push(self->_state_stack, {}_Compartment_ref(self->__compartment));",
+            indent_str, ctx.system_name, ctx.system_name
+        ),
+        TargetLanguage::Cpp => format!("{}_state_stack.push_back(__compartment);", indent_str),
+        TargetLanguage::Go => format!(
+            "{}s._state_stack = append(s._state_stack, s.__compartment)",
+            indent_str
+        ),
+        TargetLanguage::Php => format!(
+            "{}$this->_state_stack[] = $this->__compartment;",
+            indent_str
+        ),
+        TargetLanguage::Lua => format!(
+            "{}self._state_stack[#self._state_stack + 1] = self.__compartment",
+            indent_str
+        ),
+        TargetLanguage::Python3 => {
+            format!("{}self._state_stack.append(self.__compartment)", indent_str)
+        }
+        TargetLanguage::GDScript => {
+            format!("{}self._state_stack.append(self.__compartment)", indent_str)
+        }
+        TargetLanguage::TypeScript | TargetLanguage::JavaScript => {
+            format!("{}this._state_stack.push(this.__compartment);", indent_str)
+        }
+        TargetLanguage::Dart => format!("{}this._state_stack.add(this.__compartment);", indent_str),
+        TargetLanguage::Java => format!("{}_state_stack.add(__compartment);", indent_str),
+        TargetLanguage::Kotlin => format!("{}_state_stack.add(__compartment)", indent_str),
+        TargetLanguage::Swift => format!("{}_state_stack.append(__compartment)", indent_str),
+        TargetLanguage::CSharp => format!("{}_state_stack.Add(__compartment);", indent_str),
+        TargetLanguage::Ruby => format!("{}@_state_stack.push(@__compartment)", indent_str),
+        // Exhaustive by intent: GraphViz emits a diagram, not a runtime.
+        TargetLanguage::Graphviz => String::new(),
+    }
 }
