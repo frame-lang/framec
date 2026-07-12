@@ -58,10 +58,25 @@ impl LanguageBackend for JavaScriptBackend {
                 methods,
                 base_classes,
                 is_abstract: _,
+                input,
                 ..
             } => {
+                ctx.input = input.clone();
+                // RFC-0056 P9 (#209): a system declaring an alphabet-typed header
+                // param BORROWS its input. The adapter holds the caller's buffer
+                // by reference — zero copy.
+                let mut input_adapter_src = String::new();
+                if let Some(spec) = input {
+                    input_adapter_src =
+                        crate::frame_c::compiler::codegen::codegen_utils::input_adapter(
+                            TargetLanguage::JavaScript,
+                            name,
+                            &spec.elem,
+                        );
+                }
                 ctx.is_framework_helper = *is_framework_helper;
                 let mut result = String::new();
+                result.push_str(&input_adapter_src);
 
                 let extends = if base_classes.is_empty() {
                     String::new()
@@ -252,7 +267,20 @@ impl LanguageBackend for JavaScriptBackend {
                 ctx.pop_indent();
 
                 // Emit bare `constructor()`
-                let mut result = format!("{}constructor() {{\n", ctx.get_indent());
+                let (in_sig, in_store) = match &ctx.input {
+                    Some(spec) => (
+                        spec.field.clone(),
+                        format!(
+                            "{}    this.{f} = new {a}({f});\n",
+                            ctx.get_indent(),
+                            f = spec.field,
+                            a = spec.adapter
+                        ),
+                    ),
+                    None => (String::new(), String::new()),
+                };
+                let mut result = format!("{}constructor({}) {{\n", ctx.get_indent(), in_sig);
+                result.push_str(&in_store);
                 for line in &framework_lines {
                     result.push_str(line);
                 }
@@ -261,6 +289,29 @@ impl LanguageBackend for JavaScriptBackend {
                 // Emit `_frame_init(<params>)` method
                 result.push('\n');
                 let frame_init_params = self.emit_params(params);
+                // RFC-0056 P9: __create takes the buffer too, so it can hand it to
+                // the bare constructor. Typed per-target (P11's table), never with
+                // the raw Frame alphabet name.
+                let frame_init_params = match &ctx.input {
+                    Some(spec) => {
+                        let bt =
+                            crate::frame_c::compiler::codegen::codegen_utils::input_buffer_type(
+                                TargetLanguage::JavaScript,
+                            );
+                        let head = if bt.is_empty() {
+                            spec.field.clone()
+                        } else {
+                            format!("{} {}", bt, spec.field)
+                        };
+                        if frame_init_params.is_empty() {
+                            head
+                        } else {
+                            format!("{}, {}", head, frame_init_params)
+                        }
+                    }
+                    None => frame_init_params,
+                };
+
                 result.push_str(&format!(
                     "{}_frame_init({}) {{\n",
                     ctx.get_indent(),
@@ -281,9 +332,13 @@ impl LanguageBackend for JavaScriptBackend {
                 ));
                 ctx.push_indent();
                 result.push_str(&format!(
-                    "{}const c = new {}();\n",
+                    "{}const c = new {}({});\n",
                     ctx.get_indent(),
-                    class_name
+                    class_name,
+                    ctx.input
+                        .as_ref()
+                        .map(|s| s.field.clone())
+                        .unwrap_or_default()
                 ));
                 let arg_pass: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
                 result.push_str(&format!(

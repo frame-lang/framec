@@ -57,10 +57,25 @@ impl LanguageBackend for DartBackend {
                 methods,
                 base_classes,
                 is_abstract,
+                input,
                 ..
             } => {
+                ctx.input = input.clone();
+                // RFC-0056 P9 (#209): a system declaring an alphabet-typed header
+                // param BORROWS its input. The adapter holds the caller's buffer
+                // by reference — zero copy.
+                let mut input_adapter_src = String::new();
+                if let Some(spec) = input {
+                    input_adapter_src =
+                        crate::frame_c::compiler::codegen::codegen_utils::input_adapter(
+                            TargetLanguage::Dart,
+                            name,
+                            &spec.elem,
+                        );
+                }
                 ctx.is_framework_helper = *is_framework_helper;
                 let mut result = String::new();
+                result.push_str(&input_adapter_src);
 
                 let abstract_kw = if *is_abstract { "abstract " } else { "" };
                 let extends = if base_classes.is_empty() {
@@ -278,7 +293,20 @@ impl LanguageBackend for DartBackend {
                 ctx.pop_indent();
 
                 // Emit `Counter()` — bare framework
-                let mut result = format!("{}{}() {{\n", ctx.get_indent(), class_name);
+                let (in_sig, in_store) = match &ctx.input {
+                    Some(spec) => (
+                        format!("List<int> {}", spec.field),
+                        format!(
+                            "{}    this.{f} = {a}({f});\n",
+                            ctx.get_indent(),
+                            f = spec.field,
+                            a = spec.adapter
+                        ),
+                    ),
+                    None => (String::new(), String::new()),
+                };
+                let mut result = format!("{}{}({}) {{\n", ctx.get_indent(), class_name, in_sig);
+                result.push_str(&in_store);
                 for line in &framework_lines {
                     result.push_str(line);
                 }

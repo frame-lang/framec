@@ -36,9 +36,24 @@ impl LanguageBackend for CBackend {
                 name,
                 fields,
                 methods,
+                input,
                 ..
             } => {
+                ctx.input = input.clone();
+                // RFC-0056 P9 (#209): a system declaring an alphabet-typed header
+                // param BORROWS its input. The adapter holds the caller's buffer
+                // by reference — zero copy.
+                let mut input_adapter_src = String::new();
+                if let Some(spec) = input {
+                    input_adapter_src =
+                        crate::frame_c::compiler::codegen::codegen_utils::input_adapter(
+                            TargetLanguage::C,
+                            name,
+                            &spec.elem,
+                        );
+                }
                 let mut result = String::new();
+                result.push_str(&input_adapter_src);
 
                 // Forward declarations for the struct and functions
                 result.push_str(&format!("// Forward declarations\n"));

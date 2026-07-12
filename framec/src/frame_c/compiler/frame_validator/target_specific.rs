@@ -334,7 +334,17 @@ impl FrameValidator {
         target: crate::frame_c::visitors::TargetLanguage,
     ) {
         use crate::frame_c::visitors::TargetLanguage as T;
-        let supported = matches!(target, T::Rust | T::Python3);
+        let supported = matches!(
+            target,
+            T::Rust
+                | T::Python3
+                | T::TypeScript
+                | T::JavaScript
+                | T::Java
+                | T::CSharp
+                | T::Swift
+                | T::Dart
+        );
         if supported {
             return;
         }
@@ -344,8 +354,8 @@ impl FrameValidator {
                     "E620",
                     format!(
                         "system '{}' declares a borrowed input source ('{}: {}'), which is not yet \
-                         supported on the {:?} target. Implemented on Rust and Python; the other \
-                         backends are pending (RFC-0056 P9 / #209). Remove the input param, or \
+                         supported on the {:?} target. Implemented on Rust, Python, TypeScript, JavaScript, Java, C#, Swift and \
+                         Dart; Kotlin/Go/Ruby/PHP/Lua/GDScript/C/C++ are pending (RFC-0056 P9 / #209). Remove the input param, or \
                          target Rust/Python.",
                         system.name,
                         p.name,

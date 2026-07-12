@@ -47,10 +47,25 @@ impl LanguageBackend for KotlinBackend {
                 methods,
                 base_classes,
                 is_abstract,
+                input,
                 ..
             } => {
+                ctx.input = input.clone();
+                // RFC-0056 P9 (#209): a system declaring an alphabet-typed header
+                // param BORROWS its input. The adapter holds the caller's buffer
+                // by reference — zero copy.
+                let mut input_adapter_src = String::new();
+                if let Some(spec) = input {
+                    input_adapter_src =
+                        crate::frame_c::compiler::codegen::codegen_utils::input_adapter(
+                            TargetLanguage::Kotlin,
+                            name,
+                            &spec.elem,
+                        );
+                }
                 ctx.is_framework_helper = *is_framework_helper;
                 let mut result = String::new();
+                result.push_str(&input_adapter_src);
                 let abstract_kw = if *is_abstract { "abstract " } else { "" };
                 let extends = if base_classes.is_empty() {
                     String::new()

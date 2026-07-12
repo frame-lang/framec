@@ -54,6 +54,25 @@ pub(crate) fn generate_fields(
     syntax: &super::super::backend::ClassSyntax,
 ) -> Vec<Field> {
     let mut fields = Vec::new();
+
+    // RFC-0056 P9 (#209): a system that declares an alphabet-typed header param
+    // holds its BORROWED input as a real field, typed as the generated adapter.
+    // (Rust is the exception — it uses a generic + trait so the borrow checker can
+    // see the lifetime, and emits the field in its own backend.)
+    if !matches!(syntax.language, TargetLanguage::Rust) {
+        if let Some(p) = system
+            .params
+            .iter()
+            .find(|p| p.kind == crate::frame_c::compiler::frame_ast::ParamKind::Input)
+        {
+            fields.push(
+                Field::new(&p.name)
+                    .with_type(&format!("{}Input", system.name))
+                    .with_visibility(Visibility::Public),
+            );
+        }
+    }
+
     let compartment_type = format!("{}Compartment", system.name);
 
     // State stack - for push/pop state operations

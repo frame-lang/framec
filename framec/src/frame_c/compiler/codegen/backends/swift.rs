@@ -47,10 +47,25 @@ impl LanguageBackend for SwiftBackend {
                 base_classes,
                 is_abstract,
                 visibility,
+                input,
                 ..
             } => {
+                ctx.input = input.clone();
+                // RFC-0056 P9 (#209): a system declaring an alphabet-typed header
+                // param BORROWS its input. The adapter holds the caller's buffer
+                // by reference — zero copy.
+                let mut input_adapter_src = String::new();
+                if let Some(spec) = input {
+                    input_adapter_src =
+                        crate::frame_c::compiler::codegen::codegen_utils::input_adapter(
+                            TargetLanguage::Swift,
+                            name,
+                            &spec.elem,
+                        );
+                }
                 ctx.is_framework_helper = *is_framework_helper;
                 let mut result = String::new();
+                result.push_str(&input_adapter_src);
                 let vis_kw = match visibility {
                     Visibility::Public => "public ",
                     _ => "",
@@ -241,7 +256,20 @@ impl LanguageBackend for SwiftBackend {
                 ctx.pop_indent();
 
                 // Emit `init()` — bare framework
-                let mut result = format!("{}init() {{\n", ctx.get_indent());
+                let (in_sig, in_store) = match &ctx.input {
+                    Some(spec) => (
+                        format!("_ {}: [UInt8]", spec.field),
+                        format!(
+                            "{}    self.{f} = {a}({f})\n",
+                            ctx.get_indent(),
+                            f = spec.field,
+                            a = spec.adapter
+                        ),
+                    ),
+                    None => (String::new(), String::new()),
+                };
+                let mut result = format!("{}init({}) {{\n", ctx.get_indent(), in_sig);
+                result.push_str(&in_store);
                 ctx.push_indent();
                 for line in &framework_lines {
                     result.push_str(line);

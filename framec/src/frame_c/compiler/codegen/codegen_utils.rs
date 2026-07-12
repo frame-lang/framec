@@ -1072,6 +1072,23 @@ pub(crate) fn utf8_char_len(first_byte: u8) -> usize {
 /// Duplicating this across seventeen backend arms is exactly the drift generator
 /// RFC-0056 P11 warns about — five zero-literal tables and three disagreeing
 /// literal emitters already exist. One table.
+/// RFC-0056 P9: the target's spelling for the RAW buffer a borrowing system is
+/// constructed from — the type of `over(src)`'s argument, before the adapter wraps
+/// it. Same table, same reason (P11).
+pub(crate) fn input_buffer_type(lang: TargetLanguage) -> &'static str {
+    match lang {
+        TargetLanguage::Java | TargetLanguage::CSharp => "byte[]",
+        TargetLanguage::Kotlin => "ByteArray",
+        TargetLanguage::Swift => "[UInt8]",
+        TargetLanguage::Dart => "List<int>",
+        TargetLanguage::TypeScript => "ArrayLike<number>",
+        TargetLanguage::Go => "[]byte",
+        TargetLanguage::Cpp | TargetLanguage::C => "const unsigned char*",
+        // dynamically typed: no annotation
+        _ => "",
+    }
+}
+
 pub(crate) fn input_adapter(lang: TargetLanguage, sys: &str, elem: &str) -> String {
     let _ = elem;
     match lang {

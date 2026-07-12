@@ -126,10 +126,25 @@ impl LanguageBackend for JavaBackend {
                 base_classes,
                 is_abstract,
                 visibility,
+                input,
                 ..
             } => {
+                ctx.input = input.clone();
+                // RFC-0056 P9 (#209): a system declaring an alphabet-typed header
+                // param BORROWS its input. The adapter holds the caller's buffer
+                // by reference — zero copy.
+                let mut input_adapter_src = String::new();
+                if let Some(spec) = input {
+                    input_adapter_src =
+                        crate::frame_c::compiler::codegen::codegen_utils::input_adapter(
+                            TargetLanguage::Java,
+                            name,
+                            &spec.elem,
+                        );
+                }
                 ctx.is_framework_helper = *is_framework_helper;
                 let mut result = String::new();
+                result.push_str(&input_adapter_src);
                 let vis_kw = match visibility {
                     Visibility::Public => "public ",
                     _ => "",
@@ -337,7 +352,22 @@ impl LanguageBackend for JavaBackend {
                 ctx.pop_indent();
 
                 // Emit `public Counter()` — bare framework
-                let mut result = format!("{}public {}() {{\n", ctx.get_indent(), class_name);
+                // RFC-0056 P9: a borrowing system takes its buffer at construction.
+                let (in_sig, in_store) = match &ctx.input {
+                    Some(spec) => (
+                        format!("byte[] {f}", f = spec.field),
+                        format!(
+                            "{}    this.{f} = new {a}({f});\n",
+                            ctx.get_indent(),
+                            f = spec.field,
+                            a = spec.adapter
+                        ),
+                    ),
+                    None => (String::new(), String::new()),
+                };
+                let mut result =
+                    format!("{}public {}({}) {{\n", ctx.get_indent(), class_name, in_sig);
+                result.push_str(&in_store);
                 ctx.push_indent();
                 for line in &framework_lines {
                     result.push_str(line);
@@ -353,6 +383,29 @@ impl LanguageBackend for JavaBackend {
                 // member references and `this.` to target the local `c`.
                 result.push('\n');
                 let create_params = self.emit_params(params);
+                // RFC-0056 P9: __create takes the buffer too, so it can hand it to
+                // the bare constructor. Typed per-target (P11's table), never with
+                // the raw Frame alphabet name.
+                let create_params = match &ctx.input {
+                    Some(spec) => {
+                        let bt =
+                            crate::frame_c::compiler::codegen::codegen_utils::input_buffer_type(
+                                TargetLanguage::Java,
+                            );
+                        let head = if bt.is_empty() {
+                            spec.field.clone()
+                        } else {
+                            format!("{} {}", bt, spec.field)
+                        };
+                        if create_params.is_empty() {
+                            head
+                        } else {
+                            format!("{}, {}", head, create_params)
+                        }
+                    }
+                    None => create_params,
+                };
+
                 result.push_str(&format!(
                     "{}public static {} __create({}) {{\n",
                     ctx.get_indent(),
@@ -361,10 +414,14 @@ impl LanguageBackend for JavaBackend {
                 ));
                 ctx.push_indent();
                 result.push_str(&format!(
-                    "{}{} c = new {}();\n",
+                    "{}{} c = new {}({});\n",
                     ctx.get_indent(),
                     class_name,
-                    class_name
+                    class_name,
+                    ctx.input
+                        .as_ref()
+                        .map(|s| s.field.clone())
+                        .unwrap_or_default()
                 ));
                 for line in &frame_init_lines {
                     let rewritten = rewrite_java_member_refs_for_factory(line);
