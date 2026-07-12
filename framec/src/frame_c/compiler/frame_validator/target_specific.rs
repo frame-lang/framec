@@ -344,6 +344,11 @@ impl FrameValidator {
                 | T::CSharp
                 | T::Swift
                 | T::Dart
+                | T::Ruby
+                | T::Php
+                | T::Lua
+                | T::GDScript
+                | T::Go
         );
         if supported {
             return;

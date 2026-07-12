@@ -263,13 +263,34 @@ impl LanguageBackend for LuaBackend {
                 ctx.pop_indent();
 
                 // Emit `function Counter.new()` — bare
-                let mut result = format!("{}function {}.new()\n", ctx.get_indent(), class_name);
+                // RFC-0056 P9: a borrowing system takes its buffer at construction.
+                // The adapter holds it BY REFERENCE — zero copy.
+                let (in_sig, in_store) = match &ctx.input {
+                    Some(spec) => (
+                        spec.field.clone(),
+                        format!(
+                            "{}    self.{f} = {a}.new({f})\n",
+                            ctx.get_indent(),
+                            f = spec.field,
+                            a = spec.adapter
+                        ),
+                    ),
+                    None => (String::new(), String::new()),
+                };
+                let mut result = format!(
+                    "{}function {}.new({})\n",
+                    ctx.get_indent(),
+                    class_name,
+                    in_sig
+                );
                 ctx.push_indent();
                 result.push_str(&format!(
                     "{}local self = setmetatable({{}}, {})\n",
                     ctx.get_indent(),
                     class_name
                 ));
+                // RFC-0056 P9: store the borrowed buffer AFTER `self` exists.
+                result.push_str(&in_store);
                 ctx.pop_indent();
                 for line in &framework_lines {
                     result.push_str(line);

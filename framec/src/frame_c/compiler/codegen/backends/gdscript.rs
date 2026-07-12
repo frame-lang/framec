@@ -408,7 +408,22 @@ impl LanguageBackend for GDScriptBackend {
                 ctx.pop_indent();
 
                 // Emit `func _init():` — bare framework
-                let mut result = format!("{}func _init():\n", ctx.get_indent());
+                // RFC-0056 P9: a borrowing system takes its buffer at construction.
+                // The adapter holds it BY REFERENCE — zero copy.
+                let (in_sig, in_store) = match &ctx.input {
+                    Some(spec) => (
+                        spec.field.clone(),
+                        format!(
+                            "{}    self.{f} = {a}.new({f})\n",
+                            ctx.get_indent(),
+                            f = spec.field,
+                            a = spec.adapter
+                        ),
+                    ),
+                    None => (String::new(), String::new()),
+                };
+                let mut result = format!("{}func _init({}):\n", ctx.get_indent(), in_sig);
+                result.push_str(&in_store);
                 ctx.push_indent();
                 if framework_lines.is_empty() {
                     result.push_str(&format!("{}pass\n", ctx.get_indent()));

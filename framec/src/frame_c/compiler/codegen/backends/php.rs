@@ -250,7 +250,26 @@ impl LanguageBackend for PhpBackend {
                 }
                 ctx.pop_indent();
 
-                let mut result = format!("{}public function __construct() {{\n", ctx.get_indent());
+                // RFC-0056 P9: a borrowing system takes its buffer at construction.
+                // The adapter holds it BY REFERENCE — zero copy.
+                let (in_sig, in_store) = match &ctx.input {
+                    Some(spec) => (
+                        format!("${}", spec.field),
+                        format!(
+                            "{}    $this->{f} = new {a}(${f});\n",
+                            ctx.get_indent(),
+                            f = spec.field,
+                            a = spec.adapter
+                        ),
+                    ),
+                    None => (String::new(), String::new()),
+                };
+                let mut result = format!(
+                    "{}public function __construct({}) {{\n",
+                    ctx.get_indent(),
+                    in_sig
+                );
+                result.push_str(&in_store);
                 for line in &framework_lines {
                     result.push_str(line);
                 }
@@ -270,13 +289,27 @@ impl LanguageBackend for PhpBackend {
 
                 result.push('\n');
                 let create_params = self.emit_params(params);
+                let create_params = match &ctx.input {
+                    Some(spec) if create_params.is_empty() => format!("${}", spec.field),
+                    Some(spec) => format!("${}, {}", spec.field, create_params),
+                    None => create_params,
+                };
                 result.push_str(&format!(
                     "{}public static function _create({}): self {{\n",
                     ctx.get_indent(),
                     create_params
                 ));
                 ctx.push_indent();
-                result.push_str(&format!("{}$c = new self();\n", ctx.get_indent()));
+                let in_pass = ctx
+                    .input
+                    .as_ref()
+                    .map(|s| format!("${}", s.field))
+                    .unwrap_or_default();
+                result.push_str(&format!(
+                    "{}$c = new self({});\n",
+                    ctx.get_indent(),
+                    in_pass
+                ));
                 let arg_pass: Vec<String> = params.iter().map(|p| format!("${}", p.name)).collect();
                 result.push_str(&format!(
                     "{}$c->_frame_init({});\n",
