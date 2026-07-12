@@ -187,7 +187,17 @@ pub fn regions_to_statements(
         match region {
             Region::NativeText { span } => {
                 let text = String::from_utf8_lossy(&bytes[span.start..span.end]).to_string();
-                stmts.push(Statement::NativeCode(text));
+                // RFC-0056 P4: carry the span the scanner already knows, so no
+                // later pass has to recover it from emitted output (P6).
+                // `terminated` / `block_depth` stay None until the per-language
+                // scanner fills them — it is the only thing that can answer them
+                // honestly (it holds the string/comment skipper).
+                stmts.push(Statement::NativeCode(NativeStmt {
+                    text,
+                    span: Span::new(span.start, span.end),
+                    terminated: None,
+                    block_depth: None,
+                }));
             }
             Region::FrameSegment {
                 span,
@@ -224,7 +234,7 @@ pub fn regions_to_statements(
                             }));
                         } else {
                             // Fallback: store raw text
-                            stmts.push(Statement::NativeCode(raw()));
+                            stmts.push(Statement::NativeCode(NativeStmt::from_text(raw())));
                         }
                     }
                     FrameSegmentKind::Forward => {
@@ -261,7 +271,7 @@ pub fn regions_to_statements(
                                 span: seg_span,
                             });
                         } else {
-                            stmts.push(Statement::NativeCode(raw()));
+                            stmts.push(Statement::NativeCode(NativeStmt::from_text(raw())));
                         }
                     }
                     FrameSegmentKind::StateVarAssign => {
@@ -278,7 +288,7 @@ pub fn regions_to_statements(
                                 span: seg_span,
                             });
                         } else {
-                            stmts.push(Statement::NativeCode(raw()));
+                            stmts.push(Statement::NativeCode(NativeStmt::from_text(raw())));
                         }
                     }
                     FrameSegmentKind::ContextReturn => {
@@ -301,7 +311,7 @@ pub fn regions_to_statements(
                                 span: seg_span,
                             });
                         } else {
-                            stmts.push(Statement::NativeCode(raw()));
+                            stmts.push(Statement::NativeCode(NativeStmt::from_text(raw())));
                         }
                     }
                     FrameSegmentKind::ReturnCall => {
@@ -311,7 +321,7 @@ pub fn regions_to_statements(
                                 span: seg_span,
                             });
                         } else {
-                            stmts.push(Statement::NativeCode(raw()));
+                            stmts.push(Statement::NativeCode(NativeStmt::from_text(raw())));
                         }
                     }
                     FrameSegmentKind::ContextEvent => {
@@ -324,7 +334,7 @@ pub fn regions_to_statements(
                                 span: seg_span,
                             });
                         } else {
-                            stmts.push(Statement::NativeCode(raw()));
+                            stmts.push(Statement::NativeCode(NativeStmt::from_text(raw())));
                         }
                     }
                     FrameSegmentKind::ContextDataAssign => {
@@ -335,7 +345,7 @@ pub fn regions_to_statements(
                                 span: seg_span,
                             });
                         } else {
-                            stmts.push(Statement::NativeCode(raw()));
+                            stmts.push(Statement::NativeCode(NativeStmt::from_text(raw())));
                         }
                     }
                     FrameSegmentKind::ContextParams => {
@@ -345,7 +355,7 @@ pub fn regions_to_statements(
                                 span: seg_span,
                             });
                         } else {
-                            stmts.push(Statement::NativeCode(raw()));
+                            stmts.push(Statement::NativeCode(NativeStmt::from_text(raw())));
                         }
                     }
                     FrameSegmentKind::SystemInstantiation => {
@@ -362,7 +372,7 @@ pub fn regions_to_statements(
                                 span: seg_span,
                             });
                         } else {
-                            stmts.push(Statement::NativeCode(raw()));
+                            stmts.push(Statement::NativeCode(NativeStmt::from_text(raw())));
                         }
                     }
                     FrameSegmentKind::ContextSelfCall => {
@@ -373,7 +383,7 @@ pub fn regions_to_statements(
                                 span: seg_span,
                             });
                         } else {
-                            stmts.push(Statement::NativeCode(raw()));
+                            stmts.push(Statement::NativeCode(NativeStmt::from_text(raw())));
                         }
                     }
                     FrameSegmentKind::ContextSelf => {
@@ -391,13 +401,13 @@ pub fn regions_to_statements(
                         stmts.push(Statement::ContextSystemState { span: seg_span });
                     }
                     FrameSegmentKind::ContextSystemBare => {
-                        stmts.push(Statement::NativeCode(raw()));
+                        stmts.push(Statement::NativeCode(NativeStmt::from_text(raw())));
                     }
                     FrameSegmentKind::ContextSystemStateReserved => {
                         // Reserved (RFC-0045) — validation rejects it with E608
                         // before codegen; emit as native so nothing leaks if a
                         // caller skips validation.
-                        stmts.push(Statement::NativeCode(raw()));
+                        stmts.push(Statement::NativeCode(NativeStmt::from_text(raw())));
                     }
                     FrameSegmentKind::ReturnStatement => {
                         // Extract return expression if present

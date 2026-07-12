@@ -355,7 +355,8 @@ pub(crate) fn emit_handler_body_via_statements(
             continue;
         }
         match stmt {
-            Statement::NativeCode(text) => {
+            Statement::NativeCode(native) => {
+                let text = &native.text;
                 if let Some(guard) = pending_guard.take() {
                     // Tight option 2 (D1 fix): the transition guard must
                     // fire AT A STATEMENT BOUNDARY, not mid-expression.
@@ -505,7 +506,7 @@ pub(crate) fn emit_handler_body_via_statements(
                                 let next_frame_idx = frame_idx + 1;
                                 for j in (stmt_idx + 1)..statements.len() {
                                     match &statements[j] {
-                                        Statement::NativeCode(text) if text.trim().is_empty() => {
+                                        Statement::NativeCode(n) if n.text.trim().is_empty() => {
                                             continue
                                         }
                                         Statement::ContextReturnExpr { .. }

@@ -75,7 +75,7 @@ impl FrameValidator {
     ) {
         for stmt in &body.statements {
             let code = match stmt {
-                Statement::NativeCode(s) => s.as_str(),
+                Statement::NativeCode(n) => n.text.as_str(),
                 _ => continue,
             };
             for field in const_fields {

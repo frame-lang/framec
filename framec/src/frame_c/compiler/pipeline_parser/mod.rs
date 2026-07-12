@@ -850,7 +850,7 @@ impl Parser {
                 Token::Eof => break,
 
                 Token::NativeCode(code) if !code.trim().is_empty() => {
-                    statements.push(Statement::NativeCode(code));
+                    statements.push(Statement::NativeCode(NativeStmt::from_text(code)));
                 }
 
                 Token::Arrow => {
@@ -1136,23 +1136,36 @@ impl Parser {
                     // State variable reference (mid-line in native code)
                     // The codegen will handle this via NativeCode chunks
                     // For now, store as NativeCode with the Frame syntax
-                    statements.push(Statement::NativeCode(format!("$.{}", name)));
+                    statements.push(Statement::NativeCode(NativeStmt::from_text(format!(
+                        "$.{}",
+                        name
+                    ))));
                 }
 
                 Token::ContextReturn => {
-                    statements.push(Statement::NativeCode("@@:return".to_string()));
+                    statements.push(Statement::NativeCode(NativeStmt::from_text(
+                        "@@:return".to_string(),
+                    )));
                 }
 
                 Token::ContextEvent => {
-                    statements.push(Statement::NativeCode("@@:event".to_string()));
+                    statements.push(Statement::NativeCode(NativeStmt::from_text(
+                        "@@:event".to_string(),
+                    )));
                 }
 
                 Token::ContextData(key) => {
-                    statements.push(Statement::NativeCode(format!("@@:data[{}]", key)));
+                    statements.push(Statement::NativeCode(NativeStmt::from_text(format!(
+                        "@@:data[{}]",
+                        key
+                    ))));
                 }
 
                 Token::ContextParams(key) => {
-                    statements.push(Statement::NativeCode(format!("@@:params[{}]", key)));
+                    statements.push(Statement::NativeCode(NativeStmt::from_text(format!(
+                        "@@:params[{}]",
+                        key
+                    ))));
                 }
 
                 _ => {
@@ -1538,14 +1551,17 @@ impl Parser {
                         span: s.span.clone(),
                     });
                 }
-                Statement::NativeCode(code) if code.starts_with("$.") => {
+                Statement::NativeCode(n) if n.text.starts_with("$.") => {
                     return Err(ParseError {
                         message: format!(
                             "E401: State variable access '{}' is not allowed in {} '{}'. \
                              State variables are only accessible in event handlers.",
-                            code, context_kind, context_name
+                            n.text, context_kind, context_name
                         ),
-                        span: Span::new(0, 0), // No precise span available for NativeCode
+                        // RFC-0056 P1.4: the node now carries its span, so the
+                        // diagnostic can be anchored. (Zero on the legacy lexer
+                        // path, which carries no spans and dies with it.)
+                        span: n.span.clone(),
                     });
                 }
                 // Allowed: Return (native in actions/operations), NativeCode, @@:* context access

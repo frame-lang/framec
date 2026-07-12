@@ -354,6 +354,50 @@ pub struct HandlerBody {
 /// `@@system`-only graphviz/model/expansion walkers) will never encounter the
 /// other construct's exclusive variants, so a `_ => {}` arm there is dead-safe.
 /// If a future construct breaks this disjointness, revisit those arms.
+/// A native statement inside a handler body: verbatim target-language text,
+/// **delimited but never interpreted** (RFC-0056 P4 — *opaque ≠ undelimited*).
+///
+/// `text` is emitted verbatim and MUST NOT be parsed, probed, or rewritten.
+/// The other fields are what framec *knows* because its front-end scanner
+/// delimited the statement — carried here so no later pass has to re-derive
+/// them from emitted output (RFC-0056 P6: emission is one-way).
+#[derive(Debug, Clone)]
+pub struct NativeStmt {
+    /// Verbatim native source. Emitted as-is; never interrogated.
+    pub text: String,
+    /// Byte span in the source file.
+    pub span: Span,
+    /// Did the *user* terminate this statement?
+    ///
+    /// An **observation, never an edit**: RFC-0056 P8 — framec terminates only
+    /// the statements it emits, and never adds, removes, or moves a native one.
+    ///
+    /// `None` = not yet determined. Only the per-language scanner can answer
+    /// this honestly (it holds the string/comment skipper); computing it from
+    /// the raw text here would be exactly the comment-blind probe that RFC-0056
+    /// exists to delete. The scanner populates it; nothing else may.
+    pub terminated: Option<bool>,
+    /// Brace/block nesting depth within the handler body (0 = top level).
+    ///
+    /// `None` = not yet determined — same reason as `terminated`.
+    pub block_depth: Option<u32>,
+}
+
+impl NativeStmt {
+    /// Construct from text alone, boundaries unknown.
+    ///
+    /// Transitional: the legacy lexer path carries no spans. That path is slated
+    /// for deletion once the region scanner is the single recognizer (RFC-0056 P7).
+    pub fn from_text(text: String) -> Self {
+        NativeStmt {
+            text,
+            span: Span { start: 0, end: 0 },
+            terminated: None,
+            block_depth: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Statement {
     /// Frame transition statement (->)  [@@system]
@@ -380,8 +424,12 @@ pub enum Statement {
     Block(BlockAst),
     /// Frame expression (assignments, calls, etc.)
     Expression(ExpressionAst),
-    /// Native code chunk within handler body (V4 pipeline: Lexer extracts, Parser stores)
-    NativeCode(String),
+    /// Native code within a handler body — **delimited, never interpreted**.
+    ///
+    /// RFC-0056 P4: framec must not know what this text *means*; it must know
+    /// where it *ends*. The payload carries the boundaries so that no downstream
+    /// pass has to recover them by re-scanning emitted output (RFC-0056 P6).
+    NativeCode(NativeStmt),
 
     // === Frame context constructs (mid-line and standalone) ===
     /// State variable read: $.varName
