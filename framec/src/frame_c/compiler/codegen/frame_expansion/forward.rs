@@ -222,31 +222,6 @@ pub(super) fn expand_forward(
                     format!("{}self:_state_{}(__e)", indent_str, parent)
                 }
             }
-            TargetLanguage::Erlang => {
-                let parent_atom = to_snake_case(parent);
-                match ctx.event_name.as_str() {
-                    // RFC-0019: `=> $^` inside a `$>` / `<$` handler
-                    // runs the parent's lifecycle code by calling its
-                    // `frame_enter__<P>(Data) -> Data` /
-                    // `frame_exit__<P>(Data) -> Data` helper. The body
-                    // processor threads the returned Data record. (The
-                    // `($>`/`<$` callbacks in gen_statem are `enter` /
-                    // `frame_exit_dispatch__`, not regular events — so
-                    // there's no `{call, From}` to re-dispatch here.)
-                    "$>" => format!("{}frame_enter__{}(Data)", indent_str, parent_atom),
-                    "<$" => format!("{}frame_exit__{}(Data)", indent_str, parent_atom),
-                    // Ordinary event handler: delegate to the parent
-                    // state function with the same `{call, From}` so
-                    // the parent's reply reaches the original caller.
-                    other => {
-                        let event_atom = to_snake_case(other);
-                        format!(
-                            "{}{}({{call, From}}, {}, Data)",
-                            indent_str, parent_atom, event_atom
-                        )
-                    }
-                }
-            }
             TargetLanguage::Graphviz => unreachable!(),
         };
         // Prefix-await langs: splice the await in after the leading indent (Rust
@@ -279,9 +254,6 @@ pub(super) fn expand_forward(
             | TargetLanguage::Go
             | TargetLanguage::Php => {
                 format!("{}return; // Forward to parent (no parent)", indent_str)
-            }
-            TargetLanguage::Erlang => {
-                format!("{}{{keep_state, Data}}", indent_str)
             }
             TargetLanguage::Graphviz => unreachable!(),
         }

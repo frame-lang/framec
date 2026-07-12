@@ -158,7 +158,7 @@ pub(super) fn generate_pop_transition(
                         indent, value
                     ));
                 }
-                TargetLanguage::Erlang | TargetLanguage::Graphviz => {}
+                TargetLanguage::Graphviz => {}
             }
         }
     }
@@ -184,62 +184,6 @@ pub(super) fn generate_pop_transition(
         TargetLanguage::Php => code.push_str(&format!("{}$__saved = array_pop($this->_state_stack);\n", indent)),
         TargetLanguage::Ruby => code.push_str(&format!("{}__saved = @_state_stack.pop\n", indent)),
         TargetLanguage::Lua => code.push_str(&format!("{}local __saved = table.remove(self._state_stack)\n", indent)),
-        TargetLanguage::Erlang => {
-            // Issue #132-G: fire the CURRENT state's `<$` exit handler
-            // before restoring the popped compartment. A normal
-            // transition runs `frame_exit_dispatch__` (via
-            // `frame_transition__`); a `-> pop$` historically skipped
-            // it, so the popping state's exit handler never ran. We
-            // dispatch on `frame_current_state` (still the popping
-            // state at this point) exactly like `frame_transition__`,
-            // threading any decorated exit-args through
-            // `frame_exit_args` first so the handler can read them.
-            //
-            // Collect exit-arg VALUES (RFC-0008 `-> (a, b) pop$`) into
-            // an Erlang list; empty when undecorated.
-            let exit_vals: Vec<String> = exit_args
-                .as_ref()
-                .map(|s| {
-                    super::super::codegen_utils::arg_values(s, lang)
-                        .iter()
-                        .map(|arg| expand_expression(arg, lang, ctx))
-                        .collect()
-                })
-                .unwrap_or_default();
-            let exit_args_list = format!("[{}]", exit_vals.join(", "));
-            code.push_str(&format!(
-                "{}__PopExitData0 = Data#data{{frame_exit_args = {}}},\n",
-                indent, exit_args_list
-            ));
-            code.push_str(&format!(
-                "{}__PopExitData1 = frame_exit_dispatch__(__PopExitData0),\n",
-                indent
-            ));
-            // Pop the saved compartment context: a 3-tuple of state
-            // atom + frame_state_args + frame_enter_args (push side
-            // emits the same shape). Restoring all three fields on
-            // the popped Data record fixes a defect surfaced by
-            // Phase 19 wave 3 P7 — without args restoration, popping
-            // back to a state with `(x: int)` left state_args at the
-            // PUSHED state's value (or undefined), so subsequent
-            // reads of `$.x` returned the wrong context.
-            code.push_str(&format!("{}[{{__PoppedState, __PoppedStateArgs, __PoppedEnterArgs}} | __RestStack] = __PopExitData1#data.frame_stack,\n", indent));
-            // Restore the popped compartment and update `frame_current_state`
-            // to the popped state so a LATER exit dispatch targets the right
-            // state (without this, after a `pop$` the Frame-level current
-            // state still pointed at the popping state, and a subsequent
-            // transition would fire the wrong `<$`). We do NOT set
-            // `frame_skip_enter__`: a nested `pop$` to the SAME state is a
-            // gen_statem same-state `{next_state, …}`, which already skips
-            // the `enter` callback (so the resumed state's `$>` does not
-            // re-run); setting the flag here would linger when gen_statem
-            // skips enter and could later wrongly suppress a genuine enter.
-            code.push_str(&format!(
-                "{}{{next_state, __PoppedState, __PopExitData1#data{{frame_stack = __RestStack, frame_state_args = __PoppedStateArgs, frame_enter_args = __PoppedEnterArgs, frame_current_state = __PoppedState}}, [{{reply, From, ok}}]}}",
-                indent
-            ));
-            return code;
-        }
         TargetLanguage::Graphviz => unreachable!(),
     }
 
@@ -315,7 +259,7 @@ pub(super) fn generate_pop_transition(
                         indent, value
                     ));
                 }
-                TargetLanguage::Erlang | TargetLanguage::Graphviz => {}
+                TargetLanguage::Graphviz => {}
             }
         }
     }
@@ -357,7 +301,7 @@ pub(super) fn generate_pop_transition(
             TargetLanguage::Lua => {
                 code.push_str(&format!("{}__saved.forward_event = __e\n", indent));
             }
-            TargetLanguage::Erlang | TargetLanguage::Graphviz => {}
+            TargetLanguage::Graphviz => {}
         }
     }
 
@@ -404,7 +348,7 @@ pub(super) fn generate_pop_transition(
         TargetLanguage::Lua => {
             code.push_str(&format!("{}self:__transition({})", indent, var));
         }
-        TargetLanguage::Erlang | TargetLanguage::Graphviz => {}
+        TargetLanguage::Graphviz => {}
     }
 
     code

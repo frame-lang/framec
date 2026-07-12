@@ -72,7 +72,6 @@ pub(crate) fn generate_fields(
         | TargetLanguage::JavaScript
         | TargetLanguage::Php
         | TargetLanguage::Ruby
-        | TargetLanguage::Erlang
         | TargetLanguage::Lua
         | TargetLanguage::GDScript => "List".to_string(),
         TargetLanguage::C => "List".to_string(),
@@ -106,7 +105,6 @@ pub(crate) fn generate_fields(
         // Dynamic languages: nullable via language convention (None/null/nil)
         TargetLanguage::Python3
         | TargetLanguage::Ruby
-        | TargetLanguage::Erlang
         | TargetLanguage::Lua
         | TargetLanguage::GDScript => (compartment_type.clone(), compartment_type.clone()),
         TargetLanguage::TypeScript | TargetLanguage::JavaScript => (
@@ -148,7 +146,6 @@ pub(crate) fn generate_fields(
         | TargetLanguage::JavaScript
         | TargetLanguage::Php
         | TargetLanguage::Ruby
-        | TargetLanguage::Erlang
         | TargetLanguage::Lua
         | TargetLanguage::GDScript => "List".to_string(),
         TargetLanguage::C => "List".to_string(),

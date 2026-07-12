@@ -154,17 +154,6 @@ pub(super) fn expand_context_return(
                 "{}self._context_stack[#self._context_stack]._return = {}",
                 indent_str, expanded_expr
             ),
-            TargetLanguage::Erlang => {
-                // Leave `self.` in the expression untouched —
-                // the Erlang body processor classifies this as
-                // Plain and substitutes `self.` with the CURRENT
-                // `DataN#data.` using the live data_gen. A
-                // hardcoded `Data#data.` here would bind to the
-                // pre-handler Data and miss updates made earlier
-                // in the handler body (e.g., by `self.x = ...`
-                // or a preceding `@@:self` dispatch).
-                format!("{}__ReturnVal = {}", indent_str, expanded_expr)
-            }
             TargetLanguage::Graphviz => unreachable!(),
         }
     } else {
@@ -340,12 +329,6 @@ pub(super) fn expand_context_return_expr(
             "self._context_stack[#self._context_stack]._return = {}",
             expanded_expr
         ),
-        TargetLanguage::Erlang => {
-            // Leave `self.` intact so the body processor binds
-            // it to the live data_gen — see the sibling fix in
-            // `FrameSegmentKind::ContextReturn` above.
-            format!("__ReturnVal = {}", expanded_expr)
-        }
         TargetLanguage::Graphviz => unreachable!(),
     };
     if has_native_return {
@@ -360,7 +343,6 @@ pub(super) fn expand_context_return_expr(
             | TargetLanguage::GDScript
             | TargetLanguage::Lua
             | TargetLanguage::Ruby => format!("{}return", indent_str),
-            TargetLanguage::Erlang => String::new(), // Erlang has no native return statement
             _ => format!("{}return;", indent_str),
         };
         if ret_line.is_empty() {

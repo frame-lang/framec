@@ -124,7 +124,6 @@ pub fn generate_frame_event_class(system: &SystemAst, lang: TargetLanguage) -> O
         | TargetLanguage::CSharp
         | TargetLanguage::Go => vec![],
         TargetLanguage::Rust => vec![], // Rust returns None earlier, but be explicit
-        TargetLanguage::Erlang => vec![], // gen_statem: handled natively by erlang_system.rs
         TargetLanguage::Graphviz => unreachable!(),
     };
 
@@ -188,7 +187,6 @@ pub fn generate_frame_event_class(system: &SystemAst, lang: TargetLanguage) -> O
         | TargetLanguage::CSharp
         | TargetLanguage::Go => vec![],
         TargetLanguage::Rust => vec![],
-        TargetLanguage::Erlang => vec![], // gen_statem: handled natively by erlang_system.rs
         TargetLanguage::Graphviz => unreachable!(),
     };
 
@@ -215,10 +213,7 @@ pub fn generate_frame_event_class(system: &SystemAst, lang: TargetLanguage) -> O
                 .with_type("List<dynamic>")
                 .with_visibility(Visibility::Public),
         ]
-    } else if matches!(
-        lang,
-        TargetLanguage::Php | TargetLanguage::Ruby | TargetLanguage::Erlang
-    ) {
+    } else if matches!(lang, TargetLanguage::Php | TargetLanguage::Ruby) {
         vec![
             Field::new("_message").with_visibility(Visibility::Public),
             Field::new("_parameters").with_visibility(Visibility::Public),
@@ -303,7 +298,6 @@ pub fn generate_frame_context_class(
         | TargetLanguage::CSharp
         | TargetLanguage::Go => vec![],
         TargetLanguage::Rust => vec![],
-        TargetLanguage::Erlang => vec![], // gen_statem: handled natively by erlang_system.rs
         TargetLanguage::Graphviz => unreachable!(),
     };
 
@@ -415,7 +409,6 @@ pub fn generate_frame_context_class(
         TargetLanguage::C | TargetLanguage::Cpp | TargetLanguage::Java | TargetLanguage::Kotlin
             | TargetLanguage::Swift | TargetLanguage::CSharp | TargetLanguage::Go => vec![],
         TargetLanguage::Rust => vec![],
-        TargetLanguage::Erlang => vec![], // gen_statem: handled natively by erlang_system.rs
         TargetLanguage::Graphviz => unreachable!(),
     };
 
@@ -554,7 +547,6 @@ pub fn generate_compartment_class(system: &SystemAst, lang: TargetLanguage) -> O
         | TargetLanguage::CSharp
         | TargetLanguage::Go => vec![Param::new("state").with_type("str")],
         TargetLanguage::Rust => vec![Param::new("state").with_type("str")],
-        TargetLanguage::Erlang => vec![], // gen_statem: handled natively by erlang_system.rs
         TargetLanguage::Graphviz => unreachable!(),
     };
 
@@ -696,7 +688,6 @@ pub fn generate_compartment_class(system: &SystemAst, lang: TargetLanguage) -> O
         TargetLanguage::C | TargetLanguage::Cpp | TargetLanguage::Java | TargetLanguage::Kotlin
             | TargetLanguage::Swift | TargetLanguage::CSharp | TargetLanguage::Go => vec![],
         TargetLanguage::Rust => vec![],
-        TargetLanguage::Erlang => vec![], // gen_statem: handled natively by erlang_system.rs
         TargetLanguage::Graphviz => unreachable!(),
     };
 
@@ -771,10 +762,7 @@ pub fn generate_compartment_class(system: &SystemAst, lang: TargetLanguage) -> O
                 .with_type(&format!("{}?", class_name))
                 .with_visibility(Visibility::Public),
         ]
-    } else if matches!(
-        lang,
-        TargetLanguage::Php | TargetLanguage::Ruby | TargetLanguage::Erlang
-    ) {
+    } else if matches!(lang, TargetLanguage::Php | TargetLanguage::Ruby) {
         vec![
             Field::new("state").with_visibility(Visibility::Public),
             Field::new("state_args").with_visibility(Visibility::Public),
@@ -963,7 +951,6 @@ return c"#,
             )]
         }
         TargetLanguage::Rust => vec![],
-        TargetLanguage::Erlang => vec![], // gen_statem: handled natively by erlang_system.rs
         TargetLanguage::Graphviz => unreachable!(),
     };
 
@@ -985,7 +972,6 @@ return c"#,
         | TargetLanguage::Cpp
         | TargetLanguage::Rust
         | TargetLanguage::Lua => class_name.to_string(),
-        TargetLanguage::Erlang => String::new(), // gen_statem: handled natively by erlang_system.rs
         TargetLanguage::Graphviz => unreachable!(),
     };
 

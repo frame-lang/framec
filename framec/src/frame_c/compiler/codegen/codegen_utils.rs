@@ -194,7 +194,6 @@ pub(crate) fn expression_to_string(expr: &Expression, lang: TargetLanguage) -> S
                 | TargetLanguage::Go
                 | TargetLanguage::Php
                 | TargetLanguage::Ruby
-                | TargetLanguage::Erlang
                 | TargetLanguage::Lua => {
                     if *b {
                         "true".to_string()
@@ -212,7 +211,6 @@ pub(crate) fn expression_to_string(expr: &Expression, lang: TargetLanguage) -> S
                 | TargetLanguage::Ruby
                 | TargetLanguage::Lua => "nil".to_string(),
                 TargetLanguage::C => "NULL".to_string(),
-                TargetLanguage::Erlang => "undefined".to_string(),
                 TargetLanguage::GDScript
                 | TargetLanguage::Dart
                 | TargetLanguage::TypeScript
@@ -1039,70 +1037,6 @@ pub fn contains_receiver_call(
     false
 }
 
-/// Erlang: lower `self.<field>` accesses to `<data_var>#data.<field>`, while
-/// leaving a `self.<name>(` *call shape* verbatim.
-///
-/// Core Frame rule: framec translates only Frame syntax. A `self.<ident>`
-/// immediately followed by `(` is a *call*, never a record-field access (Erlang
-/// records have no methods). The Frame-derived self-call arrives as the marked
-/// form `@@:self.<name>(` and is handled by the dispatch/action branches; a
-/// *bare* native `self.<name>(` carries no marker and must pass through
-/// untouched so `erlc` rejects `self` on its own line — the correct contextual
-/// native error. Only true field accesses (`self.<ident>` not followed by `(`)
-/// are lowered here.
-///
-/// String- and comment-safe via the Erlang `SyntaxSkipper` (same primitive
-/// `replace_outside_strings_and_comments` uses), so `"self.x"` inside a literal
-/// or `% ` comment is left intact. `self.` is matched only at an identifier
-/// boundary, so the tail of `myself.x` is not rewritten.
-pub(crate) fn erlang_lower_self_field_access(code: &str, data_var: &str) -> String {
-    const MARKER: &[u8] = b"self.";
-    let skipper = crate::frame_c::compiler::native_region_scanner::create_skipper(
-        crate::frame_c::visitors::TargetLanguage::Erlang,
-    );
-    let bytes = code.as_bytes();
-    let end = bytes.len();
-    let replacement = format!("{}#data.", data_var);
-    let mut out = String::with_capacity(code.len() + replacement.len());
-    let mut i = 0;
-    while i < end {
-        if let Some(next) = skipper.skip_string(bytes, i, end) {
-            out.push_str(&code[i..next]);
-            i = next;
-            continue;
-        }
-        if let Some(next) = skipper.skip_comment(bytes, i, end) {
-            out.push_str(&code[i..next]);
-            i = next;
-            continue;
-        }
-        let boundary_ok = i == 0 || {
-            let p = bytes[i - 1];
-            !(p.is_ascii_alphanumeric() || p == b'_')
-        };
-        if boundary_ok && i + MARKER.len() <= end && &bytes[i..i + MARKER.len()] == MARKER {
-            let mut id_end = i + MARKER.len();
-            while id_end < end && (bytes[id_end].is_ascii_alphanumeric() || bytes[id_end] == b'_') {
-                id_end += 1;
-            }
-            if id_end < end && bytes[id_end] == b'(' {
-                // Call shape — leave the bare `self.<name>(` verbatim.
-                out.push_str(&code[i..id_end]);
-            } else {
-                out.push_str(&replacement);
-                out.push_str(&code[i + MARKER.len()..id_end]);
-            }
-            i = id_end;
-            continue;
-        }
-        let width = utf8_char_len(bytes[i]);
-        let next = (i + width).min(end);
-        out.push_str(&code[i..next]);
-        i = next;
-    }
-    out
-}
-
 /// Byte width of the UTF-8 character that starts with `first_byte`.
 /// Returns 1 for ASCII and any unexpected continuation byte (which
 /// should never appear at an iteration boundary since we always
@@ -1282,17 +1216,6 @@ mod tests {
             &[("self.", "s.")],
         );
         assert_eq!(out, "s.x = 1 // self.inside_comment\ns.y = 2");
-    }
-
-    #[test]
-    fn replace_outside_strings_works_for_erlang() {
-        // Erlang uses `%` line comments — verify skipper respects language.
-        let out = replace_outside_strings_and_comments(
-            "X = self.a, % self.in_comment\nY = self.b.",
-            TargetLanguage::Erlang,
-            &[("self.", "Data#data.")],
-        );
-        assert_eq!(out, "X = Data#data.a, % self.in_comment\nY = Data#data.b.");
     }
 
     #[test]

@@ -537,7 +537,6 @@ pub(super) fn emit_handler_return_init(
             "{}self._context_stack[self._context_stack.size() - 1]._return = {}\n",
             indent, init_expr
         ),
-        TargetLanguage::Erlang => format!("{}__ReturnVal = {},\n", indent, init_expr),
         TargetLanguage::Graphviz => String::new(),
     };
     assign
@@ -1580,7 +1579,6 @@ pub(crate) fn generate_state_method(
                 is_start_state,
                 system_is_async,
             ),
-            TargetLanguage::Erlang => String::new(),
             _ => unreachable!("All other languages use unified dispatch"),
         }
     };
@@ -1661,9 +1659,6 @@ pub(crate) fn generate_state_method(
             vec![Param::new("__e"), Param::new("compartment")]
         }
         // Dynamic languages: untyped event parameter
-        TargetLanguage::Erlang => {
-            vec![Param::new("__e")]
-        }
         TargetLanguage::Graphviz => unreachable!(),
     };
 
@@ -1919,8 +1914,7 @@ pub(crate) fn generate_handler_from_arcanum(
         | TargetLanguage::Go
         | TargetLanguage::Php
         | TargetLanguage::Kotlin
-        | TargetLanguage::Swift
-        | TargetLanguage::Erlang => handler.return_type.clone(),
+        | TargetLanguage::Swift => handler.return_type.clone(),
         TargetLanguage::Graphviz => unreachable!(),
     };
 

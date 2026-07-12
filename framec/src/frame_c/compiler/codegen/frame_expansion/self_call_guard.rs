@@ -104,6 +104,6 @@ pub(crate) fn generate_self_call_guard(
             "{}if #self._context_stack > 0 and self._context_stack[#self._context_stack]._transitioned then return end",
             ind
         ),
-        TargetLanguage::Erlang | TargetLanguage::Graphviz => String::new(),
+        TargetLanguage::Graphviz => String::new(),
     }
 }

@@ -396,9 +396,6 @@ pub(crate) fn do_segment(c: &mut PipelineCtx) -> Option<CompileResult> {
                 TargetLanguage::Rust => {
                     Some(crate::frame_c::compiler::codegen::fsm_rust::generate(ast))
                 }
-                TargetLanguage::Erlang => {
-                    Some(crate::frame_c::compiler::codegen::fsm_erlang::generate(ast))
-                }
                 TargetLanguage::JavaScript => Some(
                     crate::frame_c::compiler::codegen::fsm_javascript::generate(ast),
                 ),
@@ -834,7 +831,6 @@ fn parse_module_segments(
                         | TargetLanguage::Lua
                         | TargetLanguage::C
                         | TargetLanguage::GDScript
-                        | TargetLanguage::Erlang
                 );
                 if unsupported {
                     return Err(CompileResult {
@@ -1137,29 +1133,6 @@ pub(crate) fn do_module_gates(c: &mut PipelineCtx) -> Option<CompileResult> {
     let config = &c.config;
     let system_asts = &c.system_asts;
     let module_imports = &c.module_imports;
-
-    // Erlang: one module per file — reject multi-system files.
-    // E431, distinct from validator's E406 ("Interface handler parameter
-    // count mismatch") which lives in `frame_validator.rs`. Both are
-    // file-structure issues but they reach the user via different code
-    // paths, so they need distinct codes.
-    if matches!(config.target, TargetLanguage::Erlang) && system_asts.len() > 1 {
-        let names: Vec<&str> = system_asts.iter().map(|s| s.name.as_str()).collect();
-        return Some(CompileResult {
-            code: String::new(),
-            errors: vec![CompileError::new(
-                "E431",
-                &format!(
-                    "Erlang requires one module per file, but this file contains {} systems: {}. \
-                     Split into separate files (one @@system per file).",
-                    system_asts.len(),
-                    names.join(", ")
-                ),
-            )],
-            warnings: vec![],
-            source_map: None,
-        });
-    }
 
     // Java: one PUBLIC class per file. Multiple package-private
     // (Frame `@@system private`) systems alongside at most one public
@@ -1642,8 +1615,6 @@ pub(crate) fn do_validate_codegen(c: &mut PipelineCtx) -> Option<CompileResult> 
             if !swift_runtime.is_empty() {
                 system_code.push_str(&swift_runtime);
             }
-        } else if matches!(config.target, TargetLanguage::Erlang) {
-            // Erlang gen_statem: no runtime classes needed — gen_statem provides everything
         } else {
             // GDScript module-scope: emit `extends Base` before runtime
             // types so it's the first line (Godot requires this).

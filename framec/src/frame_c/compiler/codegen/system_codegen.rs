@@ -47,9 +47,8 @@ use crate::frame_c::compiler::frame_ast::{
 };
 use crate::frame_c::compiler::native_region_scanner::{
     c::NativeRegionScannerC, cpp::NativeRegionScannerCpp, csharp::NativeRegionScannerCs,
-    dart::NativeRegionScannerDart, erlang::NativeRegionScannerErlang,
-    gdscript::NativeRegionScannerGDScript, go::NativeRegionScannerGo,
-    java::NativeRegionScannerJava, javascript::NativeRegionScannerJs,
+    dart::NativeRegionScannerDart, gdscript::NativeRegionScannerGDScript,
+    go::NativeRegionScannerGo, java::NativeRegionScannerJava, javascript::NativeRegionScannerJs,
     kotlin::NativeRegionScannerKotlin, lua::NativeRegionScannerLua, php::NativeRegionScannerPhp,
     python::NativeRegionScannerPy, ruby::NativeRegionScannerRuby, rust::NativeRegionScannerRust,
     swift::NativeRegionScannerSwift, typescript::NativeRegionScannerTs, FrameSegmentKind,
@@ -83,13 +82,6 @@ pub fn generate_system(
     // typically receives a no-op because gen_statem already provides
     // the guarantee in actor form.
 
-    // Erlang: gen_statem actor model — emits raw Erlang source, not a
-    // CodegenNode tree. The class-based primitive set has no analogue
-    // here (callers use `gen_statem:call/2` through the process
-    // mailbox; internal dispatch is direct `frame_dispatch__/3`).
-    if lang == TargetLanguage::Erlang {
-        return super::erlang_system::generate_erlang_system(system, arcanum, source);
-    }
     // Rust: diverges for three independent reasons —
     //   1. `Rc<RefCell<Compartment>>` ownership (no GC).
     //   2. Typed per-state `Context` structs (RFC-0025.1) instead of
@@ -113,7 +105,7 @@ pub fn generate_system_shared(
     source: &[u8],
 ) -> CodegenNode {
     debug_assert!(
-        !matches!(lang, TargetLanguage::Rust | TargetLanguage::Erlang),
+        !matches!(lang, TargetLanguage::Rust),
         "Rust and Erlang have dedicated pipelines — should not reach generate_system_shared"
     );
     let backend = get_backend(lang);
@@ -567,9 +559,6 @@ pub(crate) fn generate_frame_machinery(
                 &event_class,
                 &compartment_class,
             ));
-        }
-        TargetLanguage::Erlang => {
-            // gen_statem: kernel/router/transition are built into OTP — no custom methods needed
         }
         TargetLanguage::Lua => {
             use super::machinery::{generate_machinery, lua::LuaMachinery};

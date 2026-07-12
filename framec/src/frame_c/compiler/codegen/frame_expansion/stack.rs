@@ -227,36 +227,6 @@ pub(super) fn expand_stack_push(
                 push_code
             }
         }
-        TargetLanguage::Erlang => {
-            // Save the current compartment context (state name +
-            // state-args + enter-args) as a 3-tuple onto
-            // frame_stack. The two args fields here MUST stay
-            // in lockstep with `ERLANG_COMPARTMENT_CONTEXT_FIELDS`
-            // in `erlang_system.rs` — that constant is the
-            // canonical list of context fields and persist's
-            // save_state/load_state iterates the same list.
-            // If you add a context field to the Data record,
-            // update both spots.
-            //
-            // Pre-state-args codegen saved only the state atom,
-            // discarding the compartment's positional args; a
-            // `-> pop$` back to a state declared `(x: int)`
-            // saw undefined args. Surfaced by Phase 19 wave 3
-            // P7 (state_args_round_trip).
-            let state_atom = to_snake_case(&ctx.state_name);
-            if !target.is_empty() {
-                let target_atom = to_snake_case(&target);
-                format!(
-                            "{}self.frame_stack = [{{{}, self.frame_state_args, self.frame_enter_args}} | self.frame_stack]\n{}{{next_state, {}, Data, [{{reply, From, ok}}]}}",
-                            indent_str, state_atom, indent_str, target_atom
-                        )
-            } else {
-                format!(
-                            "{}self.frame_stack = [{{{}, self.frame_state_args, self.frame_enter_args}} | self.frame_stack]",
-                            indent_str, state_atom
-                        )
-            }
-        }
         TargetLanguage::Graphviz => unreachable!(),
     };
     // A bare `push$` (empty target) is not terminal — no return. A
@@ -317,15 +287,6 @@ pub(super) fn expand_stack_pop(
         TargetLanguage::Php => format!("{}array_pop($this->_state_stack);", indent_str),
         TargetLanguage::Ruby => format!("{}@_state_stack.pop", indent_str),
         TargetLanguage::Lua => format!("{}table.remove(self._state_stack)", indent_str),
-        TargetLanguage::Erlang => {
-            // Standalone `pop$` (no transition) discards the
-            // saved compartment. Match the 3-tuple shape that
-            // push$ emits so the pattern bind succeeds.
-            format!(
-                        "{}[{{_, _, _}} | __RestStack] = self.frame_stack,\n{}self.frame_stack = __RestStack",
-                        indent_str, indent_str
-                    )
-        }
         TargetLanguage::Graphviz => unreachable!(),
     };
     // Standalone `pop$` is not terminal — it never exits the handler.

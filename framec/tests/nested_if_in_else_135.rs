@@ -205,52 +205,6 @@ fn deep_nested_if_in_else_lua() {
     assert_clean_lua(&region, &payloads, "deep");
 }
 
-/// Erlang lowers brace-form conditionals to `case … of … end`. The multi-line
-/// nested-if-in-else must produce nested `case`s with no leaked braces. (Erlang
-/// brace-lowering is line-based, so it covers the multi-line authoring form.)
-#[test]
-fn nested_if_in_else_erlang() {
-    let src = r#"
-@@[target("erlang")]
-@@system S {
-    interface:
-        classify(n)
-    machine:
-        $A {
-            classify(n) {
-                if n < 0 {
-                    @@:("neg")
-                } else {
-                    if n == 0 {
-                        @@:("zero")
-                    } else {
-                        @@:("pos")
-                    }
-                }
-            }
-        }
-}
-"#;
-    let code = compile_source(src, "erlang");
-    let region = payload_lines(&code, &["neg", "zero", "pos"]);
-    assert!(
-        !region.contains('{') && !region.contains('}'),
-        "[erlang] stray Frame brace survived lowering:\n{region}"
-    );
-    for p in ["neg", "zero", "pos"] {
-        assert!(
-            region.contains(p),
-            "[erlang] payload {p:?} missing:\n{region}"
-        );
-    }
-    // Nested conditional → two `case … of` opened (outer + inner).
-    assert_eq!(
-        code.matches("case (").count(),
-        2,
-        "[erlang] expected two nested cases:\n{code}"
-    );
-}
-
 /// Regression guard: a genuine `else if` ladder (inner `if` is the SOLE content
 /// of the `else` block, no inner `else`) must STILL collapse to `elseif` in Lua.
 #[test]

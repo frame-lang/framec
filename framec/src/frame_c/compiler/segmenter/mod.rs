@@ -1015,10 +1015,6 @@ pub fn segment_source(source: &[u8], lang: TargetLanguage) -> Result<SourceMap, 
             use crate::frame_c::compiler::native_region_scanner::ruby::RubySkipper;
             segment(&RubySkipper, source)
         }
-        TargetLanguage::Erlang => {
-            use crate::frame_c::compiler::native_region_scanner::erlang::ErlangSkipper;
-            segment(&ErlangSkipper, source)
-        }
         TargetLanguage::Lua => {
             use crate::frame_c::compiler::native_region_scanner::lua::LuaSkipper;
             segment(&LuaSkipper, source)

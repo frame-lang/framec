@@ -327,18 +327,6 @@ pub(super) fn expand_state_var(
                 format!("self.__compartment.state_vars[{}{}{}]", q, var_name, q)
             }
         }
-        TargetLanguage::Erlang => {
-            // State vars stored as sv_<state>_<var> in the Data
-            // record. Emit via the `self.` placeholder so the
-            // body processor's classifier substitutes it with
-            // the live `DataN#data.` prefix — matching the live
-            // data_gen in the handler. Hardcoding `Data#data.`
-            // here would read the pre-handler snapshot and miss
-            // any updates (`$.v = ...` lines earlier in the
-            // same body).
-            let state_prefix = to_snake_case(&ctx.state_name);
-            format!("self.sv_{}_{}", state_prefix, var_name)
-        }
         TargetLanguage::Graphviz => unreachable!(),
     }
 }
@@ -667,19 +655,6 @@ pub(super) fn expand_state_var_assign(
                     indent_str, var_name, expanded_expr
                 )
             }
-        }
-        TargetLanguage::Erlang => {
-            // State var assignment: $.var = expr → record update.
-            // Leave `self.` intact so the body processor's
-            // classifier gets first crack at `self.<iface>(…)`
-            // patterns in the RHS (they should become
-            // `frame_dispatch__(…)` binds, not dot-accesses on
-            // the current Data record). Any bare domain
-            // `self.<field>` reads fall through to the Plain
-            // path's substitution with the live `data_var`.
-            let state_prefix = to_snake_case(&ctx.state_name);
-            let field_name = format!("sv_{}_{}", state_prefix, var_name);
-            format!("{}self.{} = {}", indent_str, field_name, expanded_expr)
         }
         TargetLanguage::Graphviz => unreachable!(),
     }

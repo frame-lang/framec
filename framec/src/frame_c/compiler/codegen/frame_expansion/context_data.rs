@@ -69,10 +69,6 @@ pub(super) fn expand_context_event(
         TargetLanguage::Lua => {
             "self._context_stack[#self._context_stack]._event._message".to_string()
         }
-        TargetLanguage::Erlang => {
-            let event_atom = to_snake_case(&ctx.event_name);
-            format!("{}", event_atom)
-        }
         TargetLanguage::Graphviz => unreachable!(),
     }
 }
@@ -140,19 +136,6 @@ pub(super) fn expand_context_data(
             "self._context_stack[#self._context_stack]._data[\"{}\"]",
             key
         ),
-        TargetLanguage::Erlang => {
-            // Call-scoped `@@:data.key` READ. The handler clause threads a
-            // local `__DataMapN` map (SSA-renamed by the body processor);
-            // each handler invocation — including a reentrant
-            // `@@:self.m()` dispatch — runs as its own Erlang function
-            // activation with its own fresh map, so the data is genuinely
-            // call-scoped. The body processor substitutes the
-            // `__FRAME_DATAMAP__` placeholder with the live map variable
-            // (the same live-binding mechanism `self.X` uses) and the
-            // generated `frame_data_get__/2` helper returns `undefined`
-            // only when the key is genuinely unset.
-            format!("frame_data_get__(<<\"{}\">>, __FRAME_DATAMAP__)", key)
-        }
         TargetLanguage::Graphviz => unreachable!(),
     }
 }
@@ -255,18 +238,6 @@ pub(super) fn expand_context_data_assign(
             "{}self._context_stack[#self._context_stack]._data[\"{}\"] = {}",
             indent_str, key, expanded_expr
         ),
-        TargetLanguage::Erlang => {
-            // Call-scoped `@@:data.key = expr` WRITE. Emit a marker line
-            // the body processor lowers to a fresh `__DataMapN =
-            // maps:put(<<"key">>, Expr, __DataMapPrev)` SSA binding,
-            // threading the updated map forward. `self.` inside `expr` is
-            // left intact so the body processor rebinds it to the live
-            // `Data#data.` (mirrors the `@@:return` Erlang arm).
-            format!(
-                "{}__FRAME_DATAPUT__(<<\"{}\">>, {})",
-                indent_str, key, expanded_expr
-            )
-        }
         TargetLanguage::Graphviz => unreachable!(),
     }
 }
@@ -309,15 +280,6 @@ pub(super) fn expand_context_params(
         extract_dot_key(&segment_text, "@@:params") // fallback
     };
     match lang {
-        TargetLanguage::Erlang => {
-            // Erlang bindings use the capitalized form (framec's
-            // dispatch prologue rebinds `x` as `X = maps:get(...)`).
-            let mut chars = key.chars();
-            match chars.next() {
-                None => String::new(),
-                Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
-            }
-        }
         // PHP identifies locals with a `$` prefix. The handler
         // prologue binds the param as `$x = $__e->_parameters[0]`.
         TargetLanguage::Php => format!("${}", key),

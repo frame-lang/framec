@@ -30,7 +30,6 @@ pub mod c;
 pub mod cpp;
 pub mod csharp;
 pub mod dart;
-pub mod erlang;
 pub mod frame_structural;
 pub mod fsm;
 pub mod gdscript;
@@ -90,9 +89,6 @@ pub fn close_body(bytes: &[u8], open: usize, lang: TargetLanguage) -> Result<usi
             .close_byte(&bytes[open..], 0)
             .map(|c| open + c),
         TargetLanguage::Ruby => ruby::BodyCloserRuby
-            .close_byte(&bytes[open..], 0)
-            .map(|c| open + c),
-        TargetLanguage::Erlang => erlang::BodyCloserErlang
             .close_byte(&bytes[open..], 0)
             .map(|c| open + c),
         TargetLanguage::Lua => lua::BodyCloserLua

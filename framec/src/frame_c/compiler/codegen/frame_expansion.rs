@@ -52,9 +52,8 @@ use super::codegen_utils::{
 use crate::frame_c::compiler::frame_ast::Type;
 use crate::frame_c::compiler::native_region_scanner::{
     c::NativeRegionScannerC, cpp::NativeRegionScannerCpp, csharp::NativeRegionScannerCs,
-    dart::NativeRegionScannerDart, erlang::NativeRegionScannerErlang,
-    gdscript::NativeRegionScannerGDScript, go::NativeRegionScannerGo,
-    java::NativeRegionScannerJava, javascript::NativeRegionScannerJs,
+    dart::NativeRegionScannerDart, gdscript::NativeRegionScannerGDScript,
+    go::NativeRegionScannerGo, java::NativeRegionScannerJava, javascript::NativeRegionScannerJs,
     kotlin::NativeRegionScannerKotlin, lua::NativeRegionScannerLua, php::NativeRegionScannerPhp,
     python::NativeRegionScannerPy, ruby::NativeRegionScannerRuby, rust::NativeRegionScannerRust,
     swift::NativeRegionScannerSwift, typescript::NativeRegionScannerTs, FrameSegmentKind,
@@ -531,19 +530,6 @@ mod tests {
             &ctx,
         );
         assert_eq!(result, "return");
-    }
-
-    #[test]
-    fn void_return_call_erlang_emits_ok() {
-        // Erlang clause bodies cannot be empty — a void exit becomes `ok`.
-        let ctx = make_ctx(vec![]);
-        let result = expand(
-            FrameSegmentKind::ReturnCall,
-            "@@:return()",
-            TargetLanguage::Erlang,
-            &ctx,
-        );
-        assert_eq!(result, "ok");
     }
 
     #[test]

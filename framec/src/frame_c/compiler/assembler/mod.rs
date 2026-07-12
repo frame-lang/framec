@@ -359,91 +359,6 @@ pub fn assemble(
         }
     }
 
-    // Erlang attribute hoist. Frame source typically has a native
-    // prolog with helper functions BEFORE the `@@system` block:
-    //
-    //   helper() -> ok.            <-- native, emitted first
-    //
-    //   @@system Foo { ... }       <-- system code:
-    //                                  -module(foo). -behaviour(gen_statem).
-    //                                  -export([...]). callbacks() ...
-    //
-    // Erlang requires `-module`/`-behaviour`/`-export` to precede ANY
-    // function definition in the source file — otherwise erlc rejects
-    // with "no module definition" + "attribute X after function
-    // definitions". Walk the assembled output and pull every leading
-    // `-` attribute line up to the top of the file, preserving their
-    // relative order. Other lines (comments, helper functions,
-    // generated callbacks) keep their original sequence in the
-    // remainder.
-    if lang == TargetLanguage::Erlang {
-        // Multi-line attributes (e.g., `-record(data, { ... }).`) are
-        // detected by an opening `-attr(` line whose closing `).` is
-        // on a later line — track paren depth across lines and
-        // keep the whole block together.
-        let lines: Vec<&str> = output.lines().collect();
-        let mut attrs: Vec<&str> = Vec::new();
-        let mut other: Vec<&str> = Vec::new();
-        let mut idx = 0;
-        while idx < lines.len() {
-            let line = lines[idx];
-            let t = line.trim_start();
-            let is_attr_start = t.starts_with("-module(")
-                || t.starts_with("-behaviour(")
-                || t.starts_with("-behavior(")
-                || t.starts_with("-export(")
-                || t.starts_with("-record(")
-                || t.starts_with("-define(")
-                || t.starts_with("-include(")
-                || t.starts_with("-include_lib(");
-            if !is_attr_start {
-                other.push(line);
-                idx += 1;
-                continue;
-            }
-            // Collect this line and any continuation lines until paren
-            // depth reaches zero AND we've seen the terminating `).`.
-            let mut depth: i32 = 0;
-            let mut closed = false;
-            let start = idx;
-            while idx < lines.len() {
-                let l = lines[idx];
-                for c in l.chars() {
-                    match c {
-                        '(' => depth += 1,
-                        ')' => depth -= 1,
-                        _ => {}
-                    }
-                }
-                idx += 1;
-                if depth <= 0 && l.trim_end().ends_with(").") {
-                    closed = true;
-                    break;
-                }
-            }
-            for l in &lines[start..idx] {
-                attrs.push(l);
-            }
-            // If the block didn't close cleanly (defensive — shouldn't
-            // happen in well-formed Erlang), the bytes end up in
-            // `attrs` and we move on.
-            let _ = closed;
-        }
-        if !attrs.is_empty() {
-            let mut hoisted = String::new();
-            for a in &attrs {
-                hoisted.push_str(a);
-                hoisted.push('\n');
-            }
-            hoisted.push('\n');
-            for o in &other {
-                hoisted.push_str(o);
-                hoisted.push('\n');
-            }
-            output = hoisted;
-        }
-    }
-
     // #120: a Lua module must `return` a table for a host file to reach the
     // systems (`local M = require("x"); M.Game`). Each system/FSM is declared
     // `local <Name> = {}` at top level, so they are in scope here. The export
@@ -856,29 +771,6 @@ pub(crate) fn generate_constructor(name: &str, args: &str, lang: TargetLanguage)
             // RFC-0017 Phase A2: Swift factory expansion uses `__create()`.
             // Bare `Counter()` is reserved for `@@!Counter()`.
             format!("{}.__create({})", name, args)
-        }
-        TargetLanguage::Erlang => {
-            // RFC-0017 Phase A6: Erlang factory expansion uses
-            // `module:create(args)` which returns a bare Pid (no
-            // `element(2, ...)` unwrap needed). Bare `module:start_link()`
-            // is reserved for `@@!Counter()`.
-            let module_name = {
-                let mut result = String::new();
-                for (i, c) in name.chars().enumerate() {
-                    if c.is_uppercase() && i > 0 {
-                        result.push('_');
-                    }
-                    if let Some(lc) = c.to_lowercase().next() {
-                        result.push(lc);
-                    }
-                }
-                result
-            };
-            if args.trim().is_empty() {
-                format!("{}:create()", module_name)
-            } else {
-                format!("{}:create({})", module_name, args)
-            }
         }
         TargetLanguage::Lua => {
             // RFC-0017 Phase A5: Lua factory expansion uses

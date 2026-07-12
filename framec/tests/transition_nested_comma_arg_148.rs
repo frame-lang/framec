@@ -44,7 +44,6 @@ fn nested_comma_transition_arg_kept_whole_all_backends() {
         "php",
         "ruby",
         "lua",
-        "erlang",
         "gdscript",
     ];
     for lang in backends {

@@ -433,30 +433,6 @@ impl FrameValidator {
 
     /// Validate a system
     fn validate_system(&mut self, system: &SystemAst) {
-        // W901: the Erlang target is deprecated (not removed) as of 4.6.1.
-        // The handler-body lowering reconstructs structure from emitted text
-        // and is slated for redesign (#119/#125); generated Erlang keeps
-        // working, but the target should not be relied on for new work until
-        // the redesign lands.
-        if matches!(
-            self.target,
-            crate::frame_c::visitors::TargetLanguage::Erlang
-        ) {
-            self.warnings.push(
-                ValidationError::new(
-                    "W901",
-                    format!(
-                        "the Erlang target is deprecated as of 4.6.1 (system '{}'). It remains \
-                         functional and is NOT removed, but its handler-body lowering is slated \
-                         for redesign (frame-lang/framec#119) — prefer another target for new \
-                         work until that lands.",
-                        system.name
-                    ),
-                )
-                .with_span(system.span.clone()),
-            );
-        }
-
         // Phase 1: Structural validation
         self.validate_section_order(system);
         self.validate_duplicate_sections(system);
@@ -2372,7 +2348,6 @@ mod tests {
         VTarget::Ruby,
         VTarget::Lua,
         VTarget::GDScript,
-        VTarget::Erlang,
     ];
 
     #[test]
@@ -2390,9 +2365,6 @@ mod tests {
     #[test]
     fn test_pop_exit_args_all_backends() {
         for &target in ALL_TARGETS {
-            if matches!(target, VTarget::Erlang) {
-                continue; // Erlang handles pop via gen_statem
-            }
             let code = v4_output_for(POP_EXIT, target);
             if matches!(target, VTarget::Rust) {
                 // RFC-0025.1: Rust carries pop exit args in the typed
@@ -2421,9 +2393,6 @@ mod tests {
     #[test]
     fn test_pop_enter_args_all_backends() {
         for &target in ALL_TARGETS {
-            if matches!(target, VTarget::Erlang) {
-                continue;
-            }
             let code = v4_output_for(POP_ENTER, target);
             if matches!(target, VTarget::Rust) {
                 // RFC-0025.1: Rust carries pop enter args in the restored
@@ -2450,9 +2419,6 @@ mod tests {
     #[test]
     fn test_pop_forward_all_backends() {
         for &target in ALL_TARGETS {
-            if matches!(target, VTarget::Erlang) {
-                continue;
-            }
             let code = v4_output_for(POP_FORWARD, target);
             assert!(
                 code.contains("forward_event")

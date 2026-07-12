@@ -356,23 +356,6 @@ impl ClassSyntax {
         }
     }
 
-    pub fn erlang() -> Self {
-        Self {
-            language: TargetLanguage::Erlang,
-            class_keyword: "-module".to_string(),
-            extends_keyword: None,
-            self_keyword: "Data".to_string(), // gen_statem state data parameter
-            constructor_name: "init".to_string(),
-            explicit_fields: true,
-            method_keyword: None, // Erlang functions don't have a keyword prefix
-            block_start: String::new(),
-            block_end: ".".to_string(), // Erlang function clauses end with .
-            statement_terminator: String::new(),
-            type_sep: " :: ".to_string(), // Erlang type specs
-            return_type_sep: " -> ".to_string(),
-        }
-    }
-
     pub fn cpp() -> Self {
         Self {
             language: TargetLanguage::Cpp,
@@ -545,7 +528,6 @@ pub fn get_backend(lang: TargetLanguage) -> Box<dyn LanguageBackend> {
         TargetLanguage::Kotlin => Box::new(kotlin::KotlinBackend),
         TargetLanguage::Swift => Box::new(swift::SwiftBackend),
         TargetLanguage::Ruby => Box::new(ruby::RubyBackend),
-        TargetLanguage::Erlang => Box::new(erlang::ErlangBackend),
         TargetLanguage::Lua => Box::new(lua::LuaBackend),
         TargetLanguage::Dart => Box::new(dart::DartBackend),
         TargetLanguage::GDScript => Box::new(gdscript::GDScriptBackend),

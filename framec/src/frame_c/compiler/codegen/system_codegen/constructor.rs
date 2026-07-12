@@ -94,7 +94,6 @@ fn init_collection_stack(
         | TargetLanguage::JavaScript
         | TargetLanguage::Php
         | TargetLanguage::Ruby
-        | TargetLanguage::Erlang
         | TargetLanguage::Rust
         | TargetLanguage::Lua
         | TargetLanguage::Dart
@@ -145,7 +144,7 @@ fn should_emit_constructor_body_init(
         //  they'd be primary-constructor params; RFC-0017 made the system
         //  ctor parameterless, so the const field must take its value via
         //  the constructor-body assignment like every other backend.)
-        Erlang | Graphviz => false,
+        Graphviz => false,
     }
 }
 
@@ -219,7 +218,7 @@ fn format_field_assignment(
         Kotlin => format!("this.{} = {}", field_name, init_value),
         Php => format!("$this->{} = {};", field_name, init_value),
         Ruby => format!("@{} = {}", field_name, init_value),
-        Rust | Erlang | Graphviz => unreachable!(
+        Rust | Graphviz => unreachable!(
             "format_field_assignment called for {:?} (Rust uses structured assign; \
              Erlang/Graphviz never reach this code path)",
             lang
@@ -452,9 +451,6 @@ pub(crate) fn generate_constructor(system: &SystemAst, syntax: &ClassSyntax) -> 
                 }
                 TargetLanguage::Swift => {
                     format!("self.{} = {}", p.name, p.name)
-                }
-                TargetLanguage::Erlang => {
-                    continue; // Erlang handles domain differently
                 }
                 _ => {
                     // Java, C#, Kotlin, Dart, TypeScript, JavaScript
@@ -1379,7 +1375,6 @@ pub(crate) fn generate_constructor(system: &SystemAst, syntax: &ClassSyntax) -> 
                 | TargetLanguage::JavaScript
                 | TargetLanguage::Php
                 | TargetLanguage::Ruby
-                | TargetLanguage::Erlang
                 | TargetLanguage::Kotlin => {
                     body.push(CodegenNode::assign(
                         CodegenNode::field(CodegenNode::self_ref(), "__compartment"),
@@ -1583,7 +1578,6 @@ self._context_stack.pop_back()"#,
                         sys = system.name
                     )
                 }
-                TargetLanguage::Erlang => String::new(), // gen_statem: handled natively by erlang_system.rs
                 TargetLanguage::Graphviz => unreachable!(),
             };
             body.push(CodegenNode::frame_init(init_event_code));

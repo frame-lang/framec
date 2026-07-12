@@ -171,9 +171,7 @@ pub(super) fn expand_transition(
                 ),
                 // Rust + Erlang dispatch to dedicated helpers below and
                 // never call this closure.
-                TargetLanguage::Rust | TargetLanguage::Erlang | TargetLanguage::Graphviz => {
-                    String::new()
-                }
+                TargetLanguage::Rust | TargetLanguage::Graphviz => String::new(),
             }
         };
 
@@ -1103,70 +1101,6 @@ pub(super) fn expand_transition(
                 code.push_str(&forward_event_line("__compartment"));
 
                 code.push_str(&format!("{}self:__transition(__compartment)", indent_str));
-                code
-            }
-            TargetLanguage::Erlang => {
-                // Path D: use frame_transition__ for full lifecycle.
-                //
-                // Args are emitted as positional Erlang lists (per the
-                // HashMap→Vec migration). For `name=value` entries
-                // the name is dropped and only `value` is included —
-                // the codegen relies on Frame source authors providing
-                // args in declaration order, same convention as
-                // Python/TS/Rust/etc.
-                let erlang_state = to_snake_case(&target);
-                let mut code = String::new();
-
-                let to_list_lit = |s: &Option<String>| -> String {
-                    match s {
-                        Some(joined) => {
-                            let vals = crate::frame_c::compiler::codegen::codegen_utils::arg_values(
-                                joined, lang,
-                            );
-                            format!("[{}]", vals.join(", "))
-                        }
-                        None => "[]".to_string(),
-                    }
-                };
-                let exit_list = to_list_lit(&exit_str);
-                let enter_list = to_list_lit(&enter_str);
-                let state_list = to_list_lit(&state_str);
-
-                // 7th arg: the @@:return value (the SSA-renamed
-                // `__ReturnVal_K` from the body's most recent
-                // `@@:return` write). Emit the literal token here;
-                // the body processor's SSA pass rewrites it to
-                // the correct SSA name when a write precedes the
-                // transition. `erlang_finalize_transition_replies`
-                // (run after the SSA pass) replaces any remaining
-                // unresolved `__ReturnVal` token in this position
-                // with `ok` — the gen_statem default reply value
-                // for handlers that didn't set one.
-                // Quote the state atom to immunize it from
-                // erlang_capitalize_params: when a transition target
-                // collides with a param name (state `$Active` and
-                // param `active`) the capitalize pass would otherwise
-                // turn the atom into the param's variable form.
-                // `'active'` and `active` are equivalent Erlang atoms.
-                if is_forward {
-                    // Forward variant: cascade exit/enter (same lifecycle)
-                    // PLUS a `next_event` action that re-dispatches the
-                    // originating event (`__Event`) to the new leaf after
-                    // gen_statem fires its `state_enter` callback there.
-                    // `__Event` is bound by the handler clause's pattern.
-                    // Decorations now flow through (#128): exit/enter/state
-                    // args are passed positionally, identical to the regular
-                    // form.
-                    code.push_str(&format!(
-                        "{}frame_forward_transition__('{}', __Event, Data, {}, {}, {}, From)",
-                        indent_str, erlang_state, exit_list, enter_list, state_list
-                    ));
-                } else {
-                    code.push_str(&format!(
-                        "{}frame_transition__('{}', Data, {}, {}, {}, From, __ReturnVal)",
-                        indent_str, erlang_state, exit_list, enter_list, state_list
-                    ));
-                }
                 code
             }
             TargetLanguage::Graphviz => unreachable!(),

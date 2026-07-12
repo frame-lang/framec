@@ -143,7 +143,6 @@ pub(super) fn context_return_read_typed(
         }
         TargetLanguage::Ruby => "@_context_stack[@_context_stack.length - 1]._return".to_string(),
         TargetLanguage::Lua => "self._context_stack[#self._context_stack]._return".to_string(),
-        TargetLanguage::Erlang => "__ReturnVal".to_string(),
         TargetLanguage::Graphviz => unreachable!(),
     }
 }
@@ -601,7 +600,6 @@ pub(crate) fn emit_handler_body_via_statements(
                                     | TargetLanguage::GDScript
                                     | TargetLanguage::Ruby
                                     | TargetLanguage::Lua
-                                    | TargetLanguage::Erlang
                                     | TargetLanguage::Graphviz => {}
                                     _ => out.push(';'),
                                 }

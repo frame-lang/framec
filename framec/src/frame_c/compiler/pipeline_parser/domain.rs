@@ -216,7 +216,10 @@ mod tests {
             out.contains(".bar()"),
             "leading-dot chain was severed (`.bar()` dropped or stray):\n{out}"
         );
-        assert!(out.contains("self.y = 7"), "following field swallowed:\n{out}");
+        assert!(
+            out.contains("self.y = 7"),
+            "following field swallowed:\n{out}"
+        );
     }
 
     #[test]

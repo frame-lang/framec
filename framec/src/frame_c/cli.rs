@@ -194,7 +194,7 @@ impl Cli {
                     .arg(Arg::new("dir").value_name("DIR").required(true))
             )
             .arg(Arg::new("FILE-PATH").help("File path").value_name("FILE").index(1))
-            .arg(Arg::new("language").value_name("LANG").long("language").short('l').help("Target language (python_3, typescript, javascript, rust, c, cpp, java, kotlin, swift, ruby, csharp, go, php, dart, gdscript, lua, erlang, graphviz). Precedence: -l > @@[target(...)] pragma > FRAMEC_DEFAULT_TARGET env var > python_3 (default; warns).").num_args(1))
+            .arg(Arg::new("language").value_name("LANG").long("language").short('l').help("Target language (python_3, typescript, javascript, rust, c, cpp, java, kotlin, swift, ruby, csharp, go, php, dart, gdscript, lua, graphviz). Precedence: -l > @@[target(...)] pragma > FRAMEC_DEFAULT_TARGET env var > python_3 (default; warns).").num_args(1))
             .arg(Arg::new("multifile").long("multifile").short('m').help("Enable multi-file project compilation").action(clap::ArgAction::SetTrue))
             .arg(Arg::new("output-dir").long("output-dir").short('o').help("Output directory for generated files (compile/multi-file)").value_name("DIR").num_args(1).global(true))
             .arg(Arg::new("debug-output").long("debug-output").help("Generate JSON output with transpiled code and source map").action(clap::ArgAction::SetTrue).global(true))
@@ -770,7 +770,6 @@ fn handle_compile_project(
         TargetLanguage::Kotlin => ["kotlin", "kt"].into_iter().collect(),
         TargetLanguage::Swift => ["swift"].into_iter().collect(),
         TargetLanguage::Ruby => ["ruby", "rb"].into_iter().collect(),
-        TargetLanguage::Erlang => ["erlang", "erl"].into_iter().collect(),
         TargetLanguage::Lua => ["lua"].into_iter().collect(),
         TargetLanguage::Dart => ["dart"].into_iter().collect(),
         TargetLanguage::GDScript => ["gdscript"].into_iter().collect(),
@@ -895,7 +894,6 @@ fn handle_compile_project(
                     TargetLanguage::Kotlin => ".kt",
                     TargetLanguage::Swift => ".swift",
                     TargetLanguage::Ruby => ".rb",
-                    TargetLanguage::Erlang => ".erl",
                     TargetLanguage::Lua => ".lua",
                     TargetLanguage::Dart => ".dart",
                     TargetLanguage::GDScript => ".gd",
@@ -916,7 +914,6 @@ fn handle_compile_project(
                     TargetLanguage::Kotlin => "kotlin",
                     TargetLanguage::Swift => "swift",
                     TargetLanguage::Ruby => "ruby",
-                    TargetLanguage::Erlang => "erlang",
                     TargetLanguage::Lua => "lua",
                     TargetLanguage::Dart => "dart",
                     TargetLanguage::GDScript => "gdscript",
@@ -1165,7 +1162,6 @@ fn handle_compile(args: &Cli, language: String, file: PathBuf, format: Option<St
                     TargetLanguage::Kotlin => ".kt",
                     TargetLanguage::Swift => ".swift",
                     TargetLanguage::Ruby => ".rb",
-                    TargetLanguage::Erlang => ".erl",
                     TargetLanguage::Lua => ".lua",
                     TargetLanguage::Dart => ".dart",
                     TargetLanguage::GDScript => ".gd",

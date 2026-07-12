@@ -26,3 +26,4 @@ _scratch/
 
 # Project-internal AI agent context (kept local, not published)
 CLAUDE.md
+erl_crash.dump

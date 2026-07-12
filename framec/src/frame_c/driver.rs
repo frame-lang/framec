@@ -181,7 +181,7 @@ fn resolve_target_with_diag(
                     "framec: warning: FRAMEC_DEFAULT_TARGET=\"{v}\" is not a recognized \
                      target; defaulting to python_3. Valid: python_3, typescript, \
                      javascript, rust, c, cpp, java, kotlin, swift, ruby, csharp, go, \
-                     php, dart, gdscript, lua, erlang, graphviz."
+                     php, dart, gdscript, lua, graphviz."
                 )),
             ),
         };

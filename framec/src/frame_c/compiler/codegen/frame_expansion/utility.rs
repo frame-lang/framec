@@ -234,7 +234,7 @@ pub(super) fn transition_terminator(
         | TargetLanguage::Go
         | TargetLanguage::Ruby
         | TargetLanguage::Lua => "return",
-        TargetLanguage::Erlang | TargetLanguage::Graphviz => "",
+        TargetLanguage::Graphviz => "",
     }
 }
 

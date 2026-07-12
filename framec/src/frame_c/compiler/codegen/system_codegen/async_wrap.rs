@@ -326,7 +326,6 @@ _context_stack.RemoveAt(_context_stack.Count - 1);"#,
             // (the old shared placeholder emitted invalid syntax there).
             TargetLanguage::Ruby => format!("# async init not yet implemented for {:?}", lang),
             TargetLanguage::Lua => format!("-- async init not yet implemented for {:?}", lang),
-            TargetLanguage::Erlang => String::new(), // gen_statem: handled natively by erlang_system.rs
             TargetLanguage::Graphviz => unreachable!(),
         };
         let init_body = vec![CodegenNode::NativeBlock {

@@ -129,14 +129,6 @@ pub(crate) fn generate_no_initialization(name: &str, lang: TargetLanguage) -> St
             // the obsolete D7 `Counter.__no_init()` factory.
             format!("{}()", name)
         }
-        TargetLanguage::Erlang => {
-            // RFC-0017 Phase A6: `@@!Counter()` lowers to bare
-            // `module:start_link()` unwrapped. The bare init sets
-            // `frame_skip_enter__ = true` so the user `$>` body never
-            // fires until `frame_init/(N+1)` is called explicitly.
-            // Returns a Pid (matches the @@! call site shape).
-            format!("element(2, {}:start_link())", to_snake_case(name))
-        }
         _ => format!(
             "/* @@! no-initialization allocation not yet wired for {:?} ({}); see RFC-0015 D7 */",
             lang, name

@@ -22,9 +22,8 @@
 
 use crate::frame_c::compiler::native_region_scanner::{
     c::NativeRegionScannerC, cpp::NativeRegionScannerCpp, csharp::NativeRegionScannerCs,
-    dart::NativeRegionScannerDart, erlang::NativeRegionScannerErlang,
-    gdscript::NativeRegionScannerGDScript, go::NativeRegionScannerGo,
-    java::NativeRegionScannerJava, javascript::NativeRegionScannerJs,
+    dart::NativeRegionScannerDart, gdscript::NativeRegionScannerGDScript,
+    go::NativeRegionScannerGo, java::NativeRegionScannerJava, javascript::NativeRegionScannerJs,
     kotlin::NativeRegionScannerKotlin, lua::NativeRegionScannerLua, php::NativeRegionScannerPhp,
     python::NativeRegionScannerPy, ruby::NativeRegionScannerRuby, rust::NativeRegionScannerRust,
     swift::NativeRegionScannerSwift, typescript::NativeRegionScannerTs, NativeRegionScanner,
@@ -47,7 +46,6 @@ pub(crate) fn get_native_scanner(lang: TargetLanguage) -> Box<dyn NativeRegionSc
         TargetLanguage::Go => Box::new(NativeRegionScannerGo),
         TargetLanguage::Php => Box::new(NativeRegionScannerPhp),
         TargetLanguage::Ruby => Box::new(NativeRegionScannerRuby),
-        TargetLanguage::Erlang => Box::new(NativeRegionScannerErlang),
         TargetLanguage::Lua => Box::new(NativeRegionScannerLua),
         TargetLanguage::Dart => Box::new(NativeRegionScannerDart),
         TargetLanguage::GDScript => Box::new(NativeRegionScannerGDScript),
@@ -87,7 +85,6 @@ pub(crate) fn expand_system_state(lang: TargetLanguage) -> String {
         // the other 16 backends). `frame_state_name__/1` is emitted by
         // `emit_runtime_helpers` and maps the atom back to the
         // original spelling.
-        TargetLanguage::Erlang => "frame_state_name__(Data#data.frame_current_state)".to_string(),
         TargetLanguage::Graphviz => unreachable!(),
     }
 }
@@ -158,7 +155,6 @@ pub(crate) fn expand_system_state_in_code(code: &str, lang: TargetLanguage) -> S
                 // matching the per-language semicolon convention used by the
                 // value form below.
                 match lang {
-                    TargetLanguage::Erlang => "ok".to_string(),
                     TargetLanguage::Python3
                     | TargetLanguage::GDScript
                     | TargetLanguage::Ruby
@@ -170,7 +166,6 @@ pub(crate) fn expand_system_state_in_code(code: &str, lang: TargetLanguage) -> S
                 }
             } else {
                 match lang {
-                    TargetLanguage::Erlang => expr.to_string(),
                     TargetLanguage::Python3
                     | TargetLanguage::GDScript
                     | TargetLanguage::Ruby
@@ -213,7 +208,6 @@ pub(crate) fn expand_system_state_in_code(code: &str, lang: TargetLanguage) -> S
             let expr = &result[after..j];
             let expansion = match lang {
                 // Erlang: last expression IS the return value
-                TargetLanguage::Erlang => expr.to_string(),
                 // No-semicolon languages
                 TargetLanguage::Python3
                 | TargetLanguage::GDScript
@@ -255,11 +249,6 @@ mod tests {
             expand_system_state_in_code("@@:return(1)", TargetLanguage::TypeScript),
             "return 1;"
         );
-        // Erlang: the last expression is the value, so just the expr.
-        assert_eq!(
-            expand_system_state_in_code("@@:return(1)", TargetLanguage::Erlang),
-            "1"
-        );
     }
 
     // #141: void `@@:return()` in an action body → bare exit (no empty
@@ -274,10 +263,6 @@ mod tests {
         assert_eq!(
             expand_system_state_in_code("@@:return()", TargetLanguage::TypeScript),
             "return;"
-        );
-        assert_eq!(
-            expand_system_state_in_code("@@:return()", TargetLanguage::Erlang),
-            "ok"
         );
     }
 

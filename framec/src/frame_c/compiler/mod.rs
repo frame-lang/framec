@@ -18,7 +18,6 @@ pub mod validator;
 pub mod assembler;
 pub mod attribute_scanner;
 pub mod codegen;
-pub mod erlang_classifier;
 pub mod frame_ast;
 pub mod frame_validator;
 pub mod fsm_parser;

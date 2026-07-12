@@ -154,7 +154,6 @@ pub mod c;
 pub mod cpp;
 pub mod csharp;
 pub mod dart;
-pub mod erlang;
 pub mod frame_structural;
 pub mod gdscript;
 pub mod go;
@@ -619,7 +618,6 @@ pub fn create_native_scanner(lang: TargetLanguage) -> Box<dyn NativeRegionScanne
         TargetLanguage::Go => Box::new(go::NativeRegionScannerGo),
         TargetLanguage::Php => Box::new(php::NativeRegionScannerPhp),
         TargetLanguage::Ruby => Box::new(ruby::NativeRegionScannerRuby),
-        TargetLanguage::Erlang => Box::new(erlang::NativeRegionScannerErlang),
         TargetLanguage::Lua => Box::new(lua::NativeRegionScannerLua),
         TargetLanguage::Dart => Box::new(dart::NativeRegionScannerDart),
         TargetLanguage::GDScript => Box::new(gdscript::NativeRegionScannerGDScript),
@@ -649,7 +647,6 @@ pub fn create_skipper(lang: TargetLanguage) -> Box<dyn SyntaxSkipper> {
         TargetLanguage::Kotlin => Box::new(kotlin::KotlinSkipper),
         TargetLanguage::Swift => Box::new(swift::SwiftSkipper),
         TargetLanguage::Ruby => Box::new(ruby::RubySkipper),
-        TargetLanguage::Erlang => Box::new(erlang::ErlangSkipper),
         TargetLanguage::Lua => Box::new(lua::LuaSkipper),
         TargetLanguage::Dart => Box::new(dart::DartSkipper),
         TargetLanguage::GDScript => Box::new(gdscript::GDScriptSkipper),

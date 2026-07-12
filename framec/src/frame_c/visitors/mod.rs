@@ -16,7 +16,6 @@ pub enum TargetLanguage {
     Kotlin,
     Swift,
     Ruby,
-    Erlang,
     Lua,
     Dart,
     GDScript,
@@ -39,7 +38,6 @@ impl TargetLanguage {
             TargetLanguage::Kotlin => "kt",
             TargetLanguage::Swift => "swift",
             TargetLanguage::Ruby => "rb",
-            TargetLanguage::Erlang => "erl",
             TargetLanguage::Lua => "lua",
             TargetLanguage::Dart => "dart",
             TargetLanguage::GDScript => "gd",
@@ -84,8 +82,6 @@ impl TryFrom<&str> for TargetLanguage {
             Ok(TargetLanguage::Swift)
         } else if normalized == "ruby" || normalized == "rb" {
             Ok(TargetLanguage::Ruby)
-        } else if normalized == "erlang" || normalized == "erl" {
-            Ok(TargetLanguage::Erlang)
         } else if normalized == "lua" {
             Ok(TargetLanguage::Lua)
         } else if normalized == "dart" {
@@ -94,7 +90,7 @@ impl TryFrom<&str> for TargetLanguage {
             Ok(TargetLanguage::GDScript)
         } else {
             Err(format!(
-                "Unrecognized target language: {}. Supported languages are: python_3, typescript, javascript, rust, c, cpp, java, csharp, go, php, kotlin, swift, ruby, erlang, lua, dart, gdscript, graphviz",
+                "Unrecognized target language: {}. Supported languages are: python_3, typescript, javascript, rust, c, cpp, java, csharp, go, php, kotlin, swift, ruby, lua, dart, gdscript, graphviz",
                 normalized
             ))
         }

@@ -108,7 +108,6 @@ pub(super) fn expand_context_self(
         TargetLanguage::Go => "s",
         TargetLanguage::Php => "$this",
         TargetLanguage::Rust => super::super::rust_system::rust_self_ref(),
-        TargetLanguage::Erlang => "self",
         TargetLanguage::Graphviz => unreachable!(),
     };
 
@@ -308,19 +307,6 @@ pub(super) fn expand_context_self_field_call(
         // (Erlang has no method-call-on-value syntax, so `@@:self.field.method()`
         // is always a cross-system call; the module name is the field's system
         // type, snake-cased — matching the field's `@@System()` initializer.)
-        TargetLanguage::Erlang => {
-            if let Some(base) = erlang_base_owned.as_deref() {
-                let module = to_snake_case(base);
-                let inner = strip_outer_parens(&args);
-                if inner.trim().is_empty() {
-                    format!("{module}:{method}(self.{field}{idx})")
-                } else {
-                    format!("{module}:{method}(self.{field}{idx}, {inner})")
-                }
-            } else {
-                format!("self.{field}{idx}.{method}{args}")
-            }
-        }
         // C++: embed fields are `shared_ptr` (deref with `->`); scalar fields are
         // values (`.`). This is the one target where the field type changes the
         // method-access operator.
@@ -527,27 +513,6 @@ pub(super) fn expand_context_self_call(
         TargetLanguage::Php => format!("$this->{}{}", method_name, args_with_parens),
         TargetLanguage::Ruby => format!("self.{}{}", method_name, args_with_parens),
         TargetLanguage::Lua => format!("self:{}{}", method_name, args_with_parens),
-        TargetLanguage::Erlang => {
-            // Emit the `@@:self.method(args)` form *with the marker
-            // preserved* and let the Erlang handler post-pass
-            // (erlang_system.rs::erlang_rewrite_native_classified_full)
-            // recognize the marked pattern as an `ActionCall` /
-            // `InterfaceCall` and rewrite it to `action(Data, args)` /
-            // `{DataN, Result} = frame_dispatch__(method, [args],
-            // DataPrev)`. That pass threads NewData forward through the
-            // rest of the handler body via `data_gen`/`data_var` — so
-            // `self.field` reads and `-> $State` transitions after a
-            // @@:self call correctly see the state changes the called
-            // handler made.
-            //
-            // Core Frame rule: framec translates only Frame syntax. The
-            // `@@:self.` marker is what makes this call *Frame-derived*
-            // and therefore translatable. A *bare* native `self.X(...)`
-            // carries no marker, so the classifier leaves it verbatim
-            // and `erlc` rejects it on its own line (Erlang has no
-            // `self` value) — the correct, contextual native behavior.
-            format!("@@:self.{}{}", method_name, args_with_parens)
-        }
         TargetLanguage::Graphviz => unreachable!(),
     };
 

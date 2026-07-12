@@ -405,14 +405,6 @@ fn expand_state_vars_in_expr(expr: &str, lang: TargetLanguage, ctx: &HandlerCont
                         result.push_str(&format!("self.__compartment.state_vars[\"{}\"]", var_name))
                     }
                 }
-                TargetLanguage::Erlang => {
-                    // Leave `self.` placeholder so the body processor's
-                    // classifier substitutes with the live `DataN#data.`
-                    // — matches the live data_gen. See sibling fix in
-                    // `FrameSegmentKind::StateVarRead` above.
-                    let state_prefix = to_snake_case(&ctx.state_name);
-                    result.push_str(&format!("self.sv_{}_{}", state_prefix, var_name))
-                }
                 TargetLanguage::Graphviz => unreachable!(),
             }
         } else {

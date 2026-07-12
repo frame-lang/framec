@@ -45,7 +45,6 @@ pub(crate) fn is_dynamic_target(lang: TargetLanguage) -> bool {
         TargetLanguage::Kotlin => "kotlin",
         TargetLanguage::Swift => "swift",
         TargetLanguage::Ruby => "ruby",
-        TargetLanguage::Erlang => "erlang",
         TargetLanguage::Lua => "lua",
         TargetLanguage::Dart => "dart",
         TargetLanguage::GDScript => "gdscript",
@@ -67,7 +66,6 @@ mod tests {
         assert!(is_dynamic_target(TargetLanguage::Lua));
         assert!(is_dynamic_target(TargetLanguage::Php));
         assert!(is_dynamic_target(TargetLanguage::GDScript));
-        assert!(is_dynamic_target(TargetLanguage::Erlang));
     }
 
     #[test]
