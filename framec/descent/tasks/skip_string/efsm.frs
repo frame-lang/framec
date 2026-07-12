@@ -1,0 +1,24 @@
+@@[target("rust")]
+
+// TASK: skip_string — a POSITIONED PROBE.
+//
+//   skip_string(bytes, i) -> Option<usize>
+//   "if a double-quoted string starts at byte i, where does it end?"
+//
+// This is the shape of all 15 SyntaxSkippers: called at *every* cursor position
+// over one buffer, thousands of times per handler body.
+//
+// CANDIDATE: @@fsm (regular).
+//
+// The pattern is genuinely regular — a quote, then any run of non-quote /
+// escaped characters, then a quote. No counter, no stack, no register.
+//
+// Driven via RFC-0042.1's `over()` + `scan_at()`: the machine BORROWS the buffer
+// (impl <Name>Input for &[u8]) and is re-seeded at each cursor in O(1).
+// Zero copies, for the whole sweep.
+// NOTE: the default is 0, not -1, because a NEGATIVE LITERAL is rejected as an
+// @@fsm return default (E700: "unexpected byte '-' in @@fsm header"). Filed.
+// "no match" is therefore signalled by `accepted == false`, not by a sentinel.
+@@fsm SkipString(text: bytes) : int = 0 {
+    /"([^"\\]|\\.)*"/  @@:cursor
+}

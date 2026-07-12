@@ -1,0 +1,4 @@
+# build artifacts — the .frs are the source; the .rs are generated
+tasks/*/driver
+tasks/*/efsm.rs
+tasks/*/system.rs

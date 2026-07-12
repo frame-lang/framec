@@ -1,0 +1,116 @@
+[
+ {
+  "task": "skip_string",
+  "error": null,
+  "rows": [
+   {
+    "task": "skip_string",
+    "candidate": "incumbent(native)",
+    "n": 2000,
+    "secs": 1.75e-06,
+    "ns_per_el": 0.88,
+    "bytes_copied": 0,
+    "agrees": true
+   },
+   {
+    "task": "skip_string",
+    "candidate": "@@fsm(borrowed+positioned)",
+    "n": 2000,
+    "secs": 2.2083e-05,
+    "ns_per_el": 11.04,
+    "bytes_copied": 0,
+    "agrees": true
+   },
+   {
+    "task": "skip_string",
+    "candidate": "@@system(owns input)",
+    "n": 2000,
+    "secs": 0.00034625,
+    "ns_per_el": 173.12,
+    "bytes_copied": 4000000,
+    "agrees": true
+   },
+   {
+    "task": "skip_string",
+    "candidate": "incumbent(native)",
+    "n": 4000,
+    "secs": 3.5e-06,
+    "ns_per_el": 0.88,
+    "bytes_copied": 0,
+    "agrees": true
+   },
+   {
+    "task": "skip_string",
+    "candidate": "@@fsm(borrowed+positioned)",
+    "n": 4000,
+    "secs": 4.475e-05,
+    "ns_per_el": 11.19,
+    "bytes_copied": 0,
+    "agrees": true
+   },
+   {
+    "task": "skip_string",
+    "candidate": "@@system(owns input)",
+    "n": 4000,
+    "secs": 0.000767083,
+    "ns_per_el": 191.77,
+    "bytes_copied": 16000000,
+    "agrees": true
+   },
+   {
+    "task": "skip_string",
+    "candidate": "incumbent(native)",
+    "n": 8000,
+    "secs": 7.125e-06,
+    "ns_per_el": 0.89,
+    "bytes_copied": 0,
+    "agrees": true
+   },
+   {
+    "task": "skip_string",
+    "candidate": "@@fsm(borrowed+positioned)",
+    "n": 8000,
+    "secs": 9.3584e-05,
+    "ns_per_el": 11.7,
+    "bytes_copied": 0,
+    "agrees": true
+   },
+   {
+    "task": "skip_string",
+    "candidate": "@@system(owns input)",
+    "n": 8000,
+    "secs": 0.00215725,
+    "ns_per_el": 269.66,
+    "bytes_copied": 64000000,
+    "agrees": true
+   },
+   {
+    "task": "skip_string",
+    "candidate": "incumbent(native)",
+    "n": 16000,
+    "secs": 1.3208e-05,
+    "ns_per_el": 0.83,
+    "bytes_copied": 0,
+    "agrees": true
+   },
+   {
+    "task": "skip_string",
+    "candidate": "@@fsm(borrowed+positioned)",
+    "n": 16000,
+    "secs": 0.000177542,
+    "ns_per_el": 11.1,
+    "bytes_copied": 0,
+    "agrees": true
+   },
+   {
+    "task": "skip_string",
+    "candidate": "@@system(owns input)",
+    "n": 16000,
+    "secs": 0.007739459,
+    "ns_per_el": 483.72,
+    "bytes_copied": 256000000,
+    "agrees": true
+   }
+  ]
+ }
+]
