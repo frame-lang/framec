@@ -14,6 +14,8 @@ pub mod parts;
 pub mod sections;
 /// The first scanner dogfooded as a Frame `@@[scan(u8)]` system (docs/JOURNAL.md).
 pub mod string_scan;
+/// Balanced-`()` extent, dogfooded as a Frame `@@[scan(u8)]` counter automaton.
+pub mod paren_balance;
 use super::{Source, Span};
 use crate::tree::{
     BomItem, EfsmItem, FileAst, Item, NativeItem, Param, PragmaItem, SystemItem, SystemParams,

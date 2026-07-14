@@ -567,6 +567,15 @@ impl Rust {
         // ACCEPTS iff it ends in a state named `$Accept`.
         out.frame("    pub fn scan_at(&mut self, start: usize) -> bool {\n");
         out.frame("        self.cursor = start;\n");
+        // Reset the scanner's domain state to its inits, so scan_at is RESTARTABLE — a
+        // counter or flag from a previous scan must not leak into the next one.
+        for f in &sym.domain {
+            let init = match &f.init_system {
+                Some(s) => format!("{s}::new()"),
+                None => f.init_text.clone().unwrap_or_else(|| "Default::default()".into()),
+            };
+            out.frame(&format!("        self.{} = {init};\n", f.name));
+        }
         out.frame(&format!(
             "        let mut compartment = Compartment::new(\"{first}\");\n"
         ));
