@@ -5,7 +5,7 @@
     machine:
         $Judging {
             decide(score: number): string {
-                if score >= 60 {
+                if (score >= 60) {
                     @@:return("pass")
                 }
                 @@:return("fail")

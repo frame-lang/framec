@@ -1,3 +1,5 @@
+package main
+
 @@system StateArgs {
     interface:
         load(initial: int)

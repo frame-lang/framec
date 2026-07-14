@@ -1,3 +1,7 @@
+class Cache
+  def get(k) = "v:" + k
+end
+
 @@[async]
 @@system AsyncFetcher {
     interface:

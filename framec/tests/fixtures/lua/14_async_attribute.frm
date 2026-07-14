@@ -1,3 +1,6 @@
+local Cache = {}
+function Cache:get(k) return "v:" .. k end
+
 @@[async]
 @@system AsyncFetcher {
     interface:

@@ -1,3 +1,7 @@
+class Cache:
+    def get(self, k):
+        return "v:" + k
+
 @@[async]
 @@system AsyncFetcher {
     interface:
@@ -11,5 +15,5 @@
         }
 
     domain:
-        cache: Cache = nil
+        cache: Cache = None
 }

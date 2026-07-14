@@ -1,3 +1,5 @@
+package main
+
 @@system Lifecycle {
     interface:
         start(label: string)
@@ -6,8 +8,7 @@
     machine:
         $Idle {
             start(label: string) {
-                (label)
-                -> $Running
+                -> (label) $Running
             }
         }
 

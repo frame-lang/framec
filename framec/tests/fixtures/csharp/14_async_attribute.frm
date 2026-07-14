@@ -1,3 +1,7 @@
+public class Cache {
+    public string get(string k) { return "v:" + k; }
+}
+
 @@[async]
 @@system AsyncFetcher {
     interface:
@@ -11,5 +15,5 @@
         }
 
     domain:
-        cache: Cache = nil
+        cache: Cache = null
 }

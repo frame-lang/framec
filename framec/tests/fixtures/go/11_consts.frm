@@ -1,3 +1,5 @@
+package main
+
 @@system Consts(step: int = 5, limit: int = 20) {
     interface:
         tick()

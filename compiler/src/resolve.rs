@@ -1,0 +1,429 @@
+//! RESOLVE — the symbol table. **A pure walk over the tree. It cannot read a byte.**
+//!
+//! This module lives outside `crate::text`, so `Source::open` and `NativeText::finish`
+//! are private to it. It could not grep source or emitted output if it wanted to.
+//!
+//! That is not a restriction we are working around; it is the design working. Every
+//! fact this pass needs is already **on a node**, because the scanner put it there —
+//! and the scanner put it there precisely because RESOLVE could not have fetched it
+//! itself.
+//!
+//! > **RULE 1.** A pass may interrogate a node about facts *framec* put there. It may
+//! > never interrogate a node about facts the *user* put there.
+//!
+//! A declaration's **name** is framec's (it is Frame's own vocabulary). A declaration's
+//! **type** is the user's — carried verbatim, never parsed.
+//!
+//! # Types, and why we do not parse them
+//!
+//! framec has no type system. `Type` is the user's target-language text, and verbatim
+//! type passthrough is a standing architectural boundary. So "resolve a field's type to
+//! a system" means deciding whether one of these names a Frame system:
+//!
+//! ```text
+//! kid: Child                kid: Optional[Child]        kid: Child?
+//! kid: Rc<RefCell<Child>>   kid: std::shared_ptr<Child> kid: *Child
+//! ```
+//!
+//! Exact-name lookup gets the first and misses the rest. Getting the rest means parsing
+//! **sixteen type grammars** — which is the "never parse the user's code" rule broken
+//! one level up, and the camel's nose.
+//!
+//! # The corpus corrected us, and the correction is better than the plan
+//!
+//! The plan was exact-name resolution on the *type text*, plus a diagnostic for wrapped
+//! types. Then the corpus failed:
+//!
+//! ```frame
+//! inner: Inner* = @@Inner()      // fixtures/c/16_marshal_embed.frm — works today
+//! ```
+//!
+//! `Inner*` is not a wrapper a C programmer *chose*. It is **C's mandatory spelling**
+//! for a system instance — C has no references, and `create` returns a pointer.
+//! Telling that user to "just write `Inner`" is telling them to write something that is
+//! not C.
+//!
+//! But look at the initializer: **`@@Inner()`**. That is *Frame's own syntax*. framec
+//! already knows the field holds a system. **It never needed to read the type at all.**
+//!
+//! That is RULE 1, and we had walked straight past it — reading the *user's* text to
+//! recover a fact *framec's own* text already stated.
+//!
+//! **The rule, in priority order:**
+//!
+//! 1. `= @@Sys(...)` — Frame's syntax. **Authoritative.** Zero type parsing.
+//! 2. The type text is *exactly* a system name (`kid: Child`) — a convenience, still no
+//!    parsing.
+//! 3. The type *mentions* a system inside something else, and there is **no** `@@`
+//!    initializer to settle it — a **diagnostic** (E640). framec suspects, cannot know,
+//!    and says so rather than guessing.
+//! 4. Otherwise: opaque. The user's type. framec knows nothing about it and needs to
+//!    know nothing — the target toolchain does all the type work.
+
+use crate::tree::{Decl, FileAst, Item, MachineMember, Section, StateMember};
+use crate::Span;
+
+#[derive(Debug)]
+pub struct SymbolTable {
+    pub systems: Vec<SystemSym>,
+}
+
+#[derive(Debug)]
+pub struct SystemSym {
+    pub name: String,
+    pub span: Span,
+    /// `@@[async]` — the system's interface is asynchronous.
+    pub is_async: bool,
+    /// `@@[persist]`
+    pub is_persist: bool,
+    /// Events the system accepts.
+    pub interface: Vec<MethodSym>,
+    pub states: Vec<StateSym>,
+    pub domain: Vec<FieldSym>,
+    pub actions: Vec<MethodSym>,
+}
+
+#[derive(Debug)]
+pub struct MethodSym {
+    pub name: String,
+    pub span: Span,
+    /// `async fetch(...)` — a MODIFIER, not part of the name.
+    pub is_async: bool,
+    /// Verbatim. Never parsed.
+    pub params_text: Option<String>,
+    pub return_text: Option<String>,
+}
+
+#[derive(Debug)]
+pub struct StateSym {
+    pub name: String,
+    pub span: Span,
+    /// The state's declared parameter NAMES. `$B(n: int)` -> ["n"].
+    pub state_params: Vec<String>,
+    /// Their declared TYPES, verbatim. `$B(n: int)` -> {"n": "int"}.
+    /// The type text is the user's and is never parsed.
+    pub state_param_types: std::collections::HashMap<String, String>,
+    /// The parent state. `$Awake => $Live`.
+    pub parent: Option<String>,
+    pub handlers: Vec<HandlerSym>,
+    pub state_vars: Vec<FieldSym>,
+}
+
+#[derive(Debug)]
+pub struct HandlerSym {
+    pub event: String,
+    pub span: Span,
+    pub params_text: String,
+    pub return_text: Option<String>,
+}
+
+#[derive(Debug)]
+pub struct FieldSym {
+    pub name: String,
+    pub span: Span,
+    pub ty: TypeRef,
+}
+
+/// What a field's declared type refers to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TypeRef {
+    /// The type text is **exactly** the name of a system in this file.
+    System(String),
+    /// The user's type, verbatim. framec knows nothing about it and needs to know
+    /// nothing about it — the target toolchain does all the type work.
+    Opaque(String),
+    /// The type text **mentions** a known system, but is not exactly it — it is inside
+    /// a wrapper framec does not parse and must not parse.
+    ///
+    /// This is a **diagnostic**, not a resolution. framec says what it sees and what to
+    /// do about it, rather than guessing (which would be wrong on five spellings out of
+    /// six) or silently treating it as opaque (which would break cross-file persist).
+    WrappedSystem { text: String, system: String },
+    /// No annotation.
+    None,
+}
+
+/// A diagnostic. Every one carries a span, always.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Diagnostic {
+    pub code: &'static str,
+    pub span: Span,
+    pub message: String,
+}
+
+/// Build the symbol table. **Pure.** Tree in, table out; no bytes, no text probes.
+pub fn resolve(ast: &FileAst) -> (SymbolTable, Vec<Diagnostic>) {
+    let mut systems = Vec::new();
+    let mut diags = Vec::new();
+
+    // Pass 1 — collect the system names, so a field can be resolved against a system
+    // declared LATER in the file. (A single pass would make resolution depend on
+    // declaration order, which is a footgun nobody expects from a compiler.)
+    let known: Vec<String> = ast
+        .items
+        .iter()
+        .filter_map(|i| match i {
+            Item::System(s) => Some(s.name.clone()),
+            _ => None,
+        })
+        .collect();
+
+    // Pass 2 — build each system.
+    //
+    // An attribute applies to the NEXT system. Track the pending ones as we walk, rather
+    // than searching backwards from the system (which would mean re-deriving position
+    // from spans).
+    let mut pending: Vec<String> = Vec::new();
+    for item in &ast.items {
+        if let Item::Pragma(p) = item {
+            if let Some(a) = &p.attr {
+                pending.push(a.clone());
+            }
+            continue;
+        }
+        let Item::System(sys) = item else {
+            // Water between an attribute and its system does not carry it.
+            if matches!(item, Item::Native(_)) && !pending.is_empty() {
+                // blank lines are fine; real code is not. Keep it simple: keep pending.
+            }
+            continue;
+        };
+        let attrs = std::mem::take(&mut pending);
+        let mut sym = SystemSym {
+            name: sys.name.clone(),
+            span: sys.span,
+            is_async: attrs.iter().any(|a| a == "async"),
+            is_persist: attrs.iter().any(|a| a == "persist"),
+            interface: Vec::new(),
+            states: Vec::new(),
+            domain: Vec::new(),
+            actions: Vec::new(),
+        };
+
+        for sec in &sys.sections {
+            match sec {
+                Section::Interface(d) => {
+                    for m in &d.members {
+                        if let Decl::Member(md) = m {
+                            sym.interface.push(MethodSym {
+                                name: md.name.clone(),
+                                span: md.span,
+                                is_async: md.is_async,
+                                params_text: md.params_text.clone(),
+                                return_text: md.type_text.clone(),
+                            });
+                        }
+                    }
+                }
+                Section::Domain(d) => {
+                    for m in &d.members {
+                        if let Decl::Member(md) = m {
+                            sym.domain.push(FieldSym {
+                                name: md.name.clone(),
+                                span: md.span,
+                                ty: classify(
+                                    md.type_text.as_deref(),
+                                    md.init_system.as_deref(),
+                                    &known,
+                                    md.span,
+                                    &mut diags,
+                                ),
+                            });
+                        }
+                    }
+                }
+                Section::Actions(d) | Section::Operations(d) => {
+                    for m in &d.members {
+                        match m {
+                            Decl::Member(md) => sym.actions.push(MethodSym {
+                                name: md.name.clone(),
+                                span: md.span,
+                                is_async: md.is_async,
+                                params_text: md.params_text.clone(),
+                                return_text: md.type_text.clone(),
+                            }),
+                            Decl::WithBody(_) => {}
+                            Decl::Trivia(_) => {}
+                        }
+                    }
+                }
+                Section::Machine(m) => {
+                    for mm in &m.members {
+                        let MachineMember::State(st) = mm else {
+                            continue;
+                        };
+                        let mut ss = StateSym {
+                            name: st.name.clone(),
+                            span: st.span,
+                            state_params: st.params.clone(),
+                            state_param_types: st.param_types.clone(),
+                            parent: st.parent.clone(),
+                            handlers: Vec::new(),
+                            state_vars: Vec::new(),
+                        };
+                        for member in &st.members {
+                            match member {
+                                StateMember::Handler(h) => ss.handlers.push(HandlerSym {
+                                    event: h.event.clone(),
+                                    span: h.span,
+                                    params_text: h.params_text.clone(),
+                                    return_text: h.return_text.clone(),
+                                }),
+                                StateMember::StateVar(v) => ss.state_vars.push(FieldSym {
+                                    name: v.name.clone(),
+                                    span: v.span,
+                                    ty: classify(
+                                        v.type_text.as_deref(),
+                                        v.init_system.as_deref(),
+                                        &known,
+                                        v.span,
+                                        &mut diags,
+                                    ),
+                                }),
+                                StateMember::Trivia(_) => {}
+                            }
+                        }
+                        sym.states.push(ss);
+                    }
+                }
+                _ => {}
+            }
+        }
+        systems.push(sym);
+    }
+
+    (SymbolTable { systems }, diags)
+}
+
+/// Classify a declared type. **The type text is never parsed.**
+fn classify(
+    text: Option<&str>,
+    init_system: Option<&str>,
+    known: &[String],
+    span: Span,
+    diags: &mut Vec<Diagnostic>,
+) -> TypeRef {
+    // (1) THE INITIALIZER SETTLES IT. `= @@Inner()` is Frame's own syntax — a fact
+    // framec put there — and it is authoritative regardless of how the user had to
+    // spell the type. `Inner*`, `Rc<RefCell<Inner>>`, `shared_ptr<Inner>`: all of them
+    // are just the target's way of saying "an instance of Inner", and framec does not
+    // need to know which. It asks its OWN syntax, not the user's.
+    if let Some(sys) = init_system {
+        if known.iter().any(|k| k == sys) {
+            return TypeRef::System(sys.to_string());
+        }
+        // `= @@Nope()` naming a system that does not exist is a real error — but it is
+        // an *instantiation* error, not a type error, and it belongs to VALIDATE.
+    }
+
+    let Some(t) = text.map(str::trim) else {
+        return TypeRef::None;
+    };
+    if t.is_empty() {
+        return TypeRef::None;
+    }
+
+    // (2) Exact name -> a system. A convenience; still no parsing.
+    if known.iter().any(|k| k == t) {
+        return TypeRef::System(t.to_string());
+    }
+
+    // Does the text MENTION a system, as a whole word, inside something else?
+    //
+    // Note carefully what this is and is not. It is NOT parsing the type: we are not
+    // deciding that `Rc<RefCell<Child>>` is an `Rc` of a `RefCell` of a `Child`. We are
+    // asking a much weaker, purely lexical question — "does the identifier `Child`
+    // appear in here?" — in order to produce a *diagnostic*, never a resolution.
+    //
+    // The distinction matters. Resolving it would require knowing sixteen wrapper
+    // grammars. Reporting it requires knowing none.
+    // (3) The type MENTIONS a system, and no `@@` initializer settled the question.
+    // framec suspects; it cannot know; it says so. It does not guess — guessing would
+    // be wrong on five spellings out of six — and it does not silently shrug, which
+    // would break cross-file persist.
+    //
+    // Note what this check is NOT. It is not parsing the type: we never decide that
+    // `Rc<RefCell<Child>>` is an Rc of a RefCell of a Child. We ask the much weaker,
+    // purely lexical question "does the identifier `Child` occur here as a word?" — and
+    // only to produce a diagnostic, never a resolution. Resolving it would need sixteen
+    // wrapper grammars. Reporting it needs none.
+    for k in known {
+        if mentions_word(t, k) {
+            diags.push(Diagnostic {
+                code: "E640",
+                span,
+                message: format!(
+                    "the type `{t}` mentions the system `{k}`, but nothing tells framec \
+                     that this field HOLDS a `{k}`.\n\
+                     framec has no type system — a type is your target's text and passes \
+                     through verbatim — so it will not read inside `{t}` to find out.\n\
+                     Initialize it with Frame's own syntax and framec will know: \
+                     `= @@{k}(...)`."
+                ),
+            });
+            return TypeRef::WrappedSystem {
+                text: t.to_string(),
+                system: k.clone(),
+            };
+        }
+    }
+
+    // The user's type. framec knows nothing about it, and needs to know nothing.
+    TypeRef::Opaque(t.to_string())
+}
+
+/// Whole-word containment. `Child` is mentioned in `Rc<RefCell<Child>>` but NOT in
+/// `ChildProcess` or `GrandChild`.
+fn mentions_word(hay: &str, word: &str) -> bool {
+    let h = hay.as_bytes();
+    let w = word.as_bytes();
+    if w.is_empty() || h.len() < w.len() {
+        return false;
+    }
+    for i in 0..=h.len() - w.len() {
+        if &h[i..i + w.len()] != w {
+            continue;
+        }
+        let before_ok = i == 0 || !(h[i - 1].is_ascii_alphanumeric() || h[i - 1] == b'_');
+        let j = i + w.len();
+        let after_ok = j == h.len() || !(h[j].is_ascii_alphanumeric() || h[j] == b'_');
+        if before_ok && after_ok {
+            return true;
+        }
+    }
+    false
+}
+
+
+impl SystemSym {
+    /// **Which state actually handles `event` when the machine is in `state`?**
+    ///
+    /// The nearest ancestor — including `state` itself — that declares a handler for it.
+    /// `None` means nobody does, and the event is a no-op.
+    ///
+    /// This is the whole of hierarchical dispatch, resolved at COMPILE TIME from the
+    /// symbol table. No runtime parent-chain walk, and no text anywhere.
+    pub fn resolve_handler(&self, state: &str, event: &str) -> Option<&StateSym> {
+        let mut cur = self.states.iter().find(|s| s.name == state)?;
+        let mut guard = 0;
+        loop {
+            if cur.handlers.iter().any(|h| h.event == event) {
+                return Some(cur);
+            }
+            let p = cur.parent.as_ref()?;
+            cur = self.states.iter().find(|s| &s.name == p)?;
+            // A cycle in the parent chain would hang the compiler. Refuse rather than spin.
+            guard += 1;
+            if guard > self.states.len() {
+                return None;
+            }
+        }
+    }
+
+    /// The state that handles `event` for `state`'s PARENT — i.e. where `=> $^` goes.
+    pub fn resolve_forward(&self, state: &str, event: &str) -> Option<&StateSym> {
+        let s = self.states.iter().find(|s| s.name == state)?;
+        let parent = s.parent.as_ref()?;
+        self.resolve_handler(parent, event)
+    }
+}

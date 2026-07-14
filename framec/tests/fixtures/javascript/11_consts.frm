@@ -7,7 +7,7 @@
         $Running {
             tick() {
                 @@:self.count = @@:self.count + @@:self.step;
-                if @@:self.count >= @@:self.limit {
+                if (@@:self.count >= @@:self.limit) {
                     @@:self.count = 0;
                 }
             }

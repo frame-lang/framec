@@ -1,3 +1,7 @@
+class Cache {
+    fun get(k: String): String { return "v:" + k }
+}
+
 @@[async]
 @@system AsyncFetcher {
     interface:
@@ -11,5 +15,5 @@
         }
 
     domain:
-        cache: Cache = nil
+        cache: Cache = null
 }

@@ -1,3 +1,5 @@
+typedef struct { int _; } Cache;
+
 @@[async]
 @@system AsyncFetcher {
     interface:
@@ -11,5 +13,5 @@
         }
 
     domain:
-        cache: Cache = nil
+        cache: Cache = NULL
 }

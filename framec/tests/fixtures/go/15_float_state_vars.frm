@@ -1,3 +1,5 @@
+package main
+
 @@system FloatStateVars {
     interface:
         tick()

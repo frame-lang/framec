@@ -1,3 +1,7 @@
+class Cache {
+    func get(_ k: String) -> String { return "v:" + k }
+}
+
 @@[async]
 @@system AsyncFetcher {
     interface:

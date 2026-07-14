@@ -1,3 +1,5 @@
+package main
+
 @@system Actions {
     interface:
         increment(n: int)

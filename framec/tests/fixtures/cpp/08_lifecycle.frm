@@ -6,8 +6,7 @@
     machine:
         $Idle {
             start(label: std::string) {
-                (label)
-                -> $Running
+                -> (label) $Running
             }
         }
 

@@ -1,3 +1,5 @@
+package main
+
 @@system LinearFsm {
     interface:
         start()

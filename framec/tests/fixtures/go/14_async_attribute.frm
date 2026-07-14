@@ -1,3 +1,9 @@
+package main
+
+type Cache struct{}
+
+func (c *Cache) get(k string) string { return "v:" + k }
+
 @@[async]
 @@system AsyncFetcher {
     interface:

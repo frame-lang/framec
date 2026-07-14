@@ -1,3 +1,5 @@
+package main
+
 @@system LifecycleArgs {
     interface:
         load(n: int, label: string)

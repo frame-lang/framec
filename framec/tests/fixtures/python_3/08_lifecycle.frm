@@ -6,8 +6,7 @@
     machine:
         $Idle {
             start(label: str) {
-                (label)
-                -> $Running
+                -> (label) $Running
             }
         }
 

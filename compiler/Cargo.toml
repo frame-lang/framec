@@ -1,0 +1,31 @@
+# THE REBUILT FRAME COMPILER.
+#
+# THE CLEANROOM WALL IS THIS FILE.
+#
+# There is deliberately NO path dependency on the `framec` crate. That is not an
+# omission and it is not a TODO — it is the wall. `use framec::…` is a LINK ERROR,
+# so reusing the old compiler's code is impossible rather than merely discouraged.
+#
+# A wall that depends on discipline is a wall that erodes. The old compiler grew two
+# copies of its `$.x` expander and they silently drifted four ways, shipping a
+# wrong-answer bug in C#. Discipline lost. Cargo does not.
+#
+# Tests cross. Code does not. See ../REUSE.md.
+[package]
+name = "frame-compiler"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The Frame compiler (rebuild — RFC-0057)"
+
+[[bin]]
+name = "framec-ng"
+path = "src/main.rs"
+
+[lib]
+name = "frame_compiler"
+path = "src/lib.rs"
+
+[dependencies]
+# Intentionally minimal. Every dependency added here is a decision, not a reflex.
