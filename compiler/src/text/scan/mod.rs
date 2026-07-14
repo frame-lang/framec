@@ -168,17 +168,20 @@ fn read_pragma(lx: &Lexer, bytes: &[u8], at: usize) -> Result<Item, SegmentError
             if e < bytes.len() {
                 e += 1; // include the newline
             }
-            // `@@[async]` / `@@[persist]` — the attribute name.
+            // `@@[async]` / `@@[persist]` / `@@[scan(u8)]` — the FULL bracket content, so
+            // an argument (`scan(u8)`) survives for the resolver to split. A bare attr
+            // (`async`) still comes through as just its name.
             let attr = if bytes.get(after) == Some(&b'[') {
-                let mut k = after + 1;
-                let ns = k;
-                while k < e && bytes[k].is_ascii_alphanumeric() || k < e && bytes[k] == b'_' {
+                let ns = after + 1;
+                let mut k = ns;
+                while k < e && bytes[k] != b']' {
                     k += 1;
                 }
-                if k > ns {
-                    Some(String::from_utf8_lossy(&bytes[ns..k]).into_owned())
-                } else {
+                let content = String::from_utf8_lossy(&bytes[ns..k]).trim().to_string();
+                if content.is_empty() {
                     None
+                } else {
+                    Some(content)
                 }
             } else {
                 None

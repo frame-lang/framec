@@ -53,6 +53,14 @@ impl Backend for Rust {
     fn open_system(&self, sym: &SystemSym, out: &mut Sink) {
         let name = &sym.name;
 
+        // `@@[scan(<elem>)]` — a positioned, borrowed-input scanner (RFC-0042.1 / #209).
+        // Emits the generic input-source trait, a machine generic over `I`, and
+        // `over`/`scan_at` instead of `new`. An ordinary system falls through unchanged.
+        if let Some(elem) = sym.scan.clone() {
+            self.open_scanner(sym, &elem, out);
+            return;
+        }
+
         out.frame(&format!("pub struct {name} {{\n"));
         out.frame("    compartment: Compartment,\n");
         out.frame("    stack: Vec<Compartment>,\n");
@@ -483,6 +491,105 @@ fn seed_state_vars(st: &crate::resolve::StateSym, out: &mut Sink) {
 }
 
 /// Frame's lifecycle event names are not Rust identifiers.
+impl Rust {
+    /// `@@[scan(<elem>)]` — emit a positioned, borrowed-input scanner (RFC-0042.1 / #209),
+    /// the `@@system` analogue of an `@@fsm` recognizer. The machine is generic over its
+    /// input source (so `over(&bytes)` borrows with zero copy — the fix for the O(n²) probe
+    /// that forced the hand-rolled loops). The impl block is left OPEN; the driver adds the
+    /// state handlers, whose native bodies peek `self.src.fsm_get(self.cursor)` and advance
+    /// `self.cursor` — framec owns the control structure, the peek/advance is native.
+    fn open_scanner(&self, sym: &SystemSym, elem: &str, out: &mut Sink) {
+        let name = &sym.name;
+
+        // 1. The input-source trait. `&[elem]` borrows (zero copy); `Vec<elem>` owns; a
+        //    `Fn(usize) -> elem` closure streams. Lifted from the shipping `fsm_rust.rs`.
+        out.frame(&format!(
+            "pub trait {name}Input {{ fn fsm_get(&self, i: usize) -> {elem}; fn fsm_len(&self) -> usize; }}\n"
+        ));
+        out.frame(&format!(
+            "impl {name}Input for &[{elem}] {{ fn fsm_get(&self, i: usize) -> {elem} {{ self[i] }} fn fsm_len(&self) -> usize {{ self.len() }} }}\n"
+        ));
+        out.frame(&format!(
+            "impl {name}Input for Vec<{elem}> {{ fn fsm_get(&self, i: usize) -> {elem} {{ self[i] }} fn fsm_len(&self) -> usize {{ self.len() }} }}\n"
+        ));
+        out.frame(&format!(
+            "pub struct {name}Fn<F: Fn(usize) -> {elem}>(pub F, pub usize);\n"
+        ));
+        out.frame(&format!(
+            "impl<F: Fn(usize) -> {elem}> {name}Input for {name}Fn<F> {{ fn fsm_get(&self, i: usize) -> {elem} {{ (self.0)(i) }} fn fsm_len(&self) -> usize {{ self.1 }} }}\n\n"
+        ));
+
+        // 2. The machine, generic over its input source. `cursor` is public so the native
+        //    wrapper can read the match extent after a scan.
+        out.frame(&format!("pub struct {name}<I: {name}Input> {{\n"));
+        out.frame("    src: I,\n");
+        out.frame("    pub cursor: usize,\n");
+        out.frame("    compartment: Compartment,\n");
+        out.frame("    stack: Vec<Compartment>,\n");
+        for f in &sym.domain {
+            let ty = match &f.ty {
+                TypeRef::Opaque(t) => t.clone(),
+                TypeRef::System(s) | TypeRef::WrappedSystem { system: s, .. } => s.clone(),
+                TypeRef::None => "()".to_string(),
+            };
+            out.frame(&format!("    {}: {ty},\n", f.name));
+        }
+        out.frame("}\n\n");
+
+        // 3. The impl block — stays OPEN; the driver appends handlers/interface methods.
+        let first = sym.states.first().map(|s| s.name.as_str()).unwrap_or("");
+        out.frame(&format!("impl<I: {name}Input> {name}<I> {{\n"));
+
+        // over(src): construct WITHOUT running (RFC-0042 construction model, positioned).
+        out.frame("    pub fn over(src: I) -> Self {\n");
+        out.frame(&format!(
+            "        let mut compartment = Compartment::new(\"{first}\");\n"
+        ));
+        if let Some(st) = sym.states.iter().find(|s| s.name == first) {
+            seed_state_vars(st, out);
+        }
+        out.frame(&format!("        {name} {{ src, cursor: 0, compartment, stack: Vec::new()"));
+        for f in &sym.domain {
+            let init = match &f.init_system {
+                Some(s) => format!("{s}::new()"),
+                None => f.init_text.clone().unwrap_or_else(|| "Default::default()".into()),
+            };
+            out.frame(&format!(", {}: {init}", f.name));
+        }
+        out.frame(" }\n    }\n\n");
+
+        // scan_at(start): position the cursor, restart at the start state, and DRIVE the
+        // machine ITERATIVELY — dispatch the scanner's step event until a terminal state.
+        // Iteration, not enter-handler recursion, so a self-looping scan state stays O(1)
+        // stack over an arbitrarily long input (the #209 linearity goal). Each step peeks,
+        // advances `self.cursor`, and transitions; a state that neither advances nor
+        // transitions is a bug, so a `len*4` bound trips to a break rather than hang.
+        // ACCEPTS iff it ends in a state named `$Accept`.
+        out.frame("    pub fn scan_at(&mut self, start: usize) -> bool {\n");
+        out.frame("        self.cursor = start;\n");
+        out.frame(&format!(
+            "        let mut compartment = Compartment::new(\"{first}\");\n"
+        ));
+        if let Some(st) = sym.states.iter().find(|s| s.name == first) {
+            seed_state_vars(st, out);
+        }
+        out.frame("        self.compartment = compartment;\n");
+        if let Some(ev) = sym.interface.first() {
+            let evname = &ev.name;
+            out.frame("        let mut __steps: usize = 0;\n");
+            out.frame(
+                "        while self.compartment.state != \"Accept\" && self.compartment.state != \"Reject\" {\n",
+            );
+            out.frame(&format!("            self.{evname}();\n"));
+            out.frame("            __steps += 1;\n");
+            out.frame("            if __steps > self.src.fsm_len() * 4 + 64 { break; }\n");
+            out.frame("        }\n");
+        }
+        out.frame("        self.compartment.state == \"Accept\"\n");
+        out.frame("    }\n\n");
+    }
+}
+
 fn rust_ident(event: &str) -> String {
     match event {
         "$>" => "__enter".to_string(),

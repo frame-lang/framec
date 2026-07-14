@@ -76,6 +76,10 @@ pub struct SystemSym {
     pub is_async: bool,
     /// `@@[persist]`
     pub is_persist: bool,
+    /// `@@[scan(<elem>)]` — a positioned, borrowed-input scanner (RFC-0042.1 / #209). The
+    /// element type (`u8`, `char`) the generated `SInput` trait yields. `None` for an
+    /// ordinary system (which emits exactly as before — the no-op #209 requires).
+    pub scan: Option<String>,
     /// Events the system accepts.
     pub interface: Vec<MethodSym>,
     pub states: Vec<StateSym>,
@@ -202,6 +206,13 @@ pub fn resolve(ast: &FileAst) -> (SymbolTable, Vec<Diagnostic>) {
             span: sys.span,
             is_async: attrs.iter().any(|a| a == "async"),
             is_persist: attrs.iter().any(|a| a == "persist"),
+            // `@@[scan(u8)]` — the positioned-scanner element type (RFC-0042.1 / #209).
+            // The system becomes a borrowed-input, cursor-driven scanner; the arg is the
+            // element type the `SInput` trait reads (`u8`, `char`, …).
+            scan: attrs.iter().find_map(|a| {
+                a.strip_prefix("scan(")
+                    .map(|r| r.trim_end_matches(')').trim().to_string())
+            }),
             interface: Vec::new(),
             states: Vec::new(),
             domain: Vec::new(),

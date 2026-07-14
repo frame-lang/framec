@@ -135,6 +135,74 @@ impl Cache { fn new() -> Cache { Cache { hits: 7 } } }
     assert_eq!(out.trim(), "7", "the user's `= Cache::new()` init must be emitted verbatim");
 }
 
+/// **Item Zero: a `@@[scan(u8)]` system is a positioned, borrowed-input scanner** (RFC-0042.1
+/// / #209) — the `@@system` analogue of an `@@fsm` recognizer, and the capability that lets
+/// the compiler's own scanners be systems instead of hand-rolled byte-loops. `over(&bytes)`
+/// borrows with zero copy; `scan_at(i)` scans a prefix from position `i`; the drive is
+/// ITERATIVE (a 50 000-byte input does not blow the stack — the linearity #209 is about);
+/// it accepts iff it ends in `$Accept`, leaving the match extent in `cursor`.
+#[test]
+fn a_scan_system_is_a_positioned_borrowed_input_scanner() {
+    let frm = r#"@@[scan(u8)]
+@@system StrScan {
+    interface:
+        step()
+    machine:
+        $Start {
+            step() {
+                if self.cursor >= self.src.fsm_len() || self.src.fsm_get(self.cursor) != 34 {
+                    -> $Reject
+                }
+                self.cursor = self.cursor + 1;
+                -> $Body
+            }
+        }
+        $Body {
+            step() {
+                if self.cursor >= self.src.fsm_len() {
+                    -> $Reject
+                }
+                let b = self.src.fsm_get(self.cursor);
+                if b == 92 {
+                    self.cursor = self.cursor + 2;
+                    -> $Body
+                }
+                if b == 34 {
+                    self.cursor = self.cursor + 1;
+                    -> $Accept
+                }
+                self.cursor = self.cursor + 1;
+                -> $Body
+            }
+        }
+        $Accept { }
+        $Reject { }
+}
+"#;
+    let out = run(
+        frm,
+        r#"fn main() {
+    let s: &[u8] = b"\"he\\\"llo\" x";
+    let mut m = StrScan::over(s);
+    let ok = m.scan_at(0);
+    let n: &[u8] = b"nope";
+    let mut r = StrScan::over(n);
+    let mut big = vec![34u8]; for _ in 0..50000 { big.push(b'x'); } big.push(34);
+    let mut b = StrScan::over(&big[..]);
+    println!("{} {} {} {}", ok, m.cursor, r.scan_at(0), b.scan_at(0));
+}"#,
+        "rust_scan",
+    );
+    if out == "SKIP" {
+        return;
+    }
+    assert_eq!(
+        out.trim(),
+        "true 9 false true",
+        "borrowed zero-copy scan: accepts \"he\\\"llo\" (cursor 9), rejects `nope`, and scans 50k iteratively"
+    );
+}
+
 /// **Two systems in one file compile** — the shared `Compartment` scaffold is emitted once
 /// at file scope, not per system. Re-emitting a top-level `struct Compartment` per system
 /// was an E0428 ("defined multiple times"); C shares it, the nesting targets scope it, and
