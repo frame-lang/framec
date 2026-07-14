@@ -376,6 +376,18 @@ impl Backend for Java {
         out.frame(&format!("        {state}_{}({});\n", java_ident(event), args.unwrap_or("")));
     }
 
+    fn pop_enter(&self, _rel: u32, sym: &SystemSym, enter_args: Option<&str>, out: &mut Sink) {
+        let a = enter_args.unwrap_or("");
+        for st in &sym.states {
+            if super::driver::has_lifecycle(sym, &st.name, "$>") {
+                out.frame(&format!(
+                    "        if (this.compartment.state.equals(\"{}\")) {}_{}({a});\n",
+                    st.name, st.name, java_ident("$>")
+                ));
+            }
+        }
+    }
+
     fn terminate(&self, _rel: u32, out: &mut Sink) {
         out.frame("        return;\n");
     }

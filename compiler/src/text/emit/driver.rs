@@ -150,6 +150,12 @@ pub trait Backend {
     /// framec authored this call and terminates it.
     fn lifecycle_call(&self, rel: u32, sym: &SystemSym, state: &str, event: &str, args: Option<&str>, out: &mut Sink);
 
+    /// Deliver `-> (enter) pop$` enter args to the RESTORED state's `$>` handler. The
+    /// popped state is runtime-determined, so this emits a state dispatch: for each state
+    /// that declares a `$>`, a guard that (when the restored compartment is in that state)
+    /// calls its enter handler with the enter args.
+    fn pop_enter(&self, rel: u32, sym: &SystemSym, enter_args: Option<&str>, out: &mut Sink);
+
     /// The return that ends a transition/push/pop. Spelled per target.
     fn terminate(&self, rel: u32, out: &mut Sink);
 
@@ -477,6 +483,11 @@ fn emit_body(
                     be.lifecycle_call(r, sym, state, "<$", st.exit_args.as_deref(), out);
                 }
                 be.pop(r, out);
+                // `-> (enter) pop$` — deliver the enter args to the RESTORED state's `$>`,
+                // dispatched at runtime (the popped state is dynamic).
+                if st.enter_args.is_some() {
+                    be.pop_enter(r, sym, st.enter_args.as_deref(), out);
+                }
                 be.terminate(r, out);
                 terminated = st.depth == 0 && r == 0;
             }

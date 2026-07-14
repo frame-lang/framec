@@ -393,6 +393,10 @@ pub struct SimpleStmt {
     /// Exit args on `(reason) -> pop$` — delivered to the current state's `<$` handler
     /// before the pop. (Forward ignores this.)
     pub exit_args: Option<String>,
+    /// Enter args on `-> (enter) pop$` — delivered to the RESTORED state's `$>` handler
+    /// after the pop, via a runtime state dispatch (the popped state is dynamic). (Forward
+    /// ignores this.)
+    pub enter_args: Option<String>,
     /// The statement's COLUMN in the source.
     ///
     /// An indent-delimited target (Python, GDScript) must reproduce the user's nesting:

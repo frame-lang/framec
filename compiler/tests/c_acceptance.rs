@@ -189,6 +189,55 @@ int main() {
     assert_eq!(out.trim(), "7", "@@:self.inner.ping() ran the child's dispatch via Inner_ping(self->inner)");
 }
 
+/// **`(exit) -> (enter) pop$` delivers BOTH arg sets** (RFC-0048): the exit args to the
+/// leaving state's `<$`, and the enter args to the RESTORED state's `$>` — the latter via
+/// a runtime state dispatch, since the popped state is dynamic. Floats round-trip by being
+/// passed to the typed handler directly (no `_Generic` box needed). Compiles AND runs.
+#[test]
+fn a_pop_delivers_both_exit_and_enter_args() {
+    let frm = r#"@@system PopArgs {
+    interface:
+        go()
+        finish()
+        peek_enter(): float
+        peek_exit(): float
+    machine:
+        $Idle {
+            $>(x: float) { @@:self.enter_seen = x; }
+            go() { push$ -> $Work }
+            peek_enter(): float { @@:(@@:self.enter_seen) }
+            peek_exit(): float { @@:(@@:self.exit_seen) }
+        }
+        $Work {
+            <$(y: float) { @@:self.exit_seen = y; }
+            finish() { (2.5) -> (3.25) pop$ }
+        }
+    domain:
+        enter_seen: float = 0.0
+        exit_seen: float = 0.0
+}
+
+#include <stdio.h>
+int main() {
+    PopArgs* p = @@PopArgs();
+    PopArgs_go(p);
+    PopArgs_finish(p);
+    printf("%.2f %.2f\n", PopArgs_peek_enter(p), PopArgs_peek_exit(p));
+    PopArgs_destroy(p);
+    return 0;
+}
+"#;
+    let out = run(frm, "", "c_popargs");
+    if out == "SKIP" {
+        return;
+    }
+    assert_eq!(
+        out.trim(),
+        "3.25 2.50",
+        "enter arg 3.25 reached the restored $Idle.$>; exit arg 2.5 reached $Work.<$"
+    );
+}
+
 /// A `push$`/`pop$` pushdown, in C, with the compartment stack. Runs.
 #[test]
 fn the_c_stack_is_a_pushdown() {

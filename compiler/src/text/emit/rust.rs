@@ -244,6 +244,19 @@ impl Backend for Rust {
         out.frame(&format!("{p}self.{state}_{}({});\n", rust_ident(event), args.unwrap_or("")));
     }
 
+    fn pop_enter(&self, rel: u32, sym: &SystemSym, enter_args: Option<&str>, out: &mut Sink) {
+        let p = self.pad(rel);
+        let a = enter_args.unwrap_or("");
+        for st in &sym.states {
+            if super::driver::has_lifecycle(sym, &st.name, "$>") {
+                out.frame(&format!(
+                    "{p}if self.compartment.state == \"{}\" {{ self.{}_{}({a}); }}\n",
+                    st.name, st.name, rust_ident("$>")
+                ));
+            }
+        }
+    }
+
     fn terminate(&self, rel: u32, out: &mut Sink) {
         out.frame(&format!("{}return Default::default();\n", self.pad(rel)));
     }
