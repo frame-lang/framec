@@ -209,7 +209,6 @@ impl Backend for Rust {
         let p = self.pad(rel);
         self.enter(&p, sym, target, args, out);
         out.frame(&format!("{p}self.compartment = __next;\n"));
-        out.frame(&format!("{p}return Default::default();\n"));
     }
 
     fn push(&self, rel: u32, sym: &SystemSym, target: &str, args: Option<&str>, out: &mut Sink) {
@@ -220,13 +219,20 @@ impl Backend for Rust {
         out.frame(&format!("{p}self.stack.push(__cur);\n"));
         self.enter(&p, sym, target, args, out);
         out.frame(&format!("{p}self.compartment = __next;\n"));
-        out.frame(&format!("{p}return Default::default();\n"));
     }
 
     fn pop(&self, rel: u32, out: &mut Sink) {
         let p = self.pad(rel);
         out.frame(&format!("{p}self.compartment = self.stack.pop().unwrap();\n"));
-        out.frame(&format!("{p}return Default::default();\n"));
+    }
+
+    fn lifecycle_call(&self, rel: u32, _sym: &SystemSym, state: &str, event: &str, args: Option<&str>, out: &mut Sink) {
+        let p = self.pad(rel);
+        out.frame(&format!("{p}self.{state}_{}({});\n", rust_ident(event), args.unwrap_or("")));
+    }
+
+    fn terminate(&self, rel: u32, out: &mut Sink) {
+        out.frame(&format!("{}return Default::default();\n", self.pad(rel)));
     }
 
     fn return_call(&self, rel: u32, _is_async: bool, expr: NativeText, out: &mut Sink) {

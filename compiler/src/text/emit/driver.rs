@@ -143,8 +143,15 @@ pub trait Backend {
     fn transition(&self, rel: u32, sym: &SystemSym, target: &str, args: Option<&str>, out: &mut Sink);
     /// `push$ -> $Target(args)`
     fn push(&self, rel: u32, sym: &SystemSym, target: &str, args: Option<&str>, out: &mut Sink);
-    /// `-> pop$`
+    /// `-> pop$` — restore the caller's compartment. **No return** (the driver adds it).
     fn pop(&self, rel: u32, out: &mut Sink);
+
+    /// Call a lifecycle handler — `$>` enter or `<$` exit — with its args, unsplit.
+    /// framec authored this call and terminates it.
+    fn lifecycle_call(&self, rel: u32, sym: &SystemSym, state: &str, event: &str, args: Option<&str>, out: &mut Sink);
+
+    /// The return that ends a transition/push/pop. Spelled per target.
+    fn terminate(&self, rel: u32, out: &mut Sink);
 
     /// **`@@:return(<expr>)`** — set the return value and exit. Terminal.
     fn return_call(&self, rel: u32, is_async: bool, expr: crate::NativeText, out: &mut Sink);
@@ -384,33 +391,50 @@ fn emit_body(
                 let text = super::reindent::render_native(src, n, 0, &lower);
                 be.native_stmt(rel(n.logical_indent), text, out);
             }
-            // A terminal statement only terminates the BODY when it sits at the body's
-            // BASE NESTING. Inside an `if` it returns from that branch, and the code
-            // after the block is still reachable.
+            // A transition orchestrates the LIFECYCLE, and the order is Frame's, uniform
+            // across every target: exit the source state, build+install the target
+            // compartment, enter the target state, return. The backend only SPELLS each
+            // step. Before this, lifecycle handlers were emitted but NEVER CALLED — `$>`
+            // and `<$` did not run, and exit/enter args were dropped.
             //
-            // ONE rule, both target families, using the two facts the scanner recorded:
-            //
-            //   * `depth == 0` — brace nesting. Catches Java's `if (x) { return; }`.
-            //   * `rel == 0`   — source column. Catches Python's `if x:\n    return`,
-            //                    where there ARE no braces and `depth` is always 0.
-            //
-            // Getting this wrong on Python DELETED the statement after the `if` block —
-            // the emitter stopped, and `return "fail"` silently vanished from the output.
+            // A terminal statement terminates the BODY only at the base nesting
+            // (`depth == 0 && rel == 0`) — see below.
             Stmt::Transition(t) => {
                 if let Some(target) = &t.target {
-                    be.transition(rel(t.col), sym, target, t.args_text.as_deref(), out);
-                    terminated = t.depth == 0 && rel(t.col) == 0;
+                    let r = rel(t.col);
+                    if has_lifecycle(sym, state, "<$") {
+                        be.lifecycle_call(r, sym, state, "<$", t.exit_args.as_deref(), out);
+                    }
+                    be.transition(r, sym, target, t.args_text.as_deref(), out);
+                    if has_lifecycle(sym, target, "$>") {
+                        be.lifecycle_call(r, sym, target, "$>", t.enter_args.as_deref(), out);
+                    }
+                    be.terminate(r, out);
+                    terminated = t.depth == 0 && r == 0;
                 }
             }
             Stmt::StackPush(t) => {
                 if let Some(target) = &t.target {
-                    be.push(rel(t.col), sym, target, t.args_text.as_deref(), out);
-                    terminated = t.depth == 0 && rel(t.col) == 0;
+                    let r = rel(t.col);
+                    if has_lifecycle(sym, state, "<$") {
+                        be.lifecycle_call(r, sym, state, "<$", t.exit_args.as_deref(), out);
+                    }
+                    be.push(r, sym, target, t.args_text.as_deref(), out);
+                    if has_lifecycle(sym, target, "$>") {
+                        be.lifecycle_call(r, sym, target, "$>", t.enter_args.as_deref(), out);
+                    }
+                    be.terminate(r, out);
+                    terminated = t.depth == 0 && r == 0;
                 }
             }
-            Stmt::StackPop(s) => {
-                be.pop(rel(s.col), out);
-                terminated = s.depth == 0 && rel(s.col) == 0;
+            Stmt::StackPop(st) => {
+                let r = rel(st.col);
+                if has_lifecycle(sym, state, "<$") {
+                    be.lifecycle_call(r, sym, state, "<$", None, out);
+                }
+                be.pop(r, out);
+                be.terminate(r, out);
+                terminated = st.depth == 0 && r == 0;
             }
             // A FRAME assignment. framec authored it, so framec terminates it — in the
             // backend's spelling, unconditionally, without ever looking at what it just
@@ -444,6 +468,15 @@ fn emit_body(
 
     let _ = be.dead_code_is_an_error();
     terminated
+}
+
+/// Does `state` declare a lifecycle handler for `event` (`$>` / `<$`)?
+pub fn has_lifecycle(sym: &SystemSym, state: &str, event: &str) -> bool {
+    sym.states
+        .iter()
+        .find(|s| s.name == state)
+        .map(|s| s.handlers.iter().any(|h| h.event == event))
+        .unwrap_or(false)
 }
 
 /// `a: int, b: String` -> `a, b`. The CALL SITE — shared, because Frame names the

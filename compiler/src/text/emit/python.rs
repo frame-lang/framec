@@ -231,24 +231,26 @@ impl Backend for Python {
         out.frame("\n");
     }
 
-    fn transition(&self, rel: u32, sym: &SystemSym, target: &str, args: Option<&str>, out: &mut Sink) {
-        let p = self.pad(rel);
+    fn transition(&self, _rel: u32, sym: &SystemSym, target: &str, args: Option<&str>, out: &mut Sink) {
         self.enter(sym, target, args, out);
         out.frame("        self.__compartment = __next\n");
-        out.frame("        return\n");
     }
 
-    fn push(&self, rel: u32, sym: &SystemSym, target: &str, args: Option<&str>, out: &mut Sink) {
-        let p = self.pad(rel);
+    fn push(&self, _rel: u32, sym: &SystemSym, target: &str, args: Option<&str>, out: &mut Sink) {
         out.frame("        self.__stack.append(self.__compartment)\n");
         self.enter(sym, target, args, out);
         out.frame("        self.__compartment = __next\n");
-        out.frame("        return\n");
     }
 
-    fn pop(&self, rel: u32, out: &mut Sink) {
-        let p = self.pad(rel);
+    fn pop(&self, _rel: u32, out: &mut Sink) {
         out.frame("        self.__compartment = self.__stack.pop()\n");
+    }
+
+    fn lifecycle_call(&self, _rel: u32, _sym: &SystemSym, state: &str, event: &str, args: Option<&str>, out: &mut Sink) {
+        out.frame(&format!("        self._{state}_{}({})\n", py_ident(event), args.unwrap_or("")));
+    }
+
+    fn terminate(&self, _rel: u32, out: &mut Sink) {
         out.frame("        return\n");
     }
 

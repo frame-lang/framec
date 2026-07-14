@@ -322,8 +322,12 @@ pub struct TransitionStmt {
     ///
     /// The cheapest number of times to compute a fact is sometimes **zero**.
     pub args: Option<Span>,
-    /// The args, verbatim, **as one blob**. Never split.
+    /// The state args, verbatim, **as one blob**. Never split. `-> $T(these)`.
     pub args_text: Option<String>,
+    /// Exit args — `(these) -> $T` — delivered to the SOURCE state's `<$` exit handler.
+    pub exit_args: Option<String>,
+    /// Enter args — `-> (these) $T` — delivered to the TARGET state's `$>` enter handler.
+    pub enter_args: Option<String>,
 }
 
 #[derive(Debug)]

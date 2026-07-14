@@ -256,7 +256,6 @@ impl Backend for C {
         let p = self.pad(rel);
         self.enter(&p, sym, target, args, out);
         out.frame(&format!("{p}self->compartment = __next;\n"));
-        out.frame(&format!("{p}return{};\n", void_ret()));
     }
 
     fn push(&self, rel: u32, sym: &SystemSym, target: &str, args: Option<&str>, out: &mut Sink) {
@@ -265,13 +264,23 @@ impl Backend for C {
         out.frame(&format!("{p}self->stack[self->stack_len++]=self->compartment;\n"));
         self.enter(&p, sym, target, args, out);
         out.frame(&format!("{p}self->compartment = __next;\n"));
-        out.frame(&format!("{p}return{};\n", void_ret()));
     }
 
     fn pop(&self, rel: u32, out: &mut Sink) {
         let p = self.pad(rel);
         out.frame(&format!("{p}self->compartment = self->stack[--self->stack_len];\n"));
-        out.frame(&format!("{p}return{};\n", void_ret()));
+    }
+
+    fn lifecycle_call(&self, rel: u32, _sym: &SystemSym, state: &str, event: &str, args: Option<&str>, out: &mut Sink) {
+        let sys = self.cur.borrow().clone();
+        let p = self.pad(rel);
+        let a = args.unwrap_or("");
+        let sep = if a.trim().is_empty() { "" } else { ", " };
+        out.frame(&format!("{p}{sys}_{state}_{}(self{sep}{a});\n", c_ident(event)));
+    }
+
+    fn terminate(&self, rel: u32, out: &mut Sink) {
+        out.frame(&format!("{}return{};\n", self.pad(rel), void_ret()));
     }
 
     fn return_call(&self, rel: u32, _is_async: bool, expr: NativeText, out: &mut Sink) {

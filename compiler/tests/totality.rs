@@ -397,7 +397,10 @@ fn corpus_census() {
     }
     // The nodes that did not exist AT ALL in the old compiler.
     assert!(total.get("Handler").copied().unwrap_or(0) > 100, "handlers must be nodes");
-    assert!(total.get("NativeStmt").copied().unwrap_or(0) > 100, "native statements must be nodes");
+    // NativeStmt is smaller now that assignments, returns and calls are TYPED nodes
+    // (Assign/ReturnCall/SelfCall) rather than untyped native text — which is the point.
+    assert!(total.get("NativeStmt").copied().unwrap_or(0) > 50, "native statements must be nodes");
+    assert!(total.get("Assign").copied().unwrap_or(0) > 50, "assignments are typed nodes, not native text");
     assert!(total.get("FrameRef").copied().unwrap_or(0) > 50, "mid-expression refs must be nodes");
     eprintln!();
 }

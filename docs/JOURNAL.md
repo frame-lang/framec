@@ -1301,3 +1301,51 @@ handlers defined later), and `Sys_new()` for `= @@Sys()` inits.
 **Four backends: Java (fixed-type), Python (reflective), Rust (no-Object), C (no-reflection).
 62 tests. The state-var deref proves the Atom invariant is real. And C's strictness caught a
 gap the other three were hiding.**
+
+---
+
+## 2026-07-14 — The defect C exposed: lifecycle handlers never ran.
+
+"Fix any and all defects." The compile matrix looked clean (Java/Python/Rust 15/15, C
+14/18), but **compilation was hiding a correctness bug on every backend**: the enter/exit
+lifecycle handlers (`$>` / `<$`) were EMITTED but never CALLED, and transition exit/enter
+args (`(x) -> (y) $T`) were silently dropped.
+
+Proven behaviorally: `-> $B` where `$B` has `$>() { print("ENTERED B"); }` printed only
+`done`. The handler existed in the output and never ran. C had surfaced a symptom of it (a
+stray `(1.25)` statement — a compile error); Java/Python/Rust swallowed the same input and
+compiled a machine that silently skipped its lifecycle.
+
+### The fix: the driver orchestrates the lifecycle, uniformly
+
+A transition is not "build a compartment." It is a sequence, and the order is Frame's:
+
+```
+exit the source state  (<$ with exit args)
+build + install the target compartment
+enter the target state  ($> with enter args)
+return
+```
+
+That control flow now lives once, in the driver — `transition`/`push`/`pop` no longer emit
+their own return; they build+set, and the driver sequences `lifecycle_call` and
+`terminate` around them. The backend only spells each step. The scanner captures exit args
+(before `->`) and enter args (between `->` and `$Target`), which it had been dropping.
+
+Verified by RUNNING on Java and Python: `(7) -> ("hi") $B` runs `$>("hi")`; `back()`'s
+`(99) -> $A` runs `<$(99)`. Output: `enter hi / exit 99 / done`. The args arrive.
+
+### A guard the misparse taught me
+
+`(exit) ->` detection can collide with native `(*p)->field` (C) or `(a) -> b`. The guard:
+a leading paren group is a transition's exit args **only if the arrow resolves to a
+`$Target` or `pop$`** — otherwise it is native code and falls through. The corpus still
+compiles 15/15 on Java/Python/Rust, confirming no real collision, and the guard keeps it
+that way.
+
+### Still deferred (C, honestly)
+
+14 (async + method-on-struct), 16 (cross-system OO call), 17/18 (`@@Sys()` mid-expression
++ float `_Generic` + manual destroy). All beyond the scalar corpus; named, not hidden.
+
+**64 tests. Four backends. The lifecycle runs — proven by execution, not compilation.**

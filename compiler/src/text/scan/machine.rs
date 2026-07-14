@@ -411,19 +411,54 @@ fn push_native(
 
 /// A Frame statement at `i`: `-> $S(args)`, `push$ -> $S`, `-> pop$`, `=> $^`.
 fn frame_stmt(bytes: &[u8], i: usize, limit: usize, depth: u32, col: u32) -> Option<Stmt> {
-    // `push$ -> $S(args)`
+    // `push$ -> (enter) $S(state)`
     if starts(bytes, i, b"push$", limit) {
         let e = to_end_of_line(bytes, i, limit);
+        let arrow = find(bytes, i, e, b"->");
+        let (enter_args, target, args_text) = parse_after_arrow(bytes, arrow.map(|a| a + 2).unwrap_or(i), e);
         return Some(Stmt::StackPush(TransitionStmt {
             span: Span::new(i, e),
             col,
             depth,
-            target: target_of(bytes, i, e),
+            target,
             args: None,
-            args_text: args_of(bytes, i, e),
+            args_text,
+            exit_args: None,
+            enter_args,
         }));
     }
-    // `-> pop$`
+    // `(exit) -> (enter) $S(state)` — a transition whose EXIT args precede the arrow.
+    if bytes[i] == b'(' {
+        if let Some(close) = balanced(_lexer_none(), bytes, i, limit, b'(', b')') {
+            let mut j = close;
+            while j < limit && (bytes[j] == b' ' || bytes[j] == b'\t') {
+                j += 1;
+            }
+            if starts(bytes, j, b"->", limit) {
+                let e = to_end_of_line(bytes, i, limit);
+                let (enter_args, target, args_text) = parse_after_arrow(bytes, j + 2, e);
+                // ONLY a transition if the arrow resolves to a $Target (or pop$). A
+                // native `(*p)->field` or `(a) -> b` has no `$Target`, so it is NOT a
+                // transition and falls through to native code.
+                let is_transition = target.is_some() || window(&bytes[j..e], b"pop$");
+                if !is_transition {
+                    return None;
+                }
+                let exit_args = trimmed(&bytes[i + 1..close.saturating_sub(1)]);
+                return Some(Stmt::Transition(TransitionStmt {
+                    span: Span::new(i, e),
+                    col,
+                    depth,
+                    target,
+                    args: None,
+                    args_text,
+                    exit_args,
+                    enter_args,
+                }));
+            }
+        }
+    }
+    // `-> pop$` / `-> (enter) $S(state)`
     if starts(bytes, i, b"->", limit) {
         let e = to_end_of_line(bytes, i, limit);
         let seg = &bytes[i..e];
@@ -434,13 +469,16 @@ fn frame_stmt(bytes: &[u8], i: usize, limit: usize, depth: u32, col: u32) -> Opt
                 depth,
             }));
         }
+        let (enter_args, target, args_text) = parse_after_arrow(bytes, i + 2, e);
         return Some(Stmt::Transition(TransitionStmt {
             span: Span::new(i, e),
             col,
             depth,
-            target: target_of(bytes, i, e),
+            target,
             args: None,
-            args_text: args_of(bytes, i, e),
+            args_text,
+            exit_args: None,
+            enter_args,
         }));
     }
     // `=> $^`
@@ -453,6 +491,54 @@ fn frame_stmt(bytes: &[u8], i: usize, limit: usize, depth: u32, col: u32) -> Opt
         }));
     }
     None
+}
+
+/// Parse the part of a transition after `->`: an optional `(enter_args)`, then
+/// `$Target(state_args)`. Returns `(enter_args, target, state_args)`.
+fn parse_after_arrow(bytes: &[u8], from: usize, to: usize) -> (Option<String>, Option<String>, Option<String>) {
+    let mut i = from;
+    while i < to && (bytes[i] == b' ' || bytes[i] == b'\t') {
+        i += 1;
+    }
+    // Optional enter args, only if the `(` comes BEFORE the `$Target`.
+    let mut enter_args = None;
+    if i < to && bytes[i] == b'(' {
+        if let Some(close) = balanced(_lexer_none(), bytes, i, to, b'(', b')') {
+            enter_args = trimmed(&bytes[i + 1..close.saturating_sub(1)]);
+            i = close;
+        }
+    }
+    (enter_args, target_of(bytes, i, to), args_of(bytes, i, to))
+}
+
+/// A lexer-less balanced-paren finder for the transition grammar (no strings expected
+/// in a transition head). Reuses the real `balanced` with a throwaway lexer.
+fn _lexer_none() -> &'static Lexer<'static> {
+    // `balanced` only uses the lexer to skip strings/comments; a transition head has
+    // none, so a minimal Python lexer over an empty slice is a safe stand-in.
+    use std::sync::OnceLock;
+    static LX: OnceLock<Lexer<'static>> = OnceLock::new();
+    LX.get_or_init(|| Lexer::new(b"", super::literals::Target::Python3))
+}
+
+fn find(bytes: &[u8], from: usize, to: usize, pat: &[u8]) -> Option<usize> {
+    let mut i = from;
+    while i + pat.len() <= to {
+        if &bytes[i..i + pat.len()] == pat {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
+}
+
+fn trimmed(b: &[u8]) -> Option<String> {
+    let s = String::from_utf8_lossy(b).trim().to_string();
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
 }
 
 fn stmt_span(s: &Stmt) -> Span {

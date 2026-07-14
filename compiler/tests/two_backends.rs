@@ -199,3 +199,68 @@ fn the_atom_rule_is_in_the_type_not_in_the_backends() {
         "compartment.state_vars[\"n\"].bit_length()"
     );
 }
+
+/// **Lifecycle handlers RUN, on every backend, and enter/exit args are delivered.**
+///
+/// Before this, `$>`/`<$` were emitted but never CALLED — `-> $B` did not run B's enter
+/// handler — and exit/enter args (`(x) -> (y) $T`) were silently dropped. A green compile
+/// hid it completely. These tests execute the machines.
+#[test]
+fn lifecycle_handlers_run_with_args_on_both_backends() {
+    // Java: enter + exit + both arg positions.
+    let java = r#"@@system L {
+    interface:
+        go()
+        back()
+    machine:
+        $A {
+            go() { (7) -> ("hi") $B }
+        }
+        $B {
+            $>(msg: String) { System.out.println("enter " + msg); }
+            <$(code: int) { System.out.println("exit " + code); }
+            back() { (99) -> $A }
+        }
+}
+"#;
+    if tool("javac") {
+        let (code, _, _) = build(java, Target::Java);
+        let d = std::env::temp_dir().join("frame_lc_java");
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let main = "\nclass Main { public static void main(String[] a) { L l = new L(); \
+                    l.go(); l.back(); System.out.println(\"done\"); } }\n";
+        std::fs::write(d.join("L.java"), format!("{code}{main}")).unwrap();
+        assert!(Command::new("javac").arg("L.java").current_dir(&d).output().unwrap().status.success());
+        let out = Command::new("java").arg("Main").current_dir(&d).output().unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).lines().collect::<Vec<_>>(),
+            ["enter hi", "exit 99", "done"],
+            "$>(hi) runs on entering B; <$(99) runs on leaving B via back()'s exit arg"
+        );
+    } else {
+        eprintln!("SKIPPED javac");
+    }
+
+    // Python: the same machine, its own syntax — enter handler must run.
+    let py = r#"@@system L {
+    interface:
+        go()
+    machine:
+        $A { go() { -> ("hi") $B } }
+        $B { $>(msg: str) { greet(msg) } }
+}
+"#;
+    if tool("python3") {
+        let (code, _, _) = build(py, Target::Python3);
+        let d = std::env::temp_dir().join("frame_lc_py");
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let main = "\ndef greet(m): print('enter ' + m)\nL().go()\n";
+        std::fs::write(d.join("m.py"), format!("{}{code}{main}", frame_compiler::text::emit::python::PRELUDE)).unwrap();
+        let out = Command::new("python3").arg(d.join("m.py")).output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "enter hi", "$>(hi) must run on Python too");
+    } else {
+        eprintln!("SKIPPED python3");
+    }
+}
