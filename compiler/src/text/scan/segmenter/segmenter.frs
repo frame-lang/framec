@@ -1,0 +1,61 @@
+@@[target("rust")]
+@@[scan(u8)]
+
+// The item-level SEGMENTER walk, dogfooded as an `@@[scan(u8)]` system — the first
+// LOAD-BEARING compiler scanner authored as a Frame machine (docs/JOURNAL.md fubar). It
+// finds the top-level `@@`-item START offsets, correctly skipping strings/comments (so a
+// `@@` inside them is never an item) and skipping over each `@@system`/`@@fsm` BODY (so a
+// `@@:self` inside a handler is not a top-level item). `target` is CONSTRUCTION CONFIG (the
+// per-target lexical forms) — it survives `scan_at`; `starts` is the accumulated output.
+//
+// framec owns the WALK (the $Sol/$Mid states + the step loop); the leaves do the
+// transformation: `skip_opaque_at`/`item_end_at` reuse the lexer, `at_pragma`/`record` are
+// trivial. Target-specific opaque forms come from the config, so it is correct for any
+// target — not the string-blind hand loop it replaces.
+//
+// Regen: framec-ng -l rust --emit segmenter.frs | grep -v '^#!\[allow' > segmenter.gen.rs
+
+@@system Segmenter(target: Target) {
+    interface:
+        step()
+    machine:
+        $Sol {
+            step() {
+                if self.cursor >= self.src.fsm_len() {
+                    -> $Accept
+                }
+                let b = self.src.fsm_get(self.cursor);
+                if b == 32 || b == 9 {
+                    self.cursor = self.cursor + 1;
+                } else if at_pragma(self.src, self.cursor) {
+                    record(&mut self.starts, self.cursor);
+                    self.cursor = item_end_at(self.src, self.cursor, self.target);
+                } else if b == 10 {
+                    self.cursor = self.cursor + 1;
+                } else {
+                    -> $Mid
+                }
+            }
+        }
+        $Mid {
+            step() {
+                if self.cursor >= self.src.fsm_len() {
+                    -> $Accept
+                }
+                let sk = skip_opaque_at(self.src, self.cursor, self.target);
+                if sk > self.cursor {
+                    self.cursor = sk;
+                } else {
+                    let b = self.src.fsm_get(self.cursor);
+                    self.cursor = self.cursor + 1;
+                    if b == 10 {
+                        -> $Sol
+                    }
+                }
+            }
+        }
+        $Accept { }
+    domain:
+        target: Target = target
+        starts: Vec<usize> = Vec::new()
+}

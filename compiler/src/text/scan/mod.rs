@@ -18,6 +18,8 @@ pub mod string_scan;
 pub mod paren_balance;
 /// Composition proof: a scan system that composes StringScan (docs/JOURNAL.md).
 pub mod string_counter;
+/// The item-level segmenter walk, dogfooded as a Frame @@[scan(u8)] system.
+pub mod segmenter;
 use super::{Source, Span};
 use crate::tree::{
     BomItem, EfsmItem, FileAst, Item, NativeItem, Param, PragmaItem, SystemItem, SystemParams,
@@ -137,6 +139,33 @@ pub fn segment(src: &Source, target: Target) -> Result<FileAst, SegmentError> {
     );
 
     Ok(ast)
+}
+
+/// Leaf for the `Segmenter` system: the end offset of the `@@…` item that starts at `at`
+/// (past its closing brace, for a `@@system`/`@@fsm`; end of line for a pragma). Reuses the
+/// hand `read_pragma` — item construction is transformation, legitimately native. On an
+/// unclosed item, consume to end-of-input.
+pub fn item_end_at(bytes: &[u8], at: usize, target: Target) -> usize {
+    use crate::tree::Node;
+    let lx = Lexer::new(bytes, target);
+    match read_pragma(&lx, bytes, at) {
+        Ok(item) => item.span().end,
+        Err(_) => bytes.len(),
+    }
+}
+
+/// Leaf for the `Segmenter` system: if a comment or literal starts at `i`, its end offset;
+/// otherwise `i`. The per-target forms come from `target` — this is exactly the opaque-skip
+/// the walk needs so a `@@` inside a string or comment is never mistaken for an item.
+pub fn skip_opaque_at(bytes: &[u8], i: usize, target: Target) -> usize {
+    let lx = Lexer::new(bytes, target);
+    if let Ok(Some(end)) = lx.comment_at(i) {
+        return end;
+    }
+    if let Ok(Some(l)) = lx.literal_at(i) {
+        return l.span.end;
+    }
+    i
 }
 
 /// Read one `@@…` island starting at `at` (which points at the first `@`).
