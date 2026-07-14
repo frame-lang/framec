@@ -501,47 +501,47 @@ impl Rust {
     fn open_scanner(&self, sym: &SystemSym, elem: &str, out: &mut Sink) {
         let name = &sym.name;
 
-        // 1. The input-source trait. `&[elem]` borrows (zero copy); `Vec<elem>` owns; a
-        //    `Fn(usize) -> elem` closure streams. Lifted from the shipping `fsm_rust.rs`.
+        // 1. The byte-accessor trait, impl'd for the borrowed slice. `self.src.fsm_get(i)`
+        //    reads a byte; `fsm_len()` is the length. The cleanroom always scans a borrowed
+        //    `&[u8]` (concrete, zero-copy — NO buffer is ever copied). Because the source is
+        //    a shared borrow, scanners COMPOSE for free: an outer scanner hands the SAME
+        //    borrow to a sub-scanner (`Inner::over(self.src)` duplicates only the 16-byte
+        //    fat pointer, never the bytes). (RFC-0042.1's generic owned/callback input is a
+        //    user convenience the compiler's own self-scanning does not need, and its
+        //    per-system trait obstructs this composition.)
+        let _ = elem;
         out.frame(&format!(
-            "pub trait {name}Input {{ fn fsm_get(&self, i: usize) -> {elem}; fn fsm_len(&self) -> usize; }}\n"
+            "pub trait {name}Input {{ fn fsm_get(&self, i: usize) -> u8; fn fsm_len(&self) -> usize; }}\n"
         ));
         out.frame(&format!(
-            "impl {name}Input for &[{elem}] {{ fn fsm_get(&self, i: usize) -> {elem} {{ self[i] }} fn fsm_len(&self) -> usize {{ self.len() }} }}\n"
-        ));
-        out.frame(&format!(
-            "impl {name}Input for Vec<{elem}> {{ fn fsm_get(&self, i: usize) -> {elem} {{ self[i] }} fn fsm_len(&self) -> usize {{ self.len() }} }}\n"
-        ));
-        out.frame(&format!(
-            "pub struct {name}Fn<F: Fn(usize) -> {elem}>(pub F, pub usize);\n"
-        ));
-        out.frame(&format!(
-            "impl<F: Fn(usize) -> {elem}> {name}Input for {name}Fn<F> {{ fn fsm_get(&self, i: usize) -> {elem} {{ (self.0)(i) }} fn fsm_len(&self) -> usize {{ self.1 }} }}\n\n"
+            "impl {name}Input for &[u8] {{ fn fsm_get(&self, i: usize) -> u8 {{ self[i] }} fn fsm_len(&self) -> usize {{ self.len() }} }}\n\n"
         ));
 
-        // 2. The machine, generic over its input source. `cursor` is public so the native
-        //    wrapper can read the match extent after a scan.
-        out.frame(&format!("pub struct {name}<I: {name}Input> {{\n"));
-        out.frame("    src: I,\n");
+        // 2. The machine, borrowing a `&'a [u8]`. `cursor` is public so the native wrapper
+        //    can read the match extent after a scan.
+        out.frame(&format!("pub struct {name}<'a> {{\n"));
+        out.frame("    src: &'a [u8],\n");
         out.frame("    pub cursor: usize,\n");
         out.frame("    compartment: Compartment,\n");
         out.frame("    stack: Vec<Compartment>,\n");
+        // Domain fields are `pub` on a scanner: they ARE the scanner's output (a count, an
+        // accumulated list, a flag), which the native wrapper reads after `scan_at`.
         for f in &sym.domain {
             let ty = match &f.ty {
                 TypeRef::Opaque(t) => t.clone(),
                 TypeRef::System(s) | TypeRef::WrappedSystem { system: s, .. } => s.clone(),
                 TypeRef::None => "()".to_string(),
             };
-            out.frame(&format!("    {}: {ty},\n", f.name));
+            out.frame(&format!("    pub {}: {ty},\n", f.name));
         }
         out.frame("}\n\n");
 
         // 3. The impl block — stays OPEN; the driver appends handlers/interface methods.
         let first = sym.states.first().map(|s| s.name.as_str()).unwrap_or("");
-        out.frame(&format!("impl<I: {name}Input> {name}<I> {{\n"));
+        out.frame(&format!("impl<'a> {name}<'a> {{\n"));
 
         // over(src): construct WITHOUT running (RFC-0042 construction model, positioned).
-        out.frame("    pub fn over(src: I) -> Self {\n");
+        out.frame("    pub fn over(src: &'a [u8]) -> Self {\n");
         out.frame(&format!(
             "        let mut compartment = Compartment::new(\"{first}\");\n"
         ));

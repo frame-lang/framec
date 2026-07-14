@@ -25,19 +25,16 @@ impl Compartment {
 
 pub trait StringScanInput { fn fsm_get(&self, i: usize) -> u8; fn fsm_len(&self) -> usize; }
 impl StringScanInput for &[u8] { fn fsm_get(&self, i: usize) -> u8 { self[i] } fn fsm_len(&self) -> usize { self.len() } }
-impl StringScanInput for Vec<u8> { fn fsm_get(&self, i: usize) -> u8 { self[i] } fn fsm_len(&self) -> usize { self.len() } }
-pub struct StringScanFn<F: Fn(usize) -> u8>(pub F, pub usize);
-impl<F: Fn(usize) -> u8> StringScanInput for StringScanFn<F> { fn fsm_get(&self, i: usize) -> u8 { (self.0)(i) } fn fsm_len(&self) -> usize { self.1 } }
 
-pub struct StringScan<I: StringScanInput> {
-    src: I,
+pub struct StringScan<'a> {
+    src: &'a [u8],
     pub cursor: usize,
     compartment: Compartment,
     stack: Vec<Compartment>,
 }
 
-impl<I: StringScanInput> StringScan<I> {
-    pub fn over(src: I) -> Self {
+impl<'a> StringScan<'a> {
+    pub fn over(src: &'a [u8]) -> Self {
         let mut compartment = Compartment::new("Start");
         StringScan { src, cursor: 0, compartment, stack: Vec::new() }
     }

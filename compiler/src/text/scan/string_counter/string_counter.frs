@@ -1,0 +1,34 @@
+@@[target("rust")]
+@@[scan(u8)]
+
+// COMPOSITION PROOF: a scan system that walks the whole input and skips each `"`-string by
+// calling a native leaf `skip_string`, which invokes the StringScan SYSTEM. framec owns the
+// walk (states + the step loop); the leaf does the transformation (run the sub-scanner).
+// This is the mechanism the Segmenter needs — skip opaque regions mid-walk by composing a
+// sub-scanner over the SAME borrowed `&[u8]` (no buffer copy). `count` is the number of
+// strings skipped.
+//
+// Regen: framec-ng -l rust --emit string_counter.frs | grep -v '^#!\[allow' > string_counter.gen.rs
+
+@@system StringCounter {
+    interface:
+        step()
+    machine:
+        $Walk {
+            step() {
+                if self.cursor >= self.src.fsm_len() {
+                    -> $Accept
+                }
+                let b = self.src.fsm_get(self.cursor);
+                if b == 34 {
+                    self.cursor = skip_string(self.src, self.cursor);
+                    self.count = self.count + 1;
+                } else {
+                    self.cursor = self.cursor + 1;
+                }
+            }
+        }
+        $Accept { }
+    domain:
+        count: i32 = 0
+}

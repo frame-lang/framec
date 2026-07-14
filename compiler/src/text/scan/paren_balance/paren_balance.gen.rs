@@ -23,20 +23,17 @@ impl Compartment {
 
 pub trait ParenBalanceInput { fn fsm_get(&self, i: usize) -> u8; fn fsm_len(&self) -> usize; }
 impl ParenBalanceInput for &[u8] { fn fsm_get(&self, i: usize) -> u8 { self[i] } fn fsm_len(&self) -> usize { self.len() } }
-impl ParenBalanceInput for Vec<u8> { fn fsm_get(&self, i: usize) -> u8 { self[i] } fn fsm_len(&self) -> usize { self.len() } }
-pub struct ParenBalanceFn<F: Fn(usize) -> u8>(pub F, pub usize);
-impl<F: Fn(usize) -> u8> ParenBalanceInput for ParenBalanceFn<F> { fn fsm_get(&self, i: usize) -> u8 { (self.0)(i) } fn fsm_len(&self) -> usize { self.1 } }
 
-pub struct ParenBalance<I: ParenBalanceInput> {
-    src: I,
+pub struct ParenBalance<'a> {
+    src: &'a [u8],
     pub cursor: usize,
     compartment: Compartment,
     stack: Vec<Compartment>,
-    depth: i32,
+    pub depth: i32,
 }
 
-impl<I: ParenBalanceInput> ParenBalance<I> {
-    pub fn over(src: I) -> Self {
+impl<'a> ParenBalance<'a> {
+    pub fn over(src: &'a [u8]) -> Self {
         let mut compartment = Compartment::new("Scan");
         ParenBalance { src, cursor: 0, compartment, stack: Vec::new(), depth: 0 }
     }

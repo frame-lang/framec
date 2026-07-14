@@ -16,6 +16,8 @@ pub mod sections;
 pub mod string_scan;
 /// Balanced-`()` extent, dogfooded as a Frame `@@[scan(u8)]` counter automaton.
 pub mod paren_balance;
+/// Composition proof: a scan system that composes StringScan (docs/JOURNAL.md).
+pub mod string_counter;
 use super::{Source, Span};
 use crate::tree::{
     BomItem, EfsmItem, FileAst, Item, NativeItem, Param, PragmaItem, SystemItem, SystemParams,
