@@ -1,0 +1,53 @@
+@@[target("rust")]
+@@[scan(u8)]
+
+// The quoted-string EXTENT recognizer, dogfooded as an `@@[scan(u8)]` system — the
+// `@@system` analogue of the shipping `string_scan_fsm`. It recognizes the same grammar
+// as `Lexer::quoted(i, b'"', multiline=false, escapes=true)`: a `"`-delimited string with
+// `\`-escapes, where a bare newline is unterminated. It finds the EXTENT (leaves `cursor`
+// one past the closing quote); a differential test proves it agrees with the hand lexer at
+// every position. This is where the string-blind `in_string: u8` native local used to live
+// (#209 / P9); here the mode is a Frame STATE, not a byte that cannot tell `"` from `}`.
+//
+// Regen: edit this file, run `framec-ng -l rust --emit string_scan.frs > string_scan.gen.rs`.
+
+@@system StringScan {
+    interface:
+        step()
+    machine:
+        $Start {
+            step() {
+                if self.cursor >= self.src.fsm_len() {
+                    -> $Reject
+                }
+                if self.src.fsm_get(self.cursor) != 34 {
+                    -> $Reject
+                }
+                self.cursor = self.cursor + 1;
+                -> $Body
+            }
+        }
+        $Body {
+            step() {
+                if self.cursor >= self.src.fsm_len() {
+                    -> $Reject
+                }
+                let b = self.src.fsm_get(self.cursor);
+                if b == 92 {
+                    self.cursor = self.cursor + 2;
+                    -> $Body
+                }
+                if b == 10 {
+                    -> $Reject
+                }
+                if b == 34 {
+                    self.cursor = self.cursor + 1;
+                    -> $Accept
+                }
+                self.cursor = self.cursor + 1;
+                -> $Body
+            }
+        }
+        $Accept { }
+        $Reject { }
+}
