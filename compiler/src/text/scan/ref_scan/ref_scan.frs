@@ -1,0 +1,73 @@
+@@[target("rust")]
+@@[scan(u8)]
+
+// Frame-reference recognizer, dogfooded as an `@@[scan(u8)]` system — the `@@system`
+// analogue of the hand `frame_ref_at`. From the cursor it recognizes `$.name` (a state var)
+// or `@@:word` (a context ref: self / data / params / return / event / system), classifies
+// the kind, and leaves the name extent + end in domain fields. framec owns the SHAPE
+// recognition (states + the ident-run loop); the leaves are trivial byte predicates and the
+// kind lookup. A differential test proves it agrees with `frame_ref_at` at every position.
+//
+// kind: 0=none 1=StateVar 2=ContextSelf 3=ContextData 4=ContextParams 5=ContextReturn
+//       6=ContextEvent 7=ContextSystemState
+//
+// Regen: framec-ng -l rust --emit ref_scan.frs | grep -v '^#!\[allow' > ref_scan.gen.rs
+
+@@system RefScan {
+    interface:
+        step()
+    machine:
+        $Start {
+            step() {
+                if starts_statevar(self.src, self.cursor) {
+                    self.cursor = self.cursor + 2;
+                    self.name_start = self.cursor;
+                    -> $StateVarName
+                }
+                if starts_context(self.src, self.cursor) {
+                    self.cursor = self.cursor + 3;
+                    self.word_start = self.cursor;
+                    -> $ContextWord
+                }
+                -> $Reject
+            }
+        }
+        $StateVarName {
+            step() {
+                if is_ident_at(self.src, self.cursor) {
+                    self.cursor = self.cursor + 1;
+                } else {
+                    if self.cursor == self.name_start {
+                        -> $Reject
+                    }
+                    self.kind = 1;
+                    self.name_out = self.name_start;
+                    self.name_end = self.cursor;
+                    -> $Accept
+                }
+            }
+        }
+        $ContextWord {
+            step() {
+                if is_ident_or_dot_at(self.src, self.cursor) {
+                    self.cursor = self.cursor + 1;
+                } else {
+                    if self.cursor == self.word_start {
+                        -> $Reject
+                    }
+                    self.kind = classify_context(self.src, self.word_start, self.cursor);
+                    self.name_out = name_start_ctx(self.src, self.word_start, self.cursor);
+                    self.name_end = self.cursor;
+                    -> $Accept
+                }
+            }
+        }
+        $Accept { }
+        $Reject { }
+    domain:
+        kind: i32 = 0
+        name_start: usize = 0
+        word_start: usize = 0
+        name_out: usize = 0
+        name_end: usize = 0
+}

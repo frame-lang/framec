@@ -20,6 +20,8 @@ pub mod paren_balance;
 pub mod string_counter;
 /// The item-level segmenter walk, dogfooded as a Frame @@[scan(u8)] system.
 pub mod segmenter;
+/// Frame-reference recognizer, dogfooded as a Frame @@[scan(u8)] system.
+pub mod ref_scan;
 use super::{Source, Span};
 use crate::tree::{
     BomItem, EfsmItem, FileAst, Item, NativeItem, Param, PragmaItem, SystemItem, SystemParams,
