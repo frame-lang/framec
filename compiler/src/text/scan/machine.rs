@@ -702,10 +702,16 @@ fn decl_of(bytes: &[u8], from: usize, to: usize, span_start: usize) -> MemberDec
         }
     }
 
-    // The initializer. If it is `@@Sys(...)` — FRAME's own syntax — then framec knows
-    // this field holds a system, and it knows it WITHOUT looking at the user's type.
+    // The initializer, VERBATIM (everything after `=`, trimmed).
+    let mut init_text = None;
+    // If it is `@@Sys(...)` — FRAME's own syntax — then framec knows this field holds a
+    // system, and it knows it WITHOUT looking at the user's type.
     let mut init_system = None;
     if i < to && bytes[i] == b'=' {
+        let raw = String::from_utf8_lossy(&bytes[i + 1..to]).trim().to_string();
+        if !raw.is_empty() {
+            init_text = Some(raw);
+        }
         let mut k = i + 1;
         while k < to && (bytes[k] == b' ' || bytes[k] == b'\t') {
             k += 1;
@@ -734,6 +740,7 @@ fn decl_of(bytes: &[u8], from: usize, to: usize, span_start: usize) -> MemberDec
         params_text,
         init_system,
         is_async,
+        init_text,
     }
 }
 

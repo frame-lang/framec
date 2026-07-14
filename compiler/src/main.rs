@@ -98,10 +98,13 @@ fn main() -> ExitCode {
             return ExitCode::from(65);
         }
         use frame_compiler::text::emit::{driver, java::Java, python::Python};
+        use frame_compiler::text::emit::rust::Rust;
         let jb = Java::new();
         let be: &dyn driver::Backend = match target {
             Target::Java => &jb,
             Target::Python3 => &Python,
+            Target::Rust => &Rust,
+            Target::C => &frame_compiler::text::emit::c::C::new(),
             other => {
                 eprintln!(
                     "no backend for `{}` yet. Built: java, python.",

@@ -71,9 +71,9 @@ impl Backend for Python {
         }
         out.frame("        self.__stack = []\n");
         for f in &sym.domain {
-            // The user's initializer is THEIR expression. We do not read it; we do not
-            // have it here (it is a span, and this module is a spelling, not a scanner).
-            out.frame(&format!("        self.{} = None\n", f.name));
+            // The user's initializer, VERBATIM (else None).
+            let init = f.init_text.clone().unwrap_or_else(|| "None".into());
+            out.frame(&format!("        self.{} = {init}\n", f.name));
         }
         out.frame("\n");
     }

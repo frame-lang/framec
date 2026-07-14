@@ -21,12 +21,12 @@
                 return
             }
             tag(): String {
-                @@:(@@:self.label)
+                @@:(@@:self.label.clone())
                 return
             }
         }
 
     domain:
         sum: i32 = 0
-        label: String = ""
+        label: String = String::from("")
 }

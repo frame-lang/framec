@@ -437,13 +437,13 @@ fn declared_types_pass_through_verbatim() {
     let code = driver::emit(&src, &ast, &syms, &Java::new());
 
     // The user's exact type text, unchanged — including a Java-invalid one.
-    assert!(code.contains("public String good;"), "String verbatim");
+    assert!(code.contains("public String good = null;"), "String verbatim, with its init");
     assert!(
-        code.contains("public Rc<RefCell<Whatever>> weird;"),
+        code.contains("public Rc<RefCell<Whatever>> weird = null;"),
         "an arbitrary user type passes through untouched:\n{code}"
     );
     assert!(
-        code.contains("public str wrong;"),
+        code.contains("public str wrong = null;"),
         "`str` is the USER's (Java-invalid) text — framec must NOT rewrite it to String. \
          Emitting it verbatim (and letting javac reject it) is the contract:\n{code}"
     );

@@ -1198,3 +1198,106 @@ kill the latter.
 **The lesson, a third time: ask what the language IS, not what my code finds convenient.** I
 was one `cargo test` from shipping a contract violation the project had already deleted once,
 dressed up as a helper with a plausible name.
+
+---
+
+## 2026-07-14 — The third backend: Rust. The "spellings only" claim holds under pressure.
+
+Rust was chosen as backend #3 precisely because it breaks assumptions Java and Python let
+stand. It landed at **15/15 corpus compliance**, compiling on rustc and running — and the
+shared driver needed **no escape hatch**. It still has zero language branches (`match lang`
+does not compile in it).
+
+### What Rust stressed, and how the model absorbed it
+
+- **No `Object`.** State vars live in framec's own `HashMap<String, Box<dyn Any>>`; a read
+  is `.downcast_ref::<T>().unwrap().clone()` — a postfix chain, hence an ATOM, needing no
+  parenthesization. The `.clone()` also owns the value out of the borrow, side-stepping
+  the borrow checker. This is container extraction — framec's scaffolding, Rust's rule —
+  the exact category the type-boundary ruling blessed, and it never touches the user's
+  declared type.
+- **Postfix `.await`.** Rust is the one target where the await-at-the-head bug (#225)
+  cannot arise, because `.await` is postfix. Its async spelling is `self.m().await`, not
+  `(await self.m())` — a different spelling of the same node, which is exactly what the
+  Backend trait is for.
+- **No null / ownership.** Domain fields are the user's `Option<T>`, initialized from the
+  user's own expression.
+
+### First run: 11/15 — and the four failures were the right four
+
+The driver flexed on the first try; the failures were Rust-specific edges, and — the
+important part — **one was my backend, three were the corpus**:
+
+- **My bug:** `Default::default() as f32` is not valid Rust (an `as`-cast needs a known
+  numeric source). Fixed to `<f32>::default()`.
+- **My bigger bug, a verbatim violation:** I emitted `Default::default()` for domain
+  fields, **throwing away the user's initializer**. It only hid because scalars default to
+  the same value. `cache: Cache = Cache::new()` exposed it. Fixed: the init is now captured
+  and emitted VERBATIM, in all three backends. (Java: `public T f = <init>;`. Python:
+  `self.f = <init>`.)
+- **The corpus, three times:** the Rust fixtures were byte-identical to the Python ones in
+  their native code — `@@:return("pass")` where Rust needs `String::from("pass")`,
+  `String = ""` where Rust needs `String::from("")`, `label` returned by move where Rust
+  needs `.clone()`, `get(key)` where Rust needs `&key`. **RFC line 397 states this
+  outright:** "a String slot needs `String::from("")` on Rust but `""` on Python — write
+  what the target compiler expects." The fixtures were wrong for Rust, the same
+  copy-paste-across-targets disease as the pseudo-conditional and `= nil`. Migrated to
+  target-native Rust.
+
+### Runs, and the behaviour is subtly correct
+
+A Door machine: `report()` after `open`/`close`/`open`/`close` reports `tries=0`, not 2 —
+because state vars are **per-compartment** and re-seeded on each entry to `Closed`. That is
+Frame's state-variable semantics, reproduced faithfully. Proven by rustc + run
+(`tests/rust_acceptance.rs`).
+
+**Three backends now — Java (fixed-type), Python (reflective), Rust — each at 15/15,
+each proven by running. 59 tests. The driver has no idea what language it is emitting.**
+
+---
+
+## 2026-07-14 — C: the backend with no reflection. 14/18, honestly.
+
+C was the real test of the architecture: no `Object`, no `Box<dyn Any>`, no generics, no
+methods, manual memory. If the model held here, it holds. It mostly did — **14/18 corpus
+fixtures compile on gcc and run**, and the driver still has zero language branches.
+
+### Where the Atom model earned its keep
+
+State vars can't live in a typed container — C has none. framec emits its own `void*`-keyed
+map, and reading a var is `*(int*)FrameMap_get(...)` — a **prefix deref, a NON-atom**, the
+exact #220 shape. `Atom::deref` parenthesizes it to `(*((int*) get(...)))`, and a test
+proves it: `@@:($.n * 2)` gives 42, because the deref binds to the value, not to `n * 2`.
+A bare `*(int*)... * 2` would deref the product. **The Atom type is load-bearing on C, not
+decorative** — this is the case Java and Python never exercised.
+
+Other C spellings the driver never learned: `->` not `.`, an explicit `self` pointer on
+every function, forward declarations (C compiles top-to-bottom and the interface calls
+handlers defined later), and `Sys_new()` for `= @@Sys()` inits.
+
+### The four honest gaps (NOT claimed as passing)
+
+- **17, 18 — transition exit/enter args** (`(1) -> (2) $B`). A real Frame feature I have not
+  built: the args before/after `->` go to the source state's exit handler and the target's
+  enter handler. C surfaces it as a hard error (a stray `(1.25)` statement); **Java, Python
+  and Rust silently DROP the args and compile anyway** — passing-by-omission that only C's
+  strictness exposed. This is a cross-cutting gap (tree + every backend), filed as work to
+  do, not hidden.
+- **14 — async + a method call on a C struct.** C has no async and no methods; the fixture's
+  `@@:self.cache.get(key)` is not a C-expressible program. A reachability limit (RFC-0053),
+  not a silent erasure.
+- **16 — a cross-system OO call** (`self.inner.ping()`). In C that must be
+  `Inner_ping(self->inner)`; the fixture is written in method syntax. Needs cross-system-call
+  lowering or C-adapted native code.
+
+### Also fixed in passing
+
+- Domain/state initializers were being IGNORED (I emitted a default), a verbatim violation
+  that only hid because scalars default to the same value. Now the user's init is emitted
+  verbatim in every backend — `cache: Cache = Cache::new()` survives.
+- Actions with bodies (`Decl::WithBody`) were absent from the symbol table's `actions` list;
+  C's forward declarations needed them, and the table should know they exist regardless.
+
+**Four backends: Java (fixed-type), Python (reflective), Rust (no-Object), C (no-reflection).
+62 tests. The state-var deref proves the Atom invariant is real. And C's strictness caught a
+gap the other three were hiding.**

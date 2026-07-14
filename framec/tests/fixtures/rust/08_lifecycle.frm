@@ -26,5 +26,5 @@
     domain:
         entered: i32 = 0
         exited: i32 = 0
-        tag: String = ""
+        tag: String = String::from("")
 }

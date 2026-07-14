@@ -9,10 +9,10 @@ impl Cache { pub fn get(&self, k: &str) -> String { format!("v:{}", k) } }
     machine:
         $Ready {
             fetch(key: String): String {
-                @@:(@@:self.cache.get(key))
+                @@:(@@:self.cache.get(&key))
             }
         }
 
     domain:
-        cache: Option<Cache> = None
+        cache: Cache = Cache
 }

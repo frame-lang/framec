@@ -194,6 +194,11 @@ pub struct MemberDecl {
     /// A MODIFIER, carried as a fact on the node. Not part of the name — reading it as
     /// one emitted `def async(self):`, and `async` is a Python keyword.
     pub is_async: bool,
+    /// The initializer expression after `=`, VERBATIM. `count: int = 0` -> "0";
+    /// `cache: Cache = Cache` -> "Cache". The user's native expression — emitted
+    /// unchanged, never interpreted. Ignoring it (emitting a default) is a verbatim
+    /// violation that only hid because scalars default to the same value.
+    pub init_text: Option<String>,
 }
 
 #[derive(Debug)]

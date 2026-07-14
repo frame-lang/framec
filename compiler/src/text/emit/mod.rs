@@ -21,10 +21,12 @@
 //!   reviewer at the end of a long day.
 
 pub mod atom;
+pub mod c;
 pub mod driver;
 pub mod java;
 pub mod persist;
 pub mod python;
+pub mod rust;
 pub mod reindent;
 
 use super::NativeText;

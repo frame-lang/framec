@@ -122,6 +122,11 @@ pub struct FieldSym {
     pub name: String,
     pub span: Span,
     pub ty: TypeRef,
+    /// The initializer expression, verbatim (the user's native code).
+    pub init_text: Option<String>,
+    /// If the init is `= @@Sys(...)`, the system name — Frame's own syntax, lowered to
+    /// the target's constructor.
+    pub init_system: Option<String>,
 }
 
 /// What a field's declared type refers to.
@@ -221,6 +226,8 @@ pub fn resolve(ast: &FileAst) -> (SymbolTable, Vec<Diagnostic>) {
                             sym.domain.push(FieldSym {
                                 name: md.name.clone(),
                                 span: md.span,
+                                init_text: md.init_text.clone(),
+                                init_system: md.init_system.clone(),
                                 ty: classify(
                                     md.type_text.as_deref(),
                                     md.init_system.as_deref(),
@@ -242,7 +249,13 @@ pub fn resolve(ast: &FileAst) -> (SymbolTable, Vec<Diagnostic>) {
                                 params_text: md.params_text.clone(),
                                 return_text: md.type_text.clone(),
                             }),
-                            Decl::WithBody(_) => {}
+                            Decl::WithBody(b) => sym.actions.push(MethodSym {
+                                name: b.name.clone(),
+                                span: b.span,
+                                is_async: false,
+                                params_text: Some(b.params_text.clone()),
+                                return_text: b.return_text.clone(),
+                            }),
                             Decl::Trivia(_) => {}
                         }
                     }
@@ -272,6 +285,8 @@ pub fn resolve(ast: &FileAst) -> (SymbolTable, Vec<Diagnostic>) {
                                 StateMember::StateVar(v) => ss.state_vars.push(FieldSym {
                                     name: v.name.clone(),
                                     span: v.span,
+                                    init_text: v.init_text.clone(),
+                                    init_system: v.init_system.clone(),
                                     ty: classify(
                                         v.type_text.as_deref(),
                                         v.init_system.as_deref(),

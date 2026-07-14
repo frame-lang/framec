@@ -101,7 +101,10 @@ impl Backend for Java {
                 TypeRef::WrappedSystem { text, .. } => text.clone(),
                 TypeRef::None => "Object".to_string(),
             };
-            out.frame(&format!("    public {ty} {};\n", f.name));
+            match &f.init_text {
+                Some(init) => out.frame(&format!("    public {ty} {} = {init};\n", f.name)),
+                None => out.frame(&format!("    public {ty} {};\n", f.name)),
+            }
         }
         out.frame("\n");
 
