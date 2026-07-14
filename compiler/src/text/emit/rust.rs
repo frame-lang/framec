@@ -20,7 +20,7 @@ use super::atom::Atom;
 use super::driver::{param_names, Backend};
 use super::Sink;
 use crate::resolve::{SystemSym, TypeRef};
-use crate::tree::body::{FrameRef, RefKind};
+use crate::tree::body::{EmbedCall, FrameRef, RefKind};
 use crate::NativeText;
 
 pub struct Rust;
@@ -69,18 +69,31 @@ impl Backend for Rust {
         // new()
         let first = sym.states.first().map(|s| s.name.as_str()).unwrap_or("");
         out.frame(&format!("impl {name} {{\n"));
-        out.frame(&format!("    pub fn new() -> {name} {{\n"));
+        // Constructor params — state, then enter, then domain (§203). Rust: `name: type`.
+        let plist = self.param_list(&super::driver::ctor_params_text(&sym.params));
+        out.frame(&format!("    pub fn new({plist}) -> {name} {{\n"));
         out.frame(&format!(
             "        let mut compartment = Compartment::new(\"{first}\");\n"
         ));
         if let Some(st) = sym.states.iter().find(|s| s.name == first) {
             seed_state_vars(st, out);
         }
+        // State/enter params seed the start compartment's args (§203); one `state_args`
+        // map in the cleanroom, a distinct `enter_args` deferred.
+        for p in sym.params.state.iter().chain(&sym.params.enter) {
+            out.frame(&format!(
+                "        compartment.state_args.insert(\"{}\".to_string(), Box::new({}));\n",
+                p.name, p.name
+            ));
+        }
         out.frame(&format!("        {name} {{ compartment, stack: Vec::new()"));
         for f in &sym.domain {
-            // The user's initializer is THEIR native expression, VERBATIM. Only fall back
-            // to a default when the user wrote none.
-            let init = f.init_text.clone().unwrap_or_else(|| "Default::default()".into());
+            // `= @@Inner()` is FRAME's instantiation syntax -> the Rust constructor. Any
+            // other init is the user's native expression, verbatim.
+            let init = match &f.init_system {
+                Some(s) => format!("{s}::new()"),
+                None => f.init_text.clone().unwrap_or_else(|| "Default::default()".into()),
+            };
             out.frame(&format!(", {}: {init}", f.name));
         }
         out.frame(" }\n    }\n\n");
@@ -304,12 +317,25 @@ impl Backend for Rust {
                 out.native(rhs);
                 out.frame("));\n");
             }
+            RefKind::ContextReturn => {
+                out.frame(&format!("{p}return "));
+                out.native(rhs);
+                out.frame(";\n");
+            }
             _ => {
                 out.frame(&format!("{p}{} = ", lhs.name));
                 out.native(rhs);
                 out.frame(";\n");
             }
         }
+    }
+
+    fn system_ctor_call(&self, name: &str, args: &[String]) -> Atom {
+        Atom::call(format!("{name}::new"), args.join(", "))
+    }
+
+    fn embed_call(&self, _sym: &SystemSym, ec: &EmbedCall) -> Atom {
+        Atom::method(Atom::field(Atom::ident("self"), &ec.field), &ec.method, &ec.args)
     }
 
     fn lower_ref(&self, sym: &SystemSym, state: &str, r: &FrameRef) -> Atom {

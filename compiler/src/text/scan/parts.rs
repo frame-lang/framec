@@ -52,6 +52,27 @@ pub fn native_parts(lx: &Lexer, bytes: &[u8], from: usize, to: usize) -> Vec<Nat
             }
         }
 
+        // `@@SystemName(args)` — a STRUCTURED instantiation, captured whole (spec §1103).
+        // Checked before the plain ref recognizer because it consumes the arg list too.
+        if let Some(inst) = instantiation_at(bytes, i, to) {
+            flush(&mut parts, text_start, i);
+            i = inst.span.end;
+            parts.push(NativePart::Instantiate(inst));
+            text_start = i;
+            continue;
+        }
+
+        // `@@:self.field.method(args)` — an embedded-system call (RFC-0046). Checked before
+        // the plain ref recognizer, which would otherwise swallow `self.field.method` as one
+        // context ref and leave `.method()` as invalid native on C.
+        if let Some(ec) = embed_call_at(bytes, i, to) {
+            flush(&mut parts, text_start, i);
+            i = ec.span.end;
+            parts.push(NativePart::EmbedCall(ec));
+            text_start = i;
+            continue;
+        }
+
         // A Frame reference sitting mid-expression in native code.
         if let Some(r) = frame_ref_at(bytes, i, to) {
             flush(&mut parts, text_start, i);
@@ -171,6 +192,229 @@ fn frame_ref_at(bytes: &[u8], i: usize, to: usize) -> Option<FrameRef> {
                 name,
             });
         }
+    }
+    None
+}
+
+use crate::tree::body::{EmbedCall, InstArg, Instantiation, ParamGroup};
+
+/// `@@:self.<field>.<method>(args)` at `i`, if there is one (RFC-0046). Requires TWO
+/// dotted segments after `self` and a `(` — that shape is what tells an embed call apart
+/// from a scalar field read (`@@:self.x`) or a self-call (`@@:self.m(...)`). Whether the
+/// field is actually a system (vs a scalar with a native method) is resolved at emit.
+fn embed_call_at(bytes: &[u8], i: usize, to: usize) -> Option<EmbedCall> {
+    let head = b"@@:self.";
+    if !starts_with(bytes, i, to, head) {
+        return None;
+    }
+    let mut j = i + head.len();
+    let fs = j;
+    while j < to && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') {
+        j += 1;
+    }
+    if j == fs || j >= to || bytes[j] != b'.' {
+        return None;
+    }
+    let field = String::from_utf8_lossy(&bytes[fs..j]).into_owned();
+    j += 1; // the `.`
+    let ms = j;
+    while j < to && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') {
+        j += 1;
+    }
+    if j == ms {
+        return None;
+    }
+    let method = String::from_utf8_lossy(&bytes[ms..j]).into_owned();
+    // A `(` (skipping spaces) confirms a call — a bare `@@:self.a.b` is a nested field read,
+    // not an embed call.
+    let mut p = j;
+    while p < to && (bytes[p] == b' ' || bytes[p] == b'\t') {
+        p += 1;
+    }
+    if p >= to || bytes[p] != b'(' {
+        return None;
+    }
+    let close = match_paren(bytes, p, to)?;
+    let args = String::from_utf8_lossy(&bytes[p + 1..close]).trim().to_string();
+    Some(EmbedCall {
+        span: Span::new(i, close + 1),
+        field,
+        method,
+        args,
+    })
+}
+
+fn starts_with(bytes: &[u8], i: usize, to: usize, needle: &[u8]) -> bool {
+    i + needle.len() <= to && &bytes[i..i + needle.len()] == needle
+}
+
+/// `@@SystemName(args)` at `i`, if there is one (spec §1103). Consumes the whole call —
+/// `@@`, an optional `!` (unmanaged variant), the name, and the balanced `(...)` — and
+/// parses the args into groups. Inside body water the only `@@` forms are `@@:` (a ref)
+/// and this; a `(` after the name confirms a call.
+fn instantiation_at(bytes: &[u8], i: usize, to: usize) -> Option<Instantiation> {
+    if i + 2 >= to || bytes[i] != b'@' || bytes[i + 1] != b'@' || bytes[i + 2] == b':' {
+        return None;
+    }
+    let mut k = i + 2;
+    if k < to && bytes[k] == b'!' {
+        k += 1;
+    }
+    if k >= to || !(bytes[k].is_ascii_alphabetic() || bytes[k] == b'_') {
+        return None;
+    }
+    let ns = k;
+    let mut m = k;
+    while m < to && (bytes[m].is_ascii_alphanumeric() || bytes[m] == b'_') {
+        m += 1;
+    }
+    let name = String::from_utf8_lossy(&bytes[ns..m]).into_owned();
+    // Require `(` (skipping spaces).
+    let mut p = m;
+    while p < to && (bytes[p] == b' ' || bytes[p] == b'\t') {
+        p += 1;
+    }
+    if p >= to || bytes[p] != b'(' {
+        return None;
+    }
+    // Balanced scan to the matching `)`, string-aware.
+    let open = p;
+    let close = match_paren(bytes, open, to)?;
+    let (args, named) = parse_inst_args(bytes, open + 1, close);
+    Some(Instantiation {
+        span: Span::new(i, close + 1),
+        name,
+        args,
+        named,
+    })
+}
+
+/// Index of the `)` matching the `(` at `open`, or None if unbalanced within `to`.
+fn match_paren(bytes: &[u8], open: usize, to: usize) -> Option<usize> {
+    let mut depth = 0i32;
+    let mut j = open;
+    while j < to {
+        match bytes[j] {
+            b'"' | b'\'' => {
+                let q = bytes[j];
+                j += 1;
+                while j < to && bytes[j] != q {
+                    if bytes[j] == b'\\' {
+                        j += 1;
+                    }
+                    j += 1;
+                }
+            }
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(j);
+                }
+            }
+            _ => {}
+        }
+        j += 1;
+    }
+    None
+}
+
+/// Parse the arg list `[from, to)` (the interior of the `(...)`) into groups. Returns the
+/// args and whether the call uses the named form. Group comes from the sigil: `$(...)`
+/// state, `$>(...)` enter, bare domain. Within a group the value is `v` (positional) or
+/// `name=v` (named).
+fn parse_inst_args(bytes: &[u8], from: usize, to: usize) -> (Vec<InstArg>, bool) {
+    let mut args = Vec::new();
+    let mut named = false;
+    for raw in split_top_commas(bytes, from, to) {
+        let s = raw.trim();
+        if s.is_empty() {
+            continue;
+        }
+        // Group by sigil.
+        let (group, inner) = if let Some(rest) = s.strip_prefix("$>(") {
+            (ParamGroup::Enter, rest.trim_end_matches(')').trim())
+        } else if let Some(rest) = s.strip_prefix("$(") {
+            (ParamGroup::State, rest.trim_end_matches(')').trim())
+        } else {
+            (ParamGroup::Domain, s)
+        };
+        // Named (`name = value`) vs positional. Only a top-level `=` that is not `==`.
+        let (name, value) = match split_top_eq(inner) {
+            Some((n, v)) => {
+                named = true;
+                (Some(n.trim().to_string()), v.trim().to_string())
+            }
+            None => (None, inner.to_string()),
+        };
+        args.push(InstArg { group, name, value });
+    }
+    (args, named)
+}
+
+/// Split `[from, to)` on top-level commas (respecting nesting and strings).
+fn split_top_commas(bytes: &[u8], from: usize, to: usize) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut depth = 0i32;
+    let mut start = from;
+    let mut j = from;
+    while j < to {
+        match bytes[j] {
+            b'"' | b'\'' => {
+                let q = bytes[j];
+                j += 1;
+                while j < to && bytes[j] != q {
+                    if bytes[j] == b'\\' {
+                        j += 1;
+                    }
+                    j += 1;
+                }
+            }
+            b'(' | b'[' | b'{' | b'<' => depth += 1,
+            b')' | b']' | b'}' | b'>' => depth -= 1,
+            b',' if depth == 0 => {
+                out.push(String::from_utf8_lossy(&bytes[start..j]).into_owned());
+                start = j + 1;
+            }
+            _ => {}
+        }
+        j += 1;
+    }
+    if start < to {
+        out.push(String::from_utf8_lossy(&bytes[start..to]).into_owned());
+    }
+    out
+}
+
+/// Split on a top-level single `=` (not `==`, `>=`, `<=`, `!=`), if present.
+fn split_top_eq(s: &str) -> Option<(&str, &str)> {
+    let b = s.as_bytes();
+    let mut depth = 0i32;
+    let mut j = 0;
+    while j < b.len() {
+        match b[j] {
+            b'"' | b'\'' => {
+                let q = b[j];
+                j += 1;
+                while j < b.len() && b[j] != q {
+                    if b[j] == b'\\' {
+                        j += 1;
+                    }
+                    j += 1;
+                }
+            }
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            b'=' if depth == 0 => {
+                let prev = if j > 0 { b[j - 1] } else { 0 };
+                let next = if j + 1 < b.len() { b[j + 1] } else { 0 };
+                if !matches!(prev, b'=' | b'!' | b'<' | b'>') && next != b'=' {
+                    return Some((&s[..j], &s[j + 1..]));
+                }
+            }
+            _ => {}
+        }
+        j += 1;
     }
     None
 }

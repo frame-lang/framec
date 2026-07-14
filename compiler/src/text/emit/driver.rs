@@ -35,7 +35,7 @@ use super::atom::Atom;
 use super::Sink;
 use crate::resolve::{SymbolTable, SystemSym};
 use crate::text::Source;
-use crate::tree::body::{Body, FrameRef, Stmt};
+use crate::tree::body::{Body, EmbedCall, FrameRef, InstArg, Instantiation, ParamGroup, Stmt};
 use crate::tree::{Decl, FileAst, Item, MachineMember, Section, StateMember};
 
 /// What a target language must be able to spell.
@@ -212,6 +212,24 @@ pub trait Backend {
     /// cannot express.
     fn lower_ref(&self, sym: &SystemSym, state: &str, r: &FrameRef) -> Atom;
 
+    /// The target's constructor NAME-PREFIX for `@@SystemName(...)` (spec §1103): Java
+    /// `new Sub`, Rust `Sub::new`, C `Sub_new`, Python `Sub`. Context-free — the `(...)`
+    /// args are native water that follows and completes the call. Used both from
+    /// top-level native water.
+    ///
+    /// The `args` are the final constructor arguments in ctor order (state, then enter,
+    /// then domain), already matched against the declared params and defaults by
+    /// [`lower_instantiation`]. The backend only spells the call: `new Sub(a, b)` /
+    /// `Sub::new(a, b)` / `Sub_new(a, b)` / `Sub(a, b)`.
+    fn system_ctor_call(&self, name: &str, args: &[String]) -> Atom;
+
+    /// `@@:self.field.method(args)` — an embedded-system (or scalar-field) call (RFC-0046).
+    /// The backend inspects `sym.domain` to see whether `field` is a system-typed domain
+    /// field: if so it emits the cross-system idiom (C's `Sys_method(self->field, args)`);
+    /// otherwise a native method call on the field. Most targets spell both the same
+    /// (`receiver.field.method(args)`); only C's system case diverges.
+    fn embed_call(&self, sym: &SystemSym, ec: &EmbedCall) -> Atom;
+
     /// Emit `@@[persist]` — `snapshot()` and `restore()` — for this system, if it is
     /// persistent. A no-op otherwise.
     ///
@@ -242,7 +260,25 @@ pub fn emit(src: &Source, ast: &FileAst, syms: &SymbolTable, be: &dyn Backend) -
         // That is the Oceans model, and leaving it out meant every type the user defined
         // alongside their system silently vanished from the output.
         if let Item::Native(n) = item {
-            out.native(super::reindent::render_span(src, n.span));
+            // Water — verbatim, EXCEPT `@@SystemName(...)` islands (spec §1103), which are
+            // Frame's own syntax even out here and lower to the target constructor. There
+            // is no compartment at top level, so a plain ref cannot legally occur here; if
+            // one did it renders as its original text.
+            let bytes = src.open();
+            let reference = |r: &FrameRef| -> Atom {
+                Atom::ident(String::from_utf8_lossy(&bytes[r.span.start..r.span.end]).into_owned())
+            };
+            let instantiate = |inst: &Instantiation| -> Atom { lower_instantiation(syms, be, inst) };
+            // No `@@:self` at top level — an embed call cannot occur here; render verbatim.
+            let embed = |ec: &EmbedCall| -> Atom {
+                Atom::ident(String::from_utf8_lossy(&bytes[ec.span.start..ec.span.end]).into_owned())
+            };
+            let lower = super::reindent::Lowering {
+                reference: &reference,
+                instantiate: &instantiate,
+                embed: &embed,
+            };
+            out.native(super::reindent::render_water(src, &n.parts, n.span, &lower));
             continue;
         }
         let Item::System(sys) = item else { continue };
@@ -304,7 +340,7 @@ pub fn emit(src: &Source, ast: &FileAst, syms: &SymbolTable, be: &dyn Backend) -
                         &mut out,
                     );
                     let terminated =
-                        emit_body(src, sym, &st.name, &h.event, is_async, &h.body, be, &mut out);
+                        emit_body(src, syms, sym, &st.name, &h.event, is_async, &h.body, be, &mut out);
                     be.close_handler(h.return_text.as_deref(), is_async, terminated, &mut out);
                 }
             }
@@ -319,7 +355,7 @@ pub fn emit(src: &Source, ast: &FileAst, syms: &SymbolTable, be: &dyn Backend) -
             for m in &d.members {
                 let Decl::WithBody(b) = m else { continue };
                 be.open_action(&b.name, &b.params_text, b.return_text.as_deref(), &mut out);
-                emit_body(src, sym, "", "", false, &b.body, be, &mut out);
+                emit_body(src, syms, sym, "", "", false, &b.body, be, &mut out);
                 be.close_action(&mut out);
             }
         }
@@ -343,6 +379,7 @@ pub fn emit(src: &Source, ast: &FileAst, syms: &SymbolTable, be: &dyn Backend) -
 #[allow(clippy::too_many_arguments)]
 fn emit_body(
     src: &Source,
+    syms: &SymbolTable,
     sym: &SystemSym,
     state: &str,
     event: &str,
@@ -360,7 +397,14 @@ fn emit_body(
     // `bool`.
     let mut terminated = false;
 
-    let lower = |r: &FrameRef| -> Atom { be.lower_ref(sym, state, r) };
+    let reference = |r: &FrameRef| -> Atom { be.lower_ref(sym, state, r) };
+    let instantiate = |inst: &Instantiation| -> Atom { lower_instantiation(syms, be, inst) };
+    let embed = |ec: &EmbedCall| -> Atom { be.embed_call(sym, ec) };
+    let lower = super::reindent::Lowering {
+        reference: &reference,
+        instantiate: &instantiate,
+        embed: &embed,
+    };
 
     // The body's BASE column: the shallowest statement in it. Everything else is
     // measured relative to that, so the user's nesting is reproduced without framec ever
@@ -430,7 +474,7 @@ fn emit_body(
             Stmt::StackPop(st) => {
                 let r = rel(st.col);
                 if has_lifecycle(sym, state, "<$") {
-                    be.lifecycle_call(r, sym, state, "<$", None, out);
+                    be.lifecycle_call(r, sym, state, "<$", st.exit_args.as_deref(), out);
                 }
                 be.pop(r, out);
                 be.terminate(r, out);
@@ -468,6 +512,79 @@ fn emit_body(
 
     let _ = be.dead_code_is_an_error();
     terminated
+}
+
+/// Lower `@@SystemName(args)` (spec §1103) to the target constructor call. **The call-site
+/// arg routing lives here, once, for every target.**
+///
+/// The declared params fix the constructor's shape: order is state, then enter, then domain
+/// (matching [`Backend::open_system`]'s signature). For each declared param this fills its
+/// value from the matching call arg — by name in the named form, by group-position in the
+/// positional form — falling back to the declared default. The backend only spells the
+/// final call; it never sees the matching.
+fn lower_instantiation(syms: &SymbolTable, be: &dyn Backend, inst: &Instantiation) -> Atom {
+    let Some(sys) = syms.systems.iter().find(|s| s.name == inst.name) else {
+        // Unknown system: emit a best-effort call so the TARGET compiler reports it
+        // (the closed-world validation layer, §1167, is deferred).
+        let args: Vec<String> = inst.args.iter().map(|a| a.value.clone()).collect();
+        return be.system_ctor_call(&inst.name, &args);
+    };
+    let p = &sys.params;
+    let mut ordered = Vec::new();
+    ordered.extend(resolve_group(&p.state, ParamGroup::State, inst));
+    ordered.extend(resolve_group(&p.enter, ParamGroup::Enter, inst));
+    ordered.extend(resolve_group(&p.domain, ParamGroup::Domain, inst));
+    // A no-default param omitted at the call site leaves an empty slot — an arity error the
+    // target compiler will report. Trailing empties (an all-defaulted tail) just shorten
+    // the call.
+    while ordered.last().map(|s: &String| s.is_empty()).unwrap_or(false) {
+        ordered.pop();
+    }
+    be.system_ctor_call(&inst.name, &ordered)
+}
+
+/// Resolve the values for one declared param group against the call's args of that group.
+fn resolve_group(
+    decls: &[crate::tree::Param],
+    group: ParamGroup,
+    inst: &Instantiation,
+) -> Vec<String> {
+    let provided: Vec<&InstArg> = inst.args.iter().filter(|a| a.group == group).collect();
+    decls
+        .iter()
+        .enumerate()
+        .map(|(idx, decl)| {
+            let arg = if inst.named {
+                provided
+                    .iter()
+                    .find(|a| a.name.as_deref() == Some(decl.name.as_str()))
+                    .copied()
+            } else {
+                provided.get(idx).copied()
+            };
+            match arg {
+                Some(a) => a.value.clone(),
+                None => decl.default.clone().unwrap_or_default(),
+            }
+        })
+        .collect()
+}
+
+/// The system's header params as Frame `name: type` declaration text, in CONSTRUCTOR
+/// order — state, then enter, then domain (spec §203). Feed to [`Backend::param_list`] for
+/// the constructor signature; the call site ([`lower_instantiation`]) fills values in the
+/// same order.
+pub fn ctor_params_text(p: &crate::tree::SystemParams) -> String {
+    p.state
+        .iter()
+        .chain(&p.enter)
+        .chain(&p.domain)
+        .map(|param| match &param.ty {
+            Some(t) => format!("{}: {}", param.name, t),
+            None => param.name.clone(),
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Does `state` declare a lifecycle handler for `event` (`$>` / `<$`)?

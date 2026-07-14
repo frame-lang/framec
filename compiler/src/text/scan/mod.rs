@@ -13,7 +13,9 @@ pub mod machine;
 pub mod parts;
 pub mod sections;
 use super::{Source, Span};
-use crate::tree::{BomItem, EfsmItem, FileAst, Item, NativeItem, PragmaItem, SystemItem};
+use crate::tree::{
+    BomItem, EfsmItem, FileAst, Item, NativeItem, Param, PragmaItem, SystemItem, SystemParams,
+};
 use lex::{LexError, Lexer};
 use literals::Target;
 
@@ -91,6 +93,7 @@ pub fn segment(src: &Source, target: Target) -> Result<FileAst, SegmentError> {
                 if water_start < line_start {
                     items.push(Item::Native(NativeItem {
                         span: Span::new(water_start, line_start),
+                        parts: parts::native_parts(&lx, bytes, water_start, line_start),
                     }));
                 }
                 let item = read_pragma(&lx, bytes, j)?;
@@ -109,6 +112,7 @@ pub fn segment(src: &Source, target: Target) -> Result<FileAst, SegmentError> {
     if water_start < n {
         items.push(Item::Native(NativeItem {
             span: Span::new(water_start, n),
+            parts: parts::native_parts(&lx, bytes, water_start, n),
         }));
     }
 
@@ -137,17 +141,18 @@ fn read_pragma(lx: &Lexer, bytes: &[u8], at: usize) -> Result<Item, SegmentError
 
     match word_text {
         "system" => {
-            let (name, brace) = read_name_then_brace(bytes, word)?;
+            let (name, params, brace) = read_name_params_brace(bytes, word)?;
             let end = close_brace(lx, bytes, brace, &name)?;
             let span = Span::new(at, end);
             Ok(Item::System(SystemItem {
                 span,
                 name,
                 sections: sections::sections(lx, bytes, span),
+                params,
             }))
         }
         "fsm" => {
-            let (name, brace) = read_name_then_brace(bytes, word)?;
+            let (name, _params, brace) = read_name_params_brace(bytes, word)?;
             let end = close_brace(lx, bytes, brace, &name)?;
             Ok(Item::Efsm(EfsmItem {
                 span: Span::new(at, end),
@@ -191,6 +196,117 @@ fn read_word(bytes: &[u8], mut i: usize) -> usize {
         i += 1;
     }
     i
+}
+
+/// Read `Name (params)? (: bases)? {` — returning the name, the split header params, and
+/// the opening-brace index. This is where system CONSTRUCTOR params come from (spec §203);
+/// the old reader dropped them silently.
+fn read_name_params_brace(
+    bytes: &[u8],
+    mut i: usize,
+) -> Result<(String, SystemParams, usize), SegmentError> {
+    while i < bytes.len() && (bytes[i] == b' ' || bytes[i] == b'\t') {
+        i += 1;
+    }
+    let ns = i;
+    while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+        i += 1;
+    }
+    let name = String::from_utf8_lossy(&bytes[ns..i]).into_owned();
+    while i < bytes.len() && (bytes[i] == b' ' || bytes[i] == b'\t') {
+        i += 1;
+    }
+    // Optional `(params)`.
+    let mut params = SystemParams::default();
+    if i < bytes.len() && bytes[i] == b'(' {
+        let open = i;
+        let mut d = 0i32;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'(' => d += 1,
+                b')' => {
+                    d -= 1;
+                    if d == 0 {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        let inner = String::from_utf8_lossy(&bytes[open + 1..i]).into_owned();
+        params = split_system_params(&inner);
+        i += 1;
+    }
+    // Skip an optional `: Base, Base` and anything up to `{`.
+    let mut j = i;
+    while j < bytes.len() && bytes[j] != b'{' {
+        j += 1;
+    }
+    if j >= bytes.len() {
+        return Err(SegmentError::UnclosedBody {
+            open: Span::new(ns, bytes.len()),
+            name,
+        });
+    }
+    Ok((name, params, j))
+}
+
+/// Split `$(a: T), $>(b: T), c: T = d` into the three groups. Sigil decides the group;
+/// each param is `name : type = default` (type/default verbatim).
+fn split_system_params(inner: &str) -> SystemParams {
+    let mut out = SystemParams::default();
+    // Top-level comma split (respecting nested parens/brackets/angles for wrapped types).
+    let mut parts = Vec::new();
+    let b = inner.as_bytes();
+    let (mut start, mut depth) = (0usize, 0i32);
+    for (k, &c) in b.iter().enumerate() {
+        match c {
+            b'(' | b'[' | b'<' | b'{' => depth += 1,
+            b')' | b']' | b'>' | b'}' => depth -= 1,
+            b',' if depth == 0 => {
+                parts.push(inner[start..k].trim());
+                start = k + 1;
+            }
+            _ => {}
+        }
+    }
+    if start < inner.len() {
+        parts.push(inner[start..].trim());
+    }
+    for raw in parts {
+        if raw.is_empty() {
+            continue;
+        }
+        // Group sigil: `$>( … )` enter, `$( … )` state, else bare domain.
+        let (group, body): (u8, &str) = if let Some(rest) = raw.strip_prefix("$>(") {
+            (2, rest.trim_end_matches(')'))
+        } else if let Some(rest) = raw.strip_prefix("$(") {
+            (1, rest.trim_end_matches(')'))
+        } else {
+            (0, raw)
+        };
+        let param = parse_one_param(body);
+        match group {
+            1 => out.state.push(param),
+            2 => out.enter.push(param),
+            _ => out.domain.push(param),
+        }
+    }
+    out
+}
+
+fn parse_one_param(body: &str) -> Param {
+    // `name : type = default`
+    let (lhs, default) = match body.split_once('=') {
+        Some((l, d)) => (l.trim(), Some(d.trim().to_string())),
+        None => (body.trim(), None),
+    };
+    let (name, ty) = match lhs.split_once(':') {
+        Some((n, t)) => (n.trim().to_string(), Some(t.trim().to_string())),
+        None => (lhs.to_string(), None),
+    };
+    Param { name, ty, default }
 }
 
 fn read_name_then_brace(bytes: &[u8], mut i: usize) -> Result<(String, usize), SegmentError> {

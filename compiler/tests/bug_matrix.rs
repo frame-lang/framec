@@ -127,6 +127,11 @@ fn b216_224() -> Status {
                         }
                     }
                     NativePart::Text(_) => {}
+                    NativePart::Instantiate(_) => {}
+                    NativePart::EmbedCall(_) => {}
+                NativePart::EmbedCall(_) => {}
+                NativePart::Instantiate(_) => {}
+                NativePart::EmbedCall(_) => {}
                 }
             }
         }

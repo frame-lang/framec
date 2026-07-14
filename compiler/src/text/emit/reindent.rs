@@ -37,7 +37,7 @@
 
 use super::atom::Atom;
 use super::super::Source;
-use crate::tree::body::{FrameRef, LiteralPart, NativePart, NativeStmt};
+use crate::tree::body::{EmbedCall, FrameRef, Instantiation, LiteralPart, NativePart, NativeStmt};
 use crate::NativeText;
 
 /// How a backend turns a Frame reference into target code.
@@ -48,8 +48,16 @@ use crate::NativeText;
 /// here; it is *unrepresentable* here.
 pub type LowerRef<'a> = &'a dyn Fn(&FrameRef) -> Atom;
 
+/// The two ways native code reaches back into Frame: a reference (`$.x`, `@@:self.f`) and
+/// an instantiation (`@@Sub(...)`). Bundled so every `render_*` threads one thing.
+pub struct Lowering<'a> {
+    pub reference: &'a dyn Fn(&FrameRef) -> Atom,
+    pub instantiate: &'a dyn Fn(&Instantiation) -> Atom,
+    pub embed: &'a dyn Fn(&EmbedCall) -> Atom,
+}
+
 /// Render a native statement: re-indent by `delta`, and expand its Frame references.
-pub fn render_native(src: &Source, stmt: &NativeStmt, delta: i32, lower: LowerRef) -> NativeText {
+pub fn render_native(src: &Source, stmt: &NativeStmt, delta: i32, lower: &Lowering) -> NativeText {
     let bytes = src.open();
     let mut out = String::with_capacity(stmt.span.len() + 16);
 
@@ -66,7 +74,7 @@ pub fn render_parts(
     src: &Source,
     parts: &[NativePart],
     span: crate::Span,
-    lower: LowerRef,
+    lower: &Lowering,
 ) -> NativeText {
     let bytes = src.open();
     let mut out = String::new();
@@ -76,7 +84,25 @@ pub fn render_parts(
     NativeText::new(out.trim().to_string(), span)
 }
 
-fn emit_part(bytes: &[u8], part: &NativePart, delta: i32, lower: LowerRef, out: &mut String) {
+/// Render top-level native **water** — the user's code outside any system. Like
+/// [`render_parts`] but **never trims**: this is layout the user wrote, and trimming a
+/// trailing newline butts the next item straight against it. The only interpretation is
+/// lowering `@@SystemName()` islands (spec §1103); everything else is byte-verbatim.
+pub fn render_water(
+    src: &Source,
+    parts: &[NativePart],
+    span: crate::Span,
+    lower: &Lowering,
+) -> NativeText {
+    let bytes = src.open();
+    let mut out = String::new();
+    for p in parts {
+        emit_part(bytes, p, 0, lower, &mut out);
+    }
+    NativeText::new(out, span)
+}
+
+fn emit_part(bytes: &[u8], part: &NativePart, delta: i32, lower: &Lowering, out: &mut String) {
     match part {
         // Ordinary target code. framec may re-indent this — these bytes are layout,
         // and layout is the one thing about the user's code framec is allowed to
@@ -119,7 +145,19 @@ fn emit_part(bytes: &[u8], part: &NativePart, delta: i32, lower: LowerRef, out: 
         // (above). A ref in string CONTENT does not exist as a node, so it cannot be
         // lowered — which is the language rule, made structural.
         NativePart::Ref(r) => {
-            out.push_str(lower(r).as_str());
+            out.push_str((lower.reference)(r).as_str());
+        }
+
+        // `@@SystemName(args)` — lowered to the target constructor call, with the args
+        // matched against the declared params (defaults, order, routing) by the driver.
+        NativePart::Instantiate(inst) => {
+            out.push_str((lower.instantiate)(inst).as_str());
+        }
+
+        // `@@:self.field.method(args)` — an embedded-system (or scalar-field) call, lowered
+        // per target by the driver (which knows the field's declared type).
+        NativePart::EmbedCall(ec) => {
+            out.push_str((lower.embed)(ec).as_str());
         }
     }
 }

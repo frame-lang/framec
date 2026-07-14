@@ -78,6 +78,9 @@ pub struct BomItem {
 #[derive(Debug)]
 pub struct NativeItem {
     pub span: Span,
+    /// The water, decomposed into parts so `@@SystemName()` islands (spec §1103) are
+    /// lowered even in top-level native code. Non-island parts render verbatim.
+    pub parts: Vec<crate::tree::body::NativePart>,
 }
 
 #[derive(Debug)]
@@ -102,6 +105,30 @@ pub struct SystemItem {
     /// This is the line the old compiler never crossed: it had an AST of the system
     /// SKELETON and nothing below it. Every one of the 25 bugs lives down here.
     pub sections: Vec<Section>,
+    /// Header params — `@@system Name($(state), $>(enter), domain)` (spec §203).
+    /// Domain params become constructor args (in scope for domain inits); state/enter
+    /// params seed the start compartment. Verbatim types; framec reorders, never parses.
+    pub params: SystemParams,
+}
+
+/// The three header param groups of `@@system Name(...)`.
+#[derive(Debug, Default, Clone)]
+pub struct SystemParams {
+    /// `$(name: type = default)` — start state's `state_args`.
+    pub state: Vec<Param>,
+    /// `$>(name: type = default)` — start state's `enter_args`.
+    pub enter: Vec<Param>,
+    /// bare `name: type = default` — constructor args, in scope for domain inits.
+    pub domain: Vec<Param>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Param {
+    pub name: String,
+    /// Verbatim type text (the user's), or None if untyped.
+    pub ty: Option<String>,
+    /// Verbatim default expression, or None.
+    pub default: Option<String>,
 }
 
 /// A section of a system. Together these **partition the system's span** — including

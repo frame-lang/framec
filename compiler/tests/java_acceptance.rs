@@ -69,6 +69,74 @@ fn run(frm: &str, main: &str, dir: &str) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
+/// **A domain param is a constructor arg, in scope for the domain field init** (spec §88),
+/// and the call site fills defaults (§1155). `@@Counter(100)` seeds the field from the
+/// param; `@@Counter()` falls back to the declared default.
+#[test]
+fn a_system_param_is_load_bearing() {
+    if !have_javac() {
+        eprintln!("SKIPPED: javac not installed.");
+        return;
+    }
+    let frm = r#"@@system Counter(start: int = 7) {
+    interface:
+        get(): int
+    machine:
+        $C { get(): int { @@:(((Number) @@:self.count).intValue()) } }
+    domain:
+        count: int = start
+}
+
+class Main {
+    public static void main(String[] args) {
+        Counter a = @@Counter(100);
+        Counter b = @@Counter();
+        System.out.println(a.get() + " " + b.get());
+    }
+}
+"#;
+    let out = run(frm, "", "java_param");
+    assert_eq!(
+        out.trim(),
+        "100 7",
+        "@@Counter(100) seeds count from the param; @@Counter() uses the default 7"
+    );
+}
+
+/// **`@@Counter()` instantiation lowers to `new Counter()`** (spec §1103) inside
+/// top-level native water — Frame's own syntax. Before this it was emitted verbatim and
+/// javac rejected it. The `Main` driver is trailing water in the `.frm`, so framec
+/// processes it (text appended by the harness never passes through the compiler).
+#[test]
+fn system_instantiation_lowers_to_the_constructor() {
+    if !have_javac() {
+        eprintln!("SKIPPED: javac not installed.");
+        return;
+    }
+    let frm = r#"@@system Counter {
+    interface:
+        inc()
+        get(): int
+    machine:
+        $C {
+            $.n: int = 5
+            inc() { $.n = ((Number) $.n).intValue() + 1 }
+            get(): int { @@:(((Number) $.n).intValue()) }
+        }
+}
+
+class Main {
+    public static void main(String[] args) {
+        Counter c = @@Counter();
+        c.inc();
+        System.out.println(c.get());
+    }
+}
+"#;
+    let out = run(frm, "", "java_instantiate");
+    assert_eq!(out.trim(), "6", "@@Counter() in water lowers to new Counter(); 5 + 1 = 6");
+}
+
 /// The machine actually works: it transitions, and a handler in the wrong state is a
 /// no-op.
 #[test]
@@ -436,14 +504,17 @@ fn declared_types_pass_through_verbatim() {
     let (syms, _) = resolve(&ast);
     let code = driver::emit(&src, &ast, &syms, &Java::new());
 
-    // The user's exact type text, unchanged — including a Java-invalid one.
-    assert!(code.contains("public String good = null;"), "String verbatim, with its init");
+    // The user's exact type text, unchanged — including a Java-invalid one. Domain fields
+    // are DECLARED with their verbatim type and ASSIGNED their init in the constructor (so
+    // a domain param would be in scope for the init).
+    assert!(code.contains("public String good;"), "String type verbatim on the field decl");
+    assert!(code.contains("this.good = null;"), "the init is assigned in the constructor");
     assert!(
-        code.contains("public Rc<RefCell<Whatever>> weird = null;"),
+        code.contains("public Rc<RefCell<Whatever>> weird;"),
         "an arbitrary user type passes through untouched:\n{code}"
     );
     assert!(
-        code.contains("public str wrong = null;"),
+        code.contains("public str wrong;"),
         "`str` is the USER's (Java-invalid) text — framec must NOT rewrite it to String. \
          Emitting it verbatim (and letting javac reject it) is the contract:\n{code}"
     );

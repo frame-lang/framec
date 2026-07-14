@@ -46,6 +46,8 @@ fn refs(parts: &[NativePart]) -> Vec<(RefKind, String)> {
                     }
                 }
                 NativePart::Text(_) => {}
+                NativePart::Instantiate(_) => {}
+                NativePart::EmbedCall(_) => {}
             }
         }
     }
@@ -68,6 +70,8 @@ fn ref_texts(code: &str, t: Target) -> Vec<String> {
                     }
                 }
                 NativePart::Text(_) => {}
+                NativePart::Instantiate(_) => {}
+                NativePart::EmbedCall(_) => {}
             }
         }
     }

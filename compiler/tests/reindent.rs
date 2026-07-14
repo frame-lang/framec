@@ -28,6 +28,19 @@ use frame_compiler::tree::body::FrameRef;
 fn identity(r: &FrameRef) -> Atom {
     Atom::ident(format!("$.{}", r.name))
 }
+fn identity_inst(i: &frame_compiler::tree::body::Instantiation) -> Atom {
+    Atom::ident(format!("@@{}()", i.name))
+}
+fn identity_embed(e: &frame_compiler::tree::body::EmbedCall) -> Atom {
+    Atom::ident(format!("@@:self.{}.{}({})", e.field, e.method, e.args))
+}
+fn identity_lowering<'a>() -> frame_compiler::text::emit::reindent::Lowering<'a> {
+    frame_compiler::text::emit::reindent::Lowering {
+        reference: &identity,
+        instantiate: &identity_inst,
+        embed: &identity_embed,
+    }
+}
 use frame_compiler::text::scan::literals::Target;
 use frame_compiler::text::scan::machine::body;
 use frame_compiler::text::scan::lex::Lexer;
@@ -51,7 +64,7 @@ fn reindented(code: &str, target: Target, delta: i32) -> String {
     let mut sink = Sink::new();
     for st in &b.stmts {
         if let Stmt::Native(n) = st {
-            sink.native(render_native(&src, n, delta, &identity));
+            sink.native(render_native(&src, n, delta, &identity_lowering()));
         }
     }
     sink.finish()
@@ -143,7 +156,7 @@ fn a_trailing_comment_is_a_node() {
     // The comment is a Literal node — so framec KNOWS it is there. The old compiler
     // did not, and spliced a `;` into the middle of one.
     let mut sink = Sink::new();
-    sink.native(render_native(&src, n, 0, &identity));
+    sink.native(render_native(&src, n, 0, &identity_lowering()));
     let out = sink.finish();
     assert_eq!(out, code, "verbatim");
     assert!(

@@ -22,7 +22,7 @@ use super::atom::{Atom, Place};
 use super::driver::{param_names, Backend};
 use super::Sink;
 use crate::resolve::SystemSym;
-use crate::tree::body::{FrameRef, RefKind};
+use crate::tree::body::{EmbedCall, FrameRef, RefKind};
 use crate::NativeText;
 
 pub struct Python;
@@ -51,7 +51,10 @@ impl Backend for Python {
         out.frame("            self.state_args = {}\n\n");
 
         let first = sym.states.first().map(|s| s.name.as_str()).unwrap_or("");
-        out.frame("    def __init__(self):\n");
+        // Constructor params — state, then enter, then domain (§203). Python: names only.
+        let plist = self.param_list(&super::driver::ctor_params_text(&sym.params));
+        let sig = if plist.is_empty() { String::new() } else { format!(", {plist}") };
+        out.frame(&format!("    def __init__(self{sig}):\n"));
         out.frame(&format!(
             "        self.__compartment = {}.Compartment(\"{first}\")\n",
             sym.name
@@ -64,15 +67,35 @@ impl Backend for Python {
             .into_iter()
             .flatten()
         {
+            // The user's initializer, VERBATIM — as Rust/C do. A hardcoded `0` dropped
+            // `$.n: int = 21` on the floor.
+            let val = v
+                .init_text
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or("None");
             out.frame(&format!(
-                "        self.__compartment.state_vars[\"{}\"] = 0\n",
+                "        self.__compartment.state_vars[\"{}\"] = {val}\n",
                 v.name
             ));
         }
         out.frame("        self.__stack = []\n");
+        // State/enter params seed the start compartment's args (§203); one `state_args`
+        // map in the cleanroom, a distinct `enter_args` deferred.
+        for p in sym.params.state.iter().chain(&sym.params.enter) {
+            out.frame(&format!(
+                "        self.__compartment.state_args[\"{}\"] = {}\n",
+                p.name, p.name
+            ));
+        }
         for f in &sym.domain {
-            // The user's initializer, VERBATIM (else None).
-            let init = f.init_text.clone().unwrap_or_else(|| "None".into());
+            // `= @@Inner()` is FRAME's instantiation syntax -> the Python constructor. Any
+            // other init is the user's native expression, verbatim.
+            let init = match &f.init_system {
+                Some(s) => format!("{s}()"),
+                None => f.init_text.clone().unwrap_or_else(|| "None".into()),
+            };
             out.frame(&format!("        self.{} = {init}\n", f.name));
         }
         out.frame("\n");
@@ -290,12 +313,25 @@ impl Backend for Python {
                 out.native(rhs);
                 out.frame("\n");
             }
+            RefKind::ContextReturn => {
+                out.frame("        return ");
+                out.native(rhs);
+                out.frame("\n");
+            }
             _ => {
                 out.frame(&format!("{p}{} = ", lhs.name));
                 out.native(rhs);
                 out.frame("\n");
             }
         }
+    }
+
+    fn system_ctor_call(&self, name: &str, args: &[String]) -> Atom {
+        Atom::call(name, args.join(", "))
+    }
+
+    fn embed_call(&self, _sym: &SystemSym, ec: &EmbedCall) -> Atom {
+        Atom::method(Atom::field(Atom::ident("self"), &ec.field), &ec.method, &ec.args)
     }
 
     fn lower_ref(&self, _sym: &SystemSym, _state: &str, r: &FrameRef) -> Atom {
@@ -449,7 +485,13 @@ impl Python {
         ));
         if let Some(st) = sym.states.iter().find(|s| s.name == target) {
             for v in &st.state_vars {
-                out.frame(&format!("        __next.state_vars[\"{}\"] = 0\n", v.name));
+                let val = v
+                    .init_text
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("None");
+                out.frame(&format!("        __next.state_vars[\"{}\"] = {val}\n", v.name));
             }
             // *** framec does not split the args. *** It hands the blob to a
             // *-varargs helper and lets Python do the splitting — correctly, and for

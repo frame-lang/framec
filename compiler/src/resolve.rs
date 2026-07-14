@@ -60,7 +60,7 @@
 //! 4. Otherwise: opaque. The user's type. framec knows nothing about it and needs to
 //!    know nothing — the target toolchain does all the type work.
 
-use crate::tree::{Decl, FileAst, Item, MachineMember, Section, StateMember};
+use crate::tree::{Decl, FileAst, Item, MachineMember, Section, StateMember, SystemParams};
 use crate::Span;
 
 #[derive(Debug)]
@@ -81,6 +81,9 @@ pub struct SystemSym {
     pub states: Vec<StateSym>,
     pub domain: Vec<FieldSym>,
     pub actions: Vec<MethodSym>,
+    /// Header params — `@@system Name($(s), $>(e), domain)`. Domain params are ctor args;
+    /// state/enter params seed the start compartment (spec §203).
+    pub params: SystemParams,
 }
 
 #[derive(Debug)]
@@ -203,6 +206,7 @@ pub fn resolve(ast: &FileAst) -> (SymbolTable, Vec<Diagnostic>) {
             states: Vec::new(),
             domain: Vec::new(),
             actions: Vec::new(),
+            params: sys.params.clone(),
         };
 
         for sec in &sys.sections {

@@ -117,6 +117,78 @@ fn a_state_var_read_is_a_parenthesized_deref() {
     assert_eq!(out.trim(), "42", "21 * 2 — the deref bound correctly inside the product");
 }
 
+/// **A domain param is a constructor arg, in scope for the domain field init** (spec §88),
+/// and the call site fills defaults / routes args (§1155). `@@Counter(100)` seeds the field
+/// from the param; `@@Counter()` falls back to the declared default. The `main` is water in
+/// the `.frm`, so framec lowers the `@@Counter(...)` calls (spelled `Counter_new(...)`).
+#[test]
+fn a_system_param_is_load_bearing() {
+    let frm = r#"@@system Counter(start: int = 7) {
+    interface:
+        get(): int
+    machine:
+        $C { get(): int { @@:(@@:self.count) } }
+    domain:
+        count: int = start
+}
+
+#include <stdio.h>
+int main() {
+    Counter* a = @@Counter(100);
+    Counter* b = @@Counter();
+    printf("%d %d\n", Counter_get(a), Counter_get(b));
+    Counter_destroy(a);
+    Counter_destroy(b);
+    return 0;
+}
+"#;
+    let out = run(frm, "", "c_param");
+    if out == "SKIP" {
+        return;
+    }
+    assert_eq!(
+        out.trim(),
+        "100 7",
+        "@@Counter(100) seeds count from the param; @@Counter() uses the default 7"
+    );
+}
+
+/// **An embedded-system call `@@:self.child.method()` lowers to C's cross-system free
+/// function** `Child_method(self->child, ...)` (RFC-0046), not `self->child.method()` —
+/// which is invalid C (structs have no methods). Compiles AND runs.
+#[test]
+fn an_embedded_system_call_uses_the_free_function_form() {
+    let frm = r#"@@system Inner {
+    interface:
+        ping(): int
+    machine:
+        $A { ping(): int { @@:(7) } }
+}
+
+@@system Outer {
+    interface:
+        relay(): int
+    machine:
+        $A { relay(): int { @@:(@@:self.inner.ping()) } }
+    domain:
+        inner: Inner* = @@Inner()
+}
+
+#include <stdio.h>
+int main() {
+    Outer* o = @@Outer();
+    printf("%d\n", Outer_relay(o));
+    Outer_destroy(o);
+    return 0;
+}
+"#;
+    let out = run(frm, "", "c_embed");
+    if out == "SKIP" {
+        return;
+    }
+    assert_eq!(out.trim(), "7", "@@:self.inner.ping() ran the child's dispatch via Inner_ping(self->inner)");
+}
+
 /// A `push$`/`pop$` pushdown, in C, with the compartment stack. Runs.
 #[test]
 fn the_c_stack_is_a_pushdown() {

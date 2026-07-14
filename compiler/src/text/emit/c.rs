@@ -18,7 +18,7 @@ use super::atom::Atom;
 use super::driver::{params_split, Backend};
 use super::Sink;
 use crate::resolve::{SystemSym, TypeRef};
-use crate::tree::body::{FrameRef, RefKind};
+use crate::tree::body::{EmbedCall, FrameRef, RefKind};
 use crate::NativeText;
 
 pub struct C {
@@ -50,11 +50,18 @@ impl Backend for C {
         out.frame("    m->keys[m->len]=strdup(k); m->vals[m->len]=v; m->len++;\n}\n");
         out.frame("static void* FrameMap_get(FrameMap* m, const char* k) {\n");
         out.frame("    for (int i=0;i<m->len;i++) if (strcmp(m->keys[i],k)==0) return m->vals[i];\n");
-        out.frame("    return 0;\n}\n\n");
+        out.frame("    return 0;\n}\n");
+        // Free the map: the keys (strdup'd) and the boxed values (malloc'd per seed) are
+        // framec's OWN allocations, so framec's destructor owns freeing them.
+        out.frame("static void FrameMap_free(FrameMap* m) {\n");
+        out.frame("    for (int i=0;i<m->len;i++) { free(m->keys[i]); free(m->vals[i]); }\n");
+        out.frame("    free(m->keys); free(m->vals);\n}\n\n");
         // The compartment.
         out.frame("typedef struct { const char* state; FrameMap state_vars; FrameMap state_args; } Compartment;\n");
         out.frame("static Compartment* Compartment_new(const char* s) {\n");
-        out.frame("    Compartment* c=malloc(sizeof(Compartment)); c->state=s; FrameMap_init(&c->state_vars); FrameMap_init(&c->state_args); return c;\n}\n\n");
+        out.frame("    Compartment* c=malloc(sizeof(Compartment)); c->state=s; FrameMap_init(&c->state_vars); FrameMap_init(&c->state_args); return c;\n}\n");
+        out.frame("static void Compartment_free(Compartment* c) {\n");
+        out.frame("    if (!c) return; FrameMap_free(&c->state_vars); FrameMap_free(&c->state_args); free(c);\n}\n\n");
     }
 
     fn open_system(&self, sym: &SystemSym, out: &mut Sink) {
@@ -101,11 +108,16 @@ impl Backend for C {
                 a.name
             ));
         }
+        // Constructor params — state, then enter, then domain (§203). C: type-first.
+        let plist = self.param_list(&super::driver::ctor_params_text(&sym.params));
+        let psig = if plist.is_empty() { "void".to_string() } else { plist };
+        out.frame(&format!("{name}* {name}_new({psig});\n"));
+        out.frame(&format!("void {name}_destroy({name}* self);\n"));
         out.frame("\n");
 
         // Constructor.
         let first = sym.states.first().map(|s| s.name.as_str()).unwrap_or("");
-        out.frame(&format!("{name}* {name}_new() {{\n"));
+        out.frame(&format!("{name}* {name}_new({psig}) {{\n"));
         out.frame(&format!("    {name}* self = malloc(sizeof({name}));\n"));
         out.frame(&format!(
             "    self->compartment = Compartment_new(\"{first}\");\n"
@@ -115,6 +127,16 @@ impl Backend for C {
             for v in &st.state_vars {
                 seed_var(name, "self->compartment", v, out);
             }
+        }
+        // State/enter params seed the start compartment's args (§203), boxed like state
+        // vars (C has no reflection). One `state_args` map; a distinct `enter_args`
+        // deferred.
+        for p in sym.params.state.iter().chain(&sym.params.enter) {
+            let ty = p.ty.as_deref().unwrap_or("int");
+            out.frame(&format!(
+                "    {{ {ty}* __v = malloc(sizeof({ty})); *__v = ({}); FrameMap_set(&self->compartment->state_args, \"{}\", __v); }}\n",
+                p.name, p.name
+            ));
         }
         for f in &sym.domain {
             // `= @@Inner()` is FRAME's instantiation syntax -> the C constructor. Any
@@ -126,6 +148,18 @@ impl Backend for C {
             out.frame(&format!("    self->{} = {init};\n", f.name));
         }
         out.frame("    return self;\n}\n\n");
+
+        // Destructor — the counterpart to `@@Sys()`/`_new()`. C has no GC, so a system you
+        // construct you must be able to free. framec frees what IT owns: the compartments
+        // and their maps (keys + boxed values). Domain fields that are themselves child
+        // systems are the user's to free (spec §848); a deep free belongs with the memory
+        // layer and is deferred.
+        out.frame(&format!("void {name}_destroy({name}* self) {{\n"));
+        out.frame("    if (!self) return;\n");
+        out.frame("    for (int i = 0; i < self->stack_len; i++) Compartment_free(self->stack[i]);\n");
+        out.frame("    free(self->stack);\n");
+        out.frame("    Compartment_free(self->compartment);\n");
+        out.frame("    free(self);\n}\n\n");
     }
 
     fn close_system(&self, _sym: &SystemSym, _out: &mut Sink) {}
@@ -342,11 +376,39 @@ impl Backend for C {
             RefKind::ContextData => {
                 out.frame(&format!("{p}/* data.{} = ... */ (void)0;\n", lhs.name));
             }
+            RefKind::ContextReturn => {
+                out.frame(&format!("{p}return "));
+                out.native(rhs);
+                out.frame(";\n");
+            }
             _ => {
                 out.frame(&format!("{p}{} = ", lhs.name));
                 out.native(rhs);
                 out.frame(";\n");
             }
+        }
+    }
+
+    fn system_ctor_call(&self, name: &str, args: &[String]) -> Atom {
+        Atom::call(format!("{name}_new"), args.join(", "))
+    }
+
+    fn embed_call(&self, sym: &SystemSym, ec: &EmbedCall) -> Atom {
+        // If `field` is a system-typed domain field, this is a cross-system call and C uses
+        // the free-function form `Sys_method(self->field, args)` (RFC-0046). Otherwise it is
+        // a native method call on a scalar field's value.
+        let sysname = sym.domain.iter().find(|f| f.name == ec.field).and_then(|f| match &f.ty {
+            TypeRef::System(s) => Some(s.clone()),
+            TypeRef::WrappedSystem { system, .. } => Some(system.clone()),
+            _ => f.init_system.clone(),
+        });
+        match sysname {
+            Some(sys) => {
+                let recv = format!("self->{}", ec.field);
+                let args = if ec.args.is_empty() { recv } else { format!("{recv}, {}", ec.args) };
+                Atom::call(format!("{sys}_{}", ec.method), args)
+            }
+            None => Atom::method(Atom::ident(format!("self->{}", ec.field)), &ec.method, &ec.args),
         }
     }
 

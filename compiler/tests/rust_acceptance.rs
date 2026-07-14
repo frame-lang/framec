@@ -135,6 +135,68 @@ impl Cache { fn new() -> Cache { Cache { hits: 7 } } }
     assert_eq!(out.trim(), "7", "the user's `= Cache::new()` init must be emitted verbatim");
 }
 
+/// **A domain param is a constructor arg, in scope for the domain field init** (spec §88),
+/// and the call site fills defaults / routes args (§1155). `@@Counter(100)` seeds the
+/// field from the param; `@@Counter()` falls back to the param's declared default.
+#[test]
+fn a_system_param_is_load_bearing() {
+    let frm = r#"@@system Counter(start: i32 = 7) {
+    interface:
+        get(): i32
+    machine:
+        $C { get(): i32 { @@:(@@:self.count) } }
+    domain:
+        count: i32 = start
+}
+
+fn main() {
+    let mut a = @@Counter(100);
+    let mut b = @@Counter();
+    println!("{} {}", a.get(), b.get());
+}
+"#;
+    let out = run(frm, "", "rust_param");
+    if out == "SKIP" {
+        return;
+    }
+    assert_eq!(
+        out.trim(),
+        "100 7",
+        "@@Counter(100) seeds count from the param; @@Counter() uses the default 7"
+    );
+}
+
+/// **`@@Machine()` instantiation lowers to the target constructor** (spec §1103) in
+/// top-level native water — Frame's own syntax, spelled `Counter::new()` on Rust. Before
+/// this, `@@Counter()` was emitted verbatim and rustc rejected it. (Single system: Rust
+/// does not yet namespace the per-system `Compartment` helper, so two systems in one file
+/// collide — a separate gap, tracked apart from instantiation.)
+#[test]
+fn system_instantiation_lowers_to_the_constructor() {
+    let frm = r#"@@system Counter {
+    interface:
+        inc()
+        get(): i32
+    machine:
+        $C {
+            $.n: i32 = 5
+            inc() { $.n = $.n + 1 }
+            get(): i32 { @@:($.n) }
+        }
+}
+"#;
+    // The `main` must live INSIDE the frm as top-level water so framec processes it;
+    // text appended by the harness never passes through the compiler.
+    let frm = format!(
+        "{frm}\nfn main() {{ let mut c = @@Counter(); c.inc(); println!(\"{{}}\", c.get()); }}\n"
+    );
+    let out = run(&frm, "", "rust_instantiate");
+    if out == "SKIP" {
+        return;
+    }
+    assert_eq!(out.trim(), "6", "@@Counter() in water lowers to Counter::new(); 5 + 1 = 6");
+}
+
 /// **State vars live in framec's own `Box<dyn Any>` container, read via downcast** — and
 /// the read is a postfix chain (an atom), so it needs no parenthesization and side-steps
 /// the borrow checker via `.clone()`.

@@ -229,6 +229,63 @@ pub enum NativePart {
     Literal(LiteralNode),
     /// A Frame reference spliced mid-expression: `$.count`, `@@:self.factor`.
     Ref(FrameRef),
+    /// `@@SystemName(args)` — Frame's own instantiation syntax (spec §1103), captured as
+    /// a STRUCTURED call. Emit matches the call args against the target system's declared
+    /// params — filling defaults, ordering for the constructor, routing state/enter args —
+    /// so the `(...)` is never opaque water when the system takes params.
+    Instantiate(Instantiation),
+    /// `@@:self.<field>.<method>(args)` — an embedded-system interface call (RFC-0046). If
+    /// `<field>` is a domain field whose type is a defined system, framec emits the call in
+    /// the target's idiom (on C the cross-system free-function form `Sys_method(self->field,
+    /// args)`); otherwise it is a native method call on a scalar field's value. Which one is
+    /// decided at emit from the field's declared type, so the scanner just captures shape.
+    EmbedCall(EmbedCall),
+}
+
+/// A `@@:self.<field>.<method>(args)` call site (RFC-0046).
+#[derive(Debug)]
+pub struct EmbedCall {
+    pub span: Span,
+    /// The domain field the call receives on — `inner` in `@@:self.inner.ping()`.
+    pub field: String,
+    /// The method invoked — `ping`.
+    pub method: String,
+    /// The args, verbatim, as one blob (may be empty). framec does not split them.
+    pub args: String,
+}
+
+/// A `@@SystemName(...)` call site. The args are captured as parsed groups; matching them
+/// to the declared params (order, defaults, sigil routing) happens at emit, where the
+/// symbol table is in scope.
+#[derive(Debug)]
+pub struct Instantiation {
+    pub span: Span,
+    pub name: String,
+    /// The call-site args, in source order. Empty for `@@Name()`.
+    pub args: Vec<InstArg>,
+    /// `@@Name(x=1, y=2)` (named) vs `@@Name(1, 2)` (positional). Spec §1108: a single
+    /// call may not mix the two.
+    pub named: bool,
+}
+
+/// One call-site argument: its group (from the sigil), an optional name (named form), and
+/// the verbatim value expression.
+#[derive(Debug)]
+pub struct InstArg {
+    pub group: ParamGroup,
+    /// `Some("x")` in the named form (`$(x=7)` / `name="R2D2"`); `None` positionally.
+    pub name: Option<String>,
+    /// The value expression, verbatim.
+    pub value: String,
+}
+
+/// Which header group a param/arg belongs to, decided by its call-site (or declaration)
+/// sigil: `$(...)` state, `$>(...)` enter, bare domain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParamGroup {
+    State,
+    Enter,
+    Domain,
 }
 
 /// A string, comment, or raw literal inside native code.
@@ -333,6 +390,9 @@ pub struct TransitionStmt {
 #[derive(Debug)]
 pub struct SimpleStmt {
     pub span: Span,
+    /// Exit args on `(reason) -> pop$` — delivered to the current state's `<$` handler
+    /// before the pop. (Forward ignores this.)
+    pub exit_args: Option<String>,
     /// The statement's COLUMN in the source.
     ///
     /// An indent-delimited target (Python, GDScript) must reproduce the user's nesting:
@@ -442,6 +502,8 @@ impl Node for NativePart {
             NativePart::Text(t) => t.span,
             NativePart::Literal(l) => l.span,
             NativePart::Ref(r) => r.span,
+            NativePart::Instantiate(i) => i.span,
+            NativePart::EmbedCall(e) => e.span,
         }
     }
     fn children(&self) -> Vec<&dyn Node> {
@@ -455,6 +517,8 @@ impl Node for NativePart {
             NativePart::Text(_) => "NativeText",
             NativePart::Literal(_) => "Literal",
             NativePart::Ref(_) => "FrameRef",
+            NativePart::Instantiate(_) => "Instantiation",
+            NativePart::EmbedCall(_) => "EmbedCall",
         }
     }
     fn is_leaf_on_purpose(&self) -> bool {
@@ -464,6 +528,11 @@ impl Node for NativePart {
             // meaning never is.
             NativePart::Text(_) => true,
             NativePart::Ref(_) => true,
+            // `@@Name(...)` — a leaf whose span is fully accounted; its args are parsed
+            // fields (Frame's own syntax), not sub-Nodes framec must re-cover.
+            NativePart::Instantiate(_) => true,
+            // `@@:self.field.method(...)` — likewise a leaf; field/method/args are parsed.
+            NativePart::EmbedCall(_) => true,
             NativePart::Literal(l) => l.parts.is_empty(),
         }
     }

@@ -436,15 +436,23 @@ fn frame_stmt(bytes: &[u8], i: usize, limit: usize, depth: u32, col: u32) -> Opt
             }
             if starts(bytes, j, b"->", limit) {
                 let e = to_end_of_line(bytes, i, limit);
+                let exit_args = trimmed(&bytes[i + 1..close.saturating_sub(1)]);
+                // `(reason) -> pop$` is a StackPop with exit args, NOT a transition.
+                if window(&bytes[j..e], b"pop$") {
+                    return Some(Stmt::StackPop(SimpleStmt {
+                        span: Span::new(i, e),
+                        col,
+                        depth,
+                        exit_args,
+                    }));
+                }
                 let (enter_args, target, args_text) = parse_after_arrow(bytes, j + 2, e);
-                // ONLY a transition if the arrow resolves to a $Target (or pop$). A
-                // native `(*p)->field` or `(a) -> b` has no `$Target`, so it is NOT a
-                // transition and falls through to native code.
-                let is_transition = target.is_some() || window(&bytes[j..e], b"pop$");
-                if !is_transition {
+                // ONLY a transition if the arrow resolves to a $Target. A native
+                // `(*p)->field` or `(a) -> b` has no `$Target`, so it is NOT a transition
+                // and falls through to native code.
+                if target.is_none() {
                     return None;
                 }
-                let exit_args = trimmed(&bytes[i + 1..close.saturating_sub(1)]);
                 return Some(Stmt::Transition(TransitionStmt {
                     span: Span::new(i, e),
                     col,
@@ -467,6 +475,7 @@ fn frame_stmt(bytes: &[u8], i: usize, limit: usize, depth: u32, col: u32) -> Opt
                 span: Span::new(i, e),
                 col,
                 depth,
+                exit_args: None,
             }));
         }
         let (enter_args, target, args_text) = parse_after_arrow(bytes, i + 2, e);
@@ -488,6 +497,7 @@ fn frame_stmt(bytes: &[u8], i: usize, limit: usize, depth: u32, col: u32) -> Opt
             span: Span::new(i, e),
             col,
             depth,
+            exit_args: None,
         }));
     }
     None

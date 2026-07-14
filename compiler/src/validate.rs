@@ -119,6 +119,12 @@ fn check_refs(
                 }
             }
             NativePart::Text(_) => {}
+            // `@@Name(...)` — the system-name/arity checks (§1167) are the deferred
+            // closed-world validation layer; the SHAPE is here today.
+            NativePart::Instantiate(_) => {}
+            // `@@:self.field.method(...)` — the E609 field-is-a-member check is deferred;
+            // the SHAPE is here today.
+            NativePart::EmbedCall(_) => {}
         }
     }
     let _ = (state_vars, domain, iface, system, RefKind::StateVar);

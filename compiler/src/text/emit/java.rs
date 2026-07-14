@@ -13,7 +13,7 @@ use super::atom::{Atom, Place};
 use super::driver::{param_names, params_split, Backend};
 use super::Sink;
 use crate::resolve::{SystemSym, TypeRef};
-use crate::tree::body::{FrameRef, RefKind};
+use crate::tree::body::{EmbedCall, FrameRef, RefKind};
 use crate::NativeText;
 
 #[derive(Default)]
@@ -94,6 +94,9 @@ impl Backend for Java {
         // the alias table (str->String, …) was exterminated as a contract violation.
         // A field typed `str` on Java emits `public str x;` and javac rejects it: that
         // is the USER writing a non-Java type name, not framec's job to fix.
+        // Domain fields are DECLARED here without an initializer; they are ASSIGNED in the
+        // constructor body, so a domain param (a constructor arg) is in scope for the
+        // init (spec §88). A field-level `= init` could not see a constructor param.
         for f in &sym.domain {
             let ty = match &f.ty {
                 TypeRef::Opaque(t) => t.clone(),
@@ -101,25 +104,49 @@ impl Backend for Java {
                 TypeRef::WrappedSystem { text, .. } => text.clone(),
                 TypeRef::None => "Object".to_string(),
             };
-            match &f.init_text {
-                Some(init) => out.frame(&format!("    public {ty} {} = {init};\n", f.name)),
-                None => out.frame(&format!("    public {ty} {};\n", f.name)),
-            }
+            out.frame(&format!("    public {ty} {};\n", f.name));
         }
         out.frame("\n");
 
         let first = sym.states.first().map(|s| s.name.as_str()).unwrap_or("");
-        out.frame(&format!("    public {name}() {{\n"));
+        // The constructor takes the header params — state, then enter, then domain (§203).
+        let plist = self.param_list(&super::driver::ctor_params_text(&sym.params));
+        out.frame(&format!("    public {name}({plist}) {{\n"));
         out.frame(&format!(
             "        this.compartment = new Compartment(\"{first}\");\n"
         ));
         if let Some(st) = sym.states.iter().find(|s| s.name == first) {
             for v in &st.state_vars {
+                // The initializer is the USER'S — emitted verbatim, exactly as Rust/C do.
+                // Seeding a hardcoded `0` dropped `$.n: int = 21` on the floor.
+                let val = v
+                    .init_text
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("null");
                 out.frame(&format!(
-                    "        this.compartment.stateVars.put(\"{}\", 0);\n",
+                    "        this.compartment.stateVars.put(\"{}\", {val});\n",
                     v.name
                 ));
             }
+        }
+        // State/enter params seed the start compartment's args (spec §203). The cleanroom
+        // keeps one `stateArgs` map; a distinct `enter_args` is a deferred refinement.
+        for p in sym.params.state.iter().chain(&sym.params.enter) {
+            out.frame(&format!(
+                "        this.compartment.stateArgs.put(\"{}\", {});\n",
+                p.name, p.name
+            ));
+        }
+        // Domain field assignments — now that domain params are in scope.
+        for f in &sym.domain {
+            let init = match (&f.init_system, &f.init_text) {
+                (Some(s), _) => format!("new {s}()"),
+                (None, Some(init)) => init.clone(),
+                (None, None) => "null".to_string(),
+            };
+            out.frame(&format!("        this.{} = {init};\n", f.name));
         }
         out.frame("    }\n\n");
     }
@@ -397,12 +424,29 @@ impl Backend for Java {
                 out.native(rhs);
                 out.frame(");\n");
             }
+            // `@@:return = e` / `@@:(e)` — set the return value. Without a context slot,
+            // that is `return e;` (matching the concise `@@:(e)` form). The `_` fallthrough
+            // used to emit `return = e;`, which is invalid.
+            RefKind::ContextReturn => {
+                out.frame("        return ");
+                out.native(rhs);
+                out.frame(";\n");
+            }
             _ => {
                 out.frame(&format!("{p}{} = ", lhs.name));
                 out.native(rhs);
                 out.frame(";\n");
             }
         }
+    }
+
+    fn system_ctor_call(&self, name: &str, args: &[String]) -> Atom {
+        Atom::call(format!("new {name}"), args.join(", "))
+    }
+
+    fn embed_call(&self, _sym: &SystemSym, ec: &EmbedCall) -> Atom {
+        // Java spells the system and scalar cases identically: `this.field.method(args)`.
+        Atom::method(Atom::field(Atom::ident("this"), &ec.field), &ec.method, &ec.args)
     }
 
     fn lower_ref(&self, sym: &SystemSym, state: &str, r: &FrameRef) -> Atom {
@@ -541,8 +585,14 @@ impl Java {
         ));
         if let Some(st) = sym.states.iter().find(|s| s.name == target) {
             for v in &st.state_vars {
+                let val = v
+                    .init_text
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("null");
                 out.frame(&format!(
-                    "        __next.stateVars.put(\"{}\", 0);\n",
+                    "        __next.stateVars.put(\"{}\", {val});\n",
                     v.name
                 ));
             }
