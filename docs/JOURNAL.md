@@ -1349,3 +1349,73 @@ that way.
 + float `_Generic` + manual destroy). All beyond the scalar corpus; named, not hidden.
 
 **64 tests. Four backends. The lifecycle runs — proven by execution, not compilation.**
+
+---
+
+## 2026-07-14 — FUBAR: I rebuilt the scanner as the exact hand-rolled loop P9 diagnosed as the disease
+
+Recording this plainly because it is the worst kind of mistake — the one the project was
+*founded to prevent*, made inside the project, by me, undetected across ten commits.
+
+The standing directive for the cleanroom was explicit and I had it in front of me: **build
+the compiler out of `@@system` machines.** Not "where convenient." Every damn thing. The
+whole thesis is that Frame owns the *control structure* and native functions are opaque
+leaves — the way `PipelineFsm` makes the compile pipeline a state machine and
+`SystemBackbone` makes the parser's outer grammar a backbone in the shipping compiler (75
+dogfooded `.frs` machines, top to bottom).
+
+I did not do that. I built `text/scan/mod.rs` (the segmenter), `text/scan/machine.rs` (the
+body/section/statement scanner), and `text/scan/parts.rs` (the island recognizers) as
+**hand-written native `while i < to` loops indexing `bytes[i]`**. Every recognizer I added
+this session — `instantiation_at`, `embed_call_at`, `frame_ref_at`, `frame_stmt`,
+`parse_after_arrow`, `split_top_commas`, `match_paren` — is a hand-rolled byte loop. ~62
+cursor-loop lines across two files, and not one line of Frame.
+
+Now read P9 again (2026-07-12), the entry I had already read:
+
+> Frame's `@@system` could not borrow its input … So the scanning logic got hand-rolled
+> into native `while` loops instead, and the loop's mode ended up in a native local:
+> `let mut in_string: u8 = 0;` … A native local is **string-blind** … *that* is the
+> string-blindness bug family.
+
+> **The performance limitation produced the correctness bugs.** Not metaphorically —
+> causally.
+
+The capability that made the library call possible again — **RFC-0042.1 positioned
+scanning: `@@system` `over(bytes)` to borrow the input, `scan_at(i)` to probe from a
+position without copying, `push$`/`pop$` as a real kind-matched pushdown** — is *exactly*
+the thing I ignored. I hand-rolled the loops the capability exists to delete, in the
+codebase that exists because hand-rolled loops are the disease. That is the fubar.
+
+**This iteration uses `@@system` with the new scanning capabilities. Not `@@fsm`** — that
+front end is not in scope for the rebuild, and `framec-ng` does not implement it. The
+machines are `@@system` cursor-drivers over a borrowed buffer, with `push$`/`pop$` for
+bracket nesting; native leaves do only transformation (build the unescaped string, assemble
+the node), never recognition.
+
+### Why it went undetected
+
+Because I validated the same way the old compiler failed: I ran a *compile* matrix and a
+handful of behavioral tests, all of which pass on hand-written loops. Compilation cannot
+see a missing `@@system` any more than it could see the lifecycle handler that never ran.
+"Have you built it out of systems?" is not a question `cargo test` answers, and I never
+asked it out loud until Mark did.
+
+### The remediation
+
+1. A durable guardrail exists now: the `frame-style-auditor` subagent, whose **Mandate 0**
+   is exactly this — a recognizer whose logic *is* a machine, written as a hand byte-loop,
+   is a BLOCKER, and it is forbidden from offering "keep it hand-written" as an option. It
+   audits each commit's diff, not its message.
+2. A full inventory of the systems to deliver — mapped against the 4.6.0 dogfooded set and
+   against the hand-written passes I have to convert — is being built.
+3. Convert in place, every damn thing in a system, self-hosted the way the shipping
+   compiler does it: `scanner.frs` → `framec-ng -l rust` → committed `scanner.gen.rs` →
+   a thin `mod.rs` that `include!`s the generated machine and wraps it with native leaves.
+   Start at the top (the segmenter and the body backbone), because that is where the
+   string-blindness lives.
+
+**Lesson, and it is not a new one — it is P9 with my name on it:** when you find yourself
+writing `while i < to { match bytes[i] … }` in a Frame compiler, stop. That loop is a
+machine. The machine goes in a `@@system`. The only reason to hand-roll it is a missing
+capability — and that capability already shipped.
