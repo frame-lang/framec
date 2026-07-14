@@ -2,6 +2,8 @@
 source: framec/tests/go_snapshots.rs
 expression: "compile_fixture(\"07_forward\", \"go\")"
 ---
+package main
+
 type ForwardFrameEvent struct {
     _message    string
     _parameters []any

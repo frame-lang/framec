@@ -50,6 +50,33 @@ use metadata::extract_segment_metadata;
 use super::*;
 use crate::frame_c::compiler::body_closer::BodyCloser;
 
+/// The `ContextParserFsm` result code -> `FrameSegmentKind` mapping.
+///
+/// ONE table, ONE computation (RFC-0056 P7). Two callers need it — the main scan
+/// loop and the string-interpolation loop — and when it lived inline in the main
+/// loop only, the interpolation loop did not recognize `@@` constructs *at all*
+/// (#216: `f"x is {@@:self.factor}"` emitted `{:self.factor}`, silently). A shared
+/// table means a construct cannot be understood in one position and not the other.
+fn context_kind_of(result_kind: usize) -> FrameSegmentKind {
+    match result_kind {
+        2 => FrameSegmentKind::ContextReturn,
+        3 => FrameSegmentKind::ContextEvent,
+        4 => FrameSegmentKind::ContextData,
+        5 => FrameSegmentKind::ContextDataAssign,
+        6 => FrameSegmentKind::ContextParams,
+        7 => FrameSegmentKind::SystemInstantiation,
+        8 => FrameSegmentKind::ContextReturnExpr,
+        9 => FrameSegmentKind::ReturnCall,
+        10 => FrameSegmentKind::ContextSelfCall,
+        11 => FrameSegmentKind::ContextSelf,
+        12 => FrameSegmentKind::ContextSystemState,
+        13 => FrameSegmentKind::ContextSystemBare,
+        14 => FrameSegmentKind::ContextSystemStateReserved,
+        15 => FrameSegmentKind::ContextSelfFieldCall,
+        _ => FrameSegmentKind::ContextReturn, // parser guarantees has_result => a known code
+    }
+}
+
 /// A region inside a string interpolation expression that may contain
 /// Frame constructs (`$.varName`, `@@:`). The main scanner scans these
 /// regions for Frame constructs while skipping the surrounding string
@@ -484,10 +511,79 @@ pub fn scan_native_regions<S: SyntaxSkipper>(
                                             },
                                         });
                                     }
-                                    // For now, emit @@ content as native text
-                                    // (full @@ parsing in interpolation is rare)
-                                    inner_pos += 2;
-                                    prev_end = inner_pos;
+                                    // #216: run the SAME `@@` recognizer the main
+                                    // scan loop uses (`ContextParserFsm`) — do not
+                                    // hand-roll a second one, and do not skip.
+                                    //
+                                    // This branch used to do `inner_pos += 2;
+                                    // prev_end = inner_pos;`, which did not "emit
+                                    // @@ as native text" as its comment claimed —
+                                    // it DELETED the two sigil bytes. So
+                                    // `print(f"x is {@@:self.factor}")` emitted
+                                    // `print(f"x is {:self.factor}")`: broken
+                                    // target code, exit 0. `$.x` in the very same
+                                    // position has always worked (RFC-0010).
+                                    let at_start = inner_pos;
+                                    let after_at = inner_pos + 2;
+
+                                    // `@@Name(...)` (system instantiation) needs the
+                                    // balanced-paren end precomputed, exactly as the
+                                    // main loop does it.
+                                    let mut precomputed_paren_end: usize = 0;
+                                    let name_start = if after_at < region.end && bytes[after_at] == b':' {
+                                        after_at + 1
+                                    } else {
+                                        after_at
+                                    };
+                                    if name_start < region.end
+                                        && bytes[name_start].is_ascii_uppercase()
+                                    {
+                                        let mut name_end = name_start;
+                                        while name_end < region.end
+                                            && (bytes[name_end].is_ascii_alphanumeric()
+                                                || bytes[name_end] == b'_')
+                                        {
+                                            name_end += 1;
+                                        }
+                                        if name_end < region.end && bytes[name_end] == b'(' {
+                                            if let Some(pe) =
+                                                skipper.balanced_paren_end(bytes, name_end, region.end)
+                                            {
+                                                precomputed_paren_end = pe;
+                                            }
+                                        }
+                                    }
+
+                                    let mut parser = ContextParserFsm::new();
+                                    parser.bytes = bytes[..region.end].to_vec();
+                                    parser.pos = after_at;
+                                    parser.end = region.end;
+                                    parser.paren_end = precomputed_paren_end;
+                                    parser.do_parse();
+
+                                    if parser.has_result {
+                                        let kind = context_kind_of(parser.result_kind);
+                                        let seg_bytes = &bytes[at_start..parser.result_end];
+                                        let seg_text = String::from_utf8_lossy(seg_bytes);
+                                        let metadata = extract_segment_metadata(kind, &seg_text);
+                                        regions.push(Region::FrameSegment {
+                                            span: RegionSpan {
+                                                start: at_start,
+                                                end: parser.result_end,
+                                            },
+                                            kind,
+                                            indent: 0,
+                                            metadata,
+                                        });
+                                        inner_pos = parser.result_end;
+                                        prev_end = inner_pos;
+                                    } else {
+                                        // Not a construct we recognize. Leave the
+                                        // bytes — INCLUDING the `@@` — in the native
+                                        // text run. Advance the cursor only; do NOT
+                                        // move `prev_end`, or the sigil is eaten.
+                                        inner_pos += 2;
+                                    }
                                 } else {
                                     inner_pos += 1;
                                 }
@@ -610,23 +706,7 @@ pub fn scan_native_regions<S: SyntaxSkipper>(
                 parser.do_parse();
 
                 if parser.has_result {
-                    let kind = match parser.result_kind {
-                        2 => FrameSegmentKind::ContextReturn,
-                        3 => FrameSegmentKind::ContextEvent,
-                        4 => FrameSegmentKind::ContextData,
-                        5 => FrameSegmentKind::ContextDataAssign,
-                        6 => FrameSegmentKind::ContextParams,
-                        7 => FrameSegmentKind::SystemInstantiation,
-                        8 => FrameSegmentKind::ContextReturnExpr,
-                        9 => FrameSegmentKind::ReturnCall,
-                        10 => FrameSegmentKind::ContextSelfCall,
-                        11 => FrameSegmentKind::ContextSelf,
-                        15 => FrameSegmentKind::ContextSelfFieldCall,
-                        12 => FrameSegmentKind::ContextSystemState,
-                        13 => FrameSegmentKind::ContextSystemBare,
-                        14 => FrameSegmentKind::ContextSystemStateReserved,
-                        _ => FrameSegmentKind::ContextReturn, // shouldn't happen
-                    };
+                    let kind = context_kind_of(parser.result_kind);
                     let mut seg_end = parser.result_end;
 
                     // For `@@:(expr) return;` on the same source line,

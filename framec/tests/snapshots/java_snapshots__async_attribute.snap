@@ -2,6 +2,10 @@
 source: framec/tests/java_snapshots.rs
 expression: "compile_fixture(\"14_async_attribute\", \"java\")"
 ---
+class Cache {
+    String get(String k) { return "v:" + k; }
+}
+
 class AsyncFetcherFrameEvent {
     String _message;
     java.util.ArrayList<Object> _parameters;
@@ -109,7 +113,7 @@ class _AsyncFetcherMachine {
     private AsyncFetcherCompartment __compartment;
     private AsyncFetcherCompartment __next_compartment;
     private java.util.ArrayList<AsyncFetcherFrameContext> _context_stack;
-    public Cache cache = nil;
+    public Cache cache = null;
 
     public _AsyncFetcherMachine() {
         _state_stack = new java.util.ArrayList<>();

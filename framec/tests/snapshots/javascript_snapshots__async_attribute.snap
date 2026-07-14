@@ -2,6 +2,10 @@
 source: framec/tests/javascript_snapshots.rs
 expression: "compile_fixture(\"14_async_attribute\", \"javascript\")"
 ---
+class Cache {
+    get(k) { return "v:" + k; }
+}
+
 export class AsyncFetcherFrameEvent {
     _message;
     _parameters;
@@ -102,7 +106,7 @@ export class _AsyncFetcherMachine {
     __compartment;
     __next_compartment;
     _context_stack;
-    cache = nil;
+    cache = null;
 
     constructor() {
         this._state_stack = [];

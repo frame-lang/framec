@@ -1,3 +1,5 @@
+package main
+
 @@[persist(string)]
 @@[save(snapshot)]
 @@[load(restore)]

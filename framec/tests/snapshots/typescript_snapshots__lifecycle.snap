@@ -207,8 +207,7 @@ export class Lifecycle {
 
     private _s_Idle_hdl_user_start(__e: LifecycleFrameEvent, compartment: LifecycleCompartment) {
         const label = __e._parameters[0];
-        (label);
-        const __compartment = this.__prepareEnter("Running", [], []);
+        const __compartment = this.__prepareEnter("Running", [], [label]);
         this.__transition(__compartment);
         return;
     }

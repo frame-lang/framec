@@ -4,6 +4,10 @@ expression: "compile_fixture(\"14_async_attribute\", \"php\")"
 ---
 <?php
 
+class Cache {
+    function get($k) { return "v:" . $k; }
+}
+
 class AsyncFetcherFrameEvent {
     public $_message;
     public $_parameters;
@@ -66,7 +70,7 @@ class AsyncFetcher {
     private $__compartment;
     private $__next_compartment;
     private $_context_stack;
-    public $cache = nil;
+    public $cache = null;
 
     public function __construct() {
         $this->_state_stack = [];

@@ -1,3 +1,6 @@
+pub struct Cache;
+impl Cache { pub fn get(&self, k: &str) -> String { format!("v:{}", k) } }
+
 @@[async]
 @@system AsyncFetcher {
     interface:
@@ -11,5 +14,5 @@
         }
 
     domain:
-        cache: Cache = nil
+        cache: Option<Cache> = None
 }

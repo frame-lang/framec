@@ -133,7 +133,7 @@ private:
 
     void _s_Judging_hdl_user_decide(ReturnExplicitFrameEvent& __e, std::shared_ptr<ReturnExplicitCompartment> compartment) {
         auto score = std::any_cast<int>(__e._parameters[0]);
-                        if score >= 60 {
+                        if (score >= 60) {
         _context_stack.back()._return = std::any(std::string("pass"));
                             return;
                         }

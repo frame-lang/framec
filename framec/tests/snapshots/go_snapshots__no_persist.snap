@@ -2,6 +2,10 @@
 source: framec/tests/go_snapshots.rs
 expression: "compile_fixture(\"12_no_persist\", \"go\")"
 ---
+package main
+
+import "encoding/json"
+
 type NoPersistFrameEvent struct {
     _message    string
     _parameters []any

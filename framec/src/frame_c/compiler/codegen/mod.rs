@@ -90,7 +90,6 @@
 //!   borrow-checker workarounds).
 //! - **`codegen_utils.rs`** — shared utilities ([`HandlerContext`],
 //!   type-string mappers, expression-to-string helpers).
-//! - **`block_transform.rs`** — post-pass block-level rewriters
 //!   (async-await injection, etc.).
 //! - **`output_block_*.gen.rs`** — Frame-defined output-block parsers
 //!   (generated; do not edit by hand).
@@ -165,7 +164,6 @@
 pub mod ast;
 pub mod backend;
 pub mod backends;
-pub mod block_transform;
 pub(crate) mod c_marshal;
 pub mod codegen_utils;
 pub mod frame_expansion;

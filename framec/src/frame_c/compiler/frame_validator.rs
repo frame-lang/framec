@@ -756,27 +756,47 @@ pub(super) fn arity_error(
     }
 }
 
-pub(super) fn count_args(args: &str) -> usize {
-    let inner = args
-        .trim()
-        .trim_start_matches('(')
-        .trim_end_matches(')')
-        .trim();
-    if inner.is_empty() {
-        return 0;
+impl FrameValidator {
+    /// Arity of a native argument list, counted the same way codegen splits it.
+    ///
+    /// Delegates to `codegen_utils::split_top_level_args`, which is string-,
+    /// comment- and bracket-aware via the target's `SyntaxSkipper`. This
+    /// *must* stay a delegation and never become a second implementation:
+    /// the validator decides whether to **accept** a transition and codegen
+    /// decides what to **emit** from it, so if the two disagree, framec accepts
+    /// one transition and emits a different one.
+    ///
+    /// It did disagree. The previous hand-rolled counter tracked only `()` and
+    /// was blind to strings, chars, comments and `[]`/`{}`, so:
+    ///
+    /// * `-> $S("hello, world", 9)` was **rejected** (E405) — a string literal
+    ///   containing a comma could not be passed to a state, on any target.
+    /// * `-> $S("a,b", 9)` into `$S(a, b, c)` was **accepted** — the miscount
+    ///   happened to match the declared arity — and then codegen emitted only
+    ///   two assignments, leaving `c` silently at its default. Exit 0, no
+    ///   warning, wrong program.
+    ///
+    /// One fact, one computation (RFC-0056 P7).
+    pub(super) fn count_args(&self, args: &str) -> usize {
+        use crate::frame_c::compiler::codegen::codegen_utils::{
+            matching_close_paren, split_top_level_args,
+        };
+        let s = args.trim();
+        // Callers disagree about parens: transition metadata carries a BARE list
+        // (`a, b`), while `SelfCall` metadata carries a PARENTHESIZED one (`(a, b)`).
+        // Strip exactly one wrapping pair, and only when it genuinely wraps the
+        // whole list — in `(1,2), 3` the leading paren opens a *tuple first
+        // argument*, not the list. (The previous counter used
+        // `trim_start_matches('(')`, which ate that paren and corrupted the
+        // depth for everything after it.)
+        let inner = match s.strip_prefix('(') {
+            Some(rest) if matching_close_paren(s, self.target, 1) == Some(s.len() - 1) => {
+                &rest[..rest.len() - 1]
+            }
+            _ => s,
+        };
+        split_top_level_args(inner, self.target).len()
     }
-    // Count commas at depth 0
-    let mut count = 1;
-    let mut depth = 0;
-    for b in inner.bytes() {
-        match b {
-            b'(' => depth += 1,
-            b')' => depth -= 1,
-            b',' if depth == 0 => count += 1,
-            _ => {}
-        }
-    }
-    count
 }
 
 #[cfg(test)]

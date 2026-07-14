@@ -127,9 +127,8 @@ class ReturnExplicit:
 
     def _s_Judging_hdl_user_decide(self, __e, compartment):
         score = __e._parameters[0]
-        if score >= 60 {
+        if score >= 60:
             self._context_stack[-1]._return = "pass"
             return
-        }
         self._context_stack[-1]._return = "fail"
         return

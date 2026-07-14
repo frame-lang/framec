@@ -220,8 +220,7 @@ public class Lifecycle {
 
     private void _s_Idle_hdl_user_start(LifecycleFrameEvent __e, LifecycleCompartment compartment) {
         string label = (string) __e._parameters[0];
-        (label);
-        { LifecycleCompartment __next = __prepareEnter("Running", new List<object>(), new List<object>());
+        { LifecycleCompartment __next = __prepareEnter("Running", new List<object>(), new List<object> { label });
         __transition(__next); }
         return;
     }

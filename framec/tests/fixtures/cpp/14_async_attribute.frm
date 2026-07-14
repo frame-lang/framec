@@ -1,3 +1,8 @@
+#include <string>
+struct Cache {
+    std::string get(const std::string& k) { return "v:" + k; }
+};
+
 @@[async]
 @@system AsyncFetcher {
     interface:
@@ -11,5 +16,5 @@
         }
 
     domain:
-        cache: Cache = nil
+        cache: Cache = nullptr
 }

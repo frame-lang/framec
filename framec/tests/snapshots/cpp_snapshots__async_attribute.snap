@@ -12,6 +12,11 @@ expression: "compile_fixture(\"14_async_attribute\", \"cpp\")"
 #include <cstdlib>
 #include <cstdio>
 
+#include <string>
+struct Cache {
+    std::string get(const std::string& k) { return "v:" + k; }
+};
+
 class AsyncFetcherFrameEvent {
 public:
     std::string _message;
@@ -193,7 +198,7 @@ private:
     }
 
 public:
-    Cache cache = nil;
+    Cache cache = nullptr;
 
     _AsyncFetcherMachine() {
         __compartment = __prepareEnter("Ready", std::vector<std::any>{}, std::vector<std::any>{});

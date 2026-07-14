@@ -2,6 +2,10 @@
 source: framec/tests/kotlin_snapshots.rs
 expression: "compile_fixture(\"14_async_attribute\", \"kotlin\")"
 ---
+class Cache {
+    fun get(k: String): String { return "v:" + k }
+}
+
 class AsyncFetcherFrameEvent(val _message: String, val _parameters: MutableList<Any?> = mutableListOf())
 
 class AsyncFetcherFrameContext(val _event: AsyncFetcherFrameEvent, var _return: Any? = null) {
@@ -77,7 +81,7 @@ class _AsyncFetcherMachine {
     private var __compartment: AsyncFetcherCompartment
     private var __next_compartment: AsyncFetcherCompartment?
     private var _context_stack: MutableList<AsyncFetcherFrameContext>
-    var cache: Cache = nil
+    var cache: Cache = null
 
     init {
         _state_stack = mutableListOf()

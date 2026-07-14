@@ -616,11 +616,12 @@ static void Lifecycle_state_Running(Lifecycle* self, Lifecycle_FrameEvent* __e, 
 static void Lifecycle_s_Idle_hdl_user_start(Lifecycle* self, Lifecycle_FrameEvent* __e, Lifecycle_Compartment* compartment) {
     const char* label = (const char*)Lifecycle_FrameVec_get(__e->_parameters, 0);
     (void)label;
-    (label);
     {
         Lifecycle_FrameVec* __sa = NULL;
-        Lifecycle_FrameVec* __ea = NULL;
+        Lifecycle_FrameVec* __ea = Lifecycle_FrameVec_new();
+        Lifecycle_FrameVec_push(__ea, (void*)(intptr_t)(label));
         Lifecycle_Compartment* __compartment = Lifecycle_prepareEnter(self, "Running", __sa, __ea);
+        Lifecycle_FrameVec_destroy(__ea);
         Lifecycle_transition(self, __compartment);
     }
     return;

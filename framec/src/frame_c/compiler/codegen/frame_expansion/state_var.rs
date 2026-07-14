@@ -47,11 +47,29 @@ pub(super) fn expand_state_var(
         } else {
             (extract_state_var_name(&segment_text), None)
         };
-    // When inside a string interpolation, use the opposite quote
-    // for dict keys to avoid collisions (e.g., f"...{d['key']}...")
+    // When inside a string interpolation, use the OPPOSITE quote for the dict key
+    // so it doesn't collide with the enclosing literal (`f"...{d['key']}..."` —
+    // a SyntaxError pre-Python-3.12; #47).
+    //
+    // This only works where `'` actually delimits a *string*. In C#, Java, Kotlin,
+    // Swift, C, C++, Go and Rust, `'n'` is a **char/rune literal**, so swapping
+    // there emits code that does not compile (#221: `CS1503: cannot convert char
+    // to string`; swiftc `single-quoted string literal found`). `expression.rs`
+    // gates this to Python; `state_var.rs` applied it to all 17 targets.
+    let single_quote_delimits_a_string = matches!(
+        lang,
+        TargetLanguage::Python3
+            | TargetLanguage::JavaScript
+            | TargetLanguage::TypeScript
+            | TargetLanguage::Ruby
+            | TargetLanguage::Php
+            | TargetLanguage::Lua
+            | TargetLanguage::GDScript
+            | TargetLanguage::Dart
+    );
     let q = match interp_quote {
         Some(b'\'') => "\"",
-        Some(b'"') => "'",
+        Some(b'"') if single_quote_delimits_a_string => "'",
         _ => "\"", // default: double quotes (standalone code or backtick)
     };
     // State variables are stored in compartment.state_vars
@@ -127,7 +145,7 @@ pub(super) fn expand_state_var(
             );
             use super::super::c_marshal::{c_marshal_of, CMarshal};
             let ct = c_type.trim();
-            match c_marshal_of(c_type) {
+            let read = match c_marshal_of(c_type) {
                 CMarshal::Dbl => format!("{}_unpack_double({})", ctx.system_name, slot),
                 CMarshal::Int => format!("({})(intptr_t){}", ct, slot),
                 CMarshal::Str if ct.ends_with('*') => format!("({}){}", ct, slot),
@@ -137,7 +155,18 @@ pub(super) fn expand_state_var(
                 CMarshal::Dict => format!("({}_FrameDict*){}", ctx.system_name, slot),
                 // A boxed user struct: the slot holds a T* (the heap box) — deref.
                 CMarshal::Boxed => format!("*({}*){}", ct, slot),
-            }
+            };
+            // Parenthesize: every arm above is a NON-ATOM in C — a cast (unary) or,
+            // for `Boxed`, a `*` deref (also unary). Both bind looser than the
+            // postfix `.`, `->` and `[]`. So a bare `(const char*)get(..)[0]`
+            // subscripts the *void\** and only then casts (#220: "operand of type
+            // 'void' where arithmetic or pointer type is required"), and `*(T*)x.f`
+            // dereferences the wrong thing entirely.
+            //
+            // The invariant (#222): every Frame-ref expansion must be an ATOM in
+            // the target grammar. `Dbl` is already a call and needs no parens; the
+            // wrap is harmless there and keeps this single-exit.
+            format!("({})", read)
         }
         TargetLanguage::Cpp => {
             let cpp_type = ctx
@@ -264,17 +293,29 @@ pub(super) fn expand_state_var(
                 .get(var_name.as_str())
                 .map(|t| csharp_map_type(t))
                 .unwrap_or_else(|| "int".to_string());
-            let cast = if cs_type == "object" {
-                String::new()
-            } else {
-                format!("({}) ", cs_type)
-            };
-            if ctx.per_handler {
-                format!("{}compartment.state_vars[{}{}{}]", cast, q, var_name, q)
+            let access = if ctx.per_handler {
+                format!("compartment.state_vars[{}{}{}]", q, var_name, q)
             } else if ctx.use_sv_comp {
-                format!("{}__sv_comp.state_vars[{}{}{}]", cast, q, var_name, q)
+                format!("__sv_comp.state_vars[{}{}{}]", q, var_name, q)
             } else {
-                format!("{}__compartment.state_vars[{}{}{}]", cast, q, var_name, q)
+                format!("__compartment.state_vars[{}{}{}]", q, var_name, q)
+            };
+            // Wrap the cast so a following member access binds to the CAST RESULT:
+            // `((int) state_vars["n"]).Doubled()`, not `(int) (state_vars["n"].Doubled())`.
+            // A C# cast is *unary* precedence while `.` is *primary*, so a bare
+            // `(int) x.M()` casts the result of `x.M()` — and since the dict is
+            // `Dictionary<string, object>`, `M()` binds on `object`. With `M()`
+            // overloaded that silently selects the wrong overload (#213: returned
+            // -1 instead of 84, compiled clean, exit 0); without an `object`
+            // overload it is CS1061.
+            //
+            // This is the same fix `expression.rs` already carries — the two
+            // `$.x` expanders are duplicates that drifted (#222). Keep them
+            // agreeing until they are collapsed into one.
+            if cs_type == "object" {
+                access
+            } else {
+                format!("(({}) {})", cs_type, access)
             }
         }
         TargetLanguage::Lua => {

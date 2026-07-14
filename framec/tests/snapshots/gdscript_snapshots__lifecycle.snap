@@ -167,8 +167,7 @@ class Lifecycle:
 
     func _s_Idle_hdl_user_start(__e, compartment):
         var label = __e._parameters[0]
-        (label)
-        var __compartment = self.__prepareEnter("Running", [], [])
+        var __compartment = self.__prepareEnter("Running", [], [label])
         self.__transition(__compartment)
         return
 

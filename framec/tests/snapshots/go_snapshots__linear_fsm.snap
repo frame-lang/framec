@@ -2,6 +2,8 @@
 source: framec/tests/go_snapshots.rs
 expression: "compile_fixture(\"01_linear_fsm\", \"go\")"
 ---
+package main
+
 type LinearFsmFrameEvent struct {
     _message    string
     _parameters []any

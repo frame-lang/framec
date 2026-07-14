@@ -2,6 +2,8 @@
 source: framec/tests/go_snapshots.rs
 expression: "compile_fixture(\"05_pushpop\", \"go\")"
 ---
+package main
+
 type PushPopFrameEvent struct {
     _message    string
     _parameters []any

@@ -7,9 +7,8 @@
         $Running {
             tick() {
                 @@:self.count = @@:self.count + @@:self.step;
-                if @@:self.count >= @@:self.limit {
+                if @@:self.count >= @@:self.limit:
                     @@:self.count = 0;
-                }
             }
             get_count(): i32 { @@:(@@:self.count) }
         }

@@ -8,7 +8,7 @@
 //! - E419/E420 — `@@:return(...)` / `@@:(value)` placement and arity inside
 //!   handler and action bodies (with terminal-statement awareness)
 
-use super::{count_args, FrameValidator, ValidationError};
+use super::{FrameValidator, ValidationError};
 use crate::frame_c::compiler::codegen::frame_expansion::get_native_scanner;
 use crate::frame_c::compiler::frame_ast::*;
 use crate::frame_c::compiler::native_region_scanner::{
@@ -425,7 +425,7 @@ impl FrameValidator {
                         if let SegmentMetadata::SelfCall { method, args } = metadata {
                             if let Some(iface_method) = interface_methods.get(method.as_str()) {
                                 // E602: check argument count
-                                let arg_count = count_args(args);
+                                let arg_count = self.count_args(args);
                                 let expected = iface_method.params.len();
                                 if arg_count != expected {
                                     self.errors.push(ValidationError::new(

@@ -215,7 +215,10 @@ fn expand_state_vars_in_expr(expr: &str, lang: TargetLanguage, ctx: &HandlerCont
                         // A boxed user struct: the slot holds a T* (the heap box) — deref.
                         CMarshal::Boxed => format!("*({}*){}", ct, slot),
                     };
-                    result.push_str(&read);
+                    // Parenthesize — every arm is a NON-ATOM in C (a cast, or a `*`
+                    // deref for `Boxed`), and both bind looser than postfix `.`/`->`/`[]`.
+                    // Must match `state_var.rs`'s C arm exactly (#220/#222).
+                    result.push_str(&format!("({})", read));
                 }
                 TargetLanguage::Cpp => {
                     let cpp_type = ctx

@@ -7,9 +7,9 @@
         $Running {
             tick() {
                 @@:self.count = @@:self.count + @@:self.step;
-                if @@:self.count >= @@:self.limit {
+                if @@:self.count >= @@:self.limit then
                     @@:self.count = 0;
-                }
+                end
             }
             get_count(): number { @@:(@@:self.count) }
         }

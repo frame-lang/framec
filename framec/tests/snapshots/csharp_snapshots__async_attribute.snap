@@ -6,6 +6,10 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 
+public class Cache {
+    public string get(string k) { return "v:" + k; }
+}
+
 class AsyncFetcherFrameEvent {
     public string _message;
     public List<object> _parameters;
@@ -113,7 +117,7 @@ class _AsyncFetcherMachine {
     private AsyncFetcherCompartment __compartment;
     private AsyncFetcherCompartment? __next_compartment;
     private List<AsyncFetcherFrameContext> _context_stack;
-    public Cache cache = nil;
+    public Cache cache = null;
 
     public _AsyncFetcherMachine() {
         _state_stack = new List<AsyncFetcherCompartment>();

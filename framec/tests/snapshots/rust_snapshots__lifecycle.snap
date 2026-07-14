@@ -292,8 +292,12 @@ mod _lifecycle_framec {
         }
 
         fn _s_Idle_hdl_user_start(&mut self, __e: &LifecycleFrameEvent, label: String) {
-            (label);
             let mut __compartment = self.__prepareEnter("Running");
+            {
+                if let LifecycleStateContext::Running(ref mut ctx) = __compartment.state_context {
+                    ctx.label = label;
+                }
+            }
             self.__transition(__compartment);
             return;
         }

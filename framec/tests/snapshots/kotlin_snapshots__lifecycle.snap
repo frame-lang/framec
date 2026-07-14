@@ -178,8 +178,7 @@ class Lifecycle {
 
     private fun _s_Idle_hdl_user_start(__e: LifecycleFrameEvent, compartment: LifecycleCompartment) {
         val label = __e._parameters[0] as String
-        (label)
-        val __compartment = __prepareEnter("Running", mutableListOf<Any?>(), mutableListOf<Any?>())
+        val __compartment = __prepareEnter("Running", mutableListOf<Any?>(), mutableListOf<Any?>(label))
         __transition(__compartment)
         return
     }

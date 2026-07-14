@@ -284,8 +284,30 @@ Note: `//` begins a line comment inside @@fsm (RFC-0043 §3.5) — a comment can
 pub fn segment<S: SyntaxSkipper>(skipper: &S, source: &[u8]) -> Result<SourceMap, SegmentError> {
     let mut segments: Vec<Segment> = Vec::new();
     let n = source.len();
-    let mut i = 0usize;
-    let mut seg_start = 0usize;
+
+    // A leading UTF-8 BOM (EF BB BF) is an ENCODING MARKER, not content. Consume
+    // it before segmenting, and do not re-emit it (a BOM belongs to the file it
+    // came from, not to the file we generate). rustc, clang and javac all do this.
+    //
+    // #214: without this, the start-of-line pragma probe below sees `0xEF` instead
+    // of `@` at byte 0, concludes line 1 has no pragma, clears `at_sol` — and the
+    // `@@system` three bytes later is never looked at. The ENTIRE system was then
+    // classified as native text and emitted verbatim, with **exit 0** and no class
+    // generated at all.
+    //
+    // That bug is also the counterexample to a "round-trip covers every byte"
+    // invariant: `unparse(parse(src)) == src` holds *perfectly* when you classify
+    // the whole file as water. Coverage cannot tell "understood everything" from
+    // "understood nothing" — which is why RFC-0057 §4.6 pairs it with island
+    // coverage, and why a file that parses to a single Native item is an ERROR.
+    const BOM: &[u8] = &[0xEF, 0xBB, 0xBF];
+    let bom_len = if source.starts_with(BOM) { BOM.len() } else { 0 };
+
+    // Offsets stay ABSOLUTE into `source` — only the cursor starts past the BOM,
+    // so every span the segmenter reports still points at the real byte in the
+    // real file, and diagnostics don't drift by three.
+    let mut i = bom_len;
+    let mut seg_start = bom_len;
     let mut at_sol = true;
     // RFC-0042 §11.6: a run of `@@[...]` attributes immediately preceding an
     // `@@fsm` is folded into that fsm's `outer_span` (so the fsm lexer/parser

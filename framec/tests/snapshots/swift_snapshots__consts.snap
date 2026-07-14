@@ -188,7 +188,7 @@ public class Consts {
 
     private func _s_Running_hdl_user_tick(_ __e: ConstsFrameEvent, _ compartment: ConstsCompartment) {
         self.count = self.count + self.step
-        if self.count >= self.limit {
+        if (self.count >= self.limit) {
             self.count = 0
         }
     }

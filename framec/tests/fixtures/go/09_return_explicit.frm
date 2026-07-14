@@ -1,3 +1,5 @@
+package main
+
 @@system ReturnExplicit {
     interface:
         decide(score: int): string

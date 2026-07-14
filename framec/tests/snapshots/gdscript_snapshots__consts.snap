@@ -161,6 +161,5 @@ class Consts:
 
     func _s_Running_hdl_user_tick(__e, compartment):
         self.count = self.count + self.step;
-        if self.count >= self.limit {
+        if self.count >= self.limit:
             self.count = 0;
-        }
