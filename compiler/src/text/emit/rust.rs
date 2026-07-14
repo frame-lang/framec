@@ -405,12 +405,12 @@ impl Rust {
         out.frame(&format!("{p}let mut __next = Compartment::new(\"{target}\");\n"));
         if let Some(st) = sym.states.iter().find(|s| s.name == target) {
             for v in &st.state_vars {
-                // Re-seed a fresh compartment's state vars. The default is the state
-                // var's declared init — a native expression; a zero stand-in for now.
+                // Re-seed a fresh compartment's state vars with the declared init (same
+                // rule as the constructor) — `= @@Sub()` lowers to the constructor.
                 out.frame(&format!(
-                    "{p}__next.state_vars.insert(\"{}\".to_string(), Box::new(<{}>::default()));\n",
+                    "{p}__next.state_vars.insert(\"{}\".to_string(), Box::new({}));\n",
                     v.name,
-                    state_var_ty(v)
+                    state_seed_value(v)
                 ));
             }
             // State args, unsplit — Box each arg by position. framec does not split the
@@ -457,16 +457,26 @@ fn state_var_ty(v: &crate::resolve::FieldSym) -> String {
     }
 }
 
-fn seed_state_vars(st: &crate::resolve::StateSym, out: &mut Sink) {
-    for v in &st.state_vars {
-        // The state var's own initializer, VERBATIM (else a typed default).
-        let init = v
+/// The seed value for a state var: `= @@Sub()` -> `Sub::new()` (Frame's instantiation
+/// syntax), else the user's init verbatim, else a typed default. Shared by the constructor
+/// and re-entry so both agree (re-entry used to drop the init and always `default()`).
+fn state_seed_value(v: &crate::resolve::FieldSym) -> String {
+    match &v.init_system {
+        Some(s) => format!("{s}::new()"),
+        None => v
             .init_text
             .clone()
-            .unwrap_or_else(|| format!("<{}>::default()", state_var_ty(v)));
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| format!("<{}>::default()", state_var_ty(v))),
+    }
+}
+
+fn seed_state_vars(st: &crate::resolve::StateSym, out: &mut Sink) {
+    for v in &st.state_vars {
         out.frame(&format!(
-            "        compartment.state_vars.insert(\"{}\".to_string(), Box::new({init}));\n",
-            v.name
+            "        compartment.state_vars.insert(\"{}\".to_string(), Box::new({}));\n",
+            v.name,
+            state_seed_value(v)
         ));
     }
 }

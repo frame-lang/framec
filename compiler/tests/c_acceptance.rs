@@ -282,6 +282,43 @@ fn async_is_fine_on_an_async_capable_target() {
     assert!(diags.is_empty(), "async on Rust must NOT raise E722; got {diags:#?}");
 }
 
+/// **A `@@Sub()` initializer on a STATE var is lowered** (not emitted raw), same as a
+/// domain field. On C the box carries a `Sub*` holding `Sub_new()`; reading it back and
+/// calling the child's interface returns the child's value. Compiles AND runs.
+#[test]
+fn a_state_var_initialized_from_a_system_is_constructed() {
+    let frm = r#"@@system Sub {
+    interface:
+        ping(): int
+    machine:
+        $A { ping(): int { @@:(9) } }
+}
+
+@@system Outer {
+    interface:
+        use_child(): int
+    machine:
+        $A {
+            $.child: Sub* = @@Sub()
+            use_child(): int { @@:(Sub_ping($.child)) }
+        }
+}
+
+#include <stdio.h>
+int main() {
+    Outer* o = @@Outer();
+    printf("%d\n", Outer_use_child(o));
+    Outer_destroy(o);
+    return 0;
+}
+"#;
+    let out = run(frm, "", "c_statevar_sys");
+    if out == "SKIP" {
+        return;
+    }
+    assert_eq!(out.trim(), "9", "$.child = @@Sub() constructed the child; Sub_ping($.child) = 9");
+}
+
 /// A `push$`/`pop$` pushdown, in C, with the compartment stack. Runs.
 #[test]
 fn the_c_stack_is_a_pushdown() {

@@ -494,12 +494,30 @@ fn out_prefixed<'a>(_p: &str, out: &'a mut Sink) -> &'a mut Sink {
 }
 
 /// Seed one state var: box its initializer (or a zero) into the compartment map.
-fn seed_var(_sys: &str, comp: &str, v: &crate::resolve::FieldSym, out: &mut Sink) {
-    let ty = match &v.ty {
+/// The C box type for a state var — what `malloc`/the `*(T*)` read cast use. **The seed
+/// and the read MUST agree**, so both go through here. `= @@Sub()` boxes a `Sub*`; a
+/// system-typed var boxes its declared pointer text; a scalar boxes its declared type;
+/// anything else falls back to `int`.
+fn c_box_type(v: &crate::resolve::FieldSym) -> String {
+    if let Some(s) = &v.init_system {
+        return format!("{s}*");
+    }
+    match &v.ty {
         TypeRef::Opaque(t) => t.clone(),
-        _ => "int".to_string(),
+        TypeRef::WrappedSystem { text, .. } => text.clone(),
+        TypeRef::System(s) => s.clone(),
+        TypeRef::None => "int".to_string(),
+    }
+}
+
+fn seed_var(_sys: &str, comp: &str, v: &crate::resolve::FieldSym, out: &mut Sink) {
+    // `= @@Sub()` is Frame's instantiation syntax -> `Sub_new()`. Otherwise the user's init
+    // verbatim. The box type comes from `c_box_type` so the read casts to the same type.
+    let ty = c_box_type(v);
+    let init = match &v.init_system {
+        Some(s) => format!("{s}_new()"),
+        None => v.init_text.clone().unwrap_or_else(|| "0".into()),
     };
-    let init = v.init_text.clone().unwrap_or_else(|| "0".into());
     out.frame(&format!(
         "    {{ {ty}* __v = malloc(sizeof({ty})); *__v = ({init}); FrameMap_set(&{comp}->state_vars, \"{}\", __v); }}\n",
         v.name
@@ -521,10 +539,9 @@ fn state_var_type(sym: &SystemSym, state: &str, name: &str) -> String {
         .iter()
         .find(|s| s.name == state)
         .and_then(|s| s.state_vars.iter().find(|v| v.name == name))
-        .and_then(|v| match &v.ty {
-            TypeRef::Opaque(t) => Some(t.clone()),
-            _ => None,
-        })
+        // Same resolution as the SEED (`c_box_type`), so the `*(T*)` read casts to exactly
+        // the type the box was allocated with.
+        .map(c_box_type)
         .unwrap_or_else(|| "int".to_string())
 }
 

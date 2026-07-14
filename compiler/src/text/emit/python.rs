@@ -69,12 +69,7 @@ impl Backend for Python {
         {
             // The user's initializer, VERBATIM — as Rust/C do. A hardcoded `0` dropped
             // `$.n: int = 21` on the floor.
-            let val = v
-                .init_text
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .unwrap_or("None");
+            let val = py_state_seed(v);
             out.frame(&format!(
                 "        self.__compartment.state_vars[\"{}\"] = {val}\n",
                 v.name
@@ -497,12 +492,7 @@ impl Python {
         ));
         if let Some(st) = sym.states.iter().find(|s| s.name == target) {
             for v in &st.state_vars {
-                let val = v
-                    .init_text
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or("None");
+                let val = py_state_seed(v);
                 out.frame(&format!("        __next.state_vars[\"{}\"] = {val}\n", v.name));
             }
             // *** framec does not split the args. *** It hands the blob to a
@@ -544,6 +534,21 @@ def _seed_args(c, names, *vals):\n\
 
 
 /// Frame's lifecycle event names are not Python identifiers.
+/// The seed value for a state var: `= @@Sub()` -> `Sub()` (Frame's instantiation syntax),
+/// else the user's init verbatim, else `None`.
+fn py_state_seed(v: &crate::resolve::FieldSym) -> String {
+    match &v.init_system {
+        Some(s) => format!("{s}()"),
+        None => v
+            .init_text
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("None")
+            .to_string(),
+    }
+}
+
 fn py_ident(event: &str) -> String {
     match event {
         "$>" => "_enter".to_string(),

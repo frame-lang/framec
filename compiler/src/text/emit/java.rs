@@ -119,12 +119,7 @@ impl Backend for Java {
             for v in &st.state_vars {
                 // The initializer is the USER'S — emitted verbatim, exactly as Rust/C do.
                 // Seeding a hardcoded `0` dropped `$.n: int = 21` on the floor.
-                let val = v
-                    .init_text
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or("null");
+                let val = java_state_seed(v);
                 out.frame(&format!(
                     "        this.compartment.stateVars.put(\"{}\", {val});\n",
                     v.name
@@ -597,12 +592,7 @@ impl Java {
         ));
         if let Some(st) = sym.states.iter().find(|s| s.name == target) {
             for v in &st.state_vars {
-                let val = v
-                    .init_text
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or("null");
+                let val = java_state_seed(v);
                 out.frame(&format!(
                     "        __next.stateVars.put(\"{}\", {val});\n",
                     v.name
@@ -622,6 +612,21 @@ impl Java {
                 }
             }
         }
+    }
+}
+
+/// The seed value for a state var: `= @@Sub()` -> `new Sub()` (Frame's instantiation
+/// syntax), else the user's init verbatim, else `null`.
+fn java_state_seed(v: &crate::resolve::FieldSym) -> String {
+    match &v.init_system {
+        Some(s) => format!("new {s}()"),
+        None => v
+            .init_text
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("null")
+            .to_string(),
     }
 }
 
