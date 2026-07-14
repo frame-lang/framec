@@ -36,12 +36,9 @@ impl Backend for Rust {
         out.frame("#![allow(dead_code, unused_variables, unused_mut, unused_imports)]\n");
         out.frame("use std::collections::HashMap;\n");
         out.frame("use std::any::Any;\n\n");
-    }
-
-    fn open_system(&self, sym: &SystemSym, out: &mut Sink) {
-        let name = &sym.name;
-
-        // The compartment: state + framec's own Any-boxed containers.
+        // The compartment: state + framec's own Any-boxed containers. Emitted ONCE at file
+        // scope (not per system) — it is identical for every system, and a top-level Rust
+        // `struct` cannot be redefined, so a second system re-emitting it was an E0428.
         out.frame("struct Compartment {\n");
         out.frame("    state: String,\n");
         out.frame("    state_vars: HashMap<String, Box<dyn Any>>,\n");
@@ -51,6 +48,10 @@ impl Backend for Rust {
         out.frame("    fn new(state: &str) -> Compartment {\n");
         out.frame("        Compartment { state: state.to_string(), state_vars: HashMap::new(), state_args: HashMap::new() }\n");
         out.frame("    }\n}\n\n");
+    }
+
+    fn open_system(&self, sym: &SystemSym, out: &mut Sink) {
+        let name = &sym.name;
 
         out.frame(&format!("pub struct {name} {{\n"));
         out.frame("    compartment: Compartment,\n");

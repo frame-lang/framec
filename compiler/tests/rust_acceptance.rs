@@ -135,6 +135,32 @@ impl Cache { fn new() -> Cache { Cache { hits: 7 } } }
     assert_eq!(out.trim(), "7", "the user's `= Cache::new()` init must be emitted verbatim");
 }
 
+/// **Two systems in one file compile** — the shared `Compartment` scaffold is emitted once
+/// at file scope, not per system. Re-emitting a top-level `struct Compartment` per system
+/// was an E0428 ("defined multiple times"); C shares it, the nesting targets scope it, and
+/// Rust now emits it once too.
+#[test]
+fn two_systems_in_one_file_compile_and_run() {
+    let frm = r#"@@system Alpha {
+    interface: a(): i32
+    machine: $S { a(): i32 { @@:(1) } }
+}
+@@system Beta {
+    interface: b(): i32
+    machine: $S { b(): i32 { @@:(2) } }
+}
+"#;
+    let out = run(
+        frm,
+        r#"fn main() { let mut a = Alpha::new(); let mut b = Beta::new(); println!("{} {}", a.a(), b.b()); }"#,
+        "rust_multisys",
+    );
+    if out == "SKIP" {
+        return;
+    }
+    assert_eq!(out.trim(), "1 2", "both systems construct and dispatch; one shared Compartment");
+}
+
 /// **A domain param is a constructor arg, in scope for the domain field init** (spec §88),
 /// and the call site fills defaults / routes args (§1155). `@@Counter(100)` seeds the
 /// field from the param; `@@Counter()` falls back to the param's declared default.
