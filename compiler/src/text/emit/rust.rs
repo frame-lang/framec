@@ -540,8 +540,22 @@ impl Rust {
         let first = sym.states.first().map(|s| s.name.as_str()).unwrap_or("");
         out.frame(&format!("impl<'a> {name}<'a> {{\n"));
 
-        // over(src): construct WITHOUT running (RFC-0042 construction model, positioned).
-        out.frame("    pub fn over(src: &'a [u8]) -> Self {\n");
+        // A domain field is CONFIG if its init references a construction (domain) param —
+        // it is set once at `over()` and must survive `scan_at` (the param is not in scope
+        // there to re-derive it). Everything else is scan STATE and resets each scan.
+        let is_config = |f: &crate::resolve::FieldSym| -> bool {
+            let Some(init) = &f.init_text else { return false };
+            sym.params.domain.iter().any(|p| {
+                init.split(|c: char| !c.is_alphanumeric() && c != '_')
+                    .any(|w| w == p.name)
+            })
+        };
+
+        // over(src, <config>): construct WITHOUT running (RFC-0042 construction model,
+        // positioned). Domain params are the scanner's construction config (e.g. the target).
+        let cfg = self.param_list(&super::driver::ctor_params_text(&sym.params));
+        let sep = if cfg.is_empty() { "" } else { ", " };
+        out.frame(&format!("    pub fn over(src: &'a [u8]{sep}{cfg}) -> Self {{\n"));
         out.frame(&format!(
             "        let mut compartment = Compartment::new(\"{first}\");\n"
         ));
@@ -567,9 +581,14 @@ impl Rust {
         // ACCEPTS iff it ends in a state named `$Accept`.
         out.frame("    pub fn scan_at(&mut self, start: usize) -> bool {\n");
         out.frame("        self.cursor = start;\n");
-        // Reset the scanner's domain state to its inits, so scan_at is RESTARTABLE — a
-        // counter or flag from a previous scan must not leak into the next one.
+        // Reset the scanner's SCAN STATE to its inits, so scan_at is RESTARTABLE — a
+        // counter or flag from a previous scan must not leak into the next one. CONFIG
+        // fields (set from a construction param) are NOT reset: they are the scanner's
+        // fixed configuration, and the param is not in scope here to re-derive them.
         for f in &sym.domain {
+            if is_config(f) {
+                continue;
+            }
             let init = match &f.init_system {
                 Some(s) => format!("{s}::new()"),
                 None => f.init_text.clone().unwrap_or_else(|| "Default::default()".into()),
