@@ -253,6 +253,52 @@ pub trait Backend {
     /// code is genuinely dead everywhere. This flag exists to record *why* it is not
     /// merely a tidiness preference on one of them.)
     fn dead_code_is_an_error(&self) -> bool;
+
+    /// Does this target have an async runtime that can realize `@@[async]`? Most do; C
+    /// (and a few others, per RFC-0044) do not — there is no coroutine/future primitive
+    /// to hang the single-driver gate on. A `false` here turns an async system on this
+    /// target into an E722 (see [`target_diagnostics`]) rather than a silent sync
+    /// miscompile that drops the async contract.
+    fn supports_async(&self) -> bool {
+        true
+    }
+}
+
+/// Target-aware validation: diagnostics that depend on the BACKEND's capabilities, not
+/// just the program. Kept out of [`crate::validate::validate`] (which is target-blind) and
+/// out of [`emit`] (which must not branch on the target at all).
+///
+/// **E722** — an async system (`@@[async]` or any `async` member) targeting a backend with
+/// no async runtime. C has none; emitting sync code would silently drop the async contract,
+/// so framec refuses (matching the shipped compiler's E722).
+pub fn target_diagnostics(
+    ast: &FileAst,
+    syms: &SymbolTable,
+    be: &dyn Backend,
+) -> Vec<crate::resolve::Diagnostic> {
+    let mut out = Vec::new();
+    if be.supports_async() {
+        return out;
+    }
+    for item in &ast.items {
+        let Item::System(sys) = item else { continue };
+        let Some(sym) = syms.systems.iter().find(|s| s.name == sys.name) else {
+            continue;
+        };
+        if sym.is_async || sym.interface.iter().any(|m| m.is_async) {
+            out.push(crate::resolve::Diagnostic {
+                code: "E722",
+                span: sym.span,
+                message: format!(
+                    "system `{}` is async, but target `{}` has no async runtime — \
+                     `@@[async]` cannot be realized here",
+                    sym.name,
+                    be.name()
+                ),
+            });
+        }
+    }
+    out
 }
 
 /// Emit every system in the file. **This function has no `Target`.**

@@ -454,6 +454,12 @@ impl Backend for C {
     fn dead_code_is_an_error(&self) -> bool {
         false
     }
+
+    /// C has no coroutine/future runtime — `@@[async]` on C is E722, not a silent sync
+    /// miscompile (RFC-0044 lists C as not async-capable).
+    fn supports_async(&self) -> bool {
+        false
+    }
 }
 
 impl C {

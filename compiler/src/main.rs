@@ -85,26 +85,15 @@ fn main() -> ExitCode {
 
     if emit {
         let (syms, diags) = frame_compiler::resolve::resolve(&ast);
-        let mut bad = false;
-        for d in diags
-            .iter()
-            .chain(frame_compiler::validate::validate(&ast, &syms).iter())
-        {
-            let (l, c) = src.line_col(d.span.start);
-            eprintln!("{path}:{l}:{c}: {}: {}", d.code, d.message);
-            bad = true;
-        }
-        if bad {
-            return ExitCode::from(65);
-        }
         use frame_compiler::text::emit::{driver, java::Java, python::Python};
         use frame_compiler::text::emit::rust::Rust;
         let jb = Java::new();
+        let cb = frame_compiler::text::emit::c::C::new();
         let be: &dyn driver::Backend = match target {
             Target::Java => &jb,
             Target::Python3 => &Python,
             Target::Rust => &Rust,
-            Target::C => &frame_compiler::text::emit::c::C::new(),
+            Target::C => &cb,
             other => {
                 eprintln!(
                     "no backend for `{}` yet. Built: java, python.",
@@ -113,6 +102,20 @@ fn main() -> ExitCode {
                 return ExitCode::from(2);
             }
         };
+        // Target-blind diagnostics, then target-aware ones (E722 async-on-C, …).
+        let mut bad = false;
+        for d in diags
+            .iter()
+            .chain(frame_compiler::validate::validate(&ast, &syms).iter())
+            .chain(driver::target_diagnostics(&ast, &syms, be).iter())
+        {
+            let (l, c) = src.line_col(d.span.start);
+            eprintln!("{path}:{l}:{c}: {}: {}", d.code, d.message);
+            bad = true;
+        }
+        if bad {
+            return ExitCode::from(65);
+        }
         print!("{}", driver::emit(&src, &ast, &syms, be));
         return ExitCode::SUCCESS;
     }

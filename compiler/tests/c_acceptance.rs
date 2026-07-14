@@ -238,6 +238,50 @@ int main() {
     );
 }
 
+/// **`@@[async]` (or an async member) on C is E722, not a silent sync miscompile.** C has
+/// no coroutine/future runtime (RFC-0044), so framec rejects the async surface at
+/// validation rather than emitting sync code that quietly drops the async contract —
+/// matching the shipped compiler's E722.
+#[test]
+fn async_on_c_is_rejected_e722() {
+    let frm = r#"@@[async]
+@@system AsyncFetcher {
+    interface:
+        async fetch(): int
+    machine:
+        $Ready { fetch(): int { @@:(0) } }
+}
+"#;
+    let src = Source::new("t.frm", frm.as_bytes().to_vec()).unwrap();
+    let ast = segment(&src, Target::C).unwrap();
+    let (syms, _) = resolve(&ast);
+    let diags = driver::target_diagnostics(&ast, &syms, &C::new());
+    assert!(
+        diags.iter().any(|d| d.code == "E722"),
+        "@@[async] on C must raise E722; got {diags:#?}"
+    );
+}
+
+/// The same async system on an async-CAPABLE target raises no E722 — the gate is scoped
+/// to targets without an async runtime.
+#[test]
+fn async_is_fine_on_an_async_capable_target() {
+    use frame_compiler::text::emit::rust::Rust;
+    let frm = r#"@@[async]
+@@system AsyncFetcher {
+    interface:
+        async fetch(): i32
+    machine:
+        $Ready { fetch(): i32 { @@:(0) } }
+}
+"#;
+    let src = Source::new("t.frm", frm.as_bytes().to_vec()).unwrap();
+    let ast = segment(&src, Target::Rust).unwrap();
+    let (syms, _) = resolve(&ast);
+    let diags = driver::target_diagnostics(&ast, &syms, &Rust);
+    assert!(diags.is_empty(), "async on Rust must NOT raise E722; got {diags:#?}");
+}
+
 /// A `push$`/`pop$` pushdown, in C, with the compartment stack. Runs.
 #[test]
 fn the_c_stack_is_a_pushdown() {
