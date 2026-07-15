@@ -62,22 +62,35 @@ pub fn native_parts(lx: &Lexer, bytes: &[u8], from: usize, to: usize) -> Vec<Nat
             continue;
         }
 
-        // `@@:self.field.method(args)` — an embedded-system call (RFC-0046). Checked before
-        // the plain ref recognizer, which would otherwise swallow `self.field.method` as one
+        // `@@:self.field.method(args)` — an embedded-system call (RFC-0046). **Production
+        // now runs the dogfooded EmbedScan system** (docs/JOURNAL.md); the hand
+        // `embed_call_at` remains only as the differential-test oracle. Checked before the
+        // plain ref recognizer, which would otherwise swallow `self.field.method` as one
         // context ref and leave `.method()` as invalid native on C.
-        if let Some(ec) = embed_call_at(bytes, i, to) {
+        if let Some((field, method, args, end)) = super::embed_scan::scan(&bytes[..to], i) {
             flush(&mut parts, text_start, i);
-            i = ec.span.end;
-            parts.push(NativePart::EmbedCall(ec));
+            parts.push(NativePart::EmbedCall(EmbedCall {
+                span: Span::new(i, end),
+                field,
+                method,
+                args,
+            }));
+            i = end;
             text_start = i;
             continue;
         }
 
-        // A Frame reference sitting mid-expression in native code.
-        if let Some(r) = frame_ref_at(bytes, i, to) {
+        // A Frame reference sitting mid-expression in native code. **Production now runs the
+        // dogfooded RefScan system**; the hand `frame_ref_at` remains as the differential
+        // oracle and for the statement scanner's LHS.
+        if let Some((kind, name, end)) = super::ref_scan::scan(&bytes[..to], i) {
             flush(&mut parts, text_start, i);
-            i = r.span.end;
-            parts.push(NativePart::Ref(r));
+            parts.push(NativePart::Ref(FrameRef {
+                span: Span::new(i, end),
+                kind,
+                name,
+            }));
+            i = end;
             text_start = i;
             continue;
         }
