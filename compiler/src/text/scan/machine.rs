@@ -413,7 +413,7 @@ fn push_native(
 /// `StmtScan` system is proven against. kind: 0=none(native) 1=Transition 2=StackPush
 /// 3=StackPop 4=Forward.
 pub fn frame_stmt_classify(bytes: &[u8], i: usize, limit: usize) -> (i32, usize) {
-    match frame_stmt(bytes, i, limit, 0, 0) {
+    match frame_stmt_hand(bytes, i, limit, 0, 0) {
         Some(Stmt::Transition(t)) => (1, t.span.end),
         Some(Stmt::StackPush(t)) => (2, t.span.end),
         Some(Stmt::StackPop(s)) => (3, s.span.end),
@@ -436,8 +436,87 @@ pub fn arrow_has_target(bytes: &[u8], from: usize, to: usize) -> bool {
     parse_after_arrow(bytes, from, to).1.is_some()
 }
 
-/// A Frame statement at `i`: `-> $S(args)`, `push$ -> $S`, `-> pop$`, `=> $^`.
+/// A Frame statement at `i` — **production dispatches via the dogfooded StmtScan system**
+/// (docs/JOURNAL.md), then extracts the fields (parse the arrow tail, the exit args). The
+/// hand classifier survives as `frame_stmt_hand`, the StmtScan differential oracle. The
+/// extraction (arg text, targets) is transformation and stays native.
 fn frame_stmt(bytes: &[u8], i: usize, limit: usize, depth: u32, col: u32) -> Option<Stmt> {
+    let (kind, e) = super::stmt_scan::classify(bytes, i, limit);
+    if kind == 0 {
+        return None;
+    }
+    let span = Span::new(i, e);
+    match kind {
+        // `push$ -> (enter) $S(state)`
+        2 => {
+            let arrow = find(bytes, i, e, b"->");
+            let (enter_args, target, args_text) =
+                parse_after_arrow(bytes, arrow.map(|a| a + 2).unwrap_or(i), e);
+            Some(Stmt::StackPush(TransitionStmt {
+                span,
+                col,
+                depth,
+                target,
+                args: None,
+                args_text,
+                exit_args: None,
+                enter_args,
+            }))
+        }
+        // Transition (1) or StackPop (3) — may carry `(exit)` args before the arrow.
+        1 | 3 => {
+            let (exit_args, arrow_at) = if bytes.get(i) == Some(&b'(') {
+                match balanced(_lexer_none(), bytes, i, limit, b'(', b')') {
+                    Some(close) => {
+                        let ea = trimmed(&bytes[i + 1..close.saturating_sub(1)]);
+                        let mut j = close;
+                        while j < limit && (bytes[j] == b' ' || bytes[j] == b'\t') {
+                            j += 1;
+                        }
+                        (ea, j)
+                    }
+                    None => (None, i),
+                }
+            } else {
+                (None, i)
+            };
+            let (enter_args, target, args_text) = parse_after_arrow(bytes, arrow_at + 2, e);
+            if kind == 3 {
+                Some(Stmt::StackPop(SimpleStmt {
+                    span,
+                    col,
+                    depth,
+                    exit_args,
+                    enter_args,
+                }))
+            } else {
+                Some(Stmt::Transition(TransitionStmt {
+                    span,
+                    col,
+                    depth,
+                    target,
+                    args: None,
+                    args_text,
+                    exit_args,
+                    enter_args,
+                }))
+            }
+        }
+        // `=> $^`
+        4 => Some(Stmt::Forward(SimpleStmt {
+            span,
+            col,
+            depth,
+            exit_args: None,
+            enter_args: None,
+        })),
+        _ => None,
+    }
+}
+
+/// The hand classifier — kept ONLY as the StmtScan differential oracle (production runs the
+/// system via `frame_stmt`). `-> $S(args)`, `push$ -> $S`, `-> pop$`, `=> $^`.
+fn frame_stmt_hand(bytes: &[u8], i: usize, limit: usize, depth: u32, col: u32) -> Option<Stmt> {
     // `push$ -> (enter) $S(state)`
     if starts(bytes, i, b"push$", limit) {
         let e = to_end_of_line(bytes, i, limit);
