@@ -75,3 +75,27 @@ pub fn scan(bytes: &[u8], i: usize) -> Option<(String, usize)> {
     let name = String::from_utf8_lossy(&bytes[m.name_start..m.name_end]).into_owned();
     Some((name, m.cursor))
 }
+
+/// The full `Instantiation` node — the system recognizes the shape, and the arg list is
+/// parsed by the hand `parse_inst_args` LEAF (transformation). This is what production
+/// `native_parts` calls, so the InstScan system is on the real parse path.
+pub fn scan_node(bytes: &[u8], i: usize) -> Option<crate::tree::body::Instantiation> {
+    let mut m = fsm::InstScan::over(bytes);
+    if !m.scan_at(i) {
+        return None;
+    }
+    let name = String::from_utf8_lossy(&bytes[m.name_start..m.name_end]).into_owned();
+    let end = m.cursor; // one past the closing paren
+    // The `(` sits after the name (skipping spaces); the args are its interior.
+    let mut p = m.name_end;
+    while p < end && (bytes[p] == b' ' || bytes[p] == b'\t') {
+        p += 1;
+    }
+    let (args, named) = super::parts::parse_inst_args(bytes, p + 1, end.saturating_sub(1));
+    Some(crate::tree::body::Instantiation {
+        span: crate::Span::new(i, end),
+        name,
+        args,
+        named,
+    })
+}

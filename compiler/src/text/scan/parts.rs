@@ -52,9 +52,11 @@ pub fn native_parts(lx: &Lexer, bytes: &[u8], from: usize, to: usize) -> Vec<Nat
             }
         }
 
-        // `@@SystemName(args)` — a STRUCTURED instantiation, captured whole (spec §1103).
-        // Checked before the plain ref recognizer because it consumes the arg list too.
-        if let Some(inst) = instantiation_at(bytes, i, to) {
+        // `@@SystemName(args)` — a STRUCTURED instantiation (spec §1103). **Production runs
+        // the dogfooded InstScan system** (shape) + the arg-parsing leaf; the hand
+        // `instantiation_at` remains only as the differential oracle. Checked before the
+        // plain ref recognizer because it consumes the arg list too.
+        if let Some(inst) = super::inst_scan::scan_node(&bytes[..to], i) {
             flush(&mut parts, text_start, i);
             i = inst.span.end;
             parts.push(NativePart::Instantiate(inst));
@@ -347,7 +349,8 @@ fn match_paren(bytes: &[u8], open: usize, to: usize) -> Option<usize> {
 /// args and whether the call uses the named form. Group comes from the sigil: `$(...)`
 /// state, `$>(...)` enter, bare domain. Within a group the value is `v` (positional) or
 /// `name=v` (named).
-fn parse_inst_args(bytes: &[u8], from: usize, to: usize) -> (Vec<InstArg>, bool) {
+/// Public as the arg-parsing LEAF for the dogfooded InstScan system.
+pub fn parse_inst_args(bytes: &[u8], from: usize, to: usize) -> (Vec<InstArg>, bool) {
     let mut args = Vec::new();
     let mut named = false;
     for raw in split_top_commas(bytes, from, to) {
