@@ -19,7 +19,8 @@ use frame_compiler::text::emit::{driver, python::Python};
 use frame_compiler::Source;
 use std::process::Command;
 
-const SPEC: &str = r#"class Point:
+const SPEC: &str = r#"from collections import OrderedDict
+class Point:
     def __init__(self, x=0, y=0):
         self.x = x
         self.y = y
@@ -29,13 +30,31 @@ const SPEC: &str = r#"class Point:
     interface:
         go()
     machine:
-        $A { go() { } }
+        $A {
+            go() { -> $B }
+        }
+        $B { }
     domain:
         pt: Point = None
         n: int = 0
         data: dict = None
 }
 "#;
+
+/// **Guard against a silently-green suite.** Every behavioural test here `return`s on
+/// `SKIP` when its toolchain is absent — which means on a toolchain-less image the whole
+/// persistence suite could report green having *run nothing*, the exact "proven by running"
+/// lie the roadmap swears off. This test fails loudly if NONE of the three toolchains the
+/// suite depends on is present, so a green persistence suite always means at least one route
+/// actually executed.
+#[test]
+fn at_least_one_persist_toolchain_is_present() {
+    let has = |bin: &str| Command::new(bin).arg("--version").output().is_ok();
+    assert!(
+        has("python3") || has("rustc") || has("cc"),
+        "no persistence toolchain (python3/rustc/cc) present — the suite would be vacuously green"
+    );
+}
 
 fn emit_python() -> String {
     let src = Source::new("t.frm", SPEC.as_bytes().to_vec()).unwrap();
@@ -142,7 +161,12 @@ print("ok", isinstance(h2.data, dict) and isinstance(h2.data["k"], Point) and h2
     assert_eq!(out.trim(), "ok True");
 }
 
-/// **The safety floor (non-deferrable): a blob naming a stdlib type must NOT resolve.**
+/// **The safety floor (non-deferrable): a blob naming a foreign type must NOT resolve —
+/// even when that type is VISIBLE in the module.** `SPEC` imports `OrderedDict`, so
+/// `"OrderedDict" in vars(module)` is true; refusing it here proves the floor rejects on
+/// *definition origin* (`__module__`), not mere name-visibility. That is exactly the
+/// Ruby-leak scenario RFC-0053 names — a resolvable-but-foreign (imported/monkeypatched)
+/// class — not just an unknown string.
 #[test]
 fn restore_will_not_resolve_a_type_the_program_does_not_define() {
     let out = run(
@@ -150,7 +174,7 @@ fn restore_will_not_resolve_a_type_the_program_does_not_define() {
 import json
 h = Holder(); h.n = 1
 snap = json.loads(h.snapshot())
-snap["data"] = {"@f:t": "OrderedDict", "@f:v": {}}   # forge an envelope naming a stdlib type
+snap["data"] = {"@f:t": "OrderedDict", "@f:v": {}}   # a type IMPORTED into this module, but foreign
 try:
     Holder().restore(json.dumps(snap)); print("LEAK")
 except RuntimeError as e:
@@ -161,25 +185,55 @@ except RuntimeError as e:
     if out == "SKIP" {
         return;
     }
-    assert_eq!(out.trim(), "refused True", "must NOT resolve ambient/stdlib types");
+    assert_eq!(out.trim(), "refused True", "a visible-but-foreign type must NOT resolve (Ruby-leak floor)");
 }
 
 /// Live control state round-trips too — RFC-0053 requires domain AND control state.
+///
+/// This test is DISTINGUISHING: `Holder` starts in `$A`, and `go()` transitions to `$B`.
+/// A fresh restore target is born in `$A`, so a green here means restore actually moved it
+/// to `$B` — not that both happened to share the single start state. (The earlier version
+/// used a one-state machine and stayed green even with control-state restore deleted.)
 #[test]
 fn control_state_round_trips() {
     let out = run(
         r#"
-h = Holder()
-h.__dict__["_Holder__compartment"].state = "A"
+h = Holder(); h.go()   # $A -> $B
+before = Holder().__dict__["_Holder__compartment"].state   # a fresh target is in $A
 h2 = Holder(); h2.restore(h.snapshot())
-print("ok", h2.__dict__["_Holder__compartment"].state == "A")
+after = h2.__dict__["_Holder__compartment"].state
+print("moved", before == "A" and after == "B")
 "#,
         "persist_control",
     );
     if out == "SKIP" {
         return;
     }
-    assert_eq!(out.trim(), "ok True");
+    assert_eq!(out.trim(), "moved True", "restore must move control state A -> B, not no-op");
+}
+
+/// **Schema drift is refused (E751) on the reflective route too.** Python emits the check
+/// (`python.rs`) but nothing exercised it — a snapshot whose `_schema` does not match this
+/// program must raise, not silently mis-restore into a mismatched shape (RFC-0054).
+#[test]
+fn a_mismatched_schema_is_refused_on_python() {
+    let out = run(
+        r#"
+import json
+h = Holder(); h.n = 5
+snap = json.loads(h.snapshot())
+snap["_schema"] = "frame-persist:1|WRONG:int"   # forge a mismatched schema
+try:
+    Holder().restore(json.dumps(snap)); print("ACCEPTED")
+except RuntimeError as e:
+    print("refused", "E751" in str(e))
+"#,
+        "persist_schema_py",
+    );
+    if out == "SKIP" {
+        return;
+    }
+    assert_eq!(out.trim(), "refused True", "a mismatched schema must be refused (E751)");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────
@@ -307,6 +361,76 @@ fn control_state_round_trips_on_rust() {
         return;
     }
     assert_eq!(out.trim(), "1", "after restore the machine must be in $On (read()==1), not $Off");
+}
+
+const RUST_USERTYPE: &str = r#"@@[persist]
+@@system Bag {
+    interface:
+        go()
+    machine:
+        $A {
+            go() { }
+        }
+    domain:
+        p: Point = Point::default()
+}
+"#;
+
+/// **HONEST GAP — RFC-0055 R2: the fixed-type route round-trips only scalars.** A
+/// user-defined-type domain field does not compile: `snapshot` needs `Display`, `restore`
+/// needs `FromStr`, because the hand-rolled flat format bypasses the host serializer (serde)
+/// that R2 makes mandatory on Regime A. `#[ignore]`d so the suite stays green while the debt
+/// is named; `cargo test -- --ignored` shows it fail to compile. Un-ignore it when the
+/// fixed-type route adopts a real serializer — then it must PASS. Java and C share this gap
+/// (C additionally cannot yet construct a user-type field — a separate defect).
+#[test]
+#[ignore = "RFC-0055 R2 unmet: fixed-type user types need the host serializer; the flat format cannot"]
+fn a_user_type_does_not_round_trip_on_the_fixed_type_rust_route() {
+    let out = run_rust(
+        RUST_USERTYPE,
+        "#[derive(Clone, Default)] struct Point { x: i32, y: i32 }\n\
+         fn main() { let b = Bag::new(); let s = b.snapshot(); \
+         let mut b2 = Bag::new(); b2.restore(&s); println!(\"{}\", b2.p.x); }",
+        "rust_persist_usertype",
+    );
+    if out == "SKIP" {
+        return;
+    }
+    assert_eq!(out.trim(), "0", "when R2 lands, a user-typed field must round-trip");
+}
+
+const RUST_STR: &str = r#"@@[persist]
+@@system Named {
+    interface:
+        go()
+    machine:
+        $A {
+            go() { }
+        }
+    domain:
+        label: String = String::new()
+}
+"#;
+
+/// A **plain** string field round-trips (substantiating the "strings are quoted" claim).
+///
+/// KNOWN LIMITATION, deliberately not exercised here: the flat format is **unescaped**, so a
+/// value containing its delimiters (`"`, `,`, `}`) corrupts the snapshot — a separate bug to
+/// fix by escaping on save + an escape-aware reader (or adopting the host serializer with
+/// RFC-0055 R2). This test uses a delimiter-free value on purpose.
+#[test]
+fn a_plain_string_round_trips_on_rust() {
+    let out = run_rust(
+        RUST_STR,
+        "fn main() { let mut n = Named::new(); n.label = String::from(\"hello\"); \
+         let s = n.snapshot(); let mut n2 = Named::new(); n2.restore(&s); \
+         println!(\"{}\", n2.label); }",
+        "rust_persist_string",
+    );
+    if out == "SKIP" {
+        return;
+    }
+    assert_eq!(out.trim(), "hello", "a plain string field must round-trip");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────

@@ -11,6 +11,16 @@ plan and honest status ledger**. It is checked against behaviour — a target co
 only when its round-trip is proven by *running* the target's toolchain, never by emitting
 plausible-looking code.
 
+> **⚠ Scope caveat (RFC-0055).** [RFC-0055](rfcs/rfc-0055.md) (the *latest* persistence RFC,
+> Draft) reframes the goal as **best-fidelity, persist-anything**: the automated tier must
+> round-trip **user-defined types, nesting, and collections**, not just primitives, with
+> **R2** making user-type self-marshalling through the host serializer (serde / Jackson /
+> `encoding/json`) a **MUST** on the static (Regime A) route. **What is built today meets
+> only the SCALAR subset of that contract.** The fixed-type route hand-rolls a flat format;
+> a user-typed field does not compile — a named, `#[ignore]`d honest-gap in `honest_gaps.rs`
+> and `tests/persist.rs`. So "DONE" below means **scalar round-trip + control state + schema
+> refusal proven by running** — it does **not** mean the RFC-0055 automated tier is met.
+
 > **The rule for this file:** a row is `DONE` only when a test compiles the output and runs
 > a save→restore→observe cycle and checks the value. "It compiles" is not done. "It emits
 > a `restore()`" is not done. The old snapshot suite blessed non-compiling code for years
@@ -159,18 +169,32 @@ DONE bar. Listed so none is forgotten.
 
 | item | target | status | proof |
 |---|---|---|---|
-| Reflective foundation | Python | ✅ DONE | `tests/persist.rs` — 6 running tests |
+| Reflective foundation (user type + scalar) | Python | ✅ DONE | `tests/persist.rs` — running |
 | #233 impossible | Python | ✅ DONE | adversarial + nested tests run green |
-| Safety floor | Python | ✅ DONE | stdlib-type-in-blob refused (`E750`) |
-| Control state | Python | ✅ DONE | round-trips |
-| Fixed-type `restore()` | Java | ✅ DONE | `honest_gaps::java_persist_actually_round_trips` — `c2.n==3` (running javac/java) |
-| Fixed-type route | Rust | ✅ DONE | `tests/persist.rs` — round-trip + schema-refusal + control-state (running rustc) |
-| Fixed-type route | C | ✅ DONE | `tests/persist.rs` — round-trip + schema-refusal + control-state (running cc) |
+| Safety floor (visible-but-foreign type refused) | Python | ✅ DONE | imported-type-in-blob refused (`E750`) |
+| Control state (distinguishing, A→B) | Python | ✅ DONE | round-trips |
+| Schema-drift refusal (`E751`) | Python/Rust/C | ✅ DONE | mismatched schema refused (running) |
+| Fixed-type route — **SCALARS only** | Java | ✅ DONE | `honest_gaps::java_persist_actually_round_trips` — `c2.n==3` (running javac/java) |
+| Fixed-type route — **SCALARS only** | Rust | ✅ DONE | round-trip + schema-refusal + control-state (running rustc) |
+| Fixed-type route — **SCALARS only** | C | ✅ DONE | round-trip + schema-refusal + control-state (running cc) |
+| Fixed-type **user types / nesting / collections** (RFC-0055 R2) | Java/Rust/C | ⛔ OPEN | `#[ignore]`d gap tests fail to compile — needs the host serializer |
 | All other reflective targets | JS/TS/Ruby/PHP/Lua/GDScript | ⛔ no backend yet | — |
 | All other fixed-type targets | C#/Kotlin/Swift/Dart/Go/C++ | ⛔ no backend yet | — |
 | Cross-target parity gate | all | ⛔ TODO | Phase 4 |
 
-**Bottom line:** the *design* is complete, and **every backend that currently exists** carries
-persistence proven by running its toolchain — Python (reflective, where #233 lives) and all
-three fixed-type backends (Java, Rust, C). What remains is *breadth* — persistence for each
-remaining target as its backend is built. Everything past L1 is a deliberately deferred layer.
+**Bottom line (honest scope).** Every backend that currently exists carries a **scalar**
+save/restore proven by running its toolchain — Python (reflective, where #233 and the
+closed-world floor live, and where a user type + nesting also round-trip) and the three
+fixed-type backends (Java, Rust, C: scalars + control state + schema refusal). Two things are
+**NOT** yet true, and are now named as failing `#[ignore]`d honest-gap tests rather than
+implied by a green suite:
+
+1. **The RFC-0055 automated tier on the fixed-type route.** User-defined types, nesting, and
+   collections do not round-trip on Java/Rust/C — a user-typed field does not compile, because
+   the hand-rolled flat format bypasses the host serializer that **R2** mandates. This is the
+   single largest open item; closing it means adopting serde / Jackson / `encoding/json` on
+   Regime A.
+2. **Breadth** — the remaining 13 targets need their backends built first.
+
+The manual tier (graphs, cycles, live resources) and Regime C (Lua/GDScript) are unbuilt.
+Everything past L1 is a deliberately deferred layer.

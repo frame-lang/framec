@@ -167,6 +167,40 @@ fn java_persist_actually_round_trips() {
     );
 }
 
+/// **HONEST GAP — RFC-0055 R2: Java fixed-type persist round-trips only scalars.**
+///
+/// The Java `restore()` assigns the extracted `String` straight to the field
+/// (`this.p = __frameField(...)`), which is a type error for any non-`String` field — the
+/// hand-rolled flat reader stands in for the host serializer (Jackson) that R2 makes
+/// mandatory on Regime A. So a user-defined-type domain field does not compile. `#[ignore]`d
+/// so the suite stays green while the debt is named; `cargo test -- --ignored` shows it fail.
+/// Un-ignore it when the fixed-type route adopts a real serializer — then it must PASS.
+#[test]
+#[ignore = "RFC-0055 R2 unmet: Java fixed-type user types need Jackson/the host serializer"]
+fn java_persist_user_type_does_not_round_trip() {
+    let frm = r#"@@[persist]
+@@system Bag {
+    interface:
+        go()
+    machine:
+        $A {
+            go() { }
+        }
+    domain:
+        p: Point = new Point()
+}
+"#;
+    let out = run(
+        &emit(frm),
+        "class Point { public int x; public int y; } \
+         class Main { public static void main(String[] a) { \
+            Bag b = new Bag(); String s = b.snapshot(); \
+            Bag b2 = new Bag(); b2.restore(s); System.out.println(b2.p.x); } }",
+        "gap_persist_java_usertype",
+    );
+    assert_eq!(out.trim(), "0", "when R2 lands, a user-typed field must round-trip");
+}
+
 /// **GAP 4 — ASYNC.**
 ///
 /// `@@[async]` should make the interface async. And when it does, the `await` MUST be
@@ -198,10 +232,18 @@ fn async_emits_an_async_interface() {
 #[test]
 fn the_compliance_number_carries_its_asterisk() {
     // CLOSED, each proven by RUNNING (see honest_gaps + tests/persist.rs):
-    //   HSM, forward `=> $^`, @@[async], @@[persist] (out-of-band framing; #233 impossible)
-    const GAPS: &[(&str, &str)] = &[];
+    //   HSM, forward `=> $^`, @@[async]; @@[persist] SCALAR round-trip + control state, and
+    //   out-of-band framing (#233 impossible on Python).
+    // OPEN — enumerated below and each named by an #[ignore]d test:
+    const GAPS: &[(&str, &str)] = &[(
+        "persist user types",
+        "the fixed-type route (Java/Rust/C) round-trips only SCALARS; a user-defined-type \
+         domain field does not compile — RFC-0055 R2 (a user type MUST self-marshal through \
+         the host serializer: serde / Jackson / encoding-json) is unmet. Named by the \
+         #[ignore]d *user_type* persist tests here and in tests/persist.rs.",
+    )];
     eprintln!("\n  CLEANROOM: 15/15 Java corpus fixtures COMPILE.");
-    eprintln!("  That number is SYNTAX-ONLY, and {} features are missing:\n", GAPS.len());
+    eprintln!("  That number is SYNTAX-ONLY, and {} feature(s) remain OPEN:\n", GAPS.len());
     for (name, why) in GAPS {
         eprintln!("      {name:<18} {why}");
     }
@@ -210,7 +252,14 @@ fn the_compliance_number_carries_its_asterisk() {
            That is exactly how the old corpus acquired blessed snapshots of code\n\
            that does not compile (#232). Run `cargo test -- --ignored` for the debt.\n"
     );
-    assert_eq!(GAPS.len(), 0, "no gaps remain — every corpus feature is implemented");
+    // This count MUST match the number of #[ignore]d gap tests. Update both together when a
+    // gap opens or closes — that coupling is what keeps "15/15 compile" from being quoted
+    // without its asterisk.
+    assert_eq!(
+        GAPS.len(),
+        1,
+        "the gap ledger drifted from the #[ignore]d gap tests"
+    );
 }
 
 /// **#225 — `await` MUST NOT land at the head.**
