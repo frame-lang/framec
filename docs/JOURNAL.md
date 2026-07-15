@@ -1419,3 +1419,59 @@ asked it out loud until Mark did.
 writing `while i < to { match bytes[i] … }` in a Frame compiler, stop. That loop is a
 machine. The machine goes in a `@@system`. The only reason to hand-roll it is a missing
 capability — and that capability already shipped.
+
+---
+
+## 2026-07-14 — The fubar, remediated: the front end parses with Frame machines
+
+The entry above named the disease and the cure. This one records that the cure was applied,
+end to end, and it worked.
+
+First we built the missing capability by hand — because it *is* codegen, not a recognizer,
+so hand-writing it is the fsm_rust.rs category, not the disease. `@@[scan(u8)]` on a
+`@@system`: `over(&bytes)` borrows the input (zero copy — the thing whose absence, #209,
+forced the hand loops), `scan_at(i)` scans a prefix at a moving cursor, iteratively so a
+self-looping state is O(1) stack over any input. That closed #209 — the open issue that was,
+verbatim, this fubar filed against the shipping compiler a release earlier. Then:
+construction config that survives `scan_at`, restartable scan state, `pub` outputs, and the
+one that made the grammar tractable — **composition**: a scanner runs another scanner over
+the *same borrow*, four deep (`NativePartsScan → InstScan → ParenBalance → StringScan`), no
+byte ever copied.
+
+Then we dogfooded, one machine at a time, each self-hosted (framec-ng compiled its own
+`.frs` into `.gen.rs`) and each proven — by *running* — to agree with the hand code it
+replaced at every position:
+
+```
+StringScan · ParenBalance · StringCounter          (lexical + composition)
+Segmenter                                           (item walk, target-configured)
+SectionScan · StmtScan                              (grammar backbones)
+RefScan · InstScan · EmbedScan · NativePartsScan    (islands)
+```
+
+And then the part that matters most: we **wired them into production**. `segment()`,
+`sections()`, `frame_stmt()`, `native_parts()` — the compiler's real parse path — now
+*dispatch through the systems*. The hand loops are gone from production; every one survives
+only as a differential oracle that re-proves equivalence on each test run. The gate was
+never a span-level diff; it was the full acceptance suite — generate, compile on the real
+toolchain, run — green throughout.
+
+> The string-blind `in_string: u8` byte that started all of this cannot be written now,
+> because the code that decides "am I in a string" is a Frame `$Body` state, and there is no
+> `let mut` in a transition graph.
+
+Two of the conversions came out **better** than the hand code: string-blindness is
+structurally impossible (a `@@`/`$.`/`machine:` inside a string is unreadable as a construct,
+proven every run), and StmtScan is bounds-safe where `frame_stmt` indexed `bytes[i]` unchecked
+and panicked at `i == len`.
+
+**Lesson, and it is the inverse of the one above:** the fix for "you hand-rolled the machine"
+is not a bigger apology. It is to build the capability the machine needed, author the machine,
+prove it against the loop it replaces, and then *delete the loop from the path*. Dogfooding
+that stops at "the system exists and passes a test" is a demo. Dogfooding that puts the system
+on the production path — where a regression breaks a real compile — is the thesis.
+
+What is NOT yet a machine: the back half. Validators (reachability, HSM cycles) and the emit
+walk are AST/graph walkers, not byte scanners — a `@@system` with no byte input needs a
+different drive than `scan_at`, and that is the next capability to build, honestly, rather
+than hand-roll around.
