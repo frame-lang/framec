@@ -1,0 +1,45 @@
+@@[target("rust")]
+@@[scan(u8)]
+
+// The section backbone, dogfooded as an `@@[scan(u8)]` system — the `@@system` analogue of
+// the shipping SystemBackbone's section dispatch. It walks a system body and finds the
+// section keywords (interface / machine / domain / actions / operations) at brace depth 0,
+// skipping strings/comments and nested braces. framec owns the WALK ($Walk + step loop + the
+// depth counter); the leaves skip opaque (via the one lexer, so a `machine:` in a string is
+// not a section) and match/record the keyword. `target` is config; `depth` is the counter.
+//
+// Regen: framec-ng -l rust --emit section_scan.frs | grep -v '^#!\[allow' > section_scan.gen.rs
+
+@@system SectionScan(target: Target) {
+    interface:
+        step()
+    machine:
+        $Walk {
+            step() {
+                if self.cursor >= self.src.fsm_len() {
+                    -> $Accept
+                }
+                let sk = skip_opaque(self.src, self.cursor, self.target);
+                if sk > self.cursor {
+                    self.cursor = sk;
+                } else {
+                    let b = self.src.fsm_get(self.cursor);
+                    if b == 123 {
+                        self.depth = self.depth + 1;
+                    }
+                    if b == 125 {
+                        self.depth = self.depth - 1;
+                    }
+                    if self.depth == 0 {
+                        record_kw(&mut self.starts, self.src, self.cursor);
+                    }
+                    self.cursor = self.cursor + 1;
+                }
+            }
+        }
+        $Accept { }
+    domain:
+        target: Target = target
+        depth: i32 = 0
+        starts: Vec<(usize, usize, usize)> = Vec::new()
+}

@@ -55,40 +55,7 @@ pub fn sections(lx: &Lexer, bytes: &[u8], sys: Span) -> Vec<Section> {
     // hand-written brace counters each knew a different subset of their language's
     // literals, which is exactly how a `}` inside a Ruby heredoc closed a block that
     // was never open — #219. Here there is one lexer and everyone asks it.)
-    let mut starts: Vec<(usize, usize, usize)> = Vec::new(); // (kw_start, kw_end, idx)
-    let mut j = body_start;
-    let mut depth = 0i32;
-    while j < close_start {
-        if let Ok(Some(end)) = lx.comment_at(j) {
-            j = end;
-            continue;
-        }
-        if let Ok(Some(l)) = lx.literal_at(j) {
-            j = l.span.end;
-            continue;
-        }
-        match bytes[j] {
-            b'{' => depth += 1,
-            b'}' => depth -= 1,
-            _ => {}
-        }
-        if depth == 0 && is_word_start(bytes, j) {
-            for (idx, kw) in KEYWORDS.iter().enumerate() {
-                let k = kw.as_bytes();
-                if bytes.len() >= j + k.len() && &bytes[j..j + k.len()] == k {
-                    // Must be followed by `:` (after optional space) and be a whole word.
-                    let mut p = j + k.len();
-                    while p < close_start && (bytes[p] == b' ' || bytes[p] == b'\t') {
-                        p += 1;
-                    }
-                    if p < close_start && bytes[p] == b':' {
-                        starts.push((j, p + 1, idx));
-                    }
-                }
-            }
-        }
-        j += 1;
-    }
+    let starts = section_keyword_starts(lx, bytes, body_start, close_start);
 
     // Sections run from their keyword to the next keyword (or to the closing brace).
     let mut cursor = body_start;
@@ -118,6 +85,51 @@ pub fn sections(lx: &Lexer, bytes: &[u8], sys: Span) -> Vec<Section> {
         span: Span::new(close_start, sys.end),
     }));
     out
+}
+
+/// The section-keyword starts `(kw_start, kw_end, idx)` at brace depth 0 in a system body,
+/// skipping strings/comments (via the one lexer, so a `machine:` inside a string is not a
+/// section — #219). **The reference the dogfooded `SectionScan` system is proven against.**
+pub fn section_keyword_starts(
+    lx: &Lexer,
+    bytes: &[u8],
+    body_start: usize,
+    close_start: usize,
+) -> Vec<(usize, usize, usize)> {
+    let mut starts: Vec<(usize, usize, usize)> = Vec::new();
+    let mut j = body_start;
+    let mut depth = 0i32;
+    while j < close_start {
+        if let Ok(Some(end)) = lx.comment_at(j) {
+            j = end;
+            continue;
+        }
+        if let Ok(Some(l)) = lx.literal_at(j) {
+            j = l.span.end;
+            continue;
+        }
+        match bytes[j] {
+            b'{' => depth += 1,
+            b'}' => depth -= 1,
+            _ => {}
+        }
+        if depth == 0 && is_word_start(bytes, j) {
+            for (idx, kw) in KEYWORDS.iter().enumerate() {
+                let k = kw.as_bytes();
+                if bytes.len() >= j + k.len() && &bytes[j..j + k.len()] == k {
+                    let mut p = j + k.len();
+                    while p < close_start && (bytes[p] == b' ' || bytes[p] == b'\t') {
+                        p += 1;
+                    }
+                    if p < close_start && bytes[p] == b':' {
+                        starts.push((j, p + 1, idx));
+                    }
+                }
+            }
+        }
+        j += 1;
+    }
+    starts
 }
 
 fn is_word_start(bytes: &[u8], i: usize) -> bool {
