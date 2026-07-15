@@ -170,10 +170,14 @@ impl Backend for Python {
             out.frame(&format!(
                 "        {branch} self.__compartment.state == \"{state}\":\n"
             ));
-            let r = if ret.is_some() { "return " } else { "" };
+            // Always `return` in Python. A value-returning handler may have NO declared
+            // return type (Python is dynamically typed — `getmag() { @@:(expr) }`), so keying
+            // the return on `ret.is_some()` dropped its value. Returning is harmless for a void
+            // handler (it returns `None`, which the method would return implicitly anyway).
+            let _ = ret;
             let aw = if is_async { "await " } else { "" };
             out.frame(&format!(
-                "            {r}{aw}self._{owner}_{}({names})\n",
+                "            return {aw}self._{owner}_{}({names})\n",
                 py_ident(event)
             ));
             any = true;
@@ -374,10 +378,18 @@ impl Backend for Python {
         out.frame("        import json\n");
         // The persisted state: the domain fields (minus @@[no_persist]) AND the live
         // control state. RFC-0053 requires BOTH.
+        // FULL compartment fidelity (RFC-0056): control state is not the state NAME, it is the
+        // whole compartment — state, state_vars, state_args — AND the stack of compartments. A
+        // compartment is serialized as a plain dict so `_enc` (below) recurses its state-var
+        // VALUES through the same out-of-band envelope that handles domain values (a user-typed
+        // state var round-trips exactly like a user-typed domain field).
+        out.frame("        def _comp(c):\n");
+        out.frame("            return {\"state\": c.state, \"state_vars\": c.state_vars, \"state_args\": c.state_args}\n");
         out.frame("        _state = {\n");
         out.frame("            \"_schema\": ");
         out.frame(&format!("{schema:?},\n"));
-        out.frame("            \"_control\": self.__compartment.state,\n");
+        out.frame("            \"_control\": _comp(self.__compartment),\n");
+        out.frame("            \"_stack\": [_comp(_c) for _c in self.__stack],\n");
         for f in &fields {
             out.frame(&format!("            {f:?}: self.{f},\n"));
         }
@@ -470,7 +482,17 @@ impl Backend for Python {
         out.frame("                return _obj\n");
         // A plain container with no reserved key: recurse, keys stay data.
         out.frame("            return {k: _dec(v) for k, v in o.items()}\n");
-        out.frame("        self.__compartment.state = _raw[\"_control\"]\n");
+        // Rebuild the full compartment(s) and the stack — allocate fresh Compartments and
+        // repopulate state_vars/state_args (decoding each value), rather than reassign a state
+        // name onto the constructed compartment (which would leave it holding the START state's
+        // vars, and would lose the stack — a `pop$`-after-restore crash).
+        out.frame("        def _rebuild(d):\n");
+        out.frame("            _c = type(self).Compartment(d[\"state\"])\n");
+        out.frame("            _c.state_vars = {_k: _dec(_v) for _k, _v in d.get(\"state_vars\", {}).items()}\n");
+        out.frame("            _c.state_args = {_k: _dec(_v) for _k, _v in d.get(\"state_args\", {}).items()}\n");
+        out.frame("            return _c\n");
+        out.frame("        self.__compartment = _rebuild(_raw[\"_control\"])\n");
+        out.frame("        self.__stack = [_rebuild(_d) for _d in _raw.get(\"_stack\", [])]\n");
         for f in &fields {
             out.frame(&format!("        self.{f} = _dec(_raw[{f:?}])\n"));
         }

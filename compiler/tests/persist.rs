@@ -238,6 +238,64 @@ except RuntimeError as e:
     assert_eq!(out.trim(), "refused True", "a mismatched schema must be refused (E751)");
 }
 
+const PY_STATEVAR: &str = r#"class Vec2:
+    def __init__(self, x=0.0, y=0.0):
+        self.x = x
+        self.y = y
+    def mag_sq(self):
+        return self.x * self.x + self.y * self.y
+
+@@[persist(str)]
+@@[save(save_state)]
+@@[load(restore_state)]
+@@system Bag {
+    interface:
+        setv(x, y)
+        getmag()
+    machine:
+        $S {
+            $.sv = Vec2(0.0, 0.0)
+            setv(x, y) { $.sv = Vec2(x, y) }
+            getmag() { @@:($.sv.mag_sq()) }
+        }
+    domain:
+        marker = 1
+}
+"#;
+
+fn emit_python_of(spec: &str) -> String {
+    let src = Source::new("t.frm", spec.as_bytes().to_vec()).unwrap();
+    let ast = segment(&src, Target::Python3).unwrap();
+    let (syms, _) = resolve(&ast);
+    driver::emit(&src, &ast, &syms, &Python)
+}
+
+/// **Compartment fidelity (RFC-0056): a user-typed STATE VARIABLE round-trips.** The snapshot
+/// must carry the whole compartment (state + state_vars), not just the state name — before the
+/// compartment fix the `$.sv` was dropped and `getmag()` came back the default. Mirrors the
+/// test-env `persist_fidelity_state_var` corpus fixture, in the cargo suite so a regression is
+/// caught here (the exact blind spot the domain-only tests had).
+#[test]
+fn a_user_typed_state_var_round_trips_on_python() {
+    if Command::new("python3").arg("--version").output().is_err() {
+        return;
+    }
+    let d = std::env::temp_dir().join("persist_statevar_py");
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    let driver = "\ns1 = Bag(); s1.setv(3.0, 4.0)\nsnap = s1.save_state()\n\
+                  s2 = Bag(); s2.restore_state(snap)\nprint(s2.getmag())\n";
+    let f = d.join("m.py");
+    std::fs::write(&f, format!("{}\n{driver}", emit_python_of(PY_STATEVAR))).unwrap();
+    let o = Command::new("python3").arg(&f).output().unwrap();
+    assert!(o.status.success(), "python crashed:\n{}", String::from_utf8_lossy(&o.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&o.stdout).trim(),
+        "25.0",
+        "a user-typed state variable must survive save/restore"
+    );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────────────
 // FIXED-TYPE ROUTE (Rust, Regime A per RFC-0056). The Rust backend delegates value
 // marshalling to serde: a user type self-marshals (derives Serialize/Deserialize) and serde
