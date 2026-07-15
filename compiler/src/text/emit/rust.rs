@@ -2,14 +2,16 @@
 //!
 //! Rust breaks assumptions Java and Python let stand:
 //!
-//! * **No `Object`.** framec's compartment container is `HashMap<String, Box<dyn Any>>`;
-//!   pulling a typed value out means `.downcast_ref::<T>()`. That is container
-//!   extraction — framec's own scaffolding, the language's own rule — never a
-//!   translation of the user's declared type (same category as Java's unbox).
+//! * **Typed compartment, no erasure.** The compartment is per-system: each state's `$.`
+//!   vars and `(param)` args become a variant of a generated `<Sys>Vars` / `<Sys>Args`
+//!   enum, and a read pattern-matches the current variant (`<Sys>Vars::S { v, .. } =>
+//!   v.clone()`). No `Box<dyn Any>`, no `downcast` — so the host serializer marshals the
+//!   compartment natively and persist round-trips the whole control state + stack
+//!   (RFC-0056). serde is derived on those types only when the system persists.
 //! * **No null.** A domain field with no value is the user's `Option<T>`; framec does
 //!   not invent one.
 //! * **Ownership.** A state-var read `.clone()`s out of the borrow, so the read is a
-//!   postfix chain — an atom — and also side-steps the borrow checker.
+//!   parenthesized `match` — an atom — and also side-steps the borrow checker.
 //! * **`.await` is postfix**, not a prefix keyword — the one target where the await
 //!   bug (#225) is structurally absent, so its spelling differs from Java/Python.
 //!
@@ -36,18 +38,12 @@ impl Backend for Rust {
         out.frame("#![allow(dead_code, unused_variables, unused_mut, unused_imports)]\n");
         out.frame("use std::collections::HashMap;\n");
         out.frame("use std::any::Any;\n\n");
-        // The compartment: state + framec's own Any-boxed containers. Emitted ONCE at file
-        // scope (not per system) — it is identical for every system, and a top-level Rust
-        // `struct` cannot be redefined, so a second system re-emitting it was an E0428.
-        out.frame("struct Compartment {\n");
-        out.frame("    state: String,\n");
-        out.frame("    state_vars: HashMap<String, Box<dyn Any>>,\n");
-        out.frame("    state_args: HashMap<String, Box<dyn Any>>,\n");
-        out.frame("}\n");
-        out.frame("impl Compartment {\n");
-        out.frame("    fn new(state: &str) -> Compartment {\n");
-        out.frame("        Compartment { state: state.to_string(), state_vars: HashMap::new(), state_args: HashMap::new() }\n");
-        out.frame("    }\n}\n\n");
+        // The compartment is **typed, per system** (see `emit_compartment_types`) — NOT a
+        // shared `HashMap<String, Box<dyn Any>>`. Each state's `$.` vars and `(param)` args
+        // become a variant of a per-system enum, so the host serializer marshals them
+        // natively (RFC-0056) and a restore rebuilds the full compartment + stack with no
+        // type erasure. Nothing is emitted at file scope; the imports above are harmless
+        // under `#![allow(unused_imports)]` and left for hand-written native segments.
     }
 
     fn open_system(&self, sym: &SystemSym, out: &mut Sink) {
@@ -61,9 +57,10 @@ impl Backend for Rust {
             return;
         }
 
+        emit_compartment_types(sym, out);
         out.frame(&format!("pub struct {name} {{\n"));
-        out.frame("    compartment: Compartment,\n");
-        out.frame("    stack: Vec<Compartment>,\n");
+        out.frame(&format!("    compartment: {name}Comp,\n"));
+        out.frame(&format!("    stack: Vec<{name}Comp>,\n"));
         // Domain fields — the user's declared type, VERBATIM. `pub`, like a scanner's: the
         // domain IS the system's readable state (a walker's result, a counter), so a native
         // wrapper can read it after driving the machine.
@@ -83,20 +80,14 @@ impl Backend for Rust {
         // Constructor params — state, then enter, then domain (§203). Rust: `name: type`.
         let plist = self.param_list(&super::driver::ctor_params_text(&sym.params));
         out.frame(&format!("    pub fn new({plist}) -> {name} {{\n"));
+        // The start compartment, TYPED: vars seed from their inits, args from the header's
+        // state/enter params (§203) that name the start state's params (a distinct
+        // `enter_args` is deferred — see `args_ctor_expr`).
         out.frame(&format!(
-            "        let mut compartment = Compartment::new(\"{first}\");\n"
+            "        let compartment = {name}Comp {{ state: \"{first}\".to_string(), vars: {}, args: {} }};\n",
+            vars_expr(sym, first),
+            args_ctor_expr(sym, first)
         ));
-        if let Some(st) = sym.states.iter().find(|s| s.name == first) {
-            seed_state_vars(st, out);
-        }
-        // State/enter params seed the start compartment's args (§203); one `state_args`
-        // map in the cleanroom, a distinct `enter_args` deferred.
-        for p in sym.params.state.iter().chain(&sym.params.enter) {
-            out.frame(&format!(
-                "        compartment.state_args.insert(\"{}\".to_string(), Box::new({}));\n",
-                p.name, p.name
-            ));
-        }
         out.frame(&format!("        {name} {{ compartment, stack: Vec::new()"));
         for f in &sym.domain {
             // `= @@Inner()` is FRAME's instantiation syntax -> the Rust constructor. Any
@@ -191,13 +182,14 @@ impl Backend for Rust {
             rust_ident(event),
             self.return_type(ret)
         ));
-        // Bind state params from framec's state_args container.
+        // Bind state params as handler locals, read out of the typed args variant (the
+        // compartment is in `state` here by construction, so the match cannot miss).
         if let Some(st) = sym.states.iter().find(|s| s.name == state) {
             for p in &st.state_params {
                 let ty = st.state_param_types.get(p).cloned().unwrap_or_else(|| "()".into());
                 out.frame(&format!(
                     "        let {p}: {ty} = {};\n",
-                    downcast_clone("state_args", p, &ty)
+                    typed_read(sym, state, "Args", "args", p)
                 ));
             }
         }
@@ -237,12 +229,13 @@ impl Backend for Rust {
 
     fn push(&self, rel: u32, sym: &SystemSym, target: &str, args: Option<&str>, out: &mut Sink) {
         let p = self.pad(rel);
-        out.frame(&format!(
-            "{p}let __cur = std::mem::replace(&mut self.compartment, Compartment::new(\"\"));\n"
-        ));
-        out.frame(&format!("{p}self.stack.push(__cur);\n"));
+        // Build the target compartment FIRST, then swap it in and push the displaced one.
+        // Building `__next` first means the swap needs no empty-state placeholder — the
+        // typed compartment has no `""` state to construct.
         self.enter(&p, sym, target, args, out);
-        out.frame(&format!("{p}self.compartment = __next;\n"));
+        out.frame(&format!(
+            "{p}self.stack.push(std::mem::replace(&mut self.compartment, __next));\n"
+        ));
     }
 
     fn pop(&self, rel: u32, out: &mut Sink) {
@@ -307,8 +300,8 @@ impl Backend for Rust {
 
     fn assign(
         &self,
-        _sym: &SystemSym,
-        _state: &str,
+        sym: &SystemSym,
+        state: &str,
         lhs: &FrameRef,
         rhs: NativeText,
         rel: u32,
@@ -323,23 +316,28 @@ impl Backend for Rust {
                 out.native(rhs);
                 out.frame(";\n");
             }
-            // A state var lives in framec's Any-boxed map — a write is an `insert`, not
-            // an lvalue. A different statement, not a different spelling of one.
+            // A state var is a field of the current compartment's TYPED variant — a write
+            // reaches it through the variant pattern (`if let` never fails: the compartment
+            // is in `state` by construction here) and assigns the place `*field`. The RHS is
+            // evaluated into a temp FIRST: `$.x = $.x + 1` reads the same variant the write
+            // borrows mutably, so binding the value before taking the `&mut` avoids E0502.
             RefKind::StateVar => {
-                out.frame(&format!(
-                    "{p}self.compartment.state_vars.insert(\"{}\".to_string(), Box::new(",
-                    lhs.name
-                ));
+                out.frame(&format!("{p}{{ let __v = "));
                 out.native(rhs);
-                out.frame("));\n");
+                out.frame(&format!(
+                    "; if let {}Vars::{state} {{ {n}, .. }} = &mut self.compartment.vars {{ *{n} = __v; }} }}\n",
+                    sym.name,
+                    n = lhs.name
+                ));
             }
             RefKind::ContextData => {
-                out.frame(&format!(
-                    "{p}self.compartment.state_args.insert(\"{}\".to_string(), Box::new(",
-                    lhs.name
-                ));
+                out.frame(&format!("{p}{{ let __v = "));
                 out.native(rhs);
-                out.frame("));\n");
+                out.frame(&format!(
+                    "; if let {}Args::{state} {{ {n}, .. }} = &mut self.compartment.args {{ *{n} = __v; }} }}\n",
+                    sym.name,
+                    n = lhs.name
+                ));
             }
             RefKind::ContextReturn => {
                 out.frame(&format!("{p}return "));
@@ -364,27 +362,14 @@ impl Backend for Rust {
 
     fn lower_ref(&self, sym: &SystemSym, state: &str, r: &FrameRef) -> Atom {
         match r.kind {
-            // A state var: `.downcast_ref::<T>().unwrap().clone()` — a postfix chain
-            // rooted at `self`, so ALREADY an atom (no `*` deref at the head). `.clone()`
-            // both makes it an atom and side-steps the borrow checker (it owns the value
-            // out of the borrow). This is container extraction: framec's own map, Rust's
-            // own rule, not a translation of the user's type.
-            RefKind::StateVar => {
-                let ty = sym
-                    .states
-                    .iter()
-                    .find(|s| s.name == state)
-                    .and_then(|s| s.state_vars.iter().find(|v| v.name == r.name))
-                    .and_then(|v| match &v.ty {
-                        TypeRef::Opaque(t) => Some(t.clone()),
-                        _ => None,
-                    })
-                    .unwrap_or_else(|| "()".to_string());
-                Atom::ident(downcast_clone("state_vars", &r.name, &ty))
-            }
-            RefKind::ContextData => {
-                Atom::ident(downcast_clone("state_args", &r.name, "()"))
-            }
+            // A state var: read the field out of the current compartment's TYPED variant.
+            // `.clone()` both owns the value out of the borrow (Rust's rule, side-steps the
+            // borrow checker) and makes the parenthesized `match` an atom. No `downcast` —
+            // the variant IS the type. The read cannot be reached in another state, so the
+            // fallback arm is `unreachable!()` (omitted for a single-state system, where the
+            // match is already exhaustive and a `_` arm would warn).
+            RefKind::StateVar => Atom::ident(typed_read(sym, state, "Vars", "vars", &r.name)),
+            RefKind::ContextData => Atom::ident(typed_read(sym, state, "Args", "args", &r.name)),
             // A domain field — `self.field`. An identifier chain, an atom, and an lvalue
             // root (`@@:self.field = e`), so it must NOT be parenthesized.
             RefKind::ContextSelf => Atom::field(Atom::ident("self"), &r.name),
@@ -411,12 +396,20 @@ impl Backend for Rust {
         // a `struct`, and a local one keeps the field set beside its use. `_schema` is checked
         // first so a drifted snapshot is refused (E751), not mis-shaped. Requires the generated
         // crate to depend on serde + serde_json (the self-marshalling requirement).
+        // FULL control-state fidelity (RFC-0056): `_control` is the ENTIRE typed compartment
+        // — its state name AND its typed vars/args — and `_stack` is the whole compartment
+        // stack, not just a state name. `<Sys>Comp` derives serde, so the host serializer
+        // marshals the vars/args natively and a restore REBUILDS the live control state: a
+        // `pop$` after restore finds the caller's compartment waiting, a state var read after
+        // restore finds its value. framec writes no per-type code; serde does the work.
         let schema = m.schema();
+        let comp = format!("{}Comp", m.sys);
         let snap_struct = |out: &mut Sink| {
             out.frame("        #[derive(serde::Serialize, serde::Deserialize)]\n");
             out.frame("        struct __Snap {\n");
             out.frame("            _schema: String,\n");
-            out.frame("            _control: String,\n");
+            out.frame(&format!("            _control: {comp},\n"));
+            out.frame(&format!("            _stack: Vec<{comp}>,\n"));
             for (n, t) in &m.fields {
                 out.frame(&format!("            {n}: {t},\n"));
             }
@@ -427,7 +420,8 @@ impl Backend for Rust {
         snap_struct(out);
         out.frame("        let __snap = __Snap {\n");
         out.frame(&format!("            _schema: {schema:?}.to_string(),\n"));
-        out.frame("            _control: self.compartment.state.clone(),\n");
+        out.frame("            _control: self.compartment.clone(),\n");
+        out.frame("            _stack: self.stack.clone(),\n");
         for (n, _) in &m.fields {
             out.frame(&format!("            {n}: self.{n}.clone(),\n"));
         }
@@ -441,7 +435,8 @@ impl Backend for Rust {
         out.frame(&format!("        if __snap._schema != {schema:?} {{\n"));
         out.frame("            panic!(\"E751: persist restore refused - snapshot schema does not match this program\");\n");
         out.frame("        }\n");
-        out.frame("        self.compartment.state = __snap._control;\n");
+        out.frame("        self.compartment = __snap._control;\n");
+        out.frame("        self.stack = __snap._stack;\n");
         for (n, _) in &m.fields {
             out.frame(&format!("        self.{n} = __snap.{n};\n"));
         }
@@ -456,53 +451,181 @@ impl Backend for Rust {
 }
 
 impl Rust {
+    /// Build `__next`, the TYPED compartment for entering `target`. Vars seed from their
+    /// declared inits; args split positionally from the transition's arg blob (framec does
+    /// not tear the blob apart — a tuple pattern binds it, so a `(a, b)` value stays whole)
+    /// into the target's typed args variant. No `Box`, no map inserts.
     fn enter(&self, p: &str, sym: &SystemSym, target: &str, args: Option<&str>, out: &mut Sink) {
-        out.frame(&format!("{p}let mut __next = Compartment::new(\"{target}\");\n"));
-        if let Some(st) = sym.states.iter().find(|s| s.name == target) {
-            for v in &st.state_vars {
-                // Re-seed a fresh compartment's state vars with the declared init (same
-                // rule as the constructor) — `= @@Sub()` lowers to the constructor.
-                out.frame(&format!(
-                    "{p}__next.state_vars.insert(\"{}\".to_string(), Box::new({}));\n",
-                    v.name,
-                    state_seed_value(v)
-                ));
-            }
-            // State args, unsplit — Box each arg by position. framec does not split the
-            // blob; but Rust is statically typed, so the args ARE known positionally from
-            // the declaration, and each is boxed individually.
-            if let Some(a) = args.map(str::trim).filter(|a| !a.is_empty()) {
-                let names: Vec<&str> = st.state_params.iter().map(String::as_str).collect();
-                if names.len() == 1 {
-                    out.frame(&format!(
-                        "{p}__next.state_args.insert(\"{}\".to_string(), Box::new({a}));\n",
-                        names[0]
-                    ));
-                } else if !names.is_empty() {
-                    // Multiple args: a tuple pattern binds them, then box each.
-                    let pat = names
-                        .iter()
-                        .map(|n| format!("__a_{n}"))
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    out.frame(&format!("{p}let ({pat}) = ({a});\n"));
-                    for n in &names {
-                        out.frame(&format!(
-                            "{p}__next.state_args.insert(\"{n}\".to_string(), Box::new(__a_{n}));\n"
-                        ));
+        let name = &sym.name;
+        let st = sym.states.iter().find(|s| s.name == target);
+        let args_expr = match st {
+            Some(st) if !st.state_params.is_empty() => {
+                match args.map(str::trim).filter(|a| !a.is_empty()) {
+                    Some(a) => {
+                        let names: Vec<&str> =
+                            st.state_params.iter().map(String::as_str).collect();
+                        if names.len() == 1 {
+                            format!("{name}Args::{target} {{ {}: {a} }}", names[0])
+                        } else {
+                            // Multiple args: bind the whole blob through a tuple pattern
+                            // (never split by framec), then name each binding into the
+                            // typed variant.
+                            let pat = names
+                                .iter()
+                                .map(|n| format!("__a_{n}"))
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            out.frame(&format!("{p}let ({pat}) = ({a});\n"));
+                            let fields = names
+                                .iter()
+                                .map(|n| format!("{n}: __a_{n}"))
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            format!("{name}Args::{target} {{ {fields} }}")
+                        }
                     }
+                    // Entered without args though the state declares params — defaults.
+                    None => args_default_expr(sym, target),
                 }
             }
-        }
+            _ => format!("{name}Args::{target} {{ }}"),
+        };
+        out.frame(&format!(
+            "{p}let mut __next = {name}Comp {{ state: \"{target}\".to_string(), vars: {}, args: {args_expr} }};\n",
+            vars_expr(sym, target)
+        ));
     }
 }
 
-/// `self.compartment.<container>.get("k").unwrap().downcast_ref::<T>().unwrap().clone()`
-/// — a postfix chain, an atom.
-fn downcast_clone(container: &str, key: &str, ty: &str) -> String {
-    format!(
-        "self.compartment.{container}.get(\"{key}\").unwrap().downcast_ref::<{ty}>().unwrap().clone()"
-    )
+/// `(match &self.compartment.<container> { <Sys><Kind>::<state> { field, .. } => field.clone(),
+/// _ => unreachable!() })` — read a typed var/arg field out of the current compartment. The
+/// `_` arm is dropped for a single-state system (the match is already exhaustive, and a `_`
+/// there would be an `unreachable_patterns` warning). Parenthesized, so it is an atom.
+fn typed_read(sym: &SystemSym, state: &str, kind: &str, container: &str, field: &str) -> String {
+    let arm = format!("{}{kind}::{state} {{ {field}, .. }} => {field}.clone()", sym.name);
+    if sym.states.len() == 1 {
+        format!("(match &self.compartment.{container} {{ {arm} }})")
+    } else {
+        format!("(match &self.compartment.{container} {{ {arm}, _ => unreachable!() }})")
+    }
+}
+
+/// Emit the per-system TYPED compartment: `<Sys>Vars` / `<Sys>Args` (one variant per state,
+/// carrying exactly that state's `$.` vars / `(param)` args) and `<Sys>Comp { state, vars,
+/// args }`. serde is derived ONLY when the system persists — an ordinary system must not
+/// force the generated crate to depend on serde. EVERY state gets a variant (var-less states
+/// get an empty one), so a compartment is constructible in any state and the stack is
+/// homogeneously typed. This is the erasure-free compartment (RFC-0056): the host serializer
+/// marshals the vars/args natively; framec writes no `downcast`, no `Box<dyn Any>`.
+fn emit_compartment_types(sym: &SystemSym, out: &mut Sink) {
+    let name = &sym.name;
+    let derive = if sym.persist.is_some() {
+        "#[derive(Clone, serde::Serialize, serde::Deserialize)]\n"
+    } else {
+        "#[derive(Clone)]\n"
+    };
+    out.frame(derive);
+    out.frame(&format!("enum {name}Vars {{\n"));
+    for st in &sym.states {
+        let fields = st
+            .state_vars
+            .iter()
+            .map(|v| format!("{}: {}", v.name, state_var_ty(v)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        out.frame(&format!("    {} {{ {fields} }},\n", st.name));
+    }
+    out.frame("}\n");
+    out.frame(derive);
+    out.frame(&format!("enum {name}Args {{\n"));
+    for st in &sym.states {
+        let fields = st
+            .state_params
+            .iter()
+            .map(|p| {
+                let ty = st.state_param_types.get(p).map(String::as_str).unwrap_or("()");
+                format!("{p}: {ty}")
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        out.frame(&format!("    {} {{ {fields} }},\n", st.name));
+    }
+    out.frame("}\n");
+    out.frame(derive);
+    out.frame(&format!("struct {name}Comp {{\n"));
+    out.frame("    state: String,\n");
+    out.frame(&format!("    vars: {name}Vars,\n"));
+    out.frame(&format!("    args: {name}Args,\n"));
+    out.frame("}\n\n");
+}
+
+/// `<Sys>Vars::<State> { v: <seed>, ... }` — the typed state-vars for constructing `state`.
+fn vars_expr(sym: &SystemSym, state: &str) -> String {
+    let inner = sym
+        .states
+        .iter()
+        .find(|s| s.name == state)
+        .map(|s| {
+            s.state_vars
+                .iter()
+                .map(|v| format!("{}: {}", v.name, state_seed_value(v)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_default();
+    format!("{}Vars::{state} {{ {inner} }}", sym.name)
+}
+
+/// `<Sys>Args::<State> { p: <p or default>, ... }` — the args for the START compartment, where
+/// the ctor's params ARE in scope: a state-param seeds from a same-named ctor/state/enter
+/// param when present, else the type's default. (A start-state param with no matching header
+/// param is the deferred enter_args nuance — it defaults rather than binding.)
+fn args_ctor_expr(sym: &SystemSym, state: &str) -> String {
+    let inner = sym
+        .states
+        .iter()
+        .find(|s| s.name == state)
+        .map(|s| {
+            s.state_params
+                .iter()
+                .map(|p| {
+                    let ty = s.state_param_types.get(p).map(String::as_str).unwrap_or("()");
+                    let in_scope = sym
+                        .params
+                        .state
+                        .iter()
+                        .chain(&sym.params.enter)
+                        .chain(&sym.params.domain)
+                        .any(|x| &x.name == p);
+                    let val = if in_scope { p.clone() } else { format!("<{ty}>::default()") };
+                    format!("{p}: {val}")
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_default();
+    format!("{}Args::{state} {{ {inner} }}", sym.name)
+}
+
+/// `<Sys>Args::<State> { p: <default>, ... }` — args when a state is ENTERED without them
+/// (no ctor params in scope here), so every field takes its type's default.
+fn args_default_expr(sym: &SystemSym, state: &str) -> String {
+    let inner = sym
+        .states
+        .iter()
+        .find(|s| s.name == state)
+        .map(|s| {
+            s.state_params
+                .iter()
+                .map(|p| {
+                    let ty = s.state_param_types.get(p).map(String::as_str).unwrap_or("()");
+                    format!("{p}: <{ty}>::default()")
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_default();
+    format!("{}Args::{state} {{ {inner} }}", sym.name)
 }
 
 fn state_var_ty(v: &crate::resolve::FieldSym) -> String {
@@ -523,16 +646,6 @@ fn state_seed_value(v: &crate::resolve::FieldSym) -> String {
             .clone()
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| format!("<{}>::default()", state_var_ty(v))),
-    }
-}
-
-fn seed_state_vars(st: &crate::resolve::StateSym, out: &mut Sink) {
-    for v in &st.state_vars {
-        out.frame(&format!(
-            "        compartment.state_vars.insert(\"{}\".to_string(), Box::new({}));\n",
-            v.name,
-            state_seed_value(v)
-        ));
     }
 }
 
@@ -564,12 +677,14 @@ impl Rust {
         ));
 
         // 2. The machine, borrowing a `&'a [u8]`. `cursor` is public so the native wrapper
-        //    can read the match extent after a scan.
+        //    can read the match extent after a scan. Its compartment is TYPED per system,
+        //    like an ordinary system's (a scanner never persists, so no serde is derived).
+        emit_compartment_types(sym, out);
         out.frame(&format!("pub struct {name}<'a> {{\n"));
         out.frame("    src: &'a [u8],\n");
         out.frame("    pub cursor: usize,\n");
-        out.frame("    compartment: Compartment,\n");
-        out.frame("    stack: Vec<Compartment>,\n");
+        out.frame(&format!("    compartment: {name}Comp,\n"));
+        out.frame(&format!("    stack: Vec<{name}Comp>,\n"));
         // Domain fields are `pub` on a scanner: they ARE the scanner's output (a count, an
         // accumulated list, a flag), which the native wrapper reads after `scan_at`.
         for f in &sym.domain {
@@ -603,11 +718,10 @@ impl Rust {
         let sep = if cfg.is_empty() { "" } else { ", " };
         out.frame(&format!("    pub fn over(src: &'a [u8]{sep}{cfg}) -> Self {{\n"));
         out.frame(&format!(
-            "        let mut compartment = Compartment::new(\"{first}\");\n"
+            "        let compartment = {name}Comp {{ state: \"{first}\".to_string(), vars: {}, args: {} }};\n",
+            vars_expr(sym, first),
+            args_ctor_expr(sym, first)
         ));
-        if let Some(st) = sym.states.iter().find(|s| s.name == first) {
-            seed_state_vars(st, out);
-        }
         out.frame(&format!("        {name} {{ src, cursor: 0, compartment, stack: Vec::new()"));
         for f in &sym.domain {
             let init = match &f.init_system {
@@ -641,13 +755,14 @@ impl Rust {
             };
             out.frame(&format!("        self.{} = {init};\n", f.name));
         }
+        // Restart at the start state — a fresh typed compartment. `over()`'s config params
+        // are not in scope here, so any start-state args default (a scanner start state
+        // rarely takes params).
         out.frame(&format!(
-            "        let mut compartment = Compartment::new(\"{first}\");\n"
+            "        self.compartment = {name}Comp {{ state: \"{first}\".to_string(), vars: {}, args: {} }};\n",
+            vars_expr(sym, first),
+            args_default_expr(sym, first)
         ));
-        if let Some(st) = sym.states.iter().find(|s| s.name == first) {
-            seed_state_vars(st, out);
-        }
-        out.frame("        self.compartment = compartment;\n");
         if let Some(ev) = sym.interface.first() {
             let evname = &ev.name;
             out.frame("        let mut __steps: usize = 0;\n");

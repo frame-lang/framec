@@ -73,12 +73,26 @@ pub enum Route {
     FixedType,
 }
 
+/// The typed slots of one state — its `$.` state-vars and its `(param)` state-args, each
+/// `(name, type_text)`, the user's type text verbatim. This is what makes the compartment
+/// **typed** rather than erased: a backend emits one variant per state carrying exactly
+/// these fields (so serde/Gson/Codable marshal them natively — RFC-0056 full-compartment
+/// fidelity), and the schema fingerprint covers them so control-state drift is caught too.
+#[derive(Debug, Clone)]
+pub struct StateSlots {
+    pub name: String,
+    pub vars: Vec<(String, String)>,
+    pub args: Vec<(String, String)>,
+}
+
 /// Everything a backend needs to emit persistence for one system — derived **once** from
 /// the symbol table (RFC-0054: one manifest, every backend derives from it).
 #[derive(Debug)]
 pub struct PersistManifest {
     /// Is this system persistent at all? (`@@[persist(..)]` + `@@[save]` + `@@[load]`.)
     pub enabled: bool,
+    /// The system's name — a backend names the typed compartment after it (`<Sys>Comp`).
+    pub sys: String,
     /// The save-method name (`@@[save(<name>)]`) — the user's chosen API, e.g. `snapshot`.
     pub save: String,
     /// The load-method name (`@@[load(<name>)]`) — e.g. `restore`.
@@ -88,6 +102,10 @@ pub struct PersistManifest {
     /// The `domain:` fields that participate, in order. Excludes `@@[no_persist]`.
     /// Each is `(name, type_text)` — the type text is the USER'S and is never parsed.
     pub fields: Vec<(String, String)>,
+    /// Every state's typed slots, in declaration order — the **control-state** shape that
+    /// `save`/`load` must round-trip in full (the compartment AND the stack), not just the
+    /// state name. See `StateSlots`.
+    pub states: Vec<StateSlots>,
     /// The user-defined types this program declares — the **closed world** the reflective
     /// reviver may resolve against. Emitted as a lexical registry, never discovered by
     /// enumerating a module or file (which is how Ruby leaked).
@@ -104,11 +122,45 @@ impl PersistManifest {
             Some(p) => (p.save.clone(), p.load.clone(), p.blob.clone()),
             None => (String::new(), String::new(), String::new()),
         };
+        let states = sym
+            .states
+            .iter()
+            .map(|st| StateSlots {
+                name: st.name.clone(),
+                vars: st
+                    .state_vars
+                    .iter()
+                    .map(|v| {
+                        let ty = match &v.ty {
+                            crate::resolve::TypeRef::Opaque(t) => t.clone(),
+                            crate::resolve::TypeRef::System(s)
+                            | crate::resolve::TypeRef::WrappedSystem { system: s, .. } => s.clone(),
+                            crate::resolve::TypeRef::None => "()".to_string(),
+                        };
+                        (v.name.clone(), ty)
+                    })
+                    .collect(),
+                args: st
+                    .state_params
+                    .iter()
+                    .map(|p| {
+                        let ty = st
+                            .state_param_types
+                            .get(p)
+                            .cloned()
+                            .unwrap_or_else(|| "()".to_string());
+                        (p.clone(), ty)
+                    })
+                    .collect(),
+            })
+            .collect();
         PersistManifest {
             enabled: sym.persist.is_some(),
+            sys: sym.name.clone(),
             save,
             load,
             blob,
+            states,
             fields: sym
                 .domain
                 .iter()
@@ -136,6 +188,29 @@ impl PersistManifest {
             .map(|(n, t)| format!("{n}:{t}"))
             .collect::<Vec<_>>()
             .join(",");
-        format!("frame-persist:1|{fields}")
+        // The control-state shape is part of the fingerprint: a snapshot taken before a
+        // state gained a `$.` var (or a state was renamed) must refuse (E751), not silently
+        // rebuild a mis-shaped compartment. Each state contributes its var/arg slots.
+        let control = self
+            .states
+            .iter()
+            .map(|s| {
+                let vars = s
+                    .vars
+                    .iter()
+                    .map(|(n, t)| format!("{n}:{t}"))
+                    .collect::<Vec<_>>()
+                    .join(";");
+                let args = s
+                    .args
+                    .iter()
+                    .map(|(n, t)| format!("{n}:{t}"))
+                    .collect::<Vec<_>>()
+                    .join(";");
+                format!("{}({vars}|{args})", s.name)
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        format!("frame-persist:2|{fields}|{control}")
     }
 }
