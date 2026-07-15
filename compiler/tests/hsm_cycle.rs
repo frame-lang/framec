@@ -29,3 +29,30 @@ fn a_root_plus_a_cycle_is_a_cycle() {
     // node 0 is a root; nodes 1<->2 cycle. Any cycle anywhere is caught.
     assert!(has_cycle(&[-1, 2, 1]));
 }
+
+// --- The validator integration: a cyclic HSM is caught as E403 in the real pipeline. ---
+
+use frame_compiler::resolve::resolve;
+use frame_compiler::scan::{literals::Target, segment};
+use frame_compiler::validate::validate;
+use frame_compiler::Source;
+
+fn diags(src: &str) -> Vec<String> {
+    let source = Source::new("t.frm", src.as_bytes().to_vec()).unwrap();
+    let ast = segment(&source, Target::Rust).unwrap();
+    let (syms, mut ds) = resolve(&ast);
+    ds.extend(validate(&ast, &syms));
+    ds.into_iter().map(|d| d.code.to_string()).collect()
+}
+
+#[test]
+fn a_cyclic_hsm_is_E403() {
+    let codes = diags("@@system S {\n    interface: e()\n    machine:\n        $A => $B { }\n        $B => $A { }\n}\n");
+    assert!(codes.contains(&"E403".to_string()), "expected E403, got {codes:?}");
+}
+
+#[test]
+fn an_acyclic_hsm_is_clean() {
+    let codes = diags("@@system S {\n    interface: e()\n    machine:\n        $A { e() { } }\n        $B => $A { }\n}\n");
+    assert!(!codes.contains(&"E403".to_string()), "no cycle here, got {codes:?}");
+}

@@ -32,6 +32,32 @@ pub fn validate(ast: &FileAst, syms: &SymbolTable) -> Vec<Diagnostic> {
         let iface: Vec<&str> = sym.interface.iter().map(|m| m.name.as_str()).collect();
         let domain: Vec<&str> = sym.domain.iter().map(|f| f.name.as_str()).collect();
 
+        // E403 — a cycle in the HSM parent chain (`$A => $B => $A`), which would infinite-loop
+        // handler dispatch. Detected by the dogfooded HsmCycle graph-walker system: map each
+        // state's parent name to its index (or -1 for a root) and ask the machine.
+        let parents: Vec<i32> = sym
+            .states
+            .iter()
+            .map(|s| {
+                s.parent
+                    .as_ref()
+                    .and_then(|p| sym.states.iter().position(|x| &x.name == p))
+                    .map(|idx| idx as i32)
+                    .unwrap_or(-1)
+            })
+            .collect();
+        if crate::text::scan::hsm_cycle::has_cycle(&parents) {
+            out.push(Diagnostic {
+                code: "E403",
+                span: sym.span,
+                message: format!(
+                    "system `{}` has a cycle in its HSM parent chain (`$A => $B => $A`), \
+                     which would infinite-loop handler dispatch",
+                    sym.name
+                ),
+            });
+        }
+
         for sec in &sys.sections {
             let Section::Machine(m) = sec else { continue };
             for mm in &m.members {
