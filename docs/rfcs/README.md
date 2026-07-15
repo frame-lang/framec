@@ -69,7 +69,10 @@ numbers are not re-used.
 | [0050](rfc-0050.md) | Frame statement syntax — assignment, call, `if/else`, expressions, comments | Draft | precursor to [0042](rfc-0042.md); strictly additive to existing Frame statement vocabulary |
 | [0051](rfc-0051.md) | Structured handler-body lowering for transforming backends | Draft | — |
 | [0052](rfc-0052.md) | Maximal per-language coverage fixtures + attribute affinity | Draft | — |
-| [0053](rfc-0053.md) | Faithful persistence — round-trip fidelity as the foundational contract | Accepted | builds on [0012](rfc-0012.md), [0015](rfc-0015.md), [0016.1](rfc-0016-1.md), [0049](rfc-0049.md); foundation accepted, layers deferred; first instance #174 (Python), precedent #176 (Dart) |
+| [0053](rfc-0053.md) | Faithful persistence — round-trip fidelity as the foundational contract | Superseded by [0056](rfc-0056.md) | — |
+| [0054](rfc-0054.md) | Persistence type manifest — one algorithm for preserving and reviving types | Superseded by [0056](rfc-0056.md) | — |
+| [0055](rfc-0055.md) | Persistence architecture — faithful save/restore and per-language type identity | Superseded by [0056](rfc-0056.md) | regime analysis carried forward into [0056](rfc-0056.md) |
+| [0056](rfc-0056.md) | Persistence — delegate to the host serializer; framec owns only the frame | Draft | **current north star**; supersedes [0053](rfc-0053.md)/[0054](rfc-0054.md)/[0055](rfc-0055.md); builds on [0015](rfc-0015.md), [0016.1](rfc-0016-1.md) |
 
 ## Other documents in this directory
 

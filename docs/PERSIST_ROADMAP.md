@@ -5,6 +5,13 @@ nav_exclude: true
 
 # Persistence Roadmap — `@@[persist]` in the 4.7 rebuild
 
+> **⚠ DEPRECATED — do not use.** This roadmap executed [RFC-0053](rfcs/rfc-0053.md) /
+> [RFC-0054](rfcs/rfc-0054.md), which are superseded by [RFC-0056](rfcs/rfc-0056.md). Its phase
+> plan, status ledger, and "dependency-free flat format" direction are retired. The north-star is
+> now RFC-0056: single-language round-trip, value marshalling delegated to each host's serializer,
+> framec owning only the manifest, control state, construction bypass, schema check, and the
+> Regime-B type-identity envelope. Any new persistence work follows RFC-0056, not this file.
+
 Implements [RFC-0053](rfcs/rfc-0053.md) (faithful persistence — the foundation) and
 [RFC-0054](rfcs/rfc-0054.md) (the `PersistManifest`). This document is the **execution
 plan and honest status ledger**. It is checked against behaviour — a target counts as done
