@@ -34,6 +34,7 @@ pub mod section_scan;
 pub mod stmt_scan;
 /// HSM parent-chain cycle detector, dogfooded as a plain @@system graph walker.
 pub mod hsm_cycle;
+pub mod reachability;
 use super::{Source, Span};
 use crate::tree::{
     BomItem, EfsmItem, FileAst, Item, NativeItem, Param, PragmaItem, SystemItem, SystemParams,

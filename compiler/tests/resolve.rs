@@ -9,7 +9,7 @@
 //!
 //! Here the validator has no bytes to count. It walks the tree.
 
-use frame_compiler::resolve::{resolve, TypeRef};
+use frame_compiler::resolve::{resolve, Severity, TypeRef};
 use frame_compiler::scan::{literals::Target, segment};
 use frame_compiler::validate::validate;
 use frame_compiler::Source;
@@ -73,15 +73,79 @@ fn a_transition_to_an_unknown_state_is_caught() {
     let (syms, _) = resolve(&ast);
     let diags = validate(&ast, &syms);
 
-    assert_eq!(diags.len(), 1, "{diags:#?}");
-    assert_eq!(diags[0].code, "E402");
-    assert!(diags[0].message.contains("$Ajar"));
+    // Breaking the transition also leaves `$Open` unreachable, which is a (correct) W401
+    // WARNING — but this test is about the E402 ERROR, so look only at errors.
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    assert_eq!(errors.len(), 1, "{diags:#?}");
+    assert_eq!(errors[0].code, "E402");
+    assert!(errors[0].message.contains("$Ajar"));
     assert!(
-        diags[0].message.contains("$Closed") && diags[0].message.contains("$Open"),
+        errors[0].message.contains("$Closed") && errors[0].message.contains("$Open"),
         "the diagnostic should tell the user what the known states ARE"
     );
     // Every diagnostic carries a span. Always.
-    assert!(diags[0].span.len() > 0);
+    assert!(errors[0].span.len() > 0);
+}
+
+/// W401 — a state no path reaches from the start state is dead code. A WARNING (not an
+/// error), found by the dogfooded Reachability graph-walker wired into `validate()`.
+#[test]
+fn an_unreachable_state_is_a_w401_warning() {
+    let src = r#"@@system Reach {
+    interface:
+        go()
+    machine:
+        $Start {
+            go() { -> $Middle }
+        }
+        $Middle {
+            go() { -> $Start }
+        }
+        $Orphan {
+            go() { }
+        }
+}"#;
+    let ast = tree(src, Target::Python3);
+    let (syms, _) = resolve(&ast);
+    let diags = validate(&ast, &syms);
+
+    let w: Vec<_> = diags.iter().filter(|d| d.code == "W401").collect();
+    assert_eq!(w.len(), 1, "exactly $Orphan is unreachable: {diags:#?}");
+    assert_eq!(w[0].severity, Severity::Warning);
+    assert!(w[0].message.contains("$Orphan"));
+    assert!(w[0].message.contains("$Start"), "names the start state");
+    // No ERRORS: an unreachable state does not make the program wrong.
+    assert!(diags.iter().all(|d| d.severity != Severity::Error));
+}
+
+/// A machine whose every state is reachable from the start raises no W401 — including a
+/// back-edge (a cycle is still reachable) and an HSM child whose parent stays live.
+#[test]
+fn a_fully_reachable_machine_is_clean() {
+    let src = r#"@@system Line {
+    interface:
+        go()
+    machine:
+        $A {
+            go() { -> $B }
+        }
+        $B {
+            go() { -> $C }
+        }
+        $C {
+            go() { -> $A }
+        }
+}"#;
+    let ast = tree(src, Target::Python3);
+    let (syms, _) = resolve(&ast);
+    let diags = validate(&ast, &syms);
+    assert!(
+        diags.iter().all(|d| d.code != "W401"),
+        "no state is dead: {diags:#?}"
+    );
 }
 
 /// **The types are the user's. framec carries them and does not look inside.**
@@ -257,7 +321,10 @@ fn the_corpus_resolves_cleanly() {
             states += s.states.len();
             handlers += s.states.iter().map(|st| st.handlers.len()).sum::<usize>();
         }
-        for d in diags.iter().chain(v.iter()) {
+        // "Cleanly" means no ERRORS — the compiler must not *reject* a valid spec. Warnings
+        // (e.g. W401 for a fixture with a deliberately dead substate) are informational and do
+        // not count as noise.
+        for d in diags.iter().chain(v.iter()).filter(|d| d.severity == Severity::Error) {
             noise.push(format!("{}: {} {}", path.display(), d.code, d.message.lines().next().unwrap_or("")));
         }
     }

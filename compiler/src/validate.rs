@@ -15,7 +15,7 @@
 //!
 //! That cannot recur here, because the validator has no bytes to count.
 
-use crate::resolve::{Diagnostic, SymbolTable};
+use crate::resolve::{Diagnostic, Severity, SymbolTable};
 use crate::tree::body::{NativePart, RefKind, Stmt};
 use crate::tree::{FileAst, Item, MachineMember, Section, StateMember};
 
@@ -49,6 +49,7 @@ pub fn validate(ast: &FileAst, syms: &SymbolTable) -> Vec<Diagnostic> {
         if crate::text::scan::hsm_cycle::has_cycle(&parents) {
             out.push(Diagnostic {
                 code: "E403",
+                severity: Severity::Error,
                 span: sym.span,
                 message: format!(
                     "system `{}` has a cycle in its HSM parent chain (`$A => $B => $A`), \
@@ -81,6 +82,7 @@ pub fn validate(ast: &FileAst, syms: &SymbolTable) -> Vec<Diagnostic> {
                                     if !state_names.contains(&target.as_str()) {
                                         out.push(Diagnostic {
                                             code: "E402",
+                                            severity: Severity::Error,
                                             span: t.span,
                                             message: format!(
                                                 "transition to `${target}`, but system \
@@ -105,6 +107,59 @@ pub fn validate(ast: &FileAst, syms: &SymbolTable) -> Vec<Diagnostic> {
                             _ => {}
                         }
                     }
+                }
+            }
+        }
+
+        // W401 — a state that no transition, stack-push, or parent path can reach from the
+        // start state (`sym.states[0]`, the state every backend enters) is dead code. Detected
+        // by the dogfooded Reachability graph-walker: build the edge list — each transition /
+        // stack-push target is an edge, plus a child→parent edge so a live child keeps its
+        // parent live (an unhandled event forwards up to it) — and ask which nodes the walk
+        // reaches. A warning, not an error: dead states are worth surfacing but do not make the
+        // program wrong.
+        if !sym.states.is_empty() {
+            let idx_of = |name: &str| sym.states.iter().position(|s| s.name == name);
+            let mut from: Vec<i32> = Vec::new();
+            let mut to: Vec<i32> = Vec::new();
+            for (i, s) in sym.states.iter().enumerate() {
+                if let Some(pj) = s.parent.as_deref().and_then(idx_of) {
+                    from.push(i as i32);
+                    to.push(pj as i32);
+                }
+            }
+            for sec in &sys.sections {
+                let Section::Machine(m) = sec else { continue };
+                for mm in &m.members {
+                    let MachineMember::State(st) = mm else { continue };
+                    let Some(si) = idx_of(&st.name) else { continue };
+                    for member in &st.members {
+                        let StateMember::Handler(h) = member else { continue };
+                        for stmt in &h.body.stmts {
+                            if let Stmt::Transition(t) | Stmt::StackPush(t) = stmt {
+                                if let Some(tj) = t.target.as_deref().and_then(idx_of) {
+                                    from.push(si as i32);
+                                    to.push(tj as i32);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            let visited =
+                crate::text::scan::reachability::reachable(&from, &to, sym.states.len(), 0);
+            for (i, s) in sym.states.iter().enumerate() {
+                if !visited[i] {
+                    out.push(Diagnostic {
+                        code: "W401",
+                        severity: Severity::Warning,
+                        span: s.span,
+                        message: format!(
+                            "state `${}` is unreachable in system `{}` — no transition, \
+                             stack-push, or parent path reaches it from the start state `${}`",
+                            s.name, sym.name, sym.states[0].name
+                        ),
+                    });
                 }
             }
         }

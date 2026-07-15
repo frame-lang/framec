@@ -102,7 +102,9 @@ fn main() -> ExitCode {
                 return ExitCode::from(2);
             }
         };
-        // Target-blind diagnostics, then target-aware ones (E722 async-on-C, …).
+        // Target-blind diagnostics, then target-aware ones (E722 async-on-C, …). An
+        // Error blocks emission; a Warning is reported but the compile still succeeds.
+        use frame_compiler::resolve::Severity;
         let mut bad = false;
         for d in diags
             .iter()
@@ -110,8 +112,14 @@ fn main() -> ExitCode {
             .chain(driver::target_diagnostics(&ast, &syms, be).iter())
         {
             let (l, c) = src.line_col(d.span.start);
-            eprintln!("{path}:{l}:{c}: {}: {}", d.code, d.message);
-            bad = true;
+            let label = match d.severity {
+                Severity::Error => "error",
+                Severity::Warning => "warning",
+            };
+            eprintln!("{path}:{l}:{c}: {} [{}]: {}", label, d.code, d.message);
+            if d.severity == Severity::Error {
+                bad = true;
+            }
         }
         if bad {
             return ExitCode::from(65);

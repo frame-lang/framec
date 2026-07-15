@@ -1,0 +1,61 @@
+@@[target("rust")]
+
+// STATE-REACHABILITY analysis, dogfooded as a plain `@@system` GRAPH WALKER (the second
+// back-half machine, after HsmCycle). A state that no transition/stack-push/parent path can
+// reach from the start state is dead — worth a warning. The graph is an EDGE LIST: `from[e] ->
+// to[e]` for each of `edge_count` edges over `node_count` nodes. `seed` is the initial visited
+// set (just the start node). framec owns the WALK; the leaf `relax` queries+grows the frontier.
+//
+// The walk is iterative relaxation (no explicit stack): each $Pass sweeps every edge once and
+// marks a `to` node visited when its `from` node already is; it repeats until a $Pass changes
+// nothing (or `node_count` passes — the longest simple path — elapse). `visited` then holds
+// exactly the nodes reachable from the start. The wrapper drives `step()` a bounded number of
+// times and reads `visited`.
+
+@@system Reachability(from: Vec<i32>, to: Vec<i32>, edge_count: usize, node_count: usize, seed: Vec<bool>) {
+    interface:
+        step()
+    machine:
+        $Pass {
+            step() {
+                if self.p >= self.node_count {
+                    -> $Done
+                }
+                self.changed = false;
+                self.e = 0;
+                -> $Scan
+            }
+        }
+        $Scan {
+            step() {
+                if self.e >= self.edge_count {
+                    -> $EndPass
+                }
+                let grew = relax(&mut self.visited, &self.from, &self.to, self.e);
+                if grew {
+                    self.changed = true;
+                }
+                self.e = self.e + 1;
+                -> $Scan
+            }
+        }
+        $EndPass {
+            step() {
+                if self.changed {
+                    self.p = self.p + 1;
+                    -> $Pass
+                }
+                -> $Done
+            }
+        }
+        $Done { }
+    domain:
+        from: Vec<i32> = from
+        to: Vec<i32> = to
+        edge_count: usize = edge_count
+        node_count: usize = node_count
+        visited: Vec<bool> = seed
+        changed: bool = false
+        p: usize = 0
+        e: usize = 0
+}

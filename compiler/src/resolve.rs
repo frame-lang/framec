@@ -155,10 +155,20 @@ pub enum TypeRef {
     None,
 }
 
+/// Severity of a diagnostic. An `Error` blocks emission; a `Warning` is reported but the
+/// compile still succeeds. Unreachable states, dead handlers, and the like are warnings —
+/// they are worth telling the author about, but they do not make the program wrong.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum Severity {
+    Error,
+    Warning,
+}
+
 /// A diagnostic. Every one carries a span, always.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Diagnostic {
     pub code: &'static str,
+    pub severity: Severity,
     pub span: Span,
     pub message: String,
 }
@@ -381,6 +391,7 @@ fn classify(
         if mentions_word(t, k) {
             diags.push(Diagnostic {
                 code: "E640",
+                severity: Severity::Error,
                 span,
                 message: format!(
                     "the type `{t}` mentions the system `{k}`, but nothing tells framec \

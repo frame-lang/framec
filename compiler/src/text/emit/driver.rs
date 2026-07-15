@@ -288,6 +288,7 @@ pub fn target_diagnostics(
         if sym.is_async || sym.interface.iter().any(|m| m.is_async) {
             out.push(crate::resolve::Diagnostic {
                 code: "E722",
+                severity: crate::resolve::Severity::Error,
                 span: sym.span,
                 message: format!(
                     "system `{}` is async, but target `{}` has no async runtime — \
