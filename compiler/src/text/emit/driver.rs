@@ -415,18 +415,29 @@ pub fn emit(src: &Source, ast: &FileAst, syms: &SymbolTable, be: &dyn Backend) -
                             .interface
                             .iter()
                             .any(|m| m.name == h.event && m.is_async);
+                    // A handler inherits the interface method's return TYPE when it does not
+                    // declare one itself. The router returns the interface type, so the handler
+                    // method must produce it — otherwise a value-returning event typed only on
+                    // the interface (`getmag(): f64` + `getmag() { @@:(...) }`) mismatches: a
+                    // `-> ()` handler returning a value (E0308 on Rust, a void method on Java/C).
+                    let ret = h.return_text.as_deref().or_else(|| {
+                        sym.interface
+                            .iter()
+                            .find(|m| m.name == h.event)
+                            .and_then(|m| m.return_text.as_deref())
+                    });
                     be.open_handler(
                         sym,
                         &st.name,
                         &h.event,
                         &h.params_text,
-                        h.return_text.as_deref(),
+                        ret,
                         is_async,
                         &mut out,
                     );
                     let terminated =
                         emit_body(src, syms, sym, &st.name, &h.event, is_async, &h.body, be, &mut out);
-                    be.close_handler(h.return_text.as_deref(), is_async, terminated, &mut out);
+                    be.close_handler(ret, is_async, terminated, &mut out);
                 }
             }
         }
