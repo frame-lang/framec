@@ -1,0 +1,51 @@
+@@[target("rust")]
+@@[scan(u8)]
+
+// System-instantiation recognizer, dogfooded as an `@@[scan(u8)]` system — the `@@system`
+// analogue of the hand `instantiation_at`. From the cursor it recognizes `@@Name(args)` (or
+// `@@!Name(args)`): `@@` not followed by `:`, an optional `!`, an identifier NAME, then a
+// balanced `(...)` arg list. framec owns the SHAPE (dispatch + the ident-run loop); the
+// balanced arg extent is found by COMPOSING the (string-aware) ParenBalance system as a
+// leaf. Arg PARSING (into groups) stays a native leaf in the wrapper.
+//
+// Regen: framec-ng -l rust --emit inst_scan.frs | grep -v '^#!\[allow' > inst_scan.gen.rs
+
+@@system InstScan {
+    interface:
+        step()
+    machine:
+        $Start {
+            step() {
+                if is_inst_start(self.src, self.cursor) {
+                    self.name_start = after_at_bang(self.src, self.cursor);
+                    self.cursor = self.name_start;
+                    -> $Name
+                }
+                -> $Reject
+            }
+        }
+        $Name {
+            step() {
+                if is_ident_at(self.src, self.cursor) {
+                    self.cursor = self.cursor + 1;
+                } else {
+                    self.name_end = self.cursor;
+                    let p = skip_ws_at(self.src, self.cursor);
+                    if is_open_paren_at(self.src, p) {
+                        let e = paren_end(self.src, p);
+                        if e > p {
+                            self.cursor = e;
+                            -> $Accept
+                        }
+                        -> $Reject
+                    }
+                    -> $Reject
+                }
+            }
+        }
+        $Accept { }
+        $Reject { }
+    domain:
+        name_start: usize = 0
+        name_end: usize = 0
+}

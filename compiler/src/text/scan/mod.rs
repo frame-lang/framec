@@ -22,6 +22,8 @@ pub mod string_counter;
 pub mod segmenter;
 /// Frame-reference recognizer, dogfooded as a Frame @@[scan(u8)] system.
 pub mod ref_scan;
+/// System-instantiation recognizer, dogfooded as a Frame @@[scan(u8)] system.
+pub mod inst_scan;
 use super::{Source, Span};
 use crate::tree::{
     BomItem, EfsmItem, FileAst, Item, NativeItem, Param, PragmaItem, SystemItem, SystemParams,

@@ -142,6 +142,12 @@ pub fn frame_ref_at_pub(bytes: &[u8], i: usize, to: usize) -> Option<FrameRef> {
     frame_ref_at(bytes, i, to)
 }
 
+/// Public for the differential test that proves the dogfooded `InstScan` system agrees with
+/// this hand recognizer.
+pub fn instantiation_at_pub(bytes: &[u8], i: usize, to: usize) -> Option<Instantiation> {
+    instantiation_at(bytes, i, to)
+}
+
 fn frame_ref_at(bytes: &[u8], i: usize, to: usize) -> Option<FrameRef> {
     // `$.name`
     if i + 1 < to && bytes[i] == b'$' && bytes[i + 1] == b'.' {
