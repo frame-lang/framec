@@ -64,14 +64,16 @@ impl Backend for Rust {
         out.frame(&format!("pub struct {name} {{\n"));
         out.frame("    compartment: Compartment,\n");
         out.frame("    stack: Vec<Compartment>,\n");
-        // Domain fields — the user's declared type, VERBATIM.
+        // Domain fields — the user's declared type, VERBATIM. `pub`, like a scanner's: the
+        // domain IS the system's readable state (a walker's result, a counter), so a native
+        // wrapper can read it after driving the machine.
         for f in &sym.domain {
             let ty = match &f.ty {
                 TypeRef::Opaque(t) => t.clone(),
                 TypeRef::System(s) | TypeRef::WrappedSystem { system: s, .. } => s.clone(),
                 TypeRef::None => "()".to_string(),
             };
-            out.frame(&format!("    {}: {ty},\n", f.name));
+            out.frame(&format!("    pub {}: {ty},\n", f.name));
         }
         out.frame("}\n\n");
 

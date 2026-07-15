@@ -1,0 +1,51 @@
+@@[target("rust")]
+
+// HSM parent-chain CYCLE detector, dogfooded as a plain `@@system` GRAPH WALKER (not a byte
+// scanner) — the first back-half machine, cracking the non-byte drive pattern. A cycle in the
+// parent chain (`$A => $B => $A`) would infinite-loop the HSM handler dispatch, so it must be
+// caught. The graph is the `parents` array (parent[i] = parent index, or -1 for a root),
+// passed via `new(parents, count)`. framec owns the WALK ($Next picks a start node, $Follow
+// chases parents); the leaf `parent_of` queries the graph. A node whose chain exceeds `count`
+// hops is in a cycle (pigeonhole). The wrapper drives `step()` a bounded number of times.
+//
+// cyclic ends true iff any parent chain cycles.
+
+@@system HsmCycle(parents: Vec<i32>, count: usize) {
+    interface:
+        step()
+    machine:
+        $Next {
+            step() {
+                if self.k >= self.count {
+                    -> $Done
+                }
+                self.cur = self.k as i32;
+                self.steps = 0;
+                -> $Follow
+            }
+        }
+        $Follow {
+            step() {
+                let p = parent_of(&self.parents, self.cur);
+                if p < 0 {
+                    self.k = self.k + 1;
+                    -> $Next
+                }
+                if self.steps > self.count {
+                    self.cyclic = true;
+                    -> $Done
+                }
+                self.cur = p;
+                self.steps = self.steps + 1;
+                -> $Follow
+            }
+        }
+        $Done { }
+    domain:
+        parents: Vec<i32> = parents
+        count: usize = count
+        k: usize = 0
+        cur: i32 = 0
+        steps: usize = 0
+        cyclic: bool = false
+}

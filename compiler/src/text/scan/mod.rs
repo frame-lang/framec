@@ -32,6 +32,8 @@ pub mod native_parts_scan;
 pub mod section_scan;
 /// The statement-level classifier, dogfooded as a Frame @@[scan(u8)] system.
 pub mod stmt_scan;
+/// HSM parent-chain cycle detector, dogfooded as a plain @@system graph walker.
+pub mod hsm_cycle;
 use super::{Source, Span};
 use crate::tree::{
     BomItem, EfsmItem, FileAst, Item, NativeItem, Param, PragmaItem, SystemItem, SystemParams,
