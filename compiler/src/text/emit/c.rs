@@ -545,6 +545,12 @@ impl Backend for C {
     fn supports_async(&self) -> bool {
         false
     }
+
+    /// RFC-0056: C has no serializer and no reflection, so it can persist only scalars and
+    /// strings. A user-defined type is refused (E752), not silently miscompiled.
+    fn persistable_field(&self, type_text: &str) -> bool {
+        c_is_scalar(type_text) || c_is_string(type_text)
+    }
 }
 
 impl C {
@@ -659,6 +665,48 @@ fn c_ident(event: &str) -> String {
 /// pointer-to-char types — a fixed target vocabulary, not a user-type-name branch.
 fn c_is_string(t: &str) -> bool {
     matches!(t.trim(), "char*" | "char *" | "const char*" | "const char *")
+}
+
+/// Is this a C scalar type framec can marshal without a serializer? A fixed vocabulary of C's
+/// own primitive/stdint types — not a user-type-name branch. Anything outside it (a user
+/// `struct`, a collection) is refused on C by E752 (RFC-0056 Option 1: C persists scalars only).
+fn c_is_scalar(t: &str) -> bool {
+    matches!(
+        t.split_whitespace().collect::<Vec<_>>().join(" ").as_str(),
+        "int"
+            | "signed"
+            | "signed int"
+            | "unsigned"
+            | "unsigned int"
+            | "long"
+            | "long int"
+            | "unsigned long"
+            | "long long"
+            | "unsigned long long"
+            | "short"
+            | "unsigned short"
+            | "char"
+            | "signed char"
+            | "unsigned char"
+            | "float"
+            | "double"
+            | "long double"
+            | "bool"
+            | "_Bool"
+            | "size_t"
+            | "ssize_t"
+            | "ptrdiff_t"
+            | "intptr_t"
+            | "uintptr_t"
+            | "int8_t"
+            | "int16_t"
+            | "int32_t"
+            | "int64_t"
+            | "uint8_t"
+            | "uint16_t"
+            | "uint32_t"
+            | "uint64_t"
+    )
 }
 
 /// The `printf` conversion for a scalar field in the snapshot. `%.17g` round-trips a double

@@ -788,3 +788,46 @@ fn control_state_round_trips_on_java() {
     }
     assert_eq!(out.trim(), "1", "after restore the machine must be in $On (read()==1), not $Off");
 }
+
+// ─── RFC-0056 Option 1: C persists scalars only; a user type is refused (E752) ───
+
+const C_USERTYPE: &str = r#"@@[persist(char*)]
+@@[save(snapshot)]
+@@[load(restore)]
+@@system Bag {
+    interface:
+        go()
+    machine:
+        $A {
+            go() { }
+        }
+    domain:
+        p: Point = zero()
+        n: int = 0
+}
+"#;
+
+/// C has no serializer, so a user-typed persisted field is REFUSED at compile time (E752),
+/// not silently miscompiled — RFC-0056's decided C contract (scalars + strings only). The
+/// scalar `n` alongside it is fine; only `p: Point` is flagged.
+#[test]
+fn c_refuses_a_user_type_persist_field_e752() {
+    let src = Source::new("t.frm", C_USERTYPE.as_bytes().to_vec()).unwrap();
+    let ast = segment(&src, Target::C).unwrap();
+    let (syms, _) = resolve(&ast);
+    let diags = driver::target_diagnostics(&ast, &syms, &CBackend::new());
+    let e752: Vec<_> = diags.iter().filter(|d| d.code == "E752").collect();
+    assert_eq!(e752.len(), 1, "only the user-typed field is refused: {diags:#?}");
+    assert!(e752[0].message.contains("Point"), "the message names the offending type");
+}
+
+/// The SAME spec on Rust raises no E752 — serde marshals the user type. The refusal is a C
+/// fact (no serializer), not a persistence-wide rule.
+#[test]
+fn rust_accepts_the_same_user_type_persist_field() {
+    let src = Source::new("t.frm", C_USERTYPE.as_bytes().to_vec()).unwrap();
+    let ast = segment(&src, Target::Rust).unwrap();
+    let (syms, _) = resolve(&ast);
+    let diags = driver::target_diagnostics(&ast, &syms, &Rust);
+    assert!(diags.iter().all(|d| d.code != "E752"), "serde marshals user types: {diags:#?}");
+}

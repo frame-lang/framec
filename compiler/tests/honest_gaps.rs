@@ -169,17 +169,12 @@ fn the_compliance_number_carries_its_asterisk() {
     // CLOSED, each proven by RUNNING (see honest_gaps + tests/persist.rs):
     //   HSM, forward `=> $^`, @@[async]; @@[persist] SCALAR round-trip + control state, and
     //   out-of-band framing (#233 impossible on Python).
-    // OPEN — known-open items. Most are named by an #[ignore]d test; a *design-open* item
-    // (a decision not yet taken, with nothing to un-ignore) is listed here and detailed in its
-    // RFC instead.
-    const GAPS: &[(&str, &str)] = &[(
-        "persist user types (C)",
-        "RFC-0056 R2 — a user-defined type MUST self-marshal through the host serializer. Rust \
-         (serde) and Java (Gson) do this: user types, nesting, and collections round-trip (see \
-         tests/persist.rs). C has NO standard serializer, so its user-type persist is the \
-         RFC-0056 UNRESOLVED decision — scalar-limited vs. a single framec-emitted encoder. This \
-         is design-open (nothing to un-ignore); it is tracked in RFC-0056 § Unresolved questions.",
-    )];
+    // OPEN — known-open items, each named by an #[ignore]d test or an RFC decision. Empty
+    // means persistence is complete for every backend that exists: Python (reflective), Rust
+    // (serde), and Java (Gson) round-trip user types / nesting / collections; C persists
+    // scalars only and REFUSES a user-typed field with E752 — RFC-0056's decided contract (no
+    // serializer), enforced by a test, not a silent miscompile. So there is nothing open here.
+    const GAPS: &[(&str, &str)] = &[];
     eprintln!("\n  CLEANROOM: 15/15 Java corpus fixtures COMPILE.");
     eprintln!("  That number is SYNTAX-ONLY, and {} feature(s) remain OPEN:\n", GAPS.len());
     for (name, why) in GAPS {
@@ -191,9 +186,9 @@ fn the_compliance_number_carries_its_asterisk() {
            that does not compile (#232). Run `cargo test -- --ignored` for the debt.\n"
     );
     // This count pins the open-item ledger so "15/15 compile" is never quoted without its
-    // asterisk. Each entry is either an #[ignore]d test (un-ignore when it lands) or a
-    // design-open decision detailed in an RFC (the C persist decision). Update on any change.
-    assert_eq!(GAPS.len(), 1, "the open-item ledger drifted");
+    // asterisk. Each entry is either an #[ignore]d test (un-ignore when it lands) or a decision
+    // recorded in an RFC. Update on any change.
+    assert_eq!(GAPS.len(), 0, "the open-item ledger drifted");
 }
 
 /// **#225 — `await` MUST NOT land at the head.**
