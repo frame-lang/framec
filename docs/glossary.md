@@ -106,6 +106,14 @@ then run the [start state](#start-state)'s `$Start(...)` body and its
 construction is the [factory](#factory). Contrast [no-initialization](#no-initialization).
 See [RFC-0015](rfcs/rfc-0015.md).
 
+### control state
+
+The live position of a running [machine](#machine): its current [state](#state) and, for a
+[state-stack](#state-stack) machine, the stack. Distinct from the [domain](#domain) data a
+system holds. The [persist contract](#persist-contract) requires control state to round-trip,
+not only domain fields, so a restored instance resumes exactly where the saved one was. See
+[RFC-0056](rfcs/rfc-0056.md).
+
 ### dispatch
 
 The runtime act of routing an incoming [frame event](#frame-event) to the
@@ -347,6 +355,16 @@ Concretely, an oracle is another Frame system (or scanner) the backbone calls,
 as framec's parser does with the dogfooded attribute / expression scanners. See
 [RFC-0039](rfcs/rfc-0039.md#terminology).
 
+### out-of-band framing
+
+On the dynamic-reflective persistence [regime](#regime), carrying a persisted value's type
+identity in an envelope whose slots cannot collide with the user's own data — so a user
+container that merely contains the envelope's key names is never mis-restored as a typed value.
+framec's answer to type-mimicry restoration (reading a type name out of the user's own
+namespace). Required *only* where framec injects a type tag (the reflective regime); on the
+static regime the declared type carries identity and no framing is needed. See
+[RFC-0056](rfcs/rfc-0056.md).
+
 ### parameterized system
 
 A [system](#system) whose header declares [system parameters](#system-parameter)
@@ -426,6 +444,13 @@ method that returns a blob containing the [system](#system)'s [domain](#domain)
 fields, [compartment](#compartment), and [state stack](#state-stack) (and any
 nested `@@system` domain fields). Named with `@@[save(<name>)]`. See
 [language reference § Persistence](frame_language.md#persistence).
+
+### self-marshalling
+
+The requirement, on a persistence [regime](#regime) that delegates to the host serializer, that a
+user-defined type used in a persisted [domain](#domain) field be serializable by that serializer
+itself (in Rust, deriving `Serialize` / `Deserialize`). framec writes no marshalling code for the
+type; the serializer, not framec, enforces the requirement. See [RFC-0056](rfcs/rfc-0056.md).
 
 ### snapshot
 
