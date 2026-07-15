@@ -26,6 +26,8 @@ pub mod ref_scan;
 pub mod inst_scan;
 /// Embedded-system-call recognizer, dogfooded as a Frame @@[scan(u8)] system.
 pub mod embed_scan;
+/// The native-code island dispatch, dogfooded as a Frame @@[scan(u8)] system.
+pub mod native_parts_scan;
 use super::{Source, Span};
 use crate::tree::{
     BomItem, EfsmItem, FileAst, Item, NativeItem, Param, PragmaItem, SystemItem, SystemParams,
