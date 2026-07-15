@@ -1,0 +1,77 @@
+@@[target("rust")]
+@@[scan(u8)]
+
+// Embedded-system-call recognizer, dogfooded as an `@@[scan(u8)]` system — the `@@system`
+// analogue of the hand `embed_call_at`. From the cursor it recognizes
+// `@@:self.<field>.<method>(args)`: the `@@:self.` head, a FIELD ident, a `.`, a METHOD
+// ident, then a balanced `(...)`. framec owns the SHAPE ($Field/$Method run the ident loops
+// and gate on `.`/`(`); the balanced arg extent is found by COMPOSING string-aware
+// ParenBalance as a leaf. A bare `@@:self.a.b` (no parens) is a field read, not a call — so
+// the `(` is required.
+//
+// Regen: framec-ng -l rust --emit embed_scan.frs | grep -v '^#!\[allow' > embed_scan.gen.rs
+
+@@system EmbedScan {
+    interface:
+        step()
+    machine:
+        $Start {
+            step() {
+                if starts_self_dot(self.src, self.cursor) {
+                    self.cursor = self.cursor + 8;
+                    self.field_start = self.cursor;
+                    -> $Field
+                }
+                -> $Reject
+            }
+        }
+        $Field {
+            step() {
+                if is_ident_at(self.src, self.cursor) {
+                    self.cursor = self.cursor + 1;
+                } else {
+                    if self.cursor == self.field_start {
+                        -> $Reject
+                    }
+                    if is_dot_at(self.src, self.cursor) {
+                        self.field_end = self.cursor;
+                        self.cursor = self.cursor + 1;
+                        self.method_start = self.cursor;
+                        -> $Method
+                    }
+                    -> $Reject
+                }
+            }
+        }
+        $Method {
+            step() {
+                if is_ident_at(self.src, self.cursor) {
+                    self.cursor = self.cursor + 1;
+                } else {
+                    if self.cursor == self.method_start {
+                        -> $Reject
+                    }
+                    self.method_end = self.cursor;
+                    let p = skip_ws_at(self.src, self.cursor);
+                    if is_open_paren_at(self.src, p) {
+                        self.paren_open = p;
+                        let e = paren_end(self.src, p);
+                        if e > p {
+                            self.cursor = e;
+                            -> $Accept
+                        }
+                        -> $Reject
+                    }
+                    -> $Reject
+                }
+            }
+        }
+        $Accept { }
+        $Reject { }
+    domain:
+        field_start: usize = 0
+        field_end: usize = 0
+        method_start: usize = 0
+        method_end: usize = 0
+        paren_open: usize = 0
+}

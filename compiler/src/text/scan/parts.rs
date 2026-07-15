@@ -148,6 +148,11 @@ pub fn instantiation_at_pub(bytes: &[u8], i: usize, to: usize) -> Option<Instant
     instantiation_at(bytes, i, to)
 }
 
+/// Public for the `EmbedScan` differential test.
+pub fn embed_call_at_pub(bytes: &[u8], i: usize, to: usize) -> Option<crate::tree::body::EmbedCall> {
+    embed_call_at(bytes, i, to)
+}
+
 fn frame_ref_at(bytes: &[u8], i: usize, to: usize) -> Option<FrameRef> {
     // `$.name`
     if i + 1 < to && bytes[i] == b'$' && bytes[i + 1] == b'.' {

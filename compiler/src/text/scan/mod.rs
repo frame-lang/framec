@@ -24,6 +24,8 @@ pub mod segmenter;
 pub mod ref_scan;
 /// System-instantiation recognizer, dogfooded as a Frame @@[scan(u8)] system.
 pub mod inst_scan;
+/// Embedded-system-call recognizer, dogfooded as a Frame @@[scan(u8)] system.
+pub mod embed_scan;
 use super::{Source, Span};
 use crate::tree::{
     BomItem, EfsmItem, FileAst, Item, NativeItem, Param, PragmaItem, SystemItem, SystemParams,
