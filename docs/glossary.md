@@ -436,7 +436,8 @@ by where a persisted value's type identity comes from: **static** (framec bakes 
 declared type; no in-blob tag), **dynamic reflective** (the runtime names the value's
 type, carried as an in-blob tag), and **dynamic non-reflective** (the runtime cannot
 name the type, so identity comes from the declared type plus a marshalling route).
-See RFC-0055.
+See [RFC-0056](rfcs/rfc-0056.md) (the static regime splits further into A1 — the
+serializer reconstructs — and A2 — framec emits the reviver, e.g. Dart/C).
 
 ### save
 
