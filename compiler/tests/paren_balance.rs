@@ -32,3 +32,11 @@ fn scan_is_restartable_the_counter_resets() {
     }
     assert_eq!(runs, vec![Some(7), Some(7), Some(7)], "depth resets each scan");
 }
+
+#[test]
+fn parens_inside_strings_are_not_counted() {
+    // A `)` inside a "-string must not close the group (v1 was string-blind).
+    assert_eq!(scan(br#"(")")"#, 0), Some(5), "close-paren inside the string does not close early");
+    assert_eq!(scan(br#"(a, "b)c", d)"#, 0), Some(13), "a string arg carrying a close-paren");
+    assert_eq!(scan(br#"("(((")"#, 0), Some(7), "opens inside a string do not raise depth");
+}

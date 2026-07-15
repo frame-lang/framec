@@ -15,9 +15,10 @@ impl Compartment {
 
 // Balanced-`()` extent recognizer, dogfooded as an `@@[scan(u8)]` system. A COUNTER
 // automaton (the journal's point: framec's bracket scanners count openers against closers;
-// they are not kind-matched pushdowns). Matches `Lexer`-less `balanced(bytes, i, '(', ')')`
-// for the string-free case: from a `(` at the cursor, find the matching `)`, leaving cursor
-// one past it. `depth` is a domain counter; `scan_at` resets it per scan.
+// they are not kind-matched pushdowns) that is STRING-AWARE: it composes StringScan (via the
+// `skip_string` leaf) to skip over a `"`-string so a `)` inside it does not count. From a
+// `(` at the cursor it finds the matching `)`, leaving cursor one past it. `depth` is a
+// domain counter; `scan_at` resets it per scan.
 //
 // Regen: framec-ng -l rust --emit paren_balance.frs | grep -v '^#!\[allow' > paren_balance.gen.rs
 
@@ -65,18 +66,23 @@ impl<'a> ParenBalance<'a> {
             self.compartment = __next;
             return Default::default();
         }
-                let b = self.src.fsm_get(self.cursor);
-                self.cursor = self.cursor + 1;
-                if b == 40 {
-                    self.depth = self.depth + 1;
+                let sk = skip_string(self.src, self.cursor);
+                if sk > self.cursor {
+                    self.cursor = sk;
+                } else {
+                    let b = self.src.fsm_get(self.cursor);
+                    self.cursor = self.cursor + 1;
+                    if b == 40 {
+                        self.depth = self.depth + 1;
+                    }
+                    if b == 41 {
+                        self.depth = self.depth - 1;
+                        if self.depth == 0 {
+                    let mut __next = Compartment::new("Accept");
+                    self.compartment = __next;
+                    return Default::default();
                 }
-                if b == 41 {
-                    self.depth = self.depth - 1;
-                    if self.depth == 0 {
-                let mut __next = Compartment::new("Accept");
-                self.compartment = __next;
-                return Default::default();
-            }
+                    }
                 }
     }
 
