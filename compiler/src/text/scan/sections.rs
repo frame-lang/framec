@@ -55,7 +55,10 @@ pub fn sections(lx: &Lexer, bytes: &[u8], sys: Span) -> Vec<Section> {
     // hand-written brace counters each knew a different subset of their language's
     // literals, which is exactly how a `}` inside a Ruby heredoc closed a block that
     // was never open — #219. Here there is one lexer and everyone asks it.)
-    let starts = section_keyword_starts(lx, bytes, body_start, close_start);
+    // **Production runs the dogfooded SectionScan system** (docs/JOURNAL.md); the hand
+    // `section_keyword_starts` remains only as the differential-test oracle.
+    let starts =
+        super::section_scan::keyword_starts(bytes, body_start, close_start, lx.target());
 
     // Sections run from their keyword to the next keyword (or to the closing brace).
     let mut cursor = body_start;
