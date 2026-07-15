@@ -1504,3 +1504,40 @@ dead substates (`$Live`'s handlers are empty; nothing ever transitions to `$Awak
 A true positive on the first live spec it met. The other 200-odd systems are clean.
 
 What is NOT yet a machine: the emit walk. That is the back half's last and largest walker.
+
+---
+
+## 2026-07-14 — The emit walk is not a machine, and saying so is the point
+
+The line above promised the emit body-statement walk as "the back half's last and largest
+walker." That promise was wrong, and correcting it is more faithful to the thesis than fulfilling
+it would have been. The machine-architect's verdict, grounded in the code:
+
+The emit walk (`emit_body`, `text/emit/driver.rs`) is a finite-state **transducer**, not a
+traversal. Run the count-or-nest test on its *control* and everything collapses: the only thing
+it accumulates across `body.stmts` is one bit — `terminated` — that flips exactly once at a
+base-nesting terminal (`-> `, `pop$`, `@@:return`) and never resets. That is an absorbing latch,
+two states {Emitting, Terminated}, below even a counter automaton. The predicate is
+`stmts.position(is_base_terminal)` — find-first-true. HsmCycle chases parent chains to an
+unbounded follow-depth under a pigeonhole bound; Reachability sweeps to a fixpoint; their history
+(`steps`, `visited`, `changed`) genuinely accumulates. The emit latch does not. It is not in
+their class.
+
+And its *substance* — `be.transition(...)`, `be.native_stmt(...)`, the lifecycle calls — is
+side-effecting emission through a borrowed `&dyn Backend` into a `&mut Sink`. A generated
+`@@system` domain holds owned data; it cannot hold those borrows, and a pure Frame leaf
+(`parent_of`, `relax`) cannot either. The only "conversion" available relocates the emission loop
+into a wrapper and leaves a system computing find-first-true over a `Vec<bool>` — real states,
+zero accumulated content, the loop merely moved. Ceremony.
+
+Decisively: the emit walk is **already structural**. It consumes the AST in order and is itself
+the code that retired `strip_java_unreachable` — the old text-oracle that recovered
+dead-code-after-`->` by deleting lines out of text framec had just emitted. The comment at the
+walk says it plainly: *"There is no pass; there is a `bool`."* #123's mandate is already
+satisfied at this site. A machine here would be ceremony over a wound already closed.
+
+**So the back-half campaign is complete.** Two graph walkers (HsmCycle, Reachability) earned their
+`@@system` and got it. The emit walk is intentionally left as native control — a transducer, not a
+walker — and that is the correct call, not an unfinished one. The dogfooding thesis was never
+"wrap every loop in a system"; it was "a recognizer whose logic IS a machine must become one." The
+discipline that converts the scanners is the same discipline that declines the emit latch.
