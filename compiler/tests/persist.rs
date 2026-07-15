@@ -614,3 +614,177 @@ fn control_state_round_trips_on_c() {
     }
     assert_eq!(out.trim(), "1", "after restore the machine must be in $On (read()==1), not $Off");
 }
+
+// ─────────────────────────────────────────────────────────────────────────────────────
+// FIXED-TYPE ROUTE (Java, Regime A per RFC-0056) via Gson. Java delegates to Gson: a user
+// type self-marshals (Gson reflects over its fields into the declared type). framec writes
+// no per-type code. Needs Gson on the classpath, so these tests discover a gson jar in the
+// local caches and SKIP if none is found. Proven by RUNNING javac/java.
+// ─────────────────────────────────────────────────────────────────────────────────────
+
+use frame_compiler::text::emit::java::Java;
+
+fn emit_java(frm: &str) -> String {
+    let src = Source::new("t.frm", frm.as_bytes().to_vec()).unwrap();
+    let ast = segment(&src, Target::Java).unwrap();
+    let (syms, _) = resolve(&ast);
+    driver::emit(&src, &ast, &syms, &Java::new())
+}
+
+/// Locate a gson jar in the usual local caches (maven/gradle). None → the Java tests SKIP.
+fn gson_jar() -> Option<String> {
+    let home = std::env::var("HOME").unwrap_or_default();
+    for root in ["/opt/homebrew/Cellar".to_string(), format!("{home}/.gradle")] {
+        if let Ok(o) = Command::new("find").arg(&root).args(["-name", "gson-*.jar"]).output() {
+            if let Some(j) = String::from_utf8_lossy(&o.stdout).lines().find(|l| !l.is_empty()) {
+                return Some(j.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Compile the generated Java plus a `main` (Gson on the classpath) and run `Main`; stdout.
+fn run_java(frm: &str, main: &str, dir: &str) -> String {
+    let gson = match gson_jar() {
+        Some(j) => j,
+        None => return "SKIP".into(),
+    };
+    if Command::new("javac").arg("--version").output().is_err() {
+        return "SKIP".into();
+    }
+    let code = emit_java(frm);
+    let cls = code
+        .lines()
+        .find_map(|l| l.strip_prefix("public class "))
+        .and_then(|l| l.split_whitespace().next())
+        .expect("a public class");
+    let d = std::env::temp_dir().join(dir);
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    std::fs::write(d.join(format!("{cls}.java")), format!("{code}\n{main}\n")).unwrap();
+    let o = Command::new("javac")
+        .arg("-cp")
+        .arg(&gson)
+        .arg(format!("{cls}.java"))
+        .current_dir(&d)
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "javac rejected:\n{}", String::from_utf8_lossy(&o.stderr));
+    let o = Command::new("java")
+        .arg("-cp")
+        .arg(format!(".:{gson}"))
+        .arg("Main")
+        .current_dir(&d)
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&o.stdout).into_owned()
+}
+
+const JAVA_COUNTER: &str = r#"@@[persist(String)]
+@@[save(snapshot)]
+@@[load(restore)]
+@@system Counter {
+    interface:
+        bump()
+    machine:
+        $A {
+            bump() { @@:self.n = @@:self.n + 1; }
+        }
+    domain:
+        n: int = 0
+}
+"#;
+
+/// A scalar field round-trips through Gson (save → restore → observe).
+#[test]
+fn a_scalar_round_trips_on_the_fixed_type_java_route() {
+    let out = run_java(
+        JAVA_COUNTER,
+        "class Main { public static void main(String[] a) { \
+            Counter c = new Counter(); c.bump(); c.bump(); c.bump(); \
+            String s = c.snapshot(); Counter c2 = new Counter(); c2.restore(s); \
+            System.out.println(c2.n); } }",
+        "java_persist_roundtrip",
+    );
+    if out == "SKIP" {
+        return;
+    }
+    assert_eq!(out.trim(), "3", "restore must reproduce n=3, not the default 0");
+}
+
+const JAVA_BAG: &str = r#"@@[persist(String)]
+@@[save(snapshot)]
+@@[load(restore)]
+@@system Bag {
+    interface:
+        go()
+    machine:
+        $A {
+            go() { }
+        }
+    domain:
+        p: Point = new Point()
+        tags: java.util.List<String> = new java.util.ArrayList<>()
+}
+"#;
+
+/// **RFC-0056 R2: a user type and a collection round-trip through Gson.** `Point` and a
+/// `List<String>` (whose second value contains the old flat format's delimiters, `", "`) both
+/// survive — Gson escapes and reconstructs into the declared field types. framec wrote no code
+/// about `Point`. This was the fixed-type user-type honest-gap; Gson closes it for Java.
+#[test]
+fn a_user_type_and_collection_round_trip_on_java() {
+    let out = run_java(
+        JAVA_BAG,
+        "class Point { public int x; public int y; } \
+         class Main { public static void main(String[] a) { \
+            Bag b = new Bag(); b.p.x = 7; b.p.y = 9; b.tags.add(\"a\"); b.tags.add(\"b, c\"); \
+            String s = b.snapshot(); Bag b2 = new Bag(); b2.restore(s); \
+            System.out.println(b2.p.x + \" \" + b2.p.y + \" \" + b2.tags.size() + \" \" + b2.tags.get(1)); } }",
+        "java_persist_usertype",
+    );
+    if out == "SKIP" {
+        return;
+    }
+    assert_eq!(out.trim(), "7 9 2 b, c", "user type + collection must round-trip via Gson");
+}
+
+const JAVA_TOGGLE: &str = r#"@@[persist(String)]
+@@[save(snapshot)]
+@@[load(restore)]
+@@system Toggle {
+    interface:
+        flip()
+        read(): int
+    machine:
+        $Off {
+            flip() { -> $On }
+            read(): int { @@:(0) }
+        }
+        $On {
+            flip() { -> $Off }
+            read(): int { @@:(1) }
+        }
+    domain:
+        x: int = 0
+}
+"#;
+
+/// **Live control state round-trips on Java.** After a `flip` the machine is in `$On`; a
+/// save → restore into a fresh instance lands back in `$On` (observable: `read()==1`).
+#[test]
+fn control_state_round_trips_on_java() {
+    let out = run_java(
+        JAVA_TOGGLE,
+        "class Main { public static void main(String[] a) { \
+            Toggle t = new Toggle(); t.flip(); \
+            String s = t.snapshot(); Toggle t2 = new Toggle(); t2.restore(s); \
+            System.out.println(t2.read()); } }",
+        "java_persist_control",
+    );
+    if out == "SKIP" {
+        return;
+    }
+    assert_eq!(out.trim(), "1", "after restore the machine must be in $On (read()==1), not $Off");
+}

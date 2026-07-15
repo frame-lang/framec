@@ -502,77 +502,45 @@ impl Backend for Java {
     }
 
     fn persist(&self, m: &super::persist::PersistManifest, out: &mut Sink) {
-        // FIXED-TYPE ROUTE. The type of every field is fixed at codegen; restore parses
-        // straight into the DECLARED type and never reads a type name from the snapshot.
-        // That is what makes Java (and every static target) structurally immune to #233 —
-        // there is no marker, so a user value carrying one is inert data.
+        // FIXED-TYPE ROUTE (Regime A) via Gson — RFC-0056. A user type self-marshals through
+        // the host serializer; framec names the fields and Gson does ALL type work — nesting,
+        // collections, user types, string escaping. Strictly type-IGNORANT: no `match
+        // user_type`. Gson deserializes each field INTO its declared type (read off the `__Snap`
+        // field via reflection), never a type name from the blob — immune to #233 by
+        // construction. Java permits a `static` nested class inside the class, so `__Snap` (the
+        // schema + control state + fields) lives here beside its use. Requires Gson on the
+        // classpath (the self-marshalling requirement). `_schema` is checked first (E751).
         let schema = m.schema();
 
-        // ---- snapshot() ----
         out.frame(&format!("    public String {}() {{\n", m.save));
-        out.frame("        StringBuilder __b = new StringBuilder();\n");
-        out.frame(&format!(
-            "        __b.append(\"{{\\\"_schema\\\":\\\"{schema}\\\"\");\n"
-        ));
-        out.frame("        __b.append(\",\\\"_control\\\":\\\"\").append(this.compartment.state).append(\"\\\"\");\n");
-        for (n, t) in &m.fields {
-            // Strings are quoted; scalars are appended bare. The user's TYPE decides the
-            // spelling, and it is the user's text — framec does not interpret it, it only
-            // asks the manifest whether this is a string-shaped field.
-            if java_is_string(t) {
-                out.frame(&format!(
-                    "        __b.append(\",\\\"{n}\\\":\\\"\").append(this.{n}).append(\"\\\"\");\n"
-                ));
-            } else {
-                out.frame(&format!(
-                    "        __b.append(\",\\\"{n}\\\":\").append(this.{n});\n"
-                ));
-            }
+        out.frame("        __Snap __s = new __Snap();\n");
+        out.frame(&format!("        __s._schema = \"{schema}\";\n"));
+        out.frame("        __s._control = this.compartment.state;\n");
+        for (n, _) in &m.fields {
+            out.frame(&format!("        __s.{n} = this.{n};\n"));
         }
-        out.frame("        __b.append(\"}\");\n");
-        out.frame("        return __b.toString();\n");
+        out.frame("        return new com.google.gson.Gson().toJson(__s);\n");
         out.frame("    }\n\n");
 
-        // ---- restore() ----
-        //
-        // A minimal field extractor into the DECLARED types. No JSON dependency: the
-        // snapshot is framec's own flat object, and each field's Java type comes from the
-        // manifest. The schema is checked first so a mismatched snapshot refuses rather
-        // than mis-restoring (RFC-0054).
         out.frame(&format!("    public void {}(String data) {{\n", m.load));
-        out.frame(&format!(
-            "        if (!__frameField(data, \"_schema\").equals(\"{schema}\")) {{\n"
-        ));
+        out.frame("        __Snap __s = new com.google.gson.Gson().fromJson(data, __Snap.class);\n");
+        out.frame(&format!("        if (!__s._schema.equals(\"{schema}\")) {{\n"));
         out.frame("            throw new RuntimeException(\"E751: persist restore refused - snapshot schema does not match this program\");\n");
         out.frame("        }\n");
-        out.frame("        this.compartment.state = __frameField(data, \"_control\");\n");
-        for (n, t) in &m.fields {
-            let extract = match t.trim() {
-                "int" => format!("Integer.parseInt(__frameField(data, \"{n}\"))"),
-                "long" => format!("Long.parseLong(__frameField(data, \"{n}\"))"),
-                "double" | "float" => format!("Double.parseDouble(__frameField(data, \"{n}\"))"),
-                "boolean" => format!("Boolean.parseBoolean(__frameField(data, \"{n}\"))"),
-                _ => format!("__frameField(data, \"{n}\")"), // String and unknown -> raw text
-            };
-            out.frame(&format!("        this.{n} = {extract};\n"));
+        out.frame("        this.compartment.state = __s._control;\n");
+        for (n, _) in &m.fields {
+            out.frame(&format!("        this.{n} = __s.{n};\n"));
         }
         out.frame("    }\n\n");
 
-        // The one shared helper — a flat-object field reader. framec's snapshot is its OWN
-        // format (no user JSON), so a small reader is honest here; it is emitted once per
-        // persistent system.
-        out.frame("    private static String __frameField(String data, String key) {\n");
-        out.frame("        String needle = \"\\\"\" + key + \"\\\":\";\n");
-        out.frame("        int i = data.indexOf(needle);\n");
-        out.frame("        if (i < 0) return \"\";\n");
-        out.frame("        i += needle.length();\n");
-        out.frame("        if (data.charAt(i) == '\\\"') {\n");
-        out.frame("            int j = data.indexOf('\\\"', i + 1);\n");
-        out.frame("            return data.substring(i + 1, j);\n");
-        out.frame("        }\n");
-        out.frame("        int j = i;\n");
-        out.frame("        while (j < data.length() && data.charAt(j) != ',' && data.charAt(j) != '}') j++;\n");
-        out.frame("        return data.substring(i, j);\n");
+        // The snapshot shape — a plain data class Gson reflects over. Each field carries its
+        // DECLARED Java type, so `fromJson` reconstructs into exactly that type.
+        out.frame("    private static class __Snap {\n");
+        out.frame("        String _schema;\n");
+        out.frame("        String _control;\n");
+        for (n, t) in &m.fields {
+            out.frame(&format!("        {t} {n};\n"));
+        }
         out.frame("    }\n\n");
     }
 
@@ -630,22 +598,6 @@ fn java_state_seed(v: &crate::resolve::FieldSym) -> String {
     }
 }
 
-/// Is this field a string in Java? (Strings are quoted in the snapshot.)
-fn java_is_string(t: &str) -> bool {
-    // framec's OWN snapshot format decides whether to quote — keyed on Java's literal
-    // String type. (A proper serializer, e.g. Jackson, removes this branch; Phase 1.)
-    matches!(t.trim(), "String")
-}
-
-/// Frame's canonical scalar names -> Java's. Anything else is the USER's type text and
-/// passes through untouched — framec has no type system and does not want one.
-fn java_param_type(t: &str) -> String {
-    match t.trim() {
-        "str" | "string" => "String",
-        other => other,
-    }
-    .to_string()
-}
 
 /// **Container extraction (Q3/Q4).** Pull a value of declared type `t` out of framec's
 /// own `Object` container (a `Map`/`List` it generates for the compartment). This is NOT

@@ -132,78 +132,9 @@ fn forward_sends_the_event_to_the_parent() {
     );
 }
 
-/// **PERSIST must ROUND-TRIP, not merely emit.**
-///
-/// This test compiles the generated Java, runs a save -> restore -> observe cycle, and
-/// checks the value came back. A `restore()` that emits and does nothing (which is what
-/// Java shipped first) FAILS here — as it must. Checking that `snapshot()`/`restore()` are
-/// *present* is the emission-only trap the whole roadmap forbids.
-#[test]
-fn java_persist_actually_round_trips() {
-    let frm = r#"@@[persist(String)]
-@@[save(snapshot)]
-@@[load(restore)]
-@@system Counter {
-    interface:
-        bump()
-    machine:
-        $A {
-            bump() { @@:self.n = @@:self.n + 1; }
-        }
-    domain:
-        n: int = 0
-}
-"#;
-    let out = run(
-        &emit(frm),
-        "class Main { public static void main(String[] a) { \
-            Counter c = new Counter(); c.bump(); c.bump(); c.bump(); \
-            String s = c.snapshot(); Counter c2 = new Counter(); c2.restore(s); \
-            System.out.println(c2.n); } }",
-        "gap_persist_java",
-    );
-    assert_eq!(
-        out.trim(),
-        "3",
-        "restore() must reproduce n=3, not leave it at its default. A no-op restore FAILS."
-    );
-}
-
-/// **HONEST GAP — RFC-0056 R2: Java fixed-type persist round-trips only scalars.**
-///
-/// The Java `restore()` assigns the extracted `String` straight to the field
-/// (`this.p = __frameField(...)`), which is a type error for any non-`String` field — the
-/// hand-rolled flat reader stands in for the host serializer (Jackson) that R2 makes
-/// mandatory on Regime A. So a user-defined-type domain field does not compile. `#[ignore]`d
-/// so the suite stays green while the debt is named; `cargo test -- --ignored` shows it fail.
-/// Un-ignore it when the fixed-type route adopts a real serializer — then it must PASS.
-#[test]
-#[ignore = "RFC-0056 R2 unmet: Java fixed-type user types need Jackson/the host serializer"]
-fn java_persist_user_type_does_not_round_trip() {
-    let frm = r#"@@[persist(String)]
-@@[save(snapshot)]
-@@[load(restore)]
-@@system Bag {
-    interface:
-        go()
-    machine:
-        $A {
-            go() { }
-        }
-    domain:
-        p: Point = new Point()
-}
-"#;
-    let out = run(
-        &emit(frm),
-        "class Point { public int x; public int y; } \
-         class Main { public static void main(String[] a) { \
-            Bag b = new Bag(); String s = b.snapshot(); \
-            Bag b2 = new Bag(); b2.restore(s); System.out.println(b2.p.x); } }",
-        "gap_persist_java_usertype",
-    );
-    assert_eq!(out.trim(), "0", "when R2 lands, a user-typed field must round-trip");
-}
+// PERSIST round-trip (scalar, user types, collections, control state) is proven per backend
+// in tests/persist.rs — Python (reflective), Rust (serde), Java (Gson), C (scalar). Those
+// tests moved there when persistence became real; this file keeps only the still-open gaps.
 
 /// **GAP 4 — ASYNC.**
 ///
@@ -238,14 +169,16 @@ fn the_compliance_number_carries_its_asterisk() {
     // CLOSED, each proven by RUNNING (see honest_gaps + tests/persist.rs):
     //   HSM, forward `=> $^`, @@[async]; @@[persist] SCALAR round-trip + control state, and
     //   out-of-band framing (#233 impossible on Python).
-    // OPEN — enumerated below and each named by an #[ignore]d test:
+    // OPEN — known-open items. Most are named by an #[ignore]d test; a *design-open* item
+    // (a decision not yet taken, with nothing to un-ignore) is listed here and detailed in its
+    // RFC instead.
     const GAPS: &[(&str, &str)] = &[(
-        "persist user types (Java, C)",
+        "persist user types (C)",
         "RFC-0056 R2 — a user-defined type MUST self-marshal through the host serializer. Rust \
-         now does this via serde (user types, nesting, and collections round-trip — see \
-         tests/persist.rs). Java and C still use the scalar flat format, so a user-typed field \
-         does not compile there; named by the #[ignore]d java_persist_user_type test. Closes \
-         when Java adopts Jackson and C takes its RFC-0056 decision.",
+         (serde) and Java (Gson) do this: user types, nesting, and collections round-trip (see \
+         tests/persist.rs). C has NO standard serializer, so its user-type persist is the \
+         RFC-0056 UNRESOLVED decision — scalar-limited vs. a single framec-emitted encoder. This \
+         is design-open (nothing to un-ignore); it is tracked in RFC-0056 § Unresolved questions.",
     )];
     eprintln!("\n  CLEANROOM: 15/15 Java corpus fixtures COMPILE.");
     eprintln!("  That number is SYNTAX-ONLY, and {} feature(s) remain OPEN:\n", GAPS.len());
@@ -257,14 +190,10 @@ fn the_compliance_number_carries_its_asterisk() {
            That is exactly how the old corpus acquired blessed snapshots of code\n\
            that does not compile (#232). Run `cargo test -- --ignored` for the debt.\n"
     );
-    // This count MUST match the number of #[ignore]d gap tests. Update both together when a
-    // gap opens or closes — that coupling is what keeps "15/15 compile" from being quoted
-    // without its asterisk.
-    assert_eq!(
-        GAPS.len(),
-        1,
-        "the gap ledger drifted from the #[ignore]d gap tests"
-    );
+    // This count pins the open-item ledger so "15/15 compile" is never quoted without its
+    // asterisk. Each entry is either an #[ignore]d test (un-ignore when it lands) or a
+    // design-open decision detailed in an RFC (the C persist decision). Update on any change.
+    assert_eq!(GAPS.len(), 1, "the open-item ledger drifted");
 }
 
 /// **#225 — `await` MUST NOT land at the head.**
