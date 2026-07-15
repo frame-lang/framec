@@ -316,8 +316,9 @@ A fingerprint of a persisted [system](#system)'s *type shape* — which
 [states](#state) carry which typed [state variables](#state-variable) and
 [state-args](#state-args) / [enter-args](#enter-args) / [exit-args](#exit-args), and
 which [domain](#domain) fields have which types. Carried in the
-[snapshot](#snapshot) as the `_manifest` member and compared on restore to detect
-schema drift; it holds type identity, never state data. Introduced in RFC-0054.
+[snapshot](#snapshot) as the `_schema` member and compared on restore to detect
+schema drift; it holds type identity, never state data. Introduced in RFC-0054;
+the authoritative treatment is [RFC-0056](rfcs/rfc-0056.md).
 
 ### Oceans Model
 
