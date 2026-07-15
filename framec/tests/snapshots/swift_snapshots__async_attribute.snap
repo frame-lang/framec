@@ -4,6 +4,10 @@ expression: "compile_fixture(\"14_async_attribute\", \"swift\")"
 ---
 import Foundation
 
+class Cache {
+    func get(_ k: String) -> String { return "v:" + k }
+}
+
 class AsyncFetcherFrameEvent {
     var _message: String
     var _parameters: [Any]

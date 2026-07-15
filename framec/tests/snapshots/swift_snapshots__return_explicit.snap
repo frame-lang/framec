@@ -167,7 +167,7 @@ public class ReturnExplicit {
 
     private func _s_Judging_hdl_user_decide(_ __e: ReturnExplicitFrameEvent, _ compartment: ReturnExplicitCompartment) {
         let score = __e._parameters[0] as! Int
-                        if score >= 60 {
+                        if (score >= 60) {
         _context_stack[_context_stack.count - 1]._return = "pass"
                             return
                         }

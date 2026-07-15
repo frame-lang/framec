@@ -151,8 +151,7 @@ private:
 
     void _s_Idle_hdl_user_start(LifecycleFrameEvent& __e, std::shared_ptr<LifecycleCompartment> compartment) {
         auto label = std::any_cast<std::string>(__e._parameters[0]);
-        (label);
-        auto __next = __prepareEnter("Running", std::vector<std::any>{}, std::vector<std::any>{});
+        auto __next = __prepareEnter("Running", std::vector<std::any>{}, std::vector<std::any>{std::any(label)});
         __transition(std::move(__next));
         return;
 

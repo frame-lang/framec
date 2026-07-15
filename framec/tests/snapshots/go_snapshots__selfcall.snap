@@ -2,6 +2,8 @@
 source: framec/tests/go_snapshots.rs
 expression: "compile_fixture(\"06_selfcall\", \"go\")"
 ---
+package main
+
 type SelfCallFrameEvent struct {
     _message    string
     _parameters []any

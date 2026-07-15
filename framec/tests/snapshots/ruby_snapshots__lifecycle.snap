@@ -203,8 +203,7 @@ class Lifecycle
 
     def _s_Idle_hdl_user_start(__e, compartment)
         label = __e._parameters[0]
-        (label)
-        __compartment = __prepareEnter("Running", [], [])
+        __compartment = __prepareEnter("Running", [], [label])
         __transition(__compartment)
         return
     end

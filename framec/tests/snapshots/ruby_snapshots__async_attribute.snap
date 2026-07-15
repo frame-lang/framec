@@ -2,6 +2,10 @@
 source: framec/tests/ruby_snapshots.rs
 expression: "compile_fixture(\"14_async_attribute\", \"ruby\")"
 ---
+class Cache
+  def get(k) = "v:" + k
+end
+
 class AsyncFetcherFrameEvent
     attr_accessor :_message
     attr_accessor :_parameters

@@ -4,6 +4,10 @@ expression: "compile_fixture(\"14_async_attribute\", \"python_3\")"
 ---
 from typing import Any, Optional, List, Dict, Callable
 
+class Cache:
+    def get(self, k):
+        return "v:" + k
+
 class AsyncFetcherFrameEvent:
     def __init__(self, message: str, parameters):
         self._message = message
@@ -71,7 +75,7 @@ class _AsyncFetcherMachine:
     def __init__(self):
         self._state_stack = []
         self._context_stack = []
-        self.cache = nil
+        self.cache = None
         self.__compartment = self.__prepareEnter("Ready", [], [])
         self.__next_compartment = None
 

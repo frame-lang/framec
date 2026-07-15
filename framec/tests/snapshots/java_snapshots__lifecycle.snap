@@ -212,8 +212,7 @@ public class Lifecycle {
 
     private void _s_Idle_hdl_user_start(LifecycleFrameEvent __e, LifecycleCompartment compartment) {
         String label = (String) __e._parameters.get(0);
-        (label);
-        LifecycleCompartment __compartment = __prepareEnter("Running", new java.util.ArrayList<>(), new java.util.ArrayList<>());
+        LifecycleCompartment __compartment = __prepareEnter("Running", new java.util.ArrayList<>(), new java.util.ArrayList<>(java.util.Arrays.asList(label)));
         __transition(__compartment);
         return;
     }

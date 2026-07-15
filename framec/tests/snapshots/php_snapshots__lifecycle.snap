@@ -206,8 +206,7 @@ class Lifecycle {
 
     private function _s_Idle_hdl_user_start($__e, $compartment) {
         $label = $__e->_parameters[0];
-        (label);
-        $__compartment = $this->__prepareEnter("Running", [], []);
+        $__compartment = $this->__prepareEnter("Running", [], [$label]);
         $this->__transition($__compartment);
         return;
     }

@@ -2,6 +2,8 @@
 source: framec/tests/go_snapshots.rs
 expression: "compile_fixture(\"04_state_args\", \"go\")"
 ---
+package main
+
 type StateArgsFrameEvent struct {
     _message    string
     _parameters []any

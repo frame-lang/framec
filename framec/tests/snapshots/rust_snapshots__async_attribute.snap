@@ -2,6 +2,9 @@
 source: framec/tests/rust_snapshots.rs
 expression: "compile_fixture(\"14_async_attribute\", \"rust\")"
 ---
+pub struct Cache;
+impl Cache { pub fn get(&self, k: &str) -> String { format!("v:{}", k) } }
+
 #[allow(dead_code)]
 #[allow(non_camel_case_types)]
 #[allow(non_snake_case)]
@@ -200,7 +203,7 @@ mod _async_fetcher_framec {
             Self {
                 _state_stack: Vec::new(),
                 _context_stack: Vec::new(),
-                cache: nil,
+                cache: Cache,
                 __compartment: AsyncFetcherCompartment::new("Ready"),
                 __next_compartment: None,
             }
@@ -320,7 +323,7 @@ mod _async_fetcher_framec {
         }
 
         async fn _s_Ready_hdl_user_fetch(&mut self, __e: &AsyncFetcherFrameEvent, key: String) {
-            let __return_val = AsyncFetcherFrameReturn::Fetch(self.cache.get(key));
+            let __return_val = AsyncFetcherFrameReturn::Fetch(self.cache.get(&key));
                             if let Some(ctx) = self._context_stack.last_mut() { ctx._return = Some(__return_val); }
         }
 

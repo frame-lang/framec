@@ -2,6 +2,8 @@
 source: framec/tests/go_snapshots.rs
 expression: "compile_fixture(\"02_hsm\", \"go\")"
 ---
+package main
+
 type MiniHsmFrameEvent struct {
     _message    string
     _parameters []any

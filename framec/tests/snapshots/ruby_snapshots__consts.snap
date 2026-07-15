@@ -1,6 +1,5 @@
 ---
 source: framec/tests/ruby_snapshots.rs
-assertion_line: 84
 expression: "compile_fixture(\"11_consts\", \"ruby\")"
 ---
 class ConstsFrameEvent
@@ -198,8 +197,8 @@ class Consts
 
     def _s_Running_hdl_user_tick(__e, compartment)
         self.count = self.count + self.step;
-        if self.count >= self.limit {
+        if self.count >= self.limit
             self.count = 0;
-        }
+        end
     end
 end

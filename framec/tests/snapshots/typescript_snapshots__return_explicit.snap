@@ -179,7 +179,7 @@ export class ReturnExplicit {
 
     private _s_Judging_hdl_user_decide(__e: ReturnExplicitFrameEvent, compartment: ReturnExplicitCompartment) {
         const score = __e._parameters[0];
-                        if score >= 60 {
+                        if (score >= 60) {
         this._context_stack[this._context_stack.length - 1]._return = "pass";
                             return;
                         }

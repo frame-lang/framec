@@ -2,6 +2,8 @@
 source: framec/tests/go_snapshots.rs
 expression: "compile_fixture(\"13_lifecycle_args\", \"go\")"
 ---
+package main
+
 type LifecycleArgsFrameEvent struct {
     _message    string
     _parameters []any

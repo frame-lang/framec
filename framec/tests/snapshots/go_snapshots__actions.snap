@@ -2,6 +2,8 @@
 source: framec/tests/go_snapshots.rs
 expression: "compile_fixture(\"10_actions\", \"go\")"
 ---
+package main
+
 type ActionsFrameEvent struct {
     _message    string
     _parameters []any

@@ -2,6 +2,10 @@
 source: framec/tests/gdscript_snapshots.rs
 expression: "compile_fixture(\"14_async_attribute\", \"gdscript\")"
 ---
+class Cache:
+    func get(k):
+        return "v:" + k
+
 class AsyncFetcherFrameEvent:
     var _message
     var _parameters
@@ -86,7 +90,7 @@ class _AsyncFetcherMachine:
     var __compartment
     var __next_compartment
     var _context_stack
-    var cache = nil
+    var cache = null
 
     func _init():
         self._state_stack = []

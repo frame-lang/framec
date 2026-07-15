@@ -1,6 +1,5 @@
 ---
 source: framec/tests/python_snapshots.rs
-assertion_line: 154
 expression: "compile_fixture(\"11_consts\", \"python_3\")"
 ---
 from typing import Any, Optional, List, Dict, Callable
@@ -149,6 +148,5 @@ class Consts:
 
     def _s_Running_hdl_user_tick(self, __e, compartment):
         self.count = self.count + self.step;
-        if self.count >= self.limit {
+        if self.count >= self.limit:
             self.count = 0;
-        }

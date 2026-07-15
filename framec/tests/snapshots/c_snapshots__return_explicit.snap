@@ -572,7 +572,7 @@ static void ReturnExplicit_state_Judging(ReturnExplicit* self, ReturnExplicit_Fr
 static void ReturnExplicit_s_Judging_hdl_user_decide(ReturnExplicit* self, ReturnExplicit_FrameEvent* __e, ReturnExplicit_Compartment* compartment) {
     int score = (int)(intptr_t)ReturnExplicit_FrameVec_get(__e->_parameters, 0);
     (void)score;
-                    if score >= 60 {
+                    if (score >= 60) {
     ReturnExplicit_CTX(self)->_return = (void*)(intptr_t)("pass");
                         return;
                     }

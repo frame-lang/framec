@@ -2,6 +2,8 @@
 source: framec/tests/go_snapshots.rs
 expression: "compile_fixture(\"09_return_explicit\", \"go\")"
 ---
+package main
+
 type ReturnExplicitFrameEvent struct {
     _message    string
     _parameters []any

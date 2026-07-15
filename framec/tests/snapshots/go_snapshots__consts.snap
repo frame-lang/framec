@@ -1,8 +1,9 @@
 ---
 source: framec/tests/go_snapshots.rs
-assertion_line: 63
 expression: "compile_fixture(\"11_consts\", \"go\")"
 ---
+package main
+
 type ConstsFrameEvent struct {
     _message    string
     _parameters []any

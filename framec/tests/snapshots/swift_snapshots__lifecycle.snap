@@ -194,8 +194,7 @@ public class Lifecycle {
 
     private func _s_Idle_hdl_user_start(_ __e: LifecycleFrameEvent, _ compartment: LifecycleCompartment) {
         let label = __e._parameters[0] as! String
-        (label)
-        let __compartment = Lifecycle.__prepareEnter("Running", [], [])
+        let __compartment = Lifecycle.__prepareEnter("Running", [], [label])
         __transition(__compartment)
         return
     }

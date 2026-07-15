@@ -146,7 +146,7 @@ class ReturnExplicit {
 
     private fun _s_Judging_hdl_user_decide(__e: ReturnExplicitFrameEvent, compartment: ReturnExplicitCompartment) {
         val score = __e._parameters[0] as Int
-                        if score >= 60 {
+                        if (score >= 60) {
         _context_stack[_context_stack.size - 1]._return = "pass"
                             return
                         }

@@ -188,7 +188,7 @@ public class ReturnExplicit {
 
     private void _s_Judging_hdl_user_decide(ReturnExplicitFrameEvent __e, ReturnExplicitCompartment compartment) {
         int score = System.Convert.ToInt32(__e._parameters[0]);
-                        if score >= 60 {
+                        if (score >= 60) {
         _context_stack[_context_stack.Count - 1]._return = "pass";
                             return;
                         }

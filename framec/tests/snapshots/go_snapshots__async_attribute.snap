@@ -2,6 +2,12 @@
 source: framec/tests/go_snapshots.rs
 expression: "compile_fixture(\"14_async_attribute\", \"go\")"
 ---
+package main
+
+type Cache struct{}
+
+func (c *Cache) get(k string) string { return "v:" + k }
+
 type AsyncFetcherFrameEvent struct {
     _message    string
     _parameters []any
