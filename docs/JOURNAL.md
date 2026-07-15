@@ -1475,3 +1475,32 @@ What is NOT yet a machine: the back half. Validators (reachability, HSM cycles) 
 walk are AST/graph walkers, not byte scanners — a `@@system` with no byte input needs a
 different drive than `scan_at`, and that is the next capability to build, honestly, rather
 than hand-roll around.
+
+---
+
+## 2026-07-14 — The back half starts walking: graph-walkers, and the compiler learns to warn
+
+The previous entry named the next capability: a `@@system` with no byte input needs a drive
+that isn't `scan_at`. It is built, and it is almost nothing — the drive loop lives in the
+wrapper (`for _ in 0..bound { m.step() }`, bounded so a broken machine can't hang), the graph
+is domain data, and `step()` is the whole interface. No new codegen: a plain `@@system` already
+emits everything a graph walker needs. The capability was a *pattern*, not a feature.
+
+Two validators now run on it. **HsmCycle** chases the parent chain and rejects `$A => $B => $A`
+(E403). **Reachability** walks the state edge-list — every transition/stack-push target, plus a
+child→parent edge so a live child keeps its parent live — by iterative relaxation (no explicit
+stack; it converges in at most `node_count` passes) and flags any state the walk can't reach
+from the start. Both are self-hosted: `.frs` → `framec-ng -l rust --emit` → `.gen.rs`, a native
+leaf for the graph query (`parent_of`, `relax`), the system owning the walk.
+
+Reachability forced a real decision: an unreachable state is *dead code*, not a *wrong program*
+— it must warn, not reject. So `Diagnostic` grew a `Severity`, and the driver now fails only on
+`Error` while printing `Warning`s and emitting anyway (`error [E402]` blocks at exit 65;
+`warning [W401]` reports at exit 0 and still hands you code). The compiler has opinions now, and
+it can hold them without refusing to work.
+
+The proof it's real: the one corpus fixture W401 flags — `02_hsm`'s `MiniHsm` — genuinely has
+dead substates (`$Live`'s handlers are empty; nothing ever transitions to `$Awake`/`$Asleep`).
+A true positive on the first live spec it met. The other 200-odd systems are clean.
+
+What is NOT yet a machine: the emit walk. That is the back half's last and largest walker.
