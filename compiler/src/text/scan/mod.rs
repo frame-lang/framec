@@ -82,53 +82,26 @@ pub fn segment(src: &Source, target: Target) -> Result<FileAst, SegmentError> {
         }));
     }
 
-    let mut water_start = i;
-    let mut at_sol = true;
-
-    while i < n {
-        // Inside native text, literals and comments are SKIPPED, not scanned. A `@@`
-        // inside a string is not a pragma; a `}` inside a Ruby heredoc closes nothing.
-        // This is the fix for #219 — and note it is the *same* lexer the delimiter
-        // uses, so the two cannot diverge the way the old scanner and the old
-        // body-closers did.
-        if let Some(end) = lx.comment_at(i)? {
-            i = end;
-            at_sol = false;
-            continue;
+    // **Production drives the item boundaries with the dogfooded Segmenter system**
+    // (docs/JOURNAL.md). It finds each top-level `@@`-at-start-of-line, skipping
+    // strings/comments (a `@@` inside them is not a pragma — the #219 fix, now a Frame state
+    // machine) and skipping each item's body. The water between items is decomposed by
+    // `native_parts` (itself now running RefScan/InstScan/EmbedScan), and `read_pragma`
+    // rebuilds each item — that node construction is transformation, legitimately native.
+    let content_start = i;
+    let starts = segmenter::item_starts(bytes, content_start, target);
+    let mut water_start = content_start;
+    for &start in &starts {
+        if water_start < start {
+            items.push(Item::Native(NativeItem {
+                span: Span::new(water_start, start),
+                parts: parts::native_parts(&lx, bytes, water_start, start),
+            }));
         }
-        if let Some(litr) = lx.literal_at(i)? {
-            i = litr.span.end;
-            at_sol = false;
-            continue;
-        }
-
-        if at_sol {
-            let line_start = i;
-            let mut j = i;
-            while j < n && (bytes[j] == b' ' || bytes[j] == b'\t') {
-                j += 1;
-            }
-            if j + 1 < n && bytes[j] == b'@' && bytes[j + 1] == b'@' {
-                // Flush the water before this island.
-                if water_start < line_start {
-                    items.push(Item::Native(NativeItem {
-                        span: Span::new(water_start, line_start),
-                        parts: parts::native_parts(&lx, bytes, water_start, line_start),
-                    }));
-                }
-                let item = read_pragma(&lx, bytes, j)?;
-                i = item.span().end;
-                water_start = i;
-                items.push(item);
-                at_sol = true;
-                continue;
-            }
-        }
-
-        at_sol = bytes[i] == b'\n';
-        i += 1;
+        let item = read_pragma(&lx, bytes, start)?;
+        water_start = item.span().end;
+        items.push(item);
     }
-
     if water_start < n {
         items.push(Item::Native(NativeItem {
             span: Span::new(water_start, n),
@@ -151,6 +124,49 @@ pub fn segment(src: &Source, target: Target) -> Result<FileAst, SegmentError> {
     );
 
     Ok(ast)
+}
+
+/// The hand item-boundary walk — kept ONLY as the differential-test oracle for the
+/// dogfooded Segmenter system (production `segment` now runs the system). Returns the
+/// top-level `@@`-item start offsets at or after `from`, skipping strings/comments and item
+/// bodies.
+pub fn hand_item_starts(bytes: &[u8], from: usize, target: Target) -> Vec<usize> {
+    use crate::tree::Node;
+    let lx = Lexer::new(bytes, target);
+    let n = bytes.len();
+    let mut starts = Vec::new();
+    let mut i = from;
+    let mut at_sol = true;
+    while i < n {
+        if let Ok(Some(end)) = lx.comment_at(i) {
+            i = end;
+            at_sol = false;
+            continue;
+        }
+        if let Ok(Some(litr)) = lx.literal_at(i) {
+            i = litr.span.end;
+            at_sol = false;
+            continue;
+        }
+        if at_sol {
+            let mut j = i;
+            while j < n && (bytes[j] == b' ' || bytes[j] == b'\t') {
+                j += 1;
+            }
+            if j + 1 < n && bytes[j] == b'@' && bytes[j + 1] == b'@' {
+                starts.push(j);
+                i = match read_pragma(&lx, bytes, j) {
+                    Ok(item) => item.span().end,
+                    Err(_) => n,
+                };
+                at_sol = true;
+                continue;
+            }
+        }
+        at_sol = bytes[i] == b'\n';
+        i += 1;
+    }
+    starts
 }
 
 /// Leaf for the `Segmenter` system: the end offset of the `@@…` item that starts at `at`

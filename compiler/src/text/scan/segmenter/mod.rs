@@ -42,10 +42,11 @@ mod fsm {
     include!("segmenter.gen.rs");
 }
 
-/// The start offsets of the top-level `@@` items in `bytes`, target-aware — the walk driven
-/// by the Segmenter system.
-pub fn item_starts(bytes: &[u8], target: Target) -> Vec<usize> {
+/// The start offsets of the top-level `@@` items in `bytes` at or after `from`, target-aware
+/// — the walk driven by the Segmenter system. Each `@@`-at-start-of-line is recorded, and the
+/// walk jumps past each item's body, so a `@@:self` inside a handler is not a top-level item.
+pub fn item_starts(bytes: &[u8], from: usize, target: Target) -> Vec<usize> {
     let mut m = fsm::Segmenter::over(bytes, target);
-    m.scan_at(0);
+    m.scan_at(from);
     m.starts
 }
