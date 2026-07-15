@@ -423,7 +423,7 @@ impl Backend for Rust {
             out.frame("        }\n");
         };
 
-        out.frame(&format!("    pub fn {}(&self) -> String {{\n", m.save));
+        out.frame(&format!("    pub fn {}(&self) -> {} {{\n", m.save, m.blob));
         snap_struct(out);
         out.frame("        let __snap = __Snap {\n");
         out.frame(&format!("            _schema: {schema:?}.to_string(),\n"));
@@ -435,9 +435,9 @@ impl Backend for Rust {
         out.frame("        serde_json::to_string(&__snap).unwrap()\n");
         out.frame("    }\n\n");
 
-        out.frame(&format!("    pub fn {}(&mut self, data: &str) {{\n", m.load));
+        out.frame(&format!("    pub fn {}(&mut self, data: {}) {{\n", m.load, m.blob));
         snap_struct(out);
-        out.frame("        let __snap: __Snap = serde_json::from_str(data).unwrap();\n");
+        out.frame("        let __snap: __Snap = serde_json::from_str(&data).unwrap();\n");
         out.frame(&format!("        if __snap._schema != {schema:?} {{\n"));
         out.frame("            panic!(\"E751: persist restore refused - snapshot schema does not match this program\");\n");
         out.frame("        }\n");

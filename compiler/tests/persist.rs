@@ -370,7 +370,7 @@ fn a_scalar_round_trips_on_the_fixed_type_rust_route() {
     let out = run_rust(
         RUST_COUNTER,
         "fn main() { let mut c = Counter::new(); c.bump(); c.bump(); c.bump(); \
-         let s = c.snapshot(); let mut c2 = Counter::new(); c2.restore(&s); \
+         let s = c.snapshot(); let mut c2 = Counter::new(); c2.restore(s); \
          println!(\"{}\", c2.n); }",
         "rust_persist_roundtrip",
     );
@@ -388,7 +388,7 @@ fn a_mismatched_schema_is_refused_on_rust() {
         RUST_COUNTER,
         "fn main() { let mut c = Counter::new(); \
          let bad = \"{\\\"_schema\\\":\\\"frame-persist:1|WRONG:i32\\\",\\\"_control\\\":\\\"A\\\",\\\"n\\\":9}\"; \
-         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| c.restore(bad))); \
+         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| c.restore(bad.to_string()))); \
          println!(\"{}\", if r.is_err() { \"refused\" } else { \"ACCEPTED\" }); }",
         "rust_persist_schema",
     );
@@ -427,7 +427,7 @@ fn control_state_round_trips_on_rust() {
     let out = run_rust(
         RUST_TOGGLE,
         "fn main() { let mut t = Toggle::new(); t.flip(); \
-         let s = t.snapshot(); let mut t2 = Toggle::new(); t2.restore(&s); \
+         let s = t.snapshot(); let mut t2 = Toggle::new(); t2.restore(s); \
          println!(\"{}\", t2.read()); }",
         "rust_persist_control",
     );
@@ -462,7 +462,7 @@ fn a_user_type_round_trips_on_the_fixed_type_rust_route() {
         RUST_USERTYPE,
         "#[derive(serde::Serialize, serde::Deserialize, Clone, Default)] struct Point { x: i32, y: i32 }\n\
          fn main() { let mut b = Bag::new(); b.p = Point { x: 7, y: 9 }; \
-         let s = b.snapshot(); let mut b2 = Bag::new(); b2.restore(&s); \
+         let s = b.snapshot(); let mut b2 = Bag::new(); b2.restore(s); \
          println!(\"{} {}\", b2.p.x, b2.p.y); }",
         "rust_persist_usertype",
     );
@@ -499,7 +499,7 @@ fn collections_and_nesting_round_trip_on_rust() {
          fn main() { let mut l = Log::new(); \
          l.entries = vec![Point{x:1,y:2}, Point{x:3,y:4}]; \
          l.tags = vec![String::from(\"a\"), String::from(\"b, c\")]; \
-         let s = l.snapshot(); let mut l2 = Log::new(); l2.restore(&s); \
+         let s = l.snapshot(); let mut l2 = Log::new(); l2.restore(s); \
          println!(\"{} {} {} {}\", l2.entries.len(), l2.entries[1].y, l2.tags.len(), l2.tags[1]); }",
         "rust_persist_coll",
     );
@@ -535,7 +535,7 @@ fn a_plain_string_round_trips_on_rust() {
     let out = run_rust(
         RUST_STR,
         "fn main() { let mut n = Named::new(); n.label = String::from(\"hello\"); \
-         let s = n.snapshot(); let mut n2 = Named::new(); n2.restore(&s); \
+         let s = n.snapshot(); let mut n2 = Named::new(); n2.restore(s); \
          println!(\"{}\", n2.label); }",
         "rust_persist_string",
     );
