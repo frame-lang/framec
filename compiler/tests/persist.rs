@@ -239,10 +239,11 @@ except RuntimeError as e:
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────
-// FIXED-TYPE ROUTE (Rust). The type of every field is fixed at codegen, so `restore`
-// parses straight into the declared type and never reads a type name from the blob —
-// structurally immune to #233. Dependency-free (no serde), mirroring the Java backend.
-// Every claim below is proven by RUNNING rustc.
+// FIXED-TYPE ROUTE (Rust, Regime A per RFC-0056). The Rust backend delegates value
+// marshalling to serde: a user type self-marshals (derives Serialize/Deserialize) and serde
+// handles nesting, collections, and string escaping. framec writes no per-type code. Because
+// the generated code depends on serde + serde_json, these tests build a Cargo project (not
+// bare rustc), sharing one target dir so serde compiles once. Proven by RUNNING the binary.
 // ─────────────────────────────────────────────────────────────────────────────────────
 
 use frame_compiler::text::emit::rust::Rust;
@@ -254,29 +255,38 @@ fn emit_rust(frm: &str) -> String {
     driver::emit(&src, &ast, &syms, &Rust)
 }
 
-/// Compile the generated code plus a `main` with rustc; return stdout. SKIP if no rustc.
+/// Build the generated code plus a `main` as a Cargo project (serde + serde_json deps) and
+/// run it; return stdout. SKIP if no cargo. A shared target dir compiles serde once.
 fn run_rust(frm: &str, main: &str, dir: &str) -> String {
-    if Command::new("rustc").arg("--version").output().is_err() {
+    if Command::new("cargo").arg("--version").output().is_err() {
         return "SKIP".into();
     }
     let d = std::env::temp_dir().join(dir);
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();
-    let src_path = d.join("m.rs");
-    std::fs::write(&src_path, format!("{}\n{main}\n", emit_rust(frm))).unwrap();
-    let bin = d.join("m");
-    let o = Command::new("rustc")
-        .arg("-o")
-        .arg(&bin)
-        .arg(&src_path)
+    std::fs::write(
+        d.join("Cargo.toml"),
+        format!(
+            "[package]\nname = \"{dir}\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n\
+             [dependencies]\nserde = {{ version = \"1\", features = [\"derive\"] }}\n\
+             serde_json = \"1\"\n\n[[bin]]\nname = \"{dir}\"\npath = \"main.rs\"\n\n[workspace]\n"
+        ),
+    )
+    .unwrap();
+    std::fs::write(d.join("main.rs"), format!("{}\n{main}\n", emit_rust(frm))).unwrap();
+    let target = std::env::temp_dir().join("frame_persist_serde_target");
+    let o = Command::new("cargo")
+        .args(["build", "--offline", "--quiet", "--manifest-path"])
+        .arg(d.join("Cargo.toml"))
+        .env("CARGO_TARGET_DIR", &target)
         .output()
         .unwrap();
     assert!(
         o.status.success(),
-        "rustc rejected:\n{}",
+        "cargo build rejected:\n{}",
         String::from_utf8_lossy(&o.stderr)
     );
-    let o = Command::new(&bin).output().unwrap();
+    let o = Command::new(target.join("debug").join(dir)).output().unwrap();
     String::from_utf8_lossy(&o.stdout).into_owned()
 }
 
@@ -384,27 +394,63 @@ const RUST_USERTYPE: &str = r#"@@[persist(String)]
 }
 "#;
 
-/// **HONEST GAP — RFC-0055 R2: the fixed-type route round-trips only scalars.** A
-/// user-defined-type domain field does not compile: `snapshot` needs `Display`, `restore`
-/// needs `FromStr`, because the hand-rolled flat format bypasses the host serializer (serde)
-/// that R2 makes mandatory on Regime A. `#[ignore]`d so the suite stays green while the debt
-/// is named; `cargo test -- --ignored` shows it fail to compile. Un-ignore it when the
-/// fixed-type route adopts a real serializer — then it must PASS. Java and C share this gap
-/// (C additionally cannot yet construct a user-type field — a separate defect).
+/// **RFC-0056 R2: a user-defined type round-trips through serde.** `Point` derives
+/// `Serialize`/`Deserialize` (the self-marshalling requirement); framec writes no code about
+/// `Point` — serde marshals it. This was a `#[ignore]`d honest-gap under the flat format; the
+/// serde route makes it pass.
 #[test]
-#[ignore = "RFC-0055 R2 unmet: fixed-type user types need the host serializer; the flat format cannot"]
-fn a_user_type_does_not_round_trip_on_the_fixed_type_rust_route() {
+fn a_user_type_round_trips_on_the_fixed_type_rust_route() {
     let out = run_rust(
         RUST_USERTYPE,
-        "#[derive(Clone, Default)] struct Point { x: i32, y: i32 }\n\
-         fn main() { let b = Bag::new(); let s = b.snapshot(); \
-         let mut b2 = Bag::new(); b2.restore(&s); println!(\"{}\", b2.p.x); }",
+        "#[derive(serde::Serialize, serde::Deserialize, Clone, Default)] struct Point { x: i32, y: i32 }\n\
+         fn main() { let mut b = Bag::new(); b.p = Point { x: 7, y: 9 }; \
+         let s = b.snapshot(); let mut b2 = Bag::new(); b2.restore(&s); \
+         println!(\"{} {}\", b2.p.x, b2.p.y); }",
         "rust_persist_usertype",
     );
     if out == "SKIP" {
         return;
     }
-    assert_eq!(out.trim(), "0", "when R2 lands, a user-typed field must round-trip");
+    assert_eq!(out.trim(), "7 9", "a user-typed field must round-trip through serde");
+}
+
+const RUST_COLL: &str = r#"@@[persist(String)]
+@@[save(snapshot)]
+@@[load(restore)]
+@@system Log {
+    interface:
+        go()
+    machine:
+        $A {
+            go() { }
+        }
+    domain:
+        entries: Vec<Point> = Vec::new()
+        tags: Vec<String> = Vec::new()
+}
+"#;
+
+/// **RFC-0056: collections and nesting round-trip.** A `Vec` of a user type and a `Vec` of
+/// strings both survive — serde recurses; framec still writes no per-type code. This is the
+/// dimension the scalar flat format could never reach.
+#[test]
+fn collections_and_nesting_round_trip_on_rust() {
+    let out = run_rust(
+        RUST_COLL,
+        "#[derive(serde::Serialize, serde::Deserialize, Clone, Default)] struct Point { x: i32, y: i32 }\n\
+         fn main() { let mut l = Log::new(); \
+         l.entries = vec![Point{x:1,y:2}, Point{x:3,y:4}]; \
+         l.tags = vec![String::from(\"a\"), String::from(\"b, c\")]; \
+         let s = l.snapshot(); let mut l2 = Log::new(); l2.restore(&s); \
+         println!(\"{} {} {} {}\", l2.entries.len(), l2.entries[1].y, l2.tags.len(), l2.tags[1]); }",
+        "rust_persist_coll",
+    );
+    if out == "SKIP" {
+        return;
+    }
+    // A collection of a user type (len 2, second element's y == 4) and a Vec<String> whose
+    // second value contains the flat format's old delimiters (`, `) — serde escapes it.
+    assert_eq!(out.trim(), "2 4 2 b, c", "Vec<UserType> and Vec<String> must round-trip");
 }
 
 const RUST_STR: &str = r#"@@[persist(String)]
@@ -422,12 +468,10 @@ const RUST_STR: &str = r#"@@[persist(String)]
 }
 "#;
 
-/// A **plain** string field round-trips (substantiating the "strings are quoted" claim).
-///
-/// KNOWN LIMITATION, deliberately not exercised here: the flat format is **unescaped**, so a
-/// value containing its delimiters (`"`, `,`, `}`) corrupts the snapshot — a separate bug to
-/// fix by escaping on save + an escape-aware reader (or adopting the host serializer with
-/// RFC-0055 R2). This test uses a delimiter-free value on purpose.
+/// A string field round-trips. Under serde (RFC-0056) this needs no special care — serde
+/// escapes — and a delimiter-containing string is exercised by
+/// `collections_and_nesting_round_trip_on_rust` (the `"b, c"` case). (The C/Java flat formats
+/// still corrupt embedded delimiters; that limitation is theirs, not Rust's, now.)
 #[test]
 fn a_plain_string_round_trips_on_rust() {
     let out = run_rust(

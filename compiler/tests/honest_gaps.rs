@@ -169,7 +169,7 @@ fn java_persist_actually_round_trips() {
     );
 }
 
-/// **HONEST GAP — RFC-0055 R2: Java fixed-type persist round-trips only scalars.**
+/// **HONEST GAP — RFC-0056 R2: Java fixed-type persist round-trips only scalars.**
 ///
 /// The Java `restore()` assigns the extracted `String` straight to the field
 /// (`this.p = __frameField(...)`), which is a type error for any non-`String` field — the
@@ -178,7 +178,7 @@ fn java_persist_actually_round_trips() {
 /// so the suite stays green while the debt is named; `cargo test -- --ignored` shows it fail.
 /// Un-ignore it when the fixed-type route adopts a real serializer — then it must PASS.
 #[test]
-#[ignore = "RFC-0055 R2 unmet: Java fixed-type user types need Jackson/the host serializer"]
+#[ignore = "RFC-0056 R2 unmet: Java fixed-type user types need Jackson/the host serializer"]
 fn java_persist_user_type_does_not_round_trip() {
     let frm = r#"@@[persist(String)]
 @@[save(snapshot)]
@@ -240,11 +240,12 @@ fn the_compliance_number_carries_its_asterisk() {
     //   out-of-band framing (#233 impossible on Python).
     // OPEN — enumerated below and each named by an #[ignore]d test:
     const GAPS: &[(&str, &str)] = &[(
-        "persist user types",
-        "the fixed-type route (Java/Rust/C) round-trips only SCALARS; a user-defined-type \
-         domain field does not compile — RFC-0055 R2 (a user type MUST self-marshal through \
-         the host serializer: serde / Jackson / encoding-json) is unmet. Named by the \
-         #[ignore]d *user_type* persist tests here and in tests/persist.rs.",
+        "persist user types (Java, C)",
+        "RFC-0056 R2 — a user-defined type MUST self-marshal through the host serializer. Rust \
+         now does this via serde (user types, nesting, and collections round-trip — see \
+         tests/persist.rs). Java and C still use the scalar flat format, so a user-typed field \
+         does not compile there; named by the #[ignore]d java_persist_user_type test. Closes \
+         when Java adopts Jackson and C takes its RFC-0056 decision.",
     )];
     eprintln!("\n  CLEANROOM: 15/15 Java corpus fixtures COMPILE.");
     eprintln!("  That number is SYNTAX-ONLY, and {} feature(s) remain OPEN:\n", GAPS.len());
