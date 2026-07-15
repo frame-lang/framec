@@ -115,8 +115,12 @@ control) ported to its toolchain. A backend is not done until all six run green 
   snapshot, and `restore` parses into the declared types — `self.n = ...parse().unwrap()`
   infers the target from the field, so unlike Java no per-type extraction match is needed.
   Proven by `tests/persist.rs` — round-trip + schema-refusal + control-state, on running rustc.
+- [x] **P3.8 — C** — the same flat format in C's idiom: free functions, no `String` (a
+  `char*` built with `snprintf`, restored with `strstr`/`atoi`), refusal is a stderr line +
+  return (no exceptions). Proven by `tests/persist.rs` — round-trip + schema-refusal +
+  control-state, on running cc.
 - [ ] **P3.1 — C#**, **P3.2 — Kotlin**, **P3.3 — Swift**, **P3.4 — Dart**,
-  **P3.5 — Go**, **P3.7 — C++**, **P3.8 — C**
+  **P3.5 — Go**, **P3.7 — C++**
 
 Each deserializes into the declared type via the target's serialization facility. Immune to
 #233 by construction; still must **round-trip faithfully** and carry control state.
@@ -161,12 +165,12 @@ DONE bar. Listed so none is forgotten.
 | Control state | Python | ✅ DONE | round-trips |
 | Fixed-type `restore()` | Java | ✅ DONE | `honest_gaps::java_persist_actually_round_trips` — `c2.n==3` (running javac/java) |
 | Fixed-type route | Rust | ✅ DONE | `tests/persist.rs` — round-trip + schema-refusal + control-state (running rustc) |
+| Fixed-type route | C | ✅ DONE | `tests/persist.rs` — round-trip + schema-refusal + control-state (running cc) |
 | All other reflective targets | JS/TS/Ruby/PHP/Lua/GDScript | ⛔ no backend yet | — |
-| All other fixed-type targets | C#/Kotlin/Swift/Dart/Go/C++/C | ⛔ no backend yet | — |
+| All other fixed-type targets | C#/Kotlin/Swift/Dart/Go/C++ | ⛔ no backend yet | — |
 | Cross-target parity gate | all | ⛔ TODO | Phase 4 |
 
-**Bottom line:** the *design* is complete; the *hardest* target (Python reflective, where #233
-lives) and **both** fixed-type targets that currently have a backend (Java, Rust) are done and
-proven by running their toolchains. What remains is *breadth* — persistence for each remaining
-target as its backend is built (C is the next one that exists). Everything past L1 is a
-deliberately deferred layer.
+**Bottom line:** the *design* is complete, and **every backend that currently exists** carries
+persistence proven by running its toolchain — Python (reflective, where #233 lives) and all
+three fixed-type backends (Java, Rust, C). What remains is *breadth* — persistence for each
+remaining target as its backend is built. Everything past L1 is a deliberately deferred layer.

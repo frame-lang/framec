@@ -447,8 +447,93 @@ impl Backend for C {
         }
     }
 
-    fn persist(&self, _m: &super::persist::PersistManifest, _out: &mut Sink) {
-        // C persist = the dispatcher pattern (RFC-0053 / PERSIST_ROADMAP). Deferred.
+    fn persist(&self, m: &super::persist::PersistManifest, out: &mut Sink) {
+        // FIXED-TYPE ROUTE, dependency-free — the same flat format as Java and Rust, in C's
+        // idiom: free functions (no methods), `self->field`, `char*` string building. The
+        // type of every field is fixed at codegen, so restore parses straight into it and
+        // never reads a type name from the blob: structurally immune to #233.
+        //
+        // Memory follows this backend's stated posture (see the module header): the returned
+        // snapshot and any restored `char*`/state are heap allocations the short-lived corpus
+        // programs leak; a free-on-drop pass belongs with the coverage layer.
+        let nm = self.cur.borrow().clone();
+        let schema = m.schema();
+
+        // stdio for snprintf/fprintf/strstr — not in the file header, injected here (guarded
+        // include, harmless if a second persistent system injects it again).
+        out.frame("#include <stdio.h>\n");
+
+        // The flat-object field reader, into a caller buffer. framec's OWN format.
+        out.frame(&format!(
+            "static void {nm}___frame_field(const char* data, const char* key, char* out, int cap) {{\n"
+        ));
+        out.frame("    char needle[128];\n");
+        out.frame("    snprintf(needle, sizeof(needle), \"\\\"%s\\\":\", key);\n");
+        out.frame("    const char* p = strstr(data, needle);\n");
+        out.frame("    if (!p) { out[0]='\\0'; return; }\n");
+        out.frame("    p += strlen(needle);\n");
+        out.frame("    int i = 0;\n");
+        out.frame("    if (*p == '\\\"') {\n");
+        out.frame("        p++;\n");
+        out.frame("        while (*p && *p != '\\\"' && i < cap-1) out[i++] = *p++;\n");
+        out.frame("    } else {\n");
+        out.frame("        while (*p && *p != ',' && *p != '}' && i < cap-1) out[i++] = *p++;\n");
+        out.frame("    }\n");
+        out.frame("    out[i] = '\\0';\n");
+        out.frame("}\n");
+
+        // ---- snapshot() ---- strings quoted, scalars bare, control state = compartment.state.
+        out.frame(&format!("char* {nm}_snapshot({nm}* self) {{\n"));
+        out.frame("    char* __b = malloc(1024);\n");
+        out.frame("    int __o = 0;\n");
+        out.frame(&format!(
+            "    __o += snprintf(__b+__o, 1024-__o, \"{{\\\"_schema\\\":\\\"{schema}\\\"\");\n"
+        ));
+        out.frame("    __o += snprintf(__b+__o, 1024-__o, \",\\\"_control\\\":\\\"%s\\\"\", self->compartment->state);\n");
+        for (n, t) in &m.fields {
+            if c_is_string(t) {
+                out.frame(&format!(
+                    "    __o += snprintf(__b+__o, 1024-__o, \",\\\"{n}\\\":\\\"%s\\\"\", self->{n});\n"
+                ));
+            } else {
+                let spec = c_scalar_fmt(t);
+                out.frame(&format!(
+                    "    __o += snprintf(__b+__o, 1024-__o, \",\\\"{n}\\\":{spec}\", self->{n});\n"
+                ));
+            }
+        }
+        out.frame("    __o += snprintf(__b+__o, 1024-__o, \"}\");\n");
+        out.frame("    return __b;\n");
+        out.frame("}\n");
+
+        // ---- restore() ---- schema-checked first (E751 refuse rather than mis-restore), then
+        // each field into its declared type. No exceptions: refusal is a stderr line + return,
+        // leaving the instance untouched.
+        out.frame(&format!("void {nm}_restore({nm}* self, const char* data) {{\n"));
+        out.frame("    char __v[256];\n");
+        out.frame(&format!(
+            "    {nm}___frame_field(data, \"_schema\", __v, sizeof(__v));\n"
+        ));
+        out.frame(&format!("    if (strcmp(__v, \"{schema}\") != 0) {{\n"));
+        out.frame("        fprintf(stderr, \"E751: persist restore refused - snapshot schema does not match this program\\n\");\n");
+        out.frame("        return;\n");
+        out.frame("    }\n");
+        out.frame(&format!(
+            "    {nm}___frame_field(data, \"_control\", __v, sizeof(__v));\n"
+        ));
+        out.frame("    self->compartment->state = strdup(__v);\n");
+        for (n, t) in &m.fields {
+            out.frame(&format!(
+                "    {nm}___frame_field(data, \"{n}\", __v, sizeof(__v));\n"
+            ));
+            if c_is_string(t) {
+                out.frame(&format!("    self->{n} = strdup(__v);\n"));
+            } else {
+                let parse = c_scalar_parse(t);
+                out.frame(&format!("    self->{n} = {parse}(__v);\n"));
+            }
+        }
+        out.frame("}\n\n");
     }
 
     fn dead_code_is_an_error(&self) -> bool {
@@ -567,5 +652,30 @@ fn c_ident(event: &str) -> String {
         "$>" => "__enter".to_string(),
         "<$" => "__exit".to_string(),
         other => other.to_string(),
+    }
+}
+
+/// Is this field a C string (quoted in the snapshot; `strdup`'d back)? Keyed on the C
+/// pointer-to-char types — a fixed target vocabulary, not a user-type-name branch.
+fn c_is_string(t: &str) -> bool {
+    matches!(t.trim(), "char*" | "char *" | "const char*" | "const char *")
+}
+
+/// The `printf` conversion for a scalar field in the snapshot. `%.17g` round-trips a double
+/// exactly. framec's OWN format decides the spelling from the declared C type.
+fn c_scalar_fmt(t: &str) -> &'static str {
+    match t.trim() {
+        "long" => "%ld",
+        "float" | "double" => "%.17g",
+        _ => "%d", // int, bool, and fallback
+    }
+}
+
+/// The `<stdlib.h>` parser for a scalar field on restore.
+fn c_scalar_parse(t: &str) -> &'static str {
+    match t.trim() {
+        "long" => "atol",
+        "float" | "double" => "atof",
+        _ => "atoi",
     }
 }

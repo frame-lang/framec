@@ -308,3 +308,127 @@ fn control_state_round_trips_on_rust() {
     }
     assert_eq!(out.trim(), "1", "after restore the machine must be in $On (read()==1), not $Off");
 }
+
+// ─────────────────────────────────────────────────────────────────────────────────────
+// FIXED-TYPE ROUTE (C). Same flat format as Java/Rust, in C's idiom: free functions, no
+// String (a `char*` built with snprintf, restored with strstr/atoi). No marker in the
+// blob → immune to #233. Proven by RUNNING cc.
+// ─────────────────────────────────────────────────────────────────────────────────────
+
+use frame_compiler::text::emit::c::C as CBackend;
+
+fn emit_c(frm: &str) -> String {
+    let src = Source::new("t.frm", frm.as_bytes().to_vec()).unwrap();
+    let ast = segment(&src, Target::C).unwrap();
+    let (syms, _) = resolve(&ast);
+    driver::emit(&src, &ast, &syms, &CBackend::new())
+}
+
+/// Compile the generated C plus a `main` with cc; return stdout. SKIP if no cc.
+fn run_c(frm: &str, main: &str, dir: &str) -> String {
+    if Command::new("cc").arg("--version").output().is_err() {
+        return "SKIP".into();
+    }
+    let d = std::env::temp_dir().join(dir);
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    let src_path = d.join("m.c");
+    std::fs::write(&src_path, format!("{}\n{main}\n", emit_c(frm))).unwrap();
+    let bin = d.join("m");
+    let o = Command::new("cc")
+        .arg("-o")
+        .arg(&bin)
+        .arg(&src_path)
+        .output()
+        .unwrap();
+    assert!(
+        o.status.success(),
+        "cc rejected:\n{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    let o = Command::new(&bin).output().unwrap();
+    String::from_utf8_lossy(&o.stdout).into_owned()
+}
+
+const C_COUNTER: &str = r#"@@[persist]
+@@system Counter {
+    interface:
+        bump()
+    machine:
+        $A {
+            bump() { @@:self.n = @@:self.n + 1; }
+        }
+    domain:
+        n: int = 0
+}
+"#;
+
+/// A scalar domain field round-trips through save -> restore into a fresh instance.
+#[test]
+fn a_scalar_round_trips_on_the_fixed_type_c_route() {
+    let out = run_c(
+        C_COUNTER,
+        r#"int main(void) { Counter* c = Counter_new(); Counter_bump(c); Counter_bump(c); Counter_bump(c);
+            char* s = Counter_snapshot(c); Counter* c2 = Counter_new(); Counter_restore(c2, s);
+            printf("%d\n", c2->n); return 0; }"#,
+        "c_persist_roundtrip",
+    );
+    if out == "SKIP" {
+        return;
+    }
+    assert_eq!(out.trim(), "3", "restore must reproduce n=3, not the default 0");
+}
+
+/// A mismatched-schema snapshot is REFUSED (E751 to stderr) and the instance is left
+/// untouched — never silently mis-restored (RFC-0054). Observable: n stays at its default.
+#[test]
+fn a_mismatched_schema_is_refused_on_c() {
+    let out = run_c(
+        C_COUNTER,
+        r#"int main(void) { Counter* c = Counter_new();
+            const char* bad = "{\"_schema\":\"frame-persist:1|WRONG:int\",\"_control\":\"A\",\"n\":9}";
+            Counter_restore(c, bad);
+            printf("%d\n", c->n); return 0; }"#,
+        "c_persist_schema",
+    );
+    if out == "SKIP" {
+        return;
+    }
+    assert_eq!(out.trim(), "0", "a mismatched schema must be refused: n stays 0, not 9");
+}
+
+const C_TOGGLE: &str = r#"@@[persist]
+@@system Toggle {
+    interface:
+        flip()
+        read(): int
+    machine:
+        $Off {
+            flip() { -> $On }
+            read(): int { @@:(0) }
+        }
+        $On {
+            flip() { -> $Off }
+            read(): int { @@:(1) }
+        }
+    domain:
+        x: int = 0
+}
+"#;
+
+/// **Live control state round-trips.** After a `flip` the machine is in `$On`; a
+/// save -> restore into a fresh instance lands back in `$On` (observable: `read()==1`).
+#[test]
+fn control_state_round_trips_on_c() {
+    let out = run_c(
+        C_TOGGLE,
+        r#"int main(void) { Toggle* t = Toggle_new(); Toggle_flip(t);
+            char* s = Toggle_snapshot(t); Toggle* t2 = Toggle_new(); Toggle_restore(t2, s);
+            printf("%d\n", Toggle_read(t2)); return 0; }"#,
+        "c_persist_control",
+    );
+    if out == "SKIP" {
+        return;
+    }
+    assert_eq!(out.trim(), "1", "after restore the machine must be in $On (read()==1), not $Off");
+}
