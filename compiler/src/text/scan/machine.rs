@@ -409,6 +409,33 @@ fn push_native(
     }
 }
 
+/// Classify a Frame statement at `i` as `(kind, end)` — the reference the dogfooded
+/// `StmtScan` system is proven against. kind: 0=none(native) 1=Transition 2=StackPush
+/// 3=StackPop 4=Forward.
+pub fn frame_stmt_classify(bytes: &[u8], i: usize, limit: usize) -> (i32, usize) {
+    match frame_stmt(bytes, i, limit, 0, 0) {
+        Some(Stmt::Transition(t)) => (1, t.span.end),
+        Some(Stmt::StackPush(t)) => (2, t.span.end),
+        Some(Stmt::StackPop(s)) => (3, s.span.end),
+        Some(Stmt::Forward(s)) => (4, s.span.end),
+        _ => (0, i),
+    }
+}
+
+/// Leaves for `StmtScan` — the exact hand sub-logic, reused so there is no drift.
+pub fn stmt_eol(bytes: &[u8], i: usize, limit: usize) -> usize {
+    to_end_of_line(bytes, i, limit)
+}
+/// The offset one past the balanced `(...)` at `i`, or `i` if unbalanced. NOT string-aware —
+/// matches the hand `(exit)` classifier, which uses a bare paren counter.
+pub fn stmt_balanced_close(bytes: &[u8], i: usize, limit: usize) -> usize {
+    balanced(_lexer_none(), bytes, i, limit, b'(', b')').unwrap_or(i)
+}
+/// Does the arrow tail `[from, to)` resolve to a `$Target`? (The transition guard.)
+pub fn arrow_has_target(bytes: &[u8], from: usize, to: usize) -> bool {
+    parse_after_arrow(bytes, from, to).1.is_some()
+}
+
 /// A Frame statement at `i`: `-> $S(args)`, `push$ -> $S`, `-> pop$`, `=> $^`.
 fn frame_stmt(bytes: &[u8], i: usize, limit: usize, depth: u32, col: u32) -> Option<Stmt> {
     // `push$ -> (enter) $S(state)`

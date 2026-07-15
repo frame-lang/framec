@@ -30,6 +30,8 @@ pub mod embed_scan;
 pub mod native_parts_scan;
 /// The section backbone, dogfooded as a Frame @@[scan(u8)] system.
 pub mod section_scan;
+/// The statement-level classifier, dogfooded as a Frame @@[scan(u8)] system.
+pub mod stmt_scan;
 use super::{Source, Span};
 use crate::tree::{
     BomItem, EfsmItem, FileAst, Item, NativeItem, Param, PragmaItem, SystemItem, SystemParams,
