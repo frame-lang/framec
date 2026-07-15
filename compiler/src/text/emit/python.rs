@@ -370,7 +370,7 @@ impl Backend for Python {
         let schema = m.schema();
 
         // ---- snapshot() ----
-        out.frame("    def snapshot(self):\n");
+        out.frame(&format!("    def {}(self):\n", m.save));
         out.frame("        import json\n");
         // The persisted state: the domain fields (minus @@[no_persist]) AND the live
         // control state. RFC-0053 requires BOTH.
@@ -417,7 +417,7 @@ impl Backend for Python {
         out.frame("        return json.dumps(_enc(_state))\n\n");
 
         // ---- restore() ----
-        out.frame("    def restore(self, data):\n");
+        out.frame(&format!("    def {}(self, data):\n", m.load));
         out.frame("        import json\n");
         out.frame("        _raw = json.loads(data)\n");
         out.frame(&format!("        if _raw.get(\"_schema\") != {schema:?}:\n"));

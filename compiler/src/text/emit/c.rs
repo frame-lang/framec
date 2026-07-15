@@ -483,7 +483,7 @@ impl Backend for C {
         out.frame("}\n");
 
         // ---- snapshot() ---- strings quoted, scalars bare, control state = compartment.state.
-        out.frame(&format!("char* {nm}_snapshot({nm}* self) {{\n"));
+        out.frame(&format!("char* {nm}_{}({nm}* self) {{\n", m.save));
         out.frame("    char* __b = malloc(1024);\n");
         out.frame("    int __o = 0;\n");
         out.frame(&format!(
@@ -509,7 +509,7 @@ impl Backend for C {
         // ---- restore() ---- schema-checked first (E751 refuse rather than mis-restore), then
         // each field into its declared type. No exceptions: refusal is a stderr line + return,
         // leaving the instance untouched.
-        out.frame(&format!("void {nm}_restore({nm}* self, const char* data) {{\n"));
+        out.frame(&format!("void {nm}_{}({nm}* self, const char* data) {{\n", m.load));
         out.frame("    char __v[256];\n");
         out.frame(&format!(
             "    {nm}___frame_field(data, \"_schema\", __v, sizeof(__v));\n"

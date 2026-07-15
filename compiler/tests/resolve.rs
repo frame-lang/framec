@@ -148,6 +148,57 @@ fn a_fully_reachable_machine_is_clean() {
     );
 }
 
+/// E814 — a persisted system MUST declare the full three-attribute contract. Bare
+/// `@@[persist]` (no save/load method names) is rejected: framec will not invent the API.
+#[test]
+fn bare_persist_is_rejected_e814() {
+    let src = r#"@@[persist]
+@@system S {
+    interface:
+        go()
+    machine:
+        $A {
+            go() { }
+        }
+    domain:
+        n: int = 0
+}"#;
+    let ast = tree(src, Target::Python3);
+    let (syms, diags) = resolve(&ast);
+    let e814: Vec<_> = diags.iter().filter(|d| d.code == "E814").collect();
+    assert_eq!(e814.len(), 1, "bare @@[persist] must be E814: {diags:#?}");
+    assert_eq!(e814[0].severity, Severity::Error);
+    assert!(syms.systems[0].persist.is_none(), "a rejected persist is not carried");
+}
+
+/// The three-attribute form is accepted and carries the user's chosen method names verbatim.
+#[test]
+fn the_three_attribute_persist_form_is_accepted() {
+    let src = r#"@@[persist(str)]
+@@[save(freeze)]
+@@[load(thaw)]
+@@system S {
+    interface:
+        go()
+    machine:
+        $A {
+            go() { }
+        }
+    domain:
+        n: int = 0
+}"#;
+    let ast = tree(src, Target::Python3);
+    let (syms, diags) = resolve(&ast);
+    assert!(diags.iter().all(|d| d.code != "E814"), "valid form must not E814: {diags:#?}");
+    let p = syms.systems[0]
+        .persist
+        .as_ref()
+        .expect("the persist contract is carried");
+    assert_eq!(p.blob, "str");
+    assert_eq!(p.save, "freeze");
+    assert_eq!(p.load, "thaw");
+}
+
 /// **The types are the user's. framec carries them and does not look inside.**
 #[test]
 fn a_type_is_opaque_text() {

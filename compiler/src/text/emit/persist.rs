@@ -77,8 +77,14 @@ pub enum Route {
 /// the symbol table (RFC-0054: one manifest, every backend derives from it).
 #[derive(Debug)]
 pub struct PersistManifest {
-    /// Is this system persistent at all? (`@@[persist]`.)
+    /// Is this system persistent at all? (`@@[persist(..)]` + `@@[save]` + `@@[load]`.)
     pub enabled: bool,
+    /// The save-method name (`@@[save(<name>)]`) — the user's chosen API, e.g. `snapshot`.
+    pub save: String,
+    /// The load-method name (`@@[load(<name>)]`) — e.g. `restore`.
+    pub load: String,
+    /// The blob type (`@@[persist(<blob_type>)]`) — the serialized form's type text.
+    pub blob: String,
     /// The `domain:` fields that participate, in order. Excludes `@@[no_persist]`.
     /// Each is `(name, type_text)` — the type text is the USER'S and is never parsed.
     pub fields: Vec<(String, String)>,
@@ -94,8 +100,15 @@ pub struct PersistManifest {
 impl PersistManifest {
     /// Derive the manifest from a system. **One computation, shared by every backend.**
     pub fn derive(sym: &SystemSym) -> PersistManifest {
+        let (save, load, blob) = match &sym.persist {
+            Some(p) => (p.save.clone(), p.load.clone(), p.blob.clone()),
+            None => (String::new(), String::new(), String::new()),
+        };
         PersistManifest {
-            enabled: sym.is_persist,
+            enabled: sym.persist.is_some(),
+            save,
+            load,
+            blob,
             fields: sym
                 .domain
                 .iter()

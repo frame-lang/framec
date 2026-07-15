@@ -25,7 +25,9 @@ class Point:
         self.x = x
         self.y = y
 
-@@[persist]
+@@[persist(str)]
+@@[save(snapshot)]
+@@[load(restore)]
 @@system Holder {
     interface:
         go()
@@ -278,7 +280,9 @@ fn run_rust(frm: &str, main: &str, dir: &str) -> String {
     String::from_utf8_lossy(&o.stdout).into_owned()
 }
 
-const RUST_COUNTER: &str = r#"@@[persist]
+const RUST_COUNTER: &str = r#"@@[persist(String)]
+@@[save(snapshot)]
+@@[load(restore)]
 @@system Counter {
     interface:
         bump()
@@ -326,7 +330,9 @@ fn a_mismatched_schema_is_refused_on_rust() {
     assert_eq!(out.trim(), "refused", "a mismatched schema must be refused, not accepted");
 }
 
-const RUST_TOGGLE: &str = r#"@@[persist]
+const RUST_TOGGLE: &str = r#"@@[persist(String)]
+@@[save(snapshot)]
+@@[load(restore)]
 @@system Toggle {
     interface:
         flip()
@@ -363,7 +369,9 @@ fn control_state_round_trips_on_rust() {
     assert_eq!(out.trim(), "1", "after restore the machine must be in $On (read()==1), not $Off");
 }
 
-const RUST_USERTYPE: &str = r#"@@[persist]
+const RUST_USERTYPE: &str = r#"@@[persist(String)]
+@@[save(snapshot)]
+@@[load(restore)]
 @@system Bag {
     interface:
         go()
@@ -399,7 +407,9 @@ fn a_user_type_does_not_round_trip_on_the_fixed_type_rust_route() {
     assert_eq!(out.trim(), "0", "when R2 lands, a user-typed field must round-trip");
 }
 
-const RUST_STR: &str = r#"@@[persist]
+const RUST_STR: &str = r#"@@[persist(String)]
+@@[save(snapshot)]
+@@[load(restore)]
 @@system Named {
     interface:
         go()
@@ -474,7 +484,9 @@ fn run_c(frm: &str, main: &str, dir: &str) -> String {
     String::from_utf8_lossy(&o.stdout).into_owned()
 }
 
-const C_COUNTER: &str = r#"@@[persist]
+const C_COUNTER: &str = r#"@@[persist(char*)]
+@@[save(snapshot)]
+@@[load(restore)]
 @@system Counter {
     interface:
         bump()
@@ -521,7 +533,9 @@ fn a_mismatched_schema_is_refused_on_c() {
     assert_eq!(out.trim(), "0", "a mismatched schema must be refused: n stays 0, not 9");
 }
 
-const C_TOGGLE: &str = r#"@@[persist]
+const C_TOGGLE: &str = r#"@@[persist(char*)]
+@@[save(snapshot)]
+@@[load(restore)]
 @@system Toggle {
     interface:
         flip()

@@ -407,7 +407,7 @@ impl Backend for Rust {
         let schema = m.schema();
 
         // ---- snapshot() ---- framec's OWN flat object; strings quoted, scalars bare.
-        out.frame("    pub fn snapshot(&self) -> String {\n");
+        out.frame(&format!("    pub fn {}(&self) -> String {{\n", m.save));
         out.frame("        let mut __b = String::new();\n");
         out.frame(&format!(
             "        __b.push_str(\"{{\\\"_schema\\\":\\\"{schema}\\\"\");\n"
@@ -430,7 +430,7 @@ impl Backend for Rust {
 
         // ---- restore() ---- schema-checked first (RFC-0054: refuse rather than
         // mis-restore into a mismatched shape), then each field into its declared type.
-        out.frame("    pub fn restore(&mut self, data: &str) {\n");
+        out.frame(&format!("    pub fn {}(&mut self, data: &str) {{\n", m.load));
         out.frame(&format!(
             "        if Self::__frame_field(data, \"_schema\") != \"{schema}\" {{\n"
         ));

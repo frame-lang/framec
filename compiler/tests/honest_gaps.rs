@@ -140,7 +140,9 @@ fn forward_sends_the_event_to_the_parent() {
 /// *present* is the emission-only trap the whole roadmap forbids.
 #[test]
 fn java_persist_actually_round_trips() {
-    let frm = r#"@@[persist]
+    let frm = r#"@@[persist(String)]
+@@[save(snapshot)]
+@@[load(restore)]
 @@system Counter {
     interface:
         bump()
@@ -178,7 +180,9 @@ fn java_persist_actually_round_trips() {
 #[test]
 #[ignore = "RFC-0055 R2 unmet: Java fixed-type user types need Jackson/the host serializer"]
 fn java_persist_user_type_does_not_round_trip() {
-    let frm = r#"@@[persist]
+    let frm = r#"@@[persist(String)]
+@@[save(snapshot)]
+@@[load(restore)]
 @@system Bag {
     interface:
         go()

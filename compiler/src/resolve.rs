@@ -68,14 +68,29 @@ pub struct SymbolTable {
     pub systems: Vec<SystemSym>,
 }
 
+/// The three-attribute persistence contract: `@@[persist(<blob_type>)]` +
+/// `@@[save(<name>)]` + `@@[load(<name>)]`. framec generates a save method (returns the blob)
+/// and a load method (an instance method taking the blob), **named by the user** — so a
+/// persisted system chooses its own API, and a system with a user method named `save` is not
+/// clobbered. Bare `@@[persist]` (no names) is rejected with E814.
+#[derive(Debug, Clone)]
+pub struct Persist {
+    /// The serialized-form type from `@@[persist(<blob_type>)]` (e.g. `str`, `String`).
+    pub blob: String,
+    /// The save-method name from `@@[save(<name>)]`.
+    pub save: String,
+    /// The load-method name from `@@[load(<name>)]`.
+    pub load: String,
+}
+
 #[derive(Debug)]
 pub struct SystemSym {
     pub name: String,
     pub span: Span,
     /// `@@[async]` — the system's interface is asynchronous.
     pub is_async: bool,
-    /// `@@[persist]`
-    pub is_persist: bool,
+    /// The persistence contract, if any (`@@[persist(..)]` + `@@[save]` + `@@[load]`).
+    pub persist: Option<Persist>,
     /// `@@[scan(<elem>)]` — a positioned, borrowed-input scanner (RFC-0042.1 / #209). The
     /// element type (`u8`, `char`) the generated `SInput` trait yields. `None` for an
     /// ordinary system (which emits exactly as before — the no-op #209 requires).
@@ -211,11 +226,51 @@ pub fn resolve(ast: &FileAst) -> (SymbolTable, Vec<Diagnostic>) {
             continue;
         };
         let attrs = std::mem::take(&mut pending);
+
+        // The three-attribute persistence contract. `@@[persist(<type>)]` names the blob type;
+        // `@@[save(<name>)]` / `@@[load(<name>)]` name the generated methods. Bare `@@[persist]`
+        // — or a persist attribute missing either method name — is E814: framec will not invent
+        // an API for a persisted system, because the method names are the user's to choose.
+        let arg = |key: &str| -> Option<String> {
+            let paren = format!("{key}(");
+            attrs
+                .iter()
+                .find_map(|a| a.strip_prefix(&paren).map(|r| r.trim_end_matches(')').trim().to_string()))
+        };
+        let persist_marked = attrs.iter().any(|a| a == "persist" || a.starts_with("persist("));
+        let persist = if persist_marked {
+            match (arg("persist"), arg("save"), arg("load")) {
+                (Some(blob), Some(save), Some(load))
+                    if !blob.is_empty() && !save.is_empty() && !load.is_empty() =>
+                {
+                    Some(Persist { blob, save, load })
+                }
+                _ => {
+                    diags.push(Diagnostic {
+                        code: "E814",
+                        severity: Severity::Error,
+                        span: sys.span,
+                        message: format!(
+                            "system `{}` is persistent but does not declare the full contract. \
+                             A persisted system MUST declare `@@[persist(<blob_type>)]`, \
+                             `@@[save(<name>)]`, and `@@[load(<name>)]` — bare `@@[persist]` is \
+                             rejected because framec will not choose the save/load method names \
+                             for you.",
+                            sys.name
+                        ),
+                    });
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         let mut sym = SystemSym {
             name: sys.name.clone(),
             span: sys.span,
             is_async: attrs.iter().any(|a| a == "async"),
-            is_persist: attrs.iter().any(|a| a == "persist"),
+            persist,
             // `@@[scan(u8)]` — the positioned-scanner element type (RFC-0042.1 / #209).
             // The system becomes a borrowed-input, cursor-driven scanner; the arg is the
             // element type the `SInput` trait reads (`u8`, `char`, …).

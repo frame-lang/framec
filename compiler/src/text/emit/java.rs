@@ -509,7 +509,7 @@ impl Backend for Java {
         let schema = m.schema();
 
         // ---- snapshot() ----
-        out.frame("    public String snapshot() {\n");
+        out.frame(&format!("    public String {}() {{\n", m.save));
         out.frame("        StringBuilder __b = new StringBuilder();\n");
         out.frame(&format!(
             "        __b.append(\"{{\\\"_schema\\\":\\\"{schema}\\\"\");\n"
@@ -539,7 +539,7 @@ impl Backend for Java {
         // snapshot is framec's own flat object, and each field's Java type comes from the
         // manifest. The schema is checked first so a mismatched snapshot refuses rather
         // than mis-restoring (RFC-0054).
-        out.frame("    public void restore(String data) {\n");
+        out.frame(&format!("    public void {}(String data) {{\n", m.load));
         out.frame(&format!(
             "        if (!__frameField(data, \"_schema\").equals(\"{schema}\")) {{\n"
         ));
