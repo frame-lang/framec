@@ -72,11 +72,11 @@ envelope `{"@f:t": "Point", "@f:v": {...}}`; the reviver reads the type only fro
 colliding user dict is wrapped with an **empty** tag on save and unwrapped-without-revival
 on restore. Disambiguation is *structural*, not a rarer-marker-string gamble.
 
-### Phase 1 — Fixed-type route: make `restore()` genuinely round-trip 🔜 IN PROGRESS
+### Phase 1 — Fixed-type route: make `restore()` genuinely round-trip ✅ DONE (Java; P1.3 deferred)
 
-**This is the current honest gap.** Java emits a correct `snapshot()` and a **stub
-`restore()`** (a no-op — `c2.n` came back 0, not 3). The fixed-type route needs a real
-deserializer into the declared field types.
+Java emits a correct `snapshot()` and a **real `restore()`** that parses into the declared
+field types + control state. Proven by running (see below). P1.3 (swap the hand reader for a
+real JSON lib) stays deferred while the corpus is scalar.
 
 - [x] **P1.1 — Java** `restore()` parses the snapshot into declared field types + control
   state. Proven by `honest_gaps::java_persist_actually_round_trips` (a running
@@ -111,8 +111,12 @@ control) ported to its toolchain. A backend is not done until all six run green 
 
 ### Phase 3 — Breadth: the remaining fixed-type targets 🔜 (blocked on backends existing)
 
+- [x] **P3.6 — Rust** — dependency-free (no serde), mirrors Java: a hand-rolled flat
+  snapshot, and `restore` parses into the declared types — `self.n = ...parse().unwrap()`
+  infers the target from the field, so unlike Java no per-type extraction match is needed.
+  Proven by `tests/persist.rs` — round-trip + schema-refusal + control-state, on running rustc.
 - [ ] **P3.1 — C#**, **P3.2 — Kotlin**, **P3.3 — Swift**, **P3.4 — Dart**,
-  **P3.5 — Go**, **P3.6 — Rust**, **P3.7 — C++**, **P3.8 — C**
+  **P3.5 — Go**, **P3.7 — C++**, **P3.8 — C**
 
 Each deserializes into the declared type via the target's serialization facility. Immune to
 #233 by construction; still must **round-trip faithfully** and carry control state.
@@ -155,12 +159,14 @@ DONE bar. Listed so none is forgotten.
 | #233 impossible | Python | ✅ DONE | adversarial + nested tests run green |
 | Safety floor | Python | ✅ DONE | stdlib-type-in-blob refused (`E750`) |
 | Control state | Python | ✅ DONE | round-trips |
-| Fixed-type `restore()` | Java | ⛔ STUB | `restore()` is a no-op; `c2.n==0` not 3 |
-| Round-trip test demands behaviour | Java | ⛔ TODO | current test checks emission only |
+| Fixed-type `restore()` | Java | ✅ DONE | `honest_gaps::java_persist_actually_round_trips` — `c2.n==3` (running javac/java) |
+| Fixed-type route | Rust | ✅ DONE | `tests/persist.rs` — round-trip + schema-refusal + control-state (running rustc) |
 | All other reflective targets | JS/TS/Ruby/PHP/Lua/GDScript | ⛔ no backend yet | — |
-| All other fixed-type targets | C#/Kotlin/Swift/Dart/Go/Rust/C++/C | ⛔ no backend yet | — |
+| All other fixed-type targets | C#/Kotlin/Swift/Dart/Go/C++/C | ⛔ no backend yet | — |
 | Cross-target parity gate | all | ⛔ TODO | Phase 4 |
 
-**Bottom line:** the *design* is complete and the *hardest* target (Python reflective, where
-#233 lives) is done right and proven. The *breadth* (17 targets) and Java's stubbed
-`restore()` are what remain. Everything past L1 is a deliberately deferred layer.
+**Bottom line:** the *design* is complete; the *hardest* target (Python reflective, where #233
+lives) and **both** fixed-type targets that currently have a backend (Java, Rust) are done and
+proven by running their toolchains. What remains is *breadth* — persistence for each remaining
+target as its backend is built (C is the next one that exists). Everything past L1 is a
+deliberately deferred layer.

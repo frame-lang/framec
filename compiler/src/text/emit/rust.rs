@@ -398,10 +398,79 @@ impl Backend for Rust {
         }
     }
 
-    fn persist(&self, _m: &super::persist::PersistManifest, _out: &mut Sink) {
-        // Fixed-type route (serde). Not built yet — see PERSIST_ROADMAP Phase 3. A
-        // domain of scalars round-trips via serde into the declared types; deferred to
-        // avoid a serde dependency in the corpus harness.
+    fn persist(&self, m: &super::persist::PersistManifest, out: &mut Sink) {
+        // FIXED-TYPE ROUTE, dependency-free (no serde) — mirrors the Java backend. Every
+        // field's Rust type is fixed at codegen, so `restore` parses straight into the
+        // DECLARED type: `self.n = ...parse().unwrap()` infers the target from the field,
+        // so — unlike Java — no per-type extraction match is needed. There is no marker in
+        // the blob, so a user value carrying one is inert data: structurally immune to #233.
+        let schema = m.schema();
+
+        // ---- snapshot() ---- framec's OWN flat object; strings quoted, scalars bare.
+        out.frame("    pub fn snapshot(&self) -> String {\n");
+        out.frame("        let mut __b = String::new();\n");
+        out.frame(&format!(
+            "        __b.push_str(\"{{\\\"_schema\\\":\\\"{schema}\\\"\");\n"
+        ));
+        out.frame("        __b.push_str(&format!(\",\\\"_control\\\":\\\"{}\\\"\", self.compartment.state));\n");
+        for (n, t) in &m.fields {
+            if rust_is_string(t) {
+                out.frame(&format!(
+                    "        __b.push_str(&format!(\",\\\"{n}\\\":\\\"{{}}\\\"\", self.{n}));\n"
+                ));
+            } else {
+                out.frame(&format!(
+                    "        __b.push_str(&format!(\",\\\"{n}\\\":{{}}\", self.{n}));\n"
+                ));
+            }
+        }
+        out.frame("        __b.push_str(\"}\");\n");
+        out.frame("        __b\n");
+        out.frame("    }\n\n");
+
+        // ---- restore() ---- schema-checked first (RFC-0054: refuse rather than
+        // mis-restore into a mismatched shape), then each field into its declared type.
+        out.frame("    pub fn restore(&mut self, data: &str) {\n");
+        out.frame(&format!(
+            "        if Self::__frame_field(data, \"_schema\") != \"{schema}\" {{\n"
+        ));
+        out.frame("            panic!(\"E751: persist restore refused - snapshot schema does not match this program\");\n");
+        out.frame("        }\n");
+        out.frame("        self.compartment.state = Self::__frame_field(data, \"_control\");\n");
+        for (n, t) in &m.fields {
+            if rust_is_string(t) {
+                out.frame(&format!(
+                    "        self.{n} = Self::__frame_field(data, \"{n}\");\n"
+                ));
+            } else {
+                out.frame(&format!(
+                    "        self.{n} = Self::__frame_field(data, \"{n}\").parse().unwrap();\n"
+                ));
+            }
+        }
+        out.frame("    }\n\n");
+
+        // The one shared helper — a flat-object field reader, emitted once per persistent
+        // system. framec's snapshot is its OWN format (no user JSON), so a small reader is
+        // honest here; a quoted value is read to its closing quote, a bare one to the next
+        // `,`/`}`.
+        out.frame("    fn __frame_field(data: &str, key: &str) -> String {\n");
+        out.frame("        let needle = format!(\"\\\"{}\\\":\", key);\n");
+        out.frame("        match data.find(&needle) {\n");
+        out.frame("            None => String::new(),\n");
+        out.frame("            Some(i) => {\n");
+        out.frame("                let rest = &data[i + needle.len()..];\n");
+        out.frame("                if rest.starts_with('\\\"') {\n");
+        out.frame("                    let inner = &rest[1..];\n");
+        out.frame("                    let j = inner.find('\\\"').unwrap_or(inner.len());\n");
+        out.frame("                    inner[..j].to_string()\n");
+        out.frame("                } else {\n");
+        out.frame("                    let j = rest.find(|c| c == ',' || c == '}').unwrap_or(rest.len());\n");
+        out.frame("                    rest[..j].to_string()\n");
+        out.frame("                }\n");
+        out.frame("            }\n");
+        out.frame("        }\n");
+        out.frame("    }\n\n");
     }
 
     fn dead_code_is_an_error(&self) -> bool {
@@ -409,6 +478,13 @@ impl Backend for Rust {
         // header covers it; we stop after a transition anyway because it is genuinely dead.
         false
     }
+}
+
+/// Is this field a string in Rust? (Strings are quoted in the snapshot; scalars are bare and
+/// `parse`d back.) framec's OWN snapshot format decides whether to quote — keyed on the user's
+/// declared type text, which framec does not otherwise interpret.
+fn rust_is_string(t: &str) -> bool {
+    matches!(t.trim(), "String" | "&str")
 }
 
 impl Rust {
