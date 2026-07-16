@@ -501,8 +501,19 @@ fn emit_body(
         match stmt {
             Stmt::Trivia(_) => {}
             Stmt::Native(n) => {
-                let text = super::reindent::render_native(src, n, 0, &lower);
-                be.native_stmt(rel(n.logical_indent), text, out);
+                // Re-indent the WHOLE native statement, not just its first line. A multi-line
+                // native block (an `if/elif/else` the user wrote at Frame's nesting) must sit
+                // at the TARGET's nesting, with its internal structure preserved. `native_stmt`
+                // pads the first line by `pad(rel)`; the CONTINUATION lines are shifted by the
+                // same amount here — `delta = target indent width − the statement's source
+                // column`. This goes through the literal-safe reindent path (only Text parts
+                // move; a newline inside a string literal is never touched — the #215 rule).
+                // Without it, continuation lines kept their original source columns and python
+                // (indent-sensitive) raised IndentationError.
+                let r = rel(n.logical_indent);
+                let delta = be.pad(r).len() as i32 - n.logical_indent as i32;
+                let text = super::reindent::render_native(src, n, delta, &lower);
+                be.native_stmt(r, text, out);
             }
             // A transition orchestrates the LIFECYCLE, and the order is Frame's, uniform
             // across every target: exit the source state, build+install the target
