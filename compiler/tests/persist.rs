@@ -944,8 +944,8 @@ fn c_emits_an_author_hook_for_a_user_type() {
     // The emitted C carries the extern hook decls + the pack/unpack calls for Point.
     let code = emit_c(C_USERTYPE);
     assert!(
-        code.contains("extern cJSON* Bag_persist_pack_field_Point(const Point* v);"),
-        "framec must emit the pack-hook extern:\n{code}"
+        code.contains("extern cJSON* Bag_persist_pack_field_Point(void* v);"),
+        "framec must emit the pack-hook extern with the shipping-compatible void* signature:\n{code}"
     );
     assert!(
         code.contains("Bag_persist_pack_field_Point(&(self->p))"),
@@ -981,13 +981,15 @@ fn c_user_type_round_trips_with_author_hook() {
     let out = run_c(
         C_USERTYPE,
         r#"
-cJSON* Bag_persist_pack_field_Point(const Point* v) {
+cJSON* Bag_persist_pack_field_Point(void* p) {
+    Point* v = (Point*)p;
     cJSON* o = cJSON_CreateObject();
     cJSON_AddNumberToObject(o, "x", v->x);
     cJSON_AddNumberToObject(o, "y", v->y);
     return o;
 }
-void Bag_persist_unpack_field_Point(const cJSON* j, Point* v) {
+void Bag_persist_unpack_field_Point(cJSON* j, void* p) {
+    Point* v = (Point*)p;
     v->x = (int)cJSON_GetObjectItem(j, "x")->valuedouble;
     v->y = (int)cJSON_GetObjectItem(j, "y")->valuedouble;
 }

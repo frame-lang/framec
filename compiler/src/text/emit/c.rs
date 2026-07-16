@@ -489,14 +489,18 @@ impl Backend for C {
         }
         if !hook_types.is_empty() {
             out.frame("/* AUTHOR MUST DEFINE these marshalling hooks for the user-typed persisted\n");
-            out.frame("   fields below; a missing definition is a link-time error, not a silent drop: */\n");
+            out.frame("   fields below; a missing definition is a link-time error, not a silent drop.\n");
+            out.frame("   The `void*` signature matches the shipping compiler's convention, so the\n");
+            out.frame("   SAME author hook works on both: define e.g.\n");
+            out.frame("     cJSON* <Sys>_persist_pack_field_<Type>(void* p) { <Type>* v = (<Type>*)p; ... }\n");
+            out.frame("     void   <Sys>_persist_unpack_field_<Type>(cJSON* j, void* p) { ... } */\n");
             for ty in &hook_types {
                 let id = c_type_ident(ty);
                 out.frame(&format!(
-                    "extern cJSON* {nm}_persist_pack_field_{id}(const {ty}* v);\n"
+                    "extern cJSON* {nm}_persist_pack_field_{id}(void* v);\n"
                 ));
                 out.frame(&format!(
-                    "extern void {nm}_persist_unpack_field_{id}(const cJSON* j, {ty}* v);\n"
+                    "extern void {nm}_persist_unpack_field_{id}(cJSON* j, void* v);\n"
                 ));
             }
         }
