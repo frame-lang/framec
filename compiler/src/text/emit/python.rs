@@ -259,39 +259,41 @@ impl Backend for Python {
         out.frame("\n");
     }
 
-    fn transition(&self, _rel: u32, sym: &SystemSym, target: &str, args: Option<&str>, out: &mut Sink) {
-        self.enter(sym, target, args, out);
-        out.frame("        self.__compartment = __next\n");
+    fn transition(&self, rel: u32, sym: &SystemSym, target: &str, args: Option<&str>, out: &mut Sink) {
+        self.enter(rel, sym, target, args, out);
+        out.frame(&format!("{}self.__compartment = __next\n", self.pad(rel)));
     }
 
-    fn push(&self, _rel: u32, sym: &SystemSym, target: &str, args: Option<&str>, out: &mut Sink) {
-        out.frame("        self.__stack.append(self.__compartment)\n");
-        self.enter(sym, target, args, out);
-        out.frame("        self.__compartment = __next\n");
+    fn push(&self, rel: u32, sym: &SystemSym, target: &str, args: Option<&str>, out: &mut Sink) {
+        let p = self.pad(rel);
+        out.frame(&format!("{p}self.__stack.append(self.__compartment)\n"));
+        self.enter(rel, sym, target, args, out);
+        out.frame(&format!("{p}self.__compartment = __next\n"));
     }
 
-    fn pop(&self, _rel: u32, out: &mut Sink) {
-        out.frame("        self.__compartment = self.__stack.pop()\n");
+    fn pop(&self, rel: u32, out: &mut Sink) {
+        out.frame(&format!("{}self.__compartment = self.__stack.pop()\n", self.pad(rel)));
     }
 
-    fn lifecycle_call(&self, _rel: u32, _sym: &SystemSym, state: &str, event: &str, args: Option<&str>, out: &mut Sink) {
-        out.frame(&format!("        self._{state}_{}({})\n", py_ident(event), args.unwrap_or("")));
+    fn lifecycle_call(&self, rel: u32, _sym: &SystemSym, state: &str, event: &str, args: Option<&str>, out: &mut Sink) {
+        out.frame(&format!("{}self._{state}_{}({})\n", self.pad(rel), py_ident(event), args.unwrap_or("")));
     }
 
-    fn pop_enter(&self, _rel: u32, sym: &SystemSym, enter_args: Option<&str>, out: &mut Sink) {
+    fn pop_enter(&self, rel: u32, sym: &SystemSym, enter_args: Option<&str>, out: &mut Sink) {
+        let p = self.pad(rel);
         let a = enter_args.unwrap_or("");
         for st in &sym.states {
             if super::driver::has_lifecycle(sym, &st.name, "$>") {
                 out.frame(&format!(
-                    "        if self.__compartment.state == \"{}\":\n            self._{}_{}({a})\n",
+                    "{p}if self.__compartment.state == \"{}\":\n{p}    self._{}_{}({a})\n",
                     st.name, st.name, py_ident("$>")
                 ));
             }
         }
     }
 
-    fn terminate(&self, _rel: u32, out: &mut Sink) {
-        out.frame("        return\n");
+    fn terminate(&self, rel: u32, out: &mut Sink) {
+        out.frame(&format!("{}return\n", self.pad(rel)));
     }
 
     fn assign(
@@ -514,14 +516,13 @@ impl Backend for Python {
 }
 
 impl Python {
-    fn enter(&self, sym: &SystemSym, target: &str, args: Option<&str>, out: &mut Sink) {
-        out.frame(&format!(
-            "        __next = type(self).Compartment(\"{target}\")\n"
-        ));
+    fn enter(&self, rel: u32, sym: &SystemSym, target: &str, args: Option<&str>, out: &mut Sink) {
+        let p = self.pad(rel);
+        out.frame(&format!("{p}__next = type(self).Compartment(\"{target}\")\n"));
         if let Some(st) = sym.states.iter().find(|s| s.name == target) {
             for v in &st.state_vars {
                 let val = py_state_seed(v);
-                out.frame(&format!("        __next.state_vars[\"{}\"] = {val}\n", v.name));
+                out.frame(&format!("{p}__next.state_vars[\"{}\"] = {val}\n", v.name));
             }
             // *** framec does not split the args. *** It hands the blob to a
             // *-varargs helper and lets Python do the splitting — correctly, and for
@@ -534,9 +535,7 @@ impl Python {
                         .map(|p| format!("\"{p}\""))
                         .collect::<Vec<_>>()
                         .join(", ");
-                    out.frame(&format!(
-                        "        _seed_args(__next, [{names}], {a})\n"
-                    ));
+                    out.frame(&format!("{p}_seed_args(__next, [{names}], {a})\n"));
                 }
             }
         }
