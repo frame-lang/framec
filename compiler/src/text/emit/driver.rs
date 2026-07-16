@@ -570,7 +570,7 @@ fn emit_body(
             Stmt::SelfCall(c) => be.self_call(rel(c.col), is_async, &c.method, &c.args_text, out),
             // `=> $^` — forward this event to the PARENT's handler. The driver knows
             // which state that is, because the symbol table knows the parent chain.
-            Stmt::Forward(_) => {
+            Stmt::Forward(fwd) => {
                 if let Some(owner) = sym.resolve_forward(state, event) {
                     let params = owner
                         .handlers
@@ -578,7 +578,11 @@ fn emit_body(
                         .find(|h| h.event == event)
                         .map(|h| h.params_text.clone())
                         .unwrap_or_default();
-                    be.forward(rel(0), &owner.name, event, &params, out);
+                    // Indent at the forward's OWN nesting — `rel(fwd.col)`, not a hardcoded
+                    // `rel(0)`. A `=> $^` inside `if x:` must sit under it; emitting at the
+                    // body base put it outside the block (a python IndentationError, and
+                    // wrong-but-tolerated on brace targets).
+                    be.forward(rel(fwd.col), &owner.name, event, &params, out);
                 }
             }
         }
