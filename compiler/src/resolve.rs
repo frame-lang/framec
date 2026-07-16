@@ -384,6 +384,37 @@ pub fn resolve(ast: &FileAst) -> (SymbolTable, Vec<Diagnostic>) {
                 _ => {}
             }
         }
+
+        // G1 — DERIVE the public interface from handled events. In Frame an event handled in
+        // the machine IS callable: a system may omit the `interface:` block entirely, or
+        // handle events beyond the ones it declares, and every such event still needs a
+        // public router (`s.e()`) — external callers, self-calls and forwards all reach a
+        // handler through it. So the interface is the DECLARED methods PLUS one derived method
+        // per handled event not already declared, with the signature read off the handler.
+        // Lifecycle events (`$>` enter / `<$` exit) are internal transition hooks, never
+        // public, so they are excluded. Dedup by event name (an event handled in several
+        // states is ONE public method); first handler wins the signature.
+        {
+            let mut seen: std::collections::HashSet<String> =
+                sym.interface.iter().map(|m| m.name.clone()).collect();
+            for st in &sym.states {
+                for h in &st.handlers {
+                    if h.event == "$>" || h.event == "<$" {
+                        continue;
+                    }
+                    if seen.insert(h.event.clone()) {
+                        sym.interface.push(MethodSym {
+                            name: h.event.clone(),
+                            span: h.span,
+                            is_async: false,
+                            params_text: Some(h.params_text.clone()),
+                            return_text: h.return_text.clone(),
+                        });
+                    }
+                }
+            }
+        }
+
         systems.push(sym);
     }
 
