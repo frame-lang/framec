@@ -432,91 +432,137 @@ impl Backend for C {
     }
 
     fn persist(&self, m: &super::persist::PersistManifest, out: &mut Sink) {
-        // FIXED-TYPE ROUTE, dependency-free — the same flat format as Java and Rust, in C's
-        // idiom: free functions (no methods), `self->field`, `char*` string building. The
-        // type of every field is fixed at codegen, so restore parses straight into it and
-        // never reads a type name from the blob: structurally immune to #233.
-        //
-        // Memory follows this backend's stated posture (see the module header): the returned
-        // snapshot and any restored `char*`/state are heap allocations the short-lived corpus
-        // programs leak; a free-on-drop pass belongs with the coverage layer.
-        let nm = self.cur.borrow().clone();
+        // FIXED-TYPE ROUTE (Regime A2) via cJSON — RFC-0056. C has no reflection and no
+        // standard serializer, so framec drives the marshalling over cJSON: scalars/strings
+        // it marshals directly (cJSON numbers/strings), and a USER type is marshalled by an
+        // AUTHOR-supplied hook pair, `<Sys>_persist_pack_field_<Type>` /
+        // `_unpack_field_<Type>`, whose call framec emits type-ignorantly (no branch on the
+        // user type — only on framec's own scalar/string vocabulary). The FULL control state
+        // round-trips: `_control` is the whole typed compartment and `_stack` the whole stack,
+        // so restore REBUILDS the live control state. The `state` discriminant is framec's,
+        // one level above any user value (external, keyed) — immune to #233. `_schema` is
+        // checked first (E751).
+        let nm = &m.sys;
         let schema = m.schema();
 
-        // stdio for snprintf/fprintf/strstr — not in the file header, injected here (guarded
-        // include, harmless if a second persistent system injects it again).
-        out.frame("#include <stdio.h>\n");
+        out.frame("#include <stdio.h>\n#include <cjson/cJSON.h>\n");
 
-        // The flat-object field reader, into a caller buffer. framec's OWN format.
+        // Author-hook contract: for every user-typed persisted field, framec emits a call to
+        // the author's marshaller and a forward `extern` here. A MISSING definition is a
+        // build-time diagnostic — an undefined-reference link error naming the exact hook —
+        // never a silent miscompile (the cleanroom posture). Scalars/strings need no hook.
+        let mut hook_types: Vec<String> = Vec::new();
+        let mut note = |ty: &str| {
+            if !c_is_scalar(ty) && !c_is_string(ty) && !hook_types.iter().any(|h| h == ty) {
+                hook_types.push(ty.to_string());
+            }
+        };
+        for (_, t) in &m.fields {
+            note(t);
+        }
+        for st in &m.states {
+            for (_, t) in st.vars.iter().chain(&st.args) {
+                note(t);
+            }
+        }
+        if !hook_types.is_empty() {
+            out.frame("/* AUTHOR MUST DEFINE these marshalling hooks for the user-typed persisted\n");
+            out.frame("   fields below; a missing definition is a link-time error, not a silent drop: */\n");
+            for ty in &hook_types {
+                let id = c_type_ident(ty);
+                out.frame(&format!(
+                    "extern cJSON* {nm}_persist_pack_field_{id}(const {ty}* v);\n"
+                ));
+                out.frame(&format!(
+                    "extern void {nm}_persist_unpack_field_{id}(const cJSON* j, {ty}* v);\n"
+                ));
+            }
+        }
+
+        // ---- the typed compartment <-> cJSON (control state, and each stack frame) ----
         out.frame(&format!(
-            "static void {nm}___frame_field(const char* data, const char* key, char* out, int cap) {{\n"
+            "static cJSON* {nm}_Comp_to_json({nm}_Comp* c) {{\n"
         ));
-        out.frame("    char needle[128];\n");
-        out.frame("    snprintf(needle, sizeof(needle), \"\\\"%s\\\":\", key);\n");
-        out.frame("    const char* p = strstr(data, needle);\n");
-        out.frame("    if (!p) { out[0]='\\0'; return; }\n");
-        out.frame("    p += strlen(needle);\n");
-        out.frame("    int i = 0;\n");
-        out.frame("    if (*p == '\\\"') {\n");
-        out.frame("        p++;\n");
-        out.frame("        while (*p && *p != '\\\"' && i < cap-1) out[i++] = *p++;\n");
-        out.frame("    } else {\n");
-        out.frame("        while (*p && *p != ',' && *p != '}' && i < cap-1) out[i++] = *p++;\n");
-        out.frame("    }\n");
-        out.frame("    out[i] = '\\0';\n");
+        out.frame("    cJSON* __o = cJSON_CreateObject();\n");
+        out.frame("    cJSON_AddStringToObject(__o, \"state\", c->state);\n");
+        out.frame("    cJSON* __v = cJSON_CreateObject(); cJSON* __a = cJSON_CreateObject();\n");
+        for st in &m.states {
+            out.frame(&format!("    if (strcmp(c->state, \"{}\")==0) {{\n", st.name));
+            for (n, t) in &st.vars {
+                let val = c_pack_value(nm, &format!("c->vars.{}.{n}", st.name), t);
+                out.frame(&format!("        cJSON_AddItemToObject(__v, \"{n}\", {val});\n"));
+            }
+            for (n, t) in &st.args {
+                let val = c_pack_value(nm, &format!("c->args.{}.{n}", st.name), t);
+                out.frame(&format!("        cJSON_AddItemToObject(__a, \"{n}\", {val});\n"));
+            }
+            out.frame("    }\n");
+        }
+        out.frame("    cJSON_AddItemToObject(__o, \"vars\", __v);\n");
+        out.frame("    cJSON_AddItemToObject(__o, \"args\", __a);\n");
+        out.frame("    return __o;\n}\n");
+
+        out.frame(&format!(
+            "static void {nm}_Comp_from_json({nm}_Comp* c, const cJSON* __o) {{\n"
+        ));
+        out.frame("    const cJSON* __st = cJSON_GetObjectItem(__o, \"state\");\n");
+        out.frame("    c->state = (__st && __st->valuestring) ? strdup(__st->valuestring) : \"\";\n");
+        out.frame("    const cJSON* __v = cJSON_GetObjectItem(__o, \"vars\"); (void)__v;\n");
+        out.frame("    const cJSON* __a = cJSON_GetObjectItem(__o, \"args\"); (void)__a;\n");
+        for st in &m.states {
+            out.frame(&format!("    if (strcmp(c->state, \"{}\")==0) {{\n", st.name));
+            for (n, t) in &st.vars {
+                let stmt = c_unpack_into(nm, &format!("cJSON_GetObjectItem(__v, \"{n}\")"), &format!("c->vars.{}.{n}", st.name), t);
+                out.frame(&format!("        {stmt}\n"));
+            }
+            for (n, t) in &st.args {
+                let stmt = c_unpack_into(nm, &format!("cJSON_GetObjectItem(__a, \"{n}\")"), &format!("c->args.{}.{n}", st.name), t);
+                out.frame(&format!("        {stmt}\n"));
+            }
+            out.frame("    }\n");
+        }
         out.frame("}\n");
 
-        // ---- snapshot() ---- strings quoted, scalars bare, control state = compartment.state.
+        // ---- save ----
         out.frame(&format!("char* {nm}_{}({nm}* self) {{\n", m.save));
-        out.frame("    char* __b = malloc(1024);\n");
-        out.frame("    int __o = 0;\n");
-        out.frame(&format!(
-            "    __o += snprintf(__b+__o, 1024-__o, \"{{\\\"_schema\\\":\\\"{schema}\\\"\");\n"
-        ));
-        out.frame("    __o += snprintf(__b+__o, 1024-__o, \",\\\"_control\\\":\\\"%s\\\"\", self->compartment->state);\n");
+        out.frame("    cJSON* __root = cJSON_CreateObject();\n");
+        out.frame(&format!("    cJSON_AddStringToObject(__root, \"_schema\", \"{schema}\");\n"));
+        out.frame(&format!("    cJSON_AddItemToObject(__root, \"_control\", {nm}_Comp_to_json(self->compartment));\n"));
+        out.frame("    cJSON* __stk = cJSON_CreateArray();\n");
+        out.frame(&format!("    for (int __i = 0; __i < self->stack_len; __i++) cJSON_AddItemToArray(__stk, {nm}_Comp_to_json(self->stack[__i]));\n"));
+        out.frame("    cJSON_AddItemToObject(__root, \"_stack\", __stk);\n");
         for (n, t) in &m.fields {
-            if c_is_string(t) {
-                out.frame(&format!(
-                    "    __o += snprintf(__b+__o, 1024-__o, \",\\\"{n}\\\":\\\"%s\\\"\", self->{n});\n"
-                ));
-            } else {
-                let spec = c_scalar_fmt(t);
-                out.frame(&format!(
-                    "    __o += snprintf(__b+__o, 1024-__o, \",\\\"{n}\\\":{spec}\", self->{n});\n"
-                ));
-            }
+            let val = c_pack_value(nm, &format!("self->{n}"), t);
+            out.frame(&format!("    cJSON_AddItemToObject(__root, \"{n}\", {val});\n"));
         }
-        out.frame("    __o += snprintf(__b+__o, 1024-__o, \"}\");\n");
-        out.frame("    return __b;\n");
-        out.frame("}\n");
+        out.frame("    char* __out = cJSON_PrintUnformatted(__root);\n");
+        out.frame("    cJSON_Delete(__root);\n");
+        out.frame("    return __out;\n}\n");
 
-        // ---- restore() ---- schema-checked first (E751 refuse rather than mis-restore), then
-        // each field into its declared type. No exceptions: refusal is a stderr line + return,
-        // leaving the instance untouched.
+        // ---- restore ---- schema-checked first (E751), then the whole compartment + stack.
         out.frame(&format!("void {nm}_{}({nm}* self, const char* data) {{\n", m.load));
-        out.frame("    char __v[256];\n");
-        out.frame(&format!(
-            "    {nm}___frame_field(data, \"_schema\", __v, sizeof(__v));\n"
-        ));
-        out.frame(&format!("    if (strcmp(__v, \"{schema}\") != 0) {{\n"));
+        out.frame("    cJSON* __root = cJSON_Parse(data);\n");
+        out.frame("    if (!__root) return;\n");
+        out.frame("    const cJSON* __sc = cJSON_GetObjectItem(__root, \"_schema\");\n");
+        out.frame(&format!("    if (!__sc || !__sc->valuestring || strcmp(__sc->valuestring, \"{schema}\") != 0) {{\n"));
         out.frame("        fprintf(stderr, \"E751: persist restore refused - snapshot schema does not match this program\\n\");\n");
-        out.frame("        return;\n");
+        out.frame("        cJSON_Delete(__root); return;\n");
         out.frame("    }\n");
-        out.frame(&format!(
-            "    {nm}___frame_field(data, \"_control\", __v, sizeof(__v));\n"
-        ));
-        out.frame("    self->compartment->state = strdup(__v);\n");
+        out.frame(&format!("    {nm}_Comp_from_json(self->compartment, cJSON_GetObjectItem(__root, \"_control\"));\n"));
+        out.frame("    const cJSON* __stk = cJSON_GetObjectItem(__root, \"_stack\");\n");
+        out.frame("    int __n = __stk ? cJSON_GetArraySize(__stk) : 0;\n");
+        out.frame(&format!("    self->stack = realloc(self->stack, (__n ? __n : 1) * sizeof({nm}_Comp*));\n"));
+        out.frame("    self->stack_len = __n; self->stack_cap = __n ? __n : 1;\n");
+        out.frame("    for (int __i = 0; __i < __n; __i++) {\n");
+        out.frame(&format!("        {nm}_Comp* __c = {nm}_Comp_new(\"\");\n"));
+        out.frame(&format!("        {nm}_Comp_from_json(__c, cJSON_GetArrayItem(__stk, __i));\n"));
+        out.frame("        self->stack[__i] = __c;\n");
+        out.frame("    }\n");
         for (n, t) in &m.fields {
-            out.frame(&format!(
-                "    {nm}___frame_field(data, \"{n}\", __v, sizeof(__v));\n"
-            ));
-            if c_is_string(t) {
-                out.frame(&format!("    self->{n} = strdup(__v);\n"));
-            } else {
-                let parse = c_scalar_parse(t);
-                out.frame(&format!("    self->{n} = {parse}(__v);\n"));
-            }
+            let stmt = c_unpack_into(nm, &format!("cJSON_GetObjectItem(__root, \"{n}\")"), &format!("self->{n}"), t);
+            out.frame(&format!("    {stmt}\n"));
         }
+        out.frame("    cJSON_Delete(__root);\n");
         out.frame("}\n\n");
     }
 
@@ -528,12 +574,6 @@ impl Backend for C {
     /// miscompile (RFC-0044 lists C as not async-capable).
     fn supports_async(&self) -> bool {
         false
-    }
-
-    /// RFC-0056: C has no serializer and no reflection, so it can persist only scalars and
-    /// strings. A user-defined type is refused (E752), not silently miscompiled.
-    fn persistable_field(&self, type_text: &str) -> bool {
-        c_is_scalar(type_text) || c_is_string(type_text)
     }
 }
 
@@ -653,6 +693,43 @@ fn c_ident(event: &str) -> String {
     }
 }
 
+/// A C-identifier suffix for a type, for the author-hook name (`Vec2` -> `Vec2`, `Vec2*` ->
+/// `Vec2`). Non-alphanumeric runs become `_`; trailing `_` trimmed. framec's OWN naming of
+/// framec's OWN hook — not a semantic branch on the user type.
+fn c_type_ident(ty: &str) -> String {
+    let s: String = ty
+        .trim()
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '_' })
+        .collect();
+    s.trim_matches('_').to_string()
+}
+
+/// A cJSON* expression that marshals `expr` (an lvalue of type `ty`) — a scalar/string
+/// directly, a user type through the author's pack hook. Type-ignorant: it branches only on
+/// framec's own scalar/string vocabulary, never on a user type name.
+fn c_pack_value(sys: &str, expr: &str, ty: &str) -> String {
+    if c_is_string(ty) {
+        format!("(({expr}) ? cJSON_CreateString({expr}) : cJSON_CreateNull())")
+    } else if c_is_scalar(ty) {
+        format!("cJSON_CreateNumber((double)({expr}))")
+    } else {
+        format!("{sys}_persist_pack_field_{}(&({expr}))", c_type_ident(ty))
+    }
+}
+
+/// A C statement that reads cJSON `item` into the lvalue `target` of type `ty` — a
+/// scalar/string directly, a user type through the author's unpack hook.
+fn c_unpack_into(sys: &str, item: &str, target: &str, ty: &str) -> String {
+    if c_is_string(ty) {
+        format!("{{ const cJSON* __i = {item}; {target} = (__i && __i->valuestring) ? strdup(__i->valuestring) : 0; }}")
+    } else if c_is_scalar(ty) {
+        format!("{{ const cJSON* __i = {item}; {target} = ({ty})(__i ? __i->valuedouble : 0); }}")
+    } else {
+        format!("{sys}_persist_unpack_field_{}({item}, &({target}));", c_type_ident(ty))
+    }
+}
+
 /// Is this field a C string (quoted in the snapshot; `strdup`'d back)? Keyed on the C
 /// pointer-to-char types — a fixed target vocabulary, not a user-type-name branch.
 fn c_is_string(t: &str) -> bool {
@@ -701,21 +778,3 @@ fn c_is_scalar(t: &str) -> bool {
     )
 }
 
-/// The `printf` conversion for a scalar field in the snapshot. `%.17g` round-trips a double
-/// exactly. framec's OWN format decides the spelling from the declared C type.
-fn c_scalar_fmt(t: &str) -> &'static str {
-    match t.trim() {
-        "long" => "%ld",
-        "float" | "double" => "%.17g",
-        _ => "%d", // int, bool, and fallback
-    }
-}
-
-/// The `<stdlib.h>` parser for a scalar field on restore.
-fn c_scalar_parse(t: &str) -> &'static str {
-    match t.trim() {
-        "long" => "atol",
-        "float" | "double" => "atof",
-        _ => "atoi",
-    }
-}

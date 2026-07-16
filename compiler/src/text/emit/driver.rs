@@ -263,14 +263,6 @@ pub trait Backend {
         true
     }
 
-    /// Can this target persist a domain field of the given (verbatim) type? Backends that
-    /// delegate to a serializer (serde, Gson, `encoding/json`, …) can persist **any** type, so
-    /// the default is `true`. **C is the exception** (RFC-0056): it has no standard serializer
-    /// and no reflection, so it can only marshal scalars and strings — a user-defined type
-    /// gets a diagnostic (see [`target_diagnostics`], E752), not a silent miscompile.
-    fn persistable_field(&self, _type_text: &str) -> bool {
-        true
-    }
 }
 
 /// Target-aware validation: diagnostics that depend on the BACKEND's capabilities, not
@@ -307,29 +299,10 @@ pub fn target_diagnostics(
             });
         }
 
-        // E752 — a persisted field whose type the target cannot marshal. Only C says no
-        // (RFC-0056: no serializer, no reflection → scalars/strings only). This replaces the
-        // old silent miscompile (`snprintf("%d", struct)`) with a refusal.
-        if sym.persist.is_some() {
-            let manifest = super::persist::PersistManifest::derive(sym);
-            for (name, ty) in &manifest.fields {
-                if !be.persistable_field(ty) {
-                    out.push(crate::resolve::Diagnostic {
-                        code: "E752",
-                        severity: crate::resolve::Severity::Error,
-                        span: sym.span,
-                        message: format!(
-                            "system `{}`: persisted field `{name}: {ty}` cannot be marshalled on \
-                             target `{}`, which has no serializer and persists only scalar and \
-                             string fields. Exclude it with `@@[no_persist]`, or persist a scalar \
-                             form of the value.",
-                            sym.name,
-                            be.name()
-                        ),
-                    });
-                }
-            }
-        }
+        // (E752 retired — RFC-0056 now gives C an author-hook route for user types: framec
+        // emits the hook call + `extern`, and a missing definition is a build-time link
+        // error, not a framec-time refusal. So there is no target that rejects a persisted
+        // field outright, and `persistable_field` is gone.)
     }
     out
 }

@@ -171,9 +171,10 @@ fn the_compliance_number_carries_its_asterisk() {
     //   out-of-band framing (#233 impossible on Python).
     // OPEN — known-open items, each named by an #[ignore]d test or an RFC decision. Empty
     // means persistence is complete for every backend that exists: Python (reflective), Rust
-    // (serde), and Java (Gson) round-trip user types / nesting / collections; C persists
-    // scalars only and REFUSES a user-typed field with E752 — RFC-0056's decided contract (no
-    // serializer), enforced by a test, not a silent miscompile. So there is nothing open here.
+    // (serde), and Java (Jackson) round-trip user types / nesting / collections AND full
+    // control state + stack; C (cJSON) round-trips scalars/strings directly and user types
+    // through an author hook, with the whole typed compartment + stack — RFC-0056's Regime A2.
+    // A missing C hook is a build-time link error, not a silent miscompile. Nothing open here.
     const GAPS: &[(&str, &str)] = &[];
     eprintln!("\n  CLEANROOM: 15/15 Java corpus fixtures COMPILE.");
     eprintln!("  That number is SYNTAX-ONLY, and {} feature(s) remain OPEN:\n", GAPS.len());

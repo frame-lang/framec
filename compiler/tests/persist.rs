@@ -560,11 +560,49 @@ fn emit_c(frm: &str) -> String {
     driver::emit(&src, &ast, &syms, &CBackend::new())
 }
 
-/// Compile the generated C plus a `main` with cc; return stdout. SKIP if no cc.
+/// cJSON compile+link flags — RFC-0056 delegates C persistence to cJSON. Prefer pkg-config;
+/// fall back to the common homebrew/usr-local prefixes. None → the C persist tests SKIP (they
+/// cannot prove anything without the serializer). Returns e.g. ["-I/opt/homebrew/include",
+/// "-L/opt/homebrew/lib", "-lcjson"].
+fn cjson_flags() -> Option<Vec<String>> {
+    // Filesystem prefixes FIRST: the running arch's homebrew prefix (/opt/homebrew on arm64,
+    // /usr/local on x86_64) naturally holds a matching-arch lib. pkg-config is a last resort
+    // because it can resolve to a stale WRONG-arch install (e.g. an x86_64 /usr/local cjson on
+    // an arm64 host -> "Undefined symbols for architecture arm64" at link).
+    for prefix in ["/opt/homebrew", "/usr/local", "/usr"] {
+        let has_lib = ["dylib", "so", "a"]
+            .iter()
+            .any(|ext| std::path::Path::new(&format!("{prefix}/lib/libcjson.{ext}")).exists());
+        if std::path::Path::new(&format!("{prefix}/include/cjson/cJSON.h")).exists() && has_lib {
+            return Some(vec![
+                format!("-I{prefix}/include"),
+                format!("-L{prefix}/lib"),
+                "-lcjson".to_string(),
+            ]);
+        }
+    }
+    if let Ok(o) = Command::new("pkg-config").args(["--cflags", "--libs", "libcjson"]).output() {
+        if o.status.success() {
+            let s = String::from_utf8_lossy(&o.stdout);
+            let flags: Vec<String> = s.split_whitespace().map(str::to_string).collect();
+            if !flags.is_empty() {
+                return Some(flags);
+            }
+        }
+    }
+    None
+}
+
+/// Compile the generated C plus a `main` with cc (cJSON on the include/link path); return
+/// stdout. SKIP if no cc or no cJSON.
 fn run_c(frm: &str, main: &str, dir: &str) -> String {
     if Command::new("cc").arg("--version").output().is_err() {
         return "SKIP".into();
     }
+    let flags = match cjson_flags() {
+        Some(f) => f,
+        None => return "SKIP".into(),
+    };
     let d = std::env::temp_dir().join(dir);
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();
@@ -575,6 +613,7 @@ fn run_c(frm: &str, main: &str, dir: &str) -> String {
         .arg("-o")
         .arg(&bin)
         .arg(&src_path)
+        .args(&flags)
         .output()
         .unwrap();
     assert!(
@@ -869,9 +908,12 @@ fn control_state_round_trips_on_java() {
     assert_eq!(out.trim(), "1", "after restore the machine must be in $On (read()==1), not $Off");
 }
 
-// ─── RFC-0056 Option 1: C persists scalars only; a user type is refused (E752) ───
+// ─── RFC-0056 Regime A2: C persists a user type through an AUTHOR HOOK (no E752 refusal) ───
 
-const C_USERTYPE: &str = r#"@@[persist(char*)]
+const C_USERTYPE: &str = r#"typedef struct { int x; int y; } Point;
+static Point zero(void) { Point p; p.x = 0; p.y = 0; return p; }
+
+@@[persist(char*)]
 @@[save(snapshot)]
 @@[load(restore)]
 @@system Bag {
@@ -887,22 +929,38 @@ const C_USERTYPE: &str = r#"@@[persist(char*)]
 }
 "#;
 
-/// C has no serializer, so a user-typed persisted field is REFUSED at compile time (E752),
-/// not silently miscompiled — RFC-0056's decided C contract (scalars + strings only). The
-/// scalar `n` alongside it is fine; only `p: Point` is flagged.
+/// RFC-0056 Option 2: C no longer REFUSES a user-typed persisted field (the old E752). It
+/// emits an author-hook call + a forward `extern` for the marshaller, type-ignorantly. A
+/// missing definition is a build-time link error, not a framec refusal. The scalar `n` is
+/// marshalled directly; only `p: Point` routes through the hook.
 #[test]
-fn c_refuses_a_user_type_persist_field_e752() {
+fn c_emits_an_author_hook_for_a_user_type() {
     let src = Source::new("t.frm", C_USERTYPE.as_bytes().to_vec()).unwrap();
     let ast = segment(&src, Target::C).unwrap();
     let (syms, _) = resolve(&ast);
+    // No target refuses a persisted field any more — E752 is retired.
     let diags = driver::target_diagnostics(&ast, &syms, &CBackend::new());
-    let e752: Vec<_> = diags.iter().filter(|d| d.code == "E752").collect();
-    assert_eq!(e752.len(), 1, "only the user-typed field is refused: {diags:#?}");
-    assert!(e752[0].message.contains("Point"), "the message names the offending type");
+    assert!(diags.iter().all(|d| d.code != "E752"), "E752 is retired: {diags:#?}");
+    // The emitted C carries the extern hook decls + the pack/unpack calls for Point.
+    let code = emit_c(C_USERTYPE);
+    assert!(
+        code.contains("extern cJSON* Bag_persist_pack_field_Point(const Point* v);"),
+        "framec must emit the pack-hook extern:\n{code}"
+    );
+    assert!(
+        code.contains("Bag_persist_pack_field_Point(&(self->p))"),
+        "framec must call the pack hook for the user field:\n{code}"
+    );
+    // The scalar is marshalled directly (no hook).
+    assert!(
+        code.contains("cJSON_AddItemToObject(__root, \"n\", cJSON_CreateNumber((double)(self->n)))"),
+        "the scalar field marshals directly:\n{code}"
+    );
 }
 
-/// The SAME spec on Rust raises no E752 — serde marshals the user type. The refusal is a C
-/// fact (no serializer), not a persistence-wide rule.
+/// The SAME spec on Rust raises no diagnostic — serde marshals the user type with no author
+/// hook. Both targets now persist user types; the difference is only who supplies the
+/// marshalling (serde derive vs. a C author hook).
 #[test]
 fn rust_accepts_the_same_user_type_persist_field() {
     let src = Source::new("t.frm", C_USERTYPE.as_bytes().to_vec()).unwrap();
@@ -910,4 +968,42 @@ fn rust_accepts_the_same_user_type_persist_field() {
     let (syms, _) = resolve(&ast);
     let diags = driver::target_diagnostics(&ast, &syms, &Rust);
     assert!(diags.iter().all(|d| d.code != "E752"), "serde marshals user types: {diags:#?}");
+}
+
+/// PROOF at runtime: a user-typed field round-trips on C when the author supplies the hook
+/// pair. The Point struct + its pack/unpack hooks are defined in `main` (author code), framec
+/// emits the calls, and cJSON does the JSON. save -> restore reproduces the value.
+#[test]
+fn c_user_type_round_trips_with_author_hook() {
+    // `Point` + `zero()` are water in the fixture (above the system); the author's marshalling
+    // hooks are defined here in `main` — after persist's `#include <cjson/cJSON.h>`, so cJSON
+    // is in scope for them.
+    let out = run_c(
+        C_USERTYPE,
+        r#"
+cJSON* Bag_persist_pack_field_Point(const Point* v) {
+    cJSON* o = cJSON_CreateObject();
+    cJSON_AddNumberToObject(o, "x", v->x);
+    cJSON_AddNumberToObject(o, "y", v->y);
+    return o;
+}
+void Bag_persist_unpack_field_Point(const cJSON* j, Point* v) {
+    v->x = (int)cJSON_GetObjectItem(j, "x")->valuedouble;
+    v->y = (int)cJSON_GetObjectItem(j, "y")->valuedouble;
+}
+int main(void) {
+    Bag* b = Bag_new();
+    b->p.x = 3; b->p.y = 4; b->n = 9;
+    char* s = Bag_snapshot(b);
+    Bag* b2 = Bag_new();
+    Bag_restore(b2, s);
+    printf("%d %d %d\n", b2->p.x, b2->p.y, b2->n);
+    return 0;
+}"#,
+        "c_persist_usertype_hook",
+    );
+    if out == "SKIP" {
+        return;
+    }
+    assert_eq!(out.trim(), "3 4 9", "the user type round-trips through the author hook");
 }
