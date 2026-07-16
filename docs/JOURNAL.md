@@ -1541,3 +1541,59 @@ satisfied at this site. A machine here would be ceremony over a wound already cl
 walker — and that is the correct call, not an unfinished one. The dogfooding thesis was never
 "wrap every loop in a system"; it was "a recognizer whose logic IS a machine must become one." The
 discipline that converts the scanners is the same discipline that declines the emit latch.
+
+---
+
+## 2026-07-16 — A test that asserts a constant is not a test, and the constant hid a real bug
+
+The persistence suite looked respectable — 712 fixtures, 570 fuzz cases — and Mark's instinct was
+that it wasn't. He was right, and the way it was wrong is worth recording, because it is a failure
+mode that *reads as coverage*.
+
+Three holes. Two were absences: the schema-drift refusal (E751) had zero tests, and the
+closed-world floor (E750) had no adversarial one — properties we'd implemented and never shot at.
+The out-of-band framing that #233 turns on (a user value carrying `@f:t` must come back as data,
+not be mis-restored as a typed instance) had no regression at all. We wrote those three, and each
+one **passes on the cleanroom and fails on shipping** — which is the honest shape of a safety fix:
+the fixture is simultaneously a regression guard for us and a live indictment of the old compiler.
+
+The third hole is the instructive one. The fuzz had a "state variables on/off" axis that the
+generator **never read** — so state-var fidelity, the whole point of persisting control state, was
+fuzzed on zero of three hundred cases. And the multi-system fuzz ticked an inner counter exactly
+three times and asserted `== 3`. Every case. A restore that ignored the saved value entirely and
+hard-returned `3` would pass all two hundred and forty. That is not a weak test; it is a test of
+nothing, wearing the costume of a test. The number was a literal, not a fact about the run.
+
+So we made the value a fact: tick `2 + case_id % 6` times, assert the count you actually drove.
+Trivial change. And the instant the assertion stopped being a constant and we pointed it at the
+cleanroom, it failed — eighteen for eighteen — with `E750: cannot resolve type 'Inner.Compartment'`.
+
+The bug was real and ours. A system that holds another system in its domain
+(`inner: Inner = @@Inner()`) can't be restored: the reflective decoder's closed-world registry is
+built by walking **module-top-level** classes, and a sub-system's compartment is a *nested* class,
+`Inner.Compartment`. The encoder writes that qualname into `@f:t`; the registry never has it; the
+floor we built to keep restore honest refuses it. E750 was written against flat systems and never
+met a nested one. Shipping passes these — so this is a cleanroom regression the *old, blind* fuzz
+structurally could not surface, because its assertion never varied and it never ran against us.
+
+There were two ways out, and the tempting one is wrong. We could teach the registry to admit
+nested `<Sys>.Compartment` qualnames — three lines, done. But that decides, by omission, that a
+sub-system's control state is just more reflectable data on the generic `@f:t` route. It is not.
+RFC-0015's factory-only contract says a system is reconstructed by *its own* blank-allocate-then-
+populate, never by a user-arg constructor and never by reflective `__new__`-and-setattr from
+outside. The registry fix would keep sub-system control state on exactly the path the contract
+exists to forbid, and it would keep it there *quietly*, which is worse. Mark's call, and the right
+one: **factory-rebuild routing.** A domain field whose declared type is a sibling `@@system` gets
+framed as a nested persist blob and rebuilt through that system's own `_rebuild`. The generic
+reflective encoder never touches a compartment again.
+
+The meta-lesson is the one the whole rebuild keeps re-teaching: the compiler *knew* `inner` was a
+system — it's a declared type in the same program — and the persistence path threw that fact away
+and asked reflection to guess it back at runtime. Same disease, new organ. The fix is the same
+prescription every time: keep the fact, route on it, don't re-derive it downstream.
+
+Not fixed yet — the routing is designed and decided, the codegen change is next. What's shipped
+today is the fuzz that will hold it honest: state-var fidelity now exercised (was zero), stack
+fidelity added (the fuzz had never once pushed a compartment and checked it survived a mid-stack
+snapshot — 12/12 green on the cleanroom now), and the multi-system value made real. The corpus that
+proves nested persist works has to be a corpus that could have caught it broken. Now it is.
