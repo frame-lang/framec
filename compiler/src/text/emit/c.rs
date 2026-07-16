@@ -290,6 +290,22 @@ impl Backend for C {
         out.frame(&format!("{p}self->compartment = self->stack[--self->stack_len];\n"));
     }
 
+    fn push_bare(&self, rel: u32, out: &mut Sink) {
+        // Push a COPY of the current compartment (a value-copy of the struct); stay. The stack
+        // owns the copy, so `pop$` can free it without touching the live compartment.
+        let p = self.pad(rel);
+        let sys = self.cur.borrow().clone();
+        out.frame(&format!("{p}if (self->stack_len==self->stack_cap) {{ self->stack_cap=self->stack_cap?self->stack_cap*2:4; self->stack=realloc(self->stack, self->stack_cap*sizeof({sys}_Comp*)); }}\n"));
+        out.frame(&format!("{p}{{ {sys}_Comp* __c = malloc(sizeof({sys}_Comp)); *__c = *self->compartment; self->stack[self->stack_len++] = __c; }}\n"));
+    }
+
+    fn pop_bare(&self, rel: u32, out: &mut Sink) {
+        // Pop and FREE the discarded copy; stay.
+        let p = self.pad(rel);
+        let sys = self.cur.borrow().clone();
+        out.frame(&format!("{p}if (self->stack_len > 0) {sys}_Comp_free(self->stack[--self->stack_len]);\n"));
+    }
+
     fn lifecycle_call(&self, rel: u32, _sym: &SystemSym, state: &str, event: &str, args: Option<&str>, out: &mut Sink) {
         let sys = self.cur.borrow().clone();
         let p = self.pad(rel);

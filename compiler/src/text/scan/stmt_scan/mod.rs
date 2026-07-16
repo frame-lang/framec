@@ -18,6 +18,9 @@ fn starts_with(src: &[u8], i: usize, pat: &[u8]) -> bool {
 fn starts_push(src: &[u8], i: usize) -> bool {
     starts_with(src, i, b"push$")
 }
+fn starts_pop(src: &[u8], i: usize) -> bool {
+    starts_with(src, i, b"pop$")
+}
 fn is_open_paren(src: &[u8], i: usize) -> bool {
     i < src.len() && src[i] == b'('
 }
@@ -60,7 +63,7 @@ mod fsm {
     )]
     use super::{
         arrow_target, balanced_close, eol, has_pop, is_open_paren, skip_ws, starts_arrow,
-        starts_fatarrow, starts_push,
+        starts_fatarrow, starts_pop, starts_push,
     };
     include!("stmt_scan.gen.rs");
 }

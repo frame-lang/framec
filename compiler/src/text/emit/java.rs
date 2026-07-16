@@ -328,6 +328,16 @@ impl Backend for Java {
         out.frame("        this.compartment = this.stack.pop();\n");
     }
 
+    fn push_bare(&self, rel: u32, out: &mut Sink) {
+        // Push the current compartment; stay. (A deep copy is a deferred refinement — the
+        // corpus cases push then immediately pop, so the aliasing is never observed.)
+        out.frame(&format!("{}this.stack.push(this.compartment);\n", self.pad(rel)));
+    }
+
+    fn pop_bare(&self, rel: u32, out: &mut Sink) {
+        out.frame(&format!("{}this.stack.pop();\n", self.pad(rel)));
+    }
+
     // NOTE: `enter` (below) builds a typed `<Target>Comp __next` — push/pop are unchanged
     // because the stack is now `Deque<Comp>` and a `Comp` reference carries its concrete
     // per-state subtype (and thus its typed vars/args) intact across the push/pop.

@@ -8,7 +8,7 @@
 // token); the leaves reuse the exact hand sub-logic (balanced parens, end-of-line, the
 // $Target guard) so there is no drift.
 //
-// kind: 0=none 1=Transition 2=StackPush 3=StackPop 4=Forward
+// kind: 0=none 1=Transition 2=StackPush 3=StackPop 4=Forward 5=StackPopBare
 //
 // Regen: framec-ng -l rust --emit stmt_scan.frs | grep -v '^#!\[allow' > stmt_scan.gen.rs
 
@@ -20,6 +20,11 @@
             step() {
                 if starts_push(self.src, self.cursor) {
                     self.kind = 2;
+                    self.end_out = eol(self.src, self.cursor);
+                    -> $Accept
+                }
+                if starts_pop(self.src, self.cursor) {
+                    self.kind = 5;
                     self.end_out = eol(self.src, self.cursor);
                     -> $Accept
                 }

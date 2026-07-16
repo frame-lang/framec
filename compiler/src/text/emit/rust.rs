@@ -243,6 +243,16 @@ impl Backend for Rust {
         out.frame(&format!("{p}self.compartment = self.stack.pop().unwrap();\n"));
     }
 
+    fn push_bare(&self, rel: u32, out: &mut Sink) {
+        // Push a CLONE of the current compartment; stay. The typed `<Sys>Comp` derives Clone.
+        out.frame(&format!("{}self.stack.push(self.compartment.clone());\n", self.pad(rel)));
+    }
+
+    fn pop_bare(&self, rel: u32, out: &mut Sink) {
+        // Pop and drop the top; stay.
+        out.frame(&format!("{}self.stack.pop();\n", self.pad(rel)));
+    }
+
     fn lifecycle_call(&self, rel: u32, _sym: &SystemSym, state: &str, event: &str, args: Option<&str>, out: &mut Sink) {
         let p = self.pad(rel);
         out.frame(&format!("{p}self.{state}_{}({});\n", rust_ident(event), args.unwrap_or("")));

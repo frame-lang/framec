@@ -275,6 +275,15 @@ impl Backend for Python {
         out.frame(&format!("{}self.__compartment = self.__stack.pop()\n", self.pad(rel)));
     }
 
+    fn push_bare(&self, rel: u32, out: &mut Sink) {
+        // Push the current compartment; stay. (Deep copy deferred — corpus pushes then pops.)
+        out.frame(&format!("{}self.__stack.append(self.__compartment)\n", self.pad(rel)));
+    }
+
+    fn pop_bare(&self, rel: u32, out: &mut Sink) {
+        out.frame(&format!("{}self.__stack.pop()\n", self.pad(rel)));
+    }
+
     fn lifecycle_call(&self, rel: u32, _sym: &SystemSym, state: &str, event: &str, args: Option<&str>, out: &mut Sink) {
         out.frame(&format!("{}self._{state}_{}({})\n", self.pad(rel), py_ident(event), args.unwrap_or("")));
     }

@@ -418,6 +418,7 @@ pub fn frame_stmt_classify(bytes: &[u8], i: usize, limit: usize) -> (i32, usize)
         Some(Stmt::StackPush(t)) => (2, t.span.end),
         Some(Stmt::StackPop(s)) => (3, s.span.end),
         Some(Stmt::Forward(s)) => (4, s.span.end),
+        Some(Stmt::StackPopBare(s)) => (5, s.span.end),
         _ => (0, i),
     }
 }
@@ -510,6 +511,14 @@ fn frame_stmt(bytes: &[u8], i: usize, limit: usize, depth: u32, col: u32) -> Opt
             exit_args: None,
             enter_args: None,
         })),
+        // bare `pop$` — pop and DISCARD (stay). Distinct from `-> pop$` (kind 3, restore).
+        5 => Some(Stmt::StackPopBare(SimpleStmt {
+            span,
+            col,
+            depth,
+            exit_args: None,
+            enter_args: None,
+        })),
         _ => None,
     }
 }
@@ -531,6 +540,17 @@ fn frame_stmt_hand(bytes: &[u8], i: usize, limit: usize, depth: u32, col: u32) -
             args_text,
             exit_args: None,
             enter_args,
+        }));
+    }
+    // bare `pop$` — pop and DISCARD (stay). Distinct from `-> pop$` (restore) below.
+    if starts(bytes, i, b"pop$", limit) {
+        let e = to_end_of_line(bytes, i, limit);
+        return Some(Stmt::StackPopBare(SimpleStmt {
+            span: Span::new(i, e),
+            col,
+            depth,
+            exit_args: None,
+            enter_args: None,
         }));
     }
     // `(exit) -> (enter) $S(state)` — a transition whose EXIT args precede the arrow.

@@ -154,6 +154,15 @@ pub trait Backend {
     fn push(&self, rel: u32, sym: &SystemSym, target: &str, args: Option<&str>, out: &mut Sink);
     /// `-> pop$` — restore the caller's compartment. **No return** (the driver adds it).
     fn pop(&self, rel: u32, out: &mut Sink);
+    /// Bare `push$` — push a COPY of the current compartment onto the stack; stay in the
+    /// current state. No transition, no return. (Default no-op; every real backend overrides.)
+    fn push_bare(&self, rel: u32, out: &mut Sink) {
+        let _ = (rel, out);
+    }
+    /// Bare `pop$` — pop and DISCARD the top of the stack; stay in the current state.
+    fn pop_bare(&self, rel: u32, out: &mut Sink) {
+        let _ = (rel, out);
+    }
 
     /// Call a lifecycle handler — `$>` enter or `<$` exit — with its args, unsplit.
     /// framec authored this call and terminates it.
@@ -493,7 +502,7 @@ fn emit_body(
         .filter_map(|s| match s {
             Stmt::Native(n) => Some(n.logical_indent),
             Stmt::Transition(t) | Stmt::StackPush(t) => Some(t.col),
-            Stmt::StackPop(x) | Stmt::Forward(x) => Some(x.col),
+            Stmt::StackPop(x) | Stmt::StackPopBare(x) | Stmt::Forward(x) => Some(x.col),
             Stmt::Assign(a) => Some(a.col),
             Stmt::ReturnCall(r) => Some(r.col),
             Stmt::SelfCall(c) => Some(c.col),
@@ -558,7 +567,15 @@ fn emit_body(
                     }
                     be.terminate(r, out);
                     terminated = t.depth == 0 && r == 0;
+                } else {
+                    // bare `push$` — push a COPY of the current compartment; STAY (no
+                    // transition, so no exit/enter lifecycle and no terminating return).
+                    be.push_bare(rel(t.col), out);
                 }
+            }
+            // bare `pop$` — pop and DISCARD the top; STAY (no restore, no terminate).
+            Stmt::StackPopBare(st) => {
+                be.pop_bare(rel(st.col), out);
             }
             Stmt::StackPop(st) => {
                 let r = rel(st.col);

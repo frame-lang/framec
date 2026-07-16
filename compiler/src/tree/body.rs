@@ -82,10 +82,14 @@ pub enum Stmt {
 
     /// `-> $State(args)`, `-> (exit) $S`, `-> => $S`
     Transition(TransitionStmt),
-    /// `push$ -> $State(args)`
+    /// `push$ -> $State(args)` — push and transition. A bare `push$` (no `->`) is the same
+    /// variant with `target: None`: push a COPY of the current compartment, stay put.
     StackPush(TransitionStmt),
-    /// `-> pop$`
+    /// `-> pop$` — pop the stack AND restore the popped compartment (a transition).
     StackPop(SimpleStmt),
+    /// Bare `pop$` — pop and DISCARD the top of the stack; stay in the current state.
+    /// (Distinct from `-> pop$`, which pops and restores.)
+    StackPopBare(SimpleStmt),
     /// `=> $^`
     Forward(SimpleStmt),
 
@@ -438,7 +442,7 @@ impl Node for Stmt {
             Stmt::Trivia(t) => t.span,
             Stmt::Native(n) => n.span,
             Stmt::Transition(t) | Stmt::StackPush(t) => t.span,
-            Stmt::StackPop(s) | Stmt::Forward(s) => s.span,
+            Stmt::StackPop(s) | Stmt::StackPopBare(s) | Stmt::Forward(s) => s.span,
             Stmt::Assign(a) => a.span,
             Stmt::ReturnCall(r) => r.span,
             Stmt::SelfCall(c) => c.span,
@@ -478,6 +482,7 @@ impl Node for Stmt {
             Stmt::Transition(_) => "Transition",
             Stmt::StackPush(_) => "StackPush",
             Stmt::StackPop(_) => "StackPop",
+            Stmt::StackPopBare(_) => "StackPopBare",
             Stmt::Forward(_) => "Forward",
             Stmt::Assign(_) => "Assign",
             Stmt::ReturnCall(_) => "ReturnCall",
@@ -488,7 +493,7 @@ impl Node for Stmt {
         match self {
             Stmt::Trivia(_) => true,
             // Frame statements framec authored. Their interior is held in typed fields.
-            Stmt::Transition(_) | Stmt::StackPush(_) | Stmt::StackPop(_) | Stmt::Forward(_) => true,
+            Stmt::Transition(_) | Stmt::StackPush(_) | Stmt::StackPop(_) | Stmt::StackPopBare(_) | Stmt::Forward(_) => true,
             // A SelfCall's args are one opaque blob by design (framec does not split
             // them — the target compiler does). It is a genuine leaf.
             Stmt::SelfCall(_) => true,
