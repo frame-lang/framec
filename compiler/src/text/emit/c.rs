@@ -1,18 +1,18 @@
 //! EMIT — C. **The hardest backend: no reflection, no generics, no `Any`, manual memory.**
 //!
-//! Java has `Object`, Rust has `Box<dyn Any>`. C has neither. So framec's compartment
-//! containers are a hand-emitted `void*`-keyed map, and pulling a typed value out means a
-//! `*(T*)` cast-and-deref. That deref is a **prefix operator** — a NON-atom — exactly the
-//! #220 family. `Atom::deref` parenthesizes it, so `*(int*)get(...)` becomes
-//! `(*((int*) get(...)))` and survives being spliced into any surrounding expression.
-//! **This is where the Atom model earns its keep.**
+//! Java has `Object`, Rust has `Box<dyn Any>`. C has neither — and the cleanroom does NOT
+//! fake one. The compartment is TYPED per system (`emit_comp_types`): each state's `$.` vars
+//! and `(param)` args become a struct, and `<Sys>_Comp` holds them in a `state`-tagged union.
+//! A read or write is a plain union-field access — `self->compartment->vars.<State>.x` — with
+//! no `void*` map, no per-var `malloc`, no `*(T*)` cast-and-deref (so the old #220 deref
+//! hazard is retired with the box). The host serializer marshals the fields natively when the
+//! system persists (RFC-0056: cJSON + author hooks for user types).
 //!
 //! C also has no methods: every function takes an explicit `self` pointer, and member
 //! access is `->`, not `.`. Those are spellings; the driver never learns them.
 //!
-//! Memory: state-var boxes are heap-allocated and leaked. That is a deferred concern (a
-//! real arena/free-on-drop pass belongs with the coverage layer); the corpus programs are
-//! short-lived and the leak does not affect correctness.
+//! Memory: `calloc`-zeroed compartments are freed on `_destroy`; a deep free of user-owned
+//! child systems belongs with the coverage layer and is deferred.
 
 use super::atom::Atom;
 use super::driver::{params_split, Backend};
@@ -41,35 +41,19 @@ impl Backend for C {
 
     fn file_header(&self, out: &mut Sink) {
         out.frame("#include <stdlib.h>\n#include <string.h>\n#include <stdbool.h>\n\n");
-        // A minimal string -> void* map. framec's OWN scaffolding.
-        out.frame("typedef struct { char** keys; void** vals; int len; int cap; } FrameMap;\n");
-        out.frame("static void FrameMap_init(FrameMap* m) { m->keys=0; m->vals=0; m->len=0; m->cap=0; }\n");
-        out.frame("static void FrameMap_set(FrameMap* m, const char* k, void* v) {\n");
-        out.frame("    for (int i=0;i<m->len;i++) if (strcmp(m->keys[i],k)==0) { m->vals[i]=v; return; }\n");
-        out.frame("    if (m->len==m->cap) { m->cap=m->cap?m->cap*2:4; m->keys=realloc(m->keys,m->cap*sizeof(char*)); m->vals=realloc(m->vals,m->cap*sizeof(void*)); }\n");
-        out.frame("    m->keys[m->len]=strdup(k); m->vals[m->len]=v; m->len++;\n}\n");
-        out.frame("static void* FrameMap_get(FrameMap* m, const char* k) {\n");
-        out.frame("    for (int i=0;i<m->len;i++) if (strcmp(m->keys[i],k)==0) return m->vals[i];\n");
-        out.frame("    return 0;\n}\n");
-        // Free the map: the keys (strdup'd) and the boxed values (malloc'd per seed) are
-        // framec's OWN allocations, so framec's destructor owns freeing them.
-        out.frame("static void FrameMap_free(FrameMap* m) {\n");
-        out.frame("    for (int i=0;i<m->len;i++) { free(m->keys[i]); free(m->vals[i]); }\n");
-        out.frame("    free(m->keys); free(m->vals);\n}\n\n");
-        // The compartment.
-        out.frame("typedef struct { const char* state; FrameMap state_vars; FrameMap state_args; } Compartment;\n");
-        out.frame("static Compartment* Compartment_new(const char* s) {\n");
-        out.frame("    Compartment* c=malloc(sizeof(Compartment)); c->state=s; FrameMap_init(&c->state_vars); FrameMap_init(&c->state_args); return c;\n}\n");
-        out.frame("static void Compartment_free(Compartment* c) {\n");
-        out.frame("    if (!c) return; FrameMap_free(&c->state_vars); FrameMap_free(&c->state_args); free(c);\n}\n\n");
+        // The compartment is TYPED, per system (see `emit_comp_types`) — no `void*`-keyed map,
+        // no heap-boxed state vars. Each state's `$.` vars and `(param)` args become a struct,
+        // and the compartment holds them in a union tagged by `state`. Nothing shared is
+        // emitted at file scope; the includes above are the only header content.
     }
 
     fn open_system(&self, sym: &SystemSym, out: &mut Sink) {
         *self.cur.borrow_mut() = sym.name.clone();
         let name = &sym.name;
+        emit_comp_types(sym, out);
         out.frame("typedef struct {\n");
-        out.frame("    Compartment* compartment;\n");
-        out.frame("    Compartment** stack; int stack_len; int stack_cap;\n");
+        out.frame(&format!("    {name}_Comp* compartment;\n"));
+        out.frame(&format!("    {name}_Comp** stack; int stack_len; int stack_cap;\n"));
         for f in &sym.domain {
             out.frame(&format!("    {} {};\n", field_type(f), f.name));
         }
@@ -120,23 +104,23 @@ impl Backend for C {
         out.frame(&format!("{name}* {name}_new({psig}) {{\n"));
         out.frame(&format!("    {name}* self = malloc(sizeof({name}));\n"));
         out.frame(&format!(
-            "    self->compartment = Compartment_new(\"{first}\");\n"
+            "    self->compartment = {name}_Comp_new(\"{first}\");\n"
         ));
         out.frame("    self->stack = 0; self->stack_len = 0; self->stack_cap = 0;\n");
         if let Some(st) = sym.states.iter().find(|s| s.name == first) {
             for v in &st.state_vars {
-                seed_var(name, "self->compartment", v, out);
+                seed_var("self->compartment", first, v, out);
             }
-        }
-        // State/enter params seed the start compartment's args (§203), boxed like state
-        // vars (C has no reflection). One `state_args` map; a distinct `enter_args`
-        // deferred.
-        for p in sym.params.state.iter().chain(&sym.params.enter) {
-            let ty = p.ty.as_deref().unwrap_or("int");
-            out.frame(&format!(
-                "    {{ {ty}* __v = malloc(sizeof({ty})); *__v = ({}); FrameMap_set(&self->compartment->state_args, \"{}\", __v); }}\n",
-                p.name, p.name
-            ));
+            // State/enter params seed the START compartment's args (§203) — a same-named
+            // header param assigns the typed field; the deferred enter_args nuance leaves an
+            // unmatched start-state param at its zero (calloc'd).
+            for p in &st.state_params {
+                if sym.params.state.iter().chain(&sym.params.enter).chain(&sym.params.domain).any(|x| x.name == *p) {
+                    out.frame(&format!(
+                        "    self->compartment->args.{first}.{p} = ({p});\n"
+                    ));
+                }
+            }
         }
         for f in &sym.domain {
             // `= @@Inner()` is FRAME's instantiation syntax -> the C constructor. Any
@@ -156,9 +140,9 @@ impl Backend for C {
         // layer and is deferred.
         out.frame(&format!("void {name}_destroy({name}* self) {{\n"));
         out.frame("    if (!self) return;\n");
-        out.frame("    for (int i = 0; i < self->stack_len; i++) Compartment_free(self->stack[i]);\n");
+        out.frame(&format!("    for (int i = 0; i < self->stack_len; i++) {name}_Comp_free(self->stack[i]);\n"));
         out.frame("    free(self->stack);\n");
-        out.frame("    Compartment_free(self->compartment);\n");
+        out.frame(&format!("    {name}_Comp_free(self->compartment);\n"));
         out.frame("    free(self);\n}\n\n");
     }
 
@@ -244,13 +228,13 @@ impl Backend for C {
             self.return_type(ret),
             c_ident(event)
         ));
-        // Bind state params from the state_args map: `int value = *(int*)get(...);`.
+        // Bind state params as locals off the current state's TYPED args struct — a plain
+        // field read, no cast, no deref (the compartment is in `state` here by construction).
         if let Some(st) = sym.states.iter().find(|s| s.name == state) {
             for p in &st.state_params {
                 let ty = st.state_param_types.get(p).cloned().unwrap_or_else(|| "void*".into());
                 out.frame(&format!(
-                    "    {ty} {p} = {};\n",
-                    unbox("state_args", p, &ty)
+                    "    {ty} {p} = self->compartment->args.{state}.{p};\n"
                 ));
             }
         }
@@ -294,7 +278,8 @@ impl Backend for C {
 
     fn push(&self, rel: u32, sym: &SystemSym, target: &str, args: Option<&str>, out: &mut Sink) {
         let p = self.pad(rel);
-        out.frame(&format!("{p}if (self->stack_len==self->stack_cap) {{ self->stack_cap=self->stack_cap?self->stack_cap*2:4; self->stack=realloc(self->stack, self->stack_cap*sizeof(Compartment*)); }}\n"));
+        let sys = self.cur.borrow().clone();
+        out.frame(&format!("{p}if (self->stack_len==self->stack_cap) {{ self->stack_cap=self->stack_cap?self->stack_cap*2:4; self->stack=realloc(self->stack, self->stack_cap*sizeof({sys}_Comp*)); }}\n"));
         out.frame(&format!("{p}self->stack[self->stack_len++]=self->compartment;\n"));
         self.enter(&p, sym, target, args, out);
         out.frame(&format!("{p}self->compartment = __next;\n"));
@@ -362,7 +347,7 @@ impl Backend for C {
 
     fn assign(
         &self,
-        sym: &SystemSym,
+        _sym: &SystemSym,
         state: &str,
         lhs: &FrameRef,
         rhs: NativeText,
@@ -376,20 +361,17 @@ impl Backend for C {
                 out.native(rhs);
                 out.frame(";\n");
             }
-            // A state var write BOXES the value onto the heap and stores the pointer.
+            // A state var / arg write is a plain assignment to the current state's TYPED
+            // union field — no malloc, no box. `self->compartment->vars.<State>.x = rhs;`.
             RefKind::StateVar => {
-                let ty = state_var_type(sym, state, &lhs.name);
-                out.frame(&format!(
-                    "{p}{{ {ty}* __v = malloc(sizeof({ty})); *__v = ("
-                ));
+                out.frame(&format!("{p}self->compartment->vars.{state}.{} = (", lhs.name));
                 out.native(rhs);
-                out.frame(&format!(
-                    "); FrameMap_set(&self->compartment->state_vars, \"{}\", __v); }}\n",
-                    lhs.name
-                ));
+                out.frame(");\n");
             }
             RefKind::ContextData => {
-                out.frame(&format!("{p}/* data.{} = ... */ (void)0;\n", lhs.name));
+                out.frame(&format!("{p}self->compartment->args.{state}.{} = (", lhs.name));
+                out.native(rhs);
+                out.frame(");\n");
             }
             RefKind::ContextReturn => {
                 out.frame(&format!("{p}return "));
@@ -427,16 +409,18 @@ impl Backend for C {
         }
     }
 
-    fn lower_ref(&self, sym: &SystemSym, state: &str, r: &FrameRef) -> Atom {
+    fn lower_ref(&self, _sym: &SystemSym, state: &str, r: &FrameRef) -> Atom {
         match r.kind {
-            // A state var: `*(T*)get(...)` — a cast-and-DEREF. The deref is a prefix
-            // operator, a NON-atom; `Atom::deref` parenthesizes it. This is #220, and it
-            // is unrepresentable-to-get-wrong here.
+            // A state var / arg: a plain field read off the current state's TYPED union
+            // member — `self->compartment->vars.<State>.x`. A member-access chain, so it is
+            // already an atom (high precedence); no deref, no cast (#220 is moot — there is
+            // no `*` to re-associate).
             RefKind::StateVar => {
-                let ty = state_var_type(sym, state, &r.name);
-                Atom::ident(unbox("state_vars", &r.name, &ty))
+                Atom::ident(format!("self->compartment->vars.{state}.{}", r.name))
             }
-            RefKind::ContextData => Atom::ident(unbox("state_args", &r.name, "void*")),
+            RefKind::ContextData => {
+                Atom::ident(format!("self->compartment->args.{state}.{}", r.name))
+            }
             // A domain field: `self->field`. `->`, not `.` — a C spelling.
             RefKind::ContextSelf => Atom::ident(format!("self->{}", r.name)),
             RefKind::ContextParams => Atom::ident(&r.name),
@@ -555,33 +539,23 @@ impl Backend for C {
 
 impl C {
     fn enter(&self, p: &str, sym: &SystemSym, target: &str, args: Option<&str>, out: &mut Sink) {
-        out.frame(&format!("{p}Compartment* __next = Compartment_new(\"{target}\");\n"));
+        let name = &sym.name;
+        out.frame(&format!("{p}{name}_Comp* __next = {name}_Comp_new(\"{target}\");\n"));
         if let Some(st) = sym.states.iter().find(|s| s.name == target) {
             for v in &st.state_vars {
-                seed_var(&sym.name, "__next", v, out_prefixed(p, out));
+                seed_var("__next", target, v, out);
             }
-            // State args: box each positional arg. Rust/C are statically typed, so the
-            // arity is known from the declaration; framec never splits the blob for the
-            // VALUE, it just boxes each declared param.
+            // State args: assign each positional arg to its typed field. framec never splits
+            // the blob for the VALUE; the arity is known from the declaration. (Multi-arg C
+            // binding is deferred — no corpus fixture needs it.)
             if let Some(a) = args.map(str::trim).filter(|a| !a.is_empty()) {
                 let names: Vec<&str> = st.state_params.iter().map(String::as_str).collect();
                 if names.len() == 1 {
-                    let ty = st.state_param_types.get(names[0]).cloned().unwrap_or_else(|| "int".into());
-                    out.frame(&format!(
-                        "{p}{{ {ty}* __v = malloc(sizeof({ty})); *__v = ({a}); FrameMap_set(&__next->state_args, \"{}\", __v); }}\n",
-                        names[0]
-                    ));
+                    out.frame(&format!("{p}__next->args.{target}.{} = ({a});\n", names[0]));
                 }
-                // (Multi-arg C tuple-binding deferred; no corpus fixture needs it.)
             }
         }
     }
-}
-
-/// `out` passthrough — a tiny shim so `seed_var` can be reused from `enter` where the
-/// indent is dynamic. (seed_var writes fixed-indent lines; here we accept that.)
-fn out_prefixed<'a>(_p: &str, out: &'a mut Sink) -> &'a mut Sink {
-    out
 }
 
 /// Seed one state var: box its initializer (or a zero) into the compartment map.
@@ -601,39 +575,57 @@ fn c_box_type(v: &crate::resolve::FieldSym) -> String {
     }
 }
 
-fn seed_var(_sys: &str, comp: &str, v: &crate::resolve::FieldSym, out: &mut Sink) {
-    // `= @@Sub()` is Frame's instantiation syntax -> `Sub_new()`. Otherwise the user's init
-    // verbatim. The box type comes from `c_box_type` so the read casts to the same type.
-    let ty = c_box_type(v);
+/// Seed one state var into the current state's TYPED union field: `<comp>->vars.<state>.<name>
+/// = (<init>);`. `= @@Sub()` is Frame's instantiation syntax -> `Sub_new()`; otherwise the
+/// user's init verbatim, else 0.
+fn seed_var(comp: &str, state: &str, v: &crate::resolve::FieldSym, out: &mut Sink) {
     let init = match &v.init_system {
         Some(s) => format!("{s}_new()"),
         None => v.init_text.clone().unwrap_or_else(|| "0".into()),
     };
-    out.frame(&format!(
-        "    {{ {ty}* __v = malloc(sizeof({ty})); *__v = ({init}); FrameMap_set(&{comp}->state_vars, \"{}\", __v); }}\n",
-        v.name
-    ));
+    out.frame(&format!("    {comp}->vars.{state}.{} = ({init});\n", v.name));
 }
 
-/// `(*(T*)FrameMap_get(&self->compartment-><container>, "k"))` — cast-and-deref, an atom
-/// by parenthesization.
-fn unbox(container: &str, key: &str, ty: &str) -> String {
-    let get = Atom::call(
-        "FrameMap_get",
-        format!("&self->compartment->{container}, \"{key}\""),
-    );
-    Atom::deref(Atom::cast(format!("{ty}*"), get)).to_string()
-}
-
-fn state_var_type(sym: &SystemSym, state: &str, name: &str) -> String {
-    sym.states
-        .iter()
-        .find(|s| s.name == state)
-        .and_then(|s| s.state_vars.iter().find(|v| v.name == name))
-        // Same resolution as the SEED (`c_box_type`), so the `*(T*)` read casts to exactly
-        // the type the box was allocated with.
-        .map(c_box_type)
-        .unwrap_or_else(|| "int".to_string())
+/// Emit the per-system TYPED compartment (RFC-0056): a per-state vars struct and args struct,
+/// a `<Sys>_Comp` that holds them in a `state`-tagged union, and its new/free. This is the
+/// erasure-free compartment — no `void*` map, no per-var `malloc`; a read/write is a plain
+/// union field access. `calloc` in `_new` zeroes the union so an unset field reads as 0.
+/// A var-less / arg-less state gets a `char __frame_pad;` member (C forbids an empty struct).
+fn emit_comp_types(sym: &SystemSym, out: &mut Sink) {
+    let name = &sym.name;
+    for st in &sym.states {
+        out.frame(&format!("typedef struct {{"));
+        if st.state_vars.is_empty() {
+            out.frame(" char __frame_pad;");
+        } else {
+            for v in &st.state_vars {
+                out.frame(&format!(" {} {};", c_box_type(v), v.name));
+            }
+        }
+        out.frame(&format!(" }} {name}_{}_vars;\n", st.name));
+        out.frame(&format!("typedef struct {{"));
+        if st.state_params.is_empty() {
+            out.frame(" char __frame_pad;");
+        } else {
+            for p in &st.state_params {
+                let ty = st.state_param_types.get(p).cloned().unwrap_or_else(|| "void*".into());
+                out.frame(&format!(" {ty} {p};"));
+            }
+        }
+        out.frame(&format!(" }} {name}_{}_args;\n", st.name));
+    }
+    out.frame(&format!("typedef struct {{\n    const char* state;\n    union {{"));
+    for st in &sym.states {
+        out.frame(&format!(" {name}_{s}_vars {s};", s = st.name));
+    }
+    out.frame(" } vars;\n    union {");
+    for st in &sym.states {
+        out.frame(&format!(" {name}_{s}_args {s};", s = st.name));
+    }
+    out.frame(&format!(" }} args;\n}} {name}_Comp;\n"));
+    out.frame(&format!("static {name}_Comp* {name}_Comp_new(const char* s) {{\n"));
+    out.frame(&format!("    {name}_Comp* c = calloc(1, sizeof({name}_Comp)); c->state = s; return c;\n}}\n"));
+    out.frame(&format!("static void {name}_Comp_free({name}_Comp* c) {{ free(c); }}\n\n"));
 }
 
 fn field_type(f: &crate::resolve::FieldSym) -> String {

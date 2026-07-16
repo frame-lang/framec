@@ -84,10 +84,12 @@ fn a_generated_c_machine_runs() {
     assert_eq!(out.trim(), "42", "boxed into void*, read back through the deref, = 42");
 }
 
-/// **The state-var read is a PARENTHESIZED deref**, so splicing it into a larger
-/// expression cannot re-associate. This is the #220 guarantee, at the C source level.
+/// **The state-var read is a typed union-field access** — `self->compartment->vars.A.n` —
+/// a member-access chain that binds at the highest precedence, so splicing it into a larger
+/// expression cannot re-associate. No `*` deref (the typed compartment retired the boxed
+/// `*(int*)` form and its #220 hazard along with it).
 #[test]
-fn a_state_var_read_is_a_parenthesized_deref() {
+fn a_state_var_read_is_a_typed_field_access() {
     let frm = r#"@@system S {
     interface:
         double_it(): int
@@ -99,13 +101,11 @@ fn a_state_var_read_is_a_parenthesized_deref() {
 }
 "#;
     let code = emit(frm);
-    // The `*(int*)` deref must be wrapped: `(*((int*) ...))`, NOT a bare `*(int*)...`.
-    // A bare deref spliced into `... * 2` would deref the product, not the value.
     assert!(
-        code.contains("(*((int*)"),
-        "the state-var read must be a PARENTHESIZED deref (#220):\n{code}"
+        code.contains("self->compartment->vars.A.n"),
+        "the state-var read must be a typed union-field access:\n{code}"
     );
-    // And it computes correctly.
+    // And it computes correctly: `self->compartment->vars.A.n * 2` binds `.n` before `*`.
     let out = run(
         frm,
         "int main(){ S* s=S_new(); printf(\"%d\\n\", S_double_it(s)); return 0; }",
@@ -114,7 +114,7 @@ fn a_state_var_read_is_a_parenthesized_deref() {
     if out == "SKIP" {
         return;
     }
-    assert_eq!(out.trim(), "42", "21 * 2 — the deref bound correctly inside the product");
+    assert_eq!(out.trim(), "42", "21 * 2 — the field read bound correctly inside the product");
 }
 
 /// **A domain param is a constructor arg, in scope for the domain field init** (spec §88),
