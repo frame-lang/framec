@@ -386,9 +386,25 @@ impl Backend for Python {
     }
 
     fn persist(&self, m: &super::persist::PersistManifest, out: &mut Sink) {
-        use super::persist::{TAG, VAL};
+        use super::persist::{SYS, TAG, VAL};
         let fields: Vec<&str> = m.fields.iter().map(|(n, _)| n.as_str()).collect();
         let schema = m.schema();
+        // The closed world of sub-system types, as a Python literal set. A domain value whose
+        // runtime class name is in here is a system and is framed via `@f:s` (factory-rebuild),
+        // never walked reflectively. `set()` (not `{}`, which is a dict) when the program
+        // declares none.
+        let sys_set = if m.systems.is_empty() {
+            "set()".to_string()
+        } else {
+            format!(
+                "{{{}}}",
+                m.systems
+                    .iter()
+                    .map(|s| format!("{s:?}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
 
         // ---- snapshot() ----
         out.frame(&format!("    def {}(self):\n", m.save));
@@ -438,6 +454,21 @@ impl Backend for Python {
         out.frame("                return [_enc(v) for v in o]\n");
         out.frame("            if isinstance(o, (str, int, float, bool)) or o is None:\n");
         out.frame("                return o\n");
+        // A SUB-SYSTEM value (declared type is a sibling `@@system`). Frame it out-of-band via
+        // `@f:s` and record its control state STRUCTURALLY (compartment + stack, as plain
+        // dicts) plus its own domain fields — NOT the reflective `@f:t` walk, which would tag
+        // the nested `<Sys>.Compartment` and fail to resolve it on restore, and would violate
+        // the factory-only contract. Detection is exact: the runtime class name is a declared
+        // system (a user type cannot shadow one). The compartment/stack attributes are private
+        // (name-mangled) on the sub-system, so reach them by their mangled spelling.
+        out.frame(&format!("            _frame_systems = {sys_set}\n"));
+        out.frame("            _cn = type(o).__name__\n");
+        out.frame("            if _cn in _frame_systems:\n");
+        out.frame("                _ca = \"_\" + _cn.lstrip(\"_\") + \"__compartment\"\n");
+        out.frame("                _sa = \"_\" + _cn.lstrip(\"_\") + \"__stack\"\n");
+        out.frame(&format!(
+            "                return {{{SYS:?}: _cn, \"_control\": _comp(getattr(o, _ca)), \"_stack\": [_comp(_c) for _c in getattr(o, _sa, [])], \"_domain\": {{k: _enc(v) for k, v in (getattr(o, \"__dict__\", None) or {{}}).items() if k not in (_ca, _sa)}}}}\n"
+        ));
         // A user-defined instance: tag it out-of-band, recurse its fields into VAL.
         out.frame("            _f = dict(getattr(o, \"__dict__\", None) or {})\n");
         out.frame(&format!(
@@ -481,6 +512,26 @@ impl Backend for Python {
         out.frame("                return [_dec(v) for v in o]\n");
         out.frame("            if not isinstance(o, dict):\n");
         out.frame("                return o\n");
+        // A `@f:s` sub-system envelope. Resolve the system name in the CLOSED WORLD (systems
+        // are top-level classes, so they are in `_known`; a foreign name is refused — E750),
+        // blank-allocate via the factory (`__new__`, never a user-arg ctor), and rebuild its
+        // control state through the system's OWN compartment class. Its domain fields recurse
+        // back through `_dec` (a nested sub-system recurses right here).
+        out.frame(&format!(
+            "            if {SYS:?} in o and isinstance(o.get({SYS:?}), str):\n"
+        ));
+        out.frame(&format!("                _cn = o[{SYS:?}]\n"));
+        out.frame("                _cls = _known.get(_cn)\n");
+        out.frame("                if _cls is None:\n");
+        out.frame("                    raise RuntimeError(\"E750: persist restore cannot resolve type: \" + repr(_cn))\n");
+        out.frame("                _inst = _cls.__new__(_cls)\n");
+        out.frame("                _ca = \"_\" + _cn.lstrip(\"_\") + \"__compartment\"\n");
+        out.frame("                _sa = \"_\" + _cn.lstrip(\"_\") + \"__stack\"\n");
+        out.frame("                setattr(_inst, _ca, _rebuild_c(_cls.Compartment, o[\"_control\"]))\n");
+        out.frame("                setattr(_inst, _sa, [_rebuild_c(_cls.Compartment, _c) for _c in o.get(\"_stack\", [])])\n");
+        out.frame("                for _k, _v in o.get(\"_domain\", {}).items():\n");
+        out.frame("                    setattr(_inst, _k, _dec(_v))\n");
+        out.frame("                return _inst\n");
         out.frame(&format!(
             "            if {TAG:?} in o and {VAL:?} in o and isinstance(o.get({TAG:?}), str):\n"
         ));
@@ -503,13 +554,17 @@ impl Backend for Python {
         // repopulate state_vars/state_args (decoding each value), rather than reassign a state
         // name onto the constructed compartment (which would leave it holding the START state's
         // vars, and would lose the stack — a `pop$`-after-restore crash).
-        out.frame("        def _rebuild(d):\n");
-        out.frame("            _c = type(self).Compartment(d[\"state\"])\n");
+        // Rebuild a compartment of a GIVEN class — `type(self).Compartment` for this system's
+        // own control state, or a sub-system's `Compartment` when `_dec` revives a `@f:s`
+        // envelope. Allocate fresh and repopulate state_vars/state_args (decoding each value)
+        // rather than reassign a state name onto a constructed compartment.
+        out.frame("        def _rebuild_c(_cc, d):\n");
+        out.frame("            _c = _cc(d[\"state\"])\n");
         out.frame("            _c.state_vars = {_k: _dec(_v) for _k, _v in d.get(\"state_vars\", {}).items()}\n");
         out.frame("            _c.state_args = {_k: _dec(_v) for _k, _v in d.get(\"state_args\", {}).items()}\n");
         out.frame("            return _c\n");
-        out.frame("        self.__compartment = _rebuild(_raw[\"_control\"])\n");
-        out.frame("        self.__stack = [_rebuild(_d) for _d in _raw.get(\"_stack\", [])]\n");
+        out.frame("        self.__compartment = _rebuild_c(type(self).Compartment, _raw[\"_control\"])\n");
+        out.frame("        self.__stack = [_rebuild_c(type(self).Compartment, _d) for _d in _raw.get(\"_stack\", [])]\n");
         for f in &fields {
             out.frame(&format!("        self.{f} = _dec(_raw[{f:?}])\n"));
         }

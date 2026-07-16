@@ -450,7 +450,7 @@ pub fn emit(src: &Source, ast: &FileAst, syms: &SymbolTable, be: &dyn Backend) -
         // `@@[persist]` — save/restore. Derived ONCE from the symbol table (RFC-0054),
         // then spelled per target. The disambiguation (out-of-band framing) is fixed in
         // each backend; the manifest just says WHAT to persist.
-        let manifest = super::persist::PersistManifest::derive(sym);
+        let manifest = super::persist::PersistManifest::derive(sym, syms);
         if manifest.enabled {
             be.persist(&manifest, &mut out);
         }

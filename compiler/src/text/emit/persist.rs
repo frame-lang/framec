@@ -50,7 +50,7 @@
 //! resolvable), so the rebuild uses an **emitted lexical registry** of framec-known types
 //! instead of enumerating a module or file.
 
-use crate::resolve::SystemSym;
+use crate::resolve::{SymbolTable, SystemSym};
 
 /// The reserved envelope keys. **Chosen to be disjoint from plausible user keys**, but
 /// the disjointness is not what makes this safe — the *out-of-band framing* is. Even if a
@@ -58,6 +58,14 @@ use crate::resolve::SystemSym;
 /// be escaped, never read as a tag. See `save`/`revive`.
 pub const TAG: &str = "@f:t";
 pub const VAL: &str = "@f:v";
+/// The reserved envelope key for a **sub-system** value — a domain field whose declared type
+/// is another `@@system`. Its control state (compartment + stack) is NOT reflectively walked
+/// (that route can't resolve the nested `<Sys>.Compartment` type, and — more fundamentally —
+/// RFC-0015's factory-only contract says a system is reconstructed by its OWN blank-allocate-
+/// then-populate, never by reflective `__new__`-and-setattr from outside). A `@f:s` envelope
+/// carries the system name; restore resolves it in the closed world and rebuilds it through the
+/// system's own compartment class. Disjoint from `@f:t`, so the two envelopes never collide.
+pub const SYS: &str = "@f:s";
 
 /// Which persistence route a target takes.
 ///
@@ -113,11 +121,18 @@ pub struct PersistManifest {
     /// (Populated when the tree carries native type declarations; for now this is the
     /// set of field types that name something the program defines.)
     pub known_types: Vec<String>,
+    /// Every `@@system` name declared in this program. A domain value whose runtime class name
+    /// is in this set is a sub-system and is framed via `@f:s` (factory-rebuild), not walked
+    /// reflectively. Sound because a user type CANNOT shadow a declared system in the same
+    /// program — the name would collide at resolve time — so membership is an exact,
+    /// type-ignorant signal, not a heuristic. The list drives an emitted literal set.
+    pub systems: Vec<String>,
 }
 
 impl PersistManifest {
     /// Derive the manifest from a system. **One computation, shared by every backend.**
-    pub fn derive(sym: &SystemSym) -> PersistManifest {
+    /// `syms` supplies the program-wide system roster (the closed world of sub-system types).
+    pub fn derive(sym: &SystemSym, syms: &SymbolTable) -> PersistManifest {
         let (save, load, blob) = match &sym.persist {
             Some(p) => (p.save.clone(), p.load.clone(), p.blob.clone()),
             None => (String::new(), String::new(), String::new()),
@@ -175,6 +190,7 @@ impl PersistManifest {
                 })
                 .collect(),
             known_types: Vec::new(),
+            systems: syms.systems.iter().map(|s| s.name.clone()).collect(),
         }
     }
 
