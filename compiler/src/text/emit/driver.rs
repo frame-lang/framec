@@ -103,6 +103,15 @@ pub trait Backend {
     /// `=> $^` — forward the current event to the PARENT's handler.
     fn forward(&self, rel: u32, owner: &str, event: &str, params: &str, out: &mut Sink);
 
+    /// A do-nothing statement, at `rel`. Emitted where a Frame construct lowers to nothing but
+    /// the slot still needs a statement — e.g. `=> $^` forwarding to a parent that does not
+    /// handle the event (a no-op), sitting alone inside an `if x:` block. Brace targets can
+    /// leave the block empty (the default is nothing); an indent-delimited target (python)
+    /// MUST emit `pass`, or the empty block is a syntax error.
+    fn noop(&self, rel: u32, out: &mut Sink) {
+        let _ = (rel, out);
+    }
+
     /// Open one `(state, handler)` method.
     #[allow(clippy::too_many_arguments)]
     fn open_handler(
@@ -594,6 +603,11 @@ fn emit_body(
                     // body base put it outside the block (a python IndentationError, and
                     // wrong-but-tolerated on brace targets).
                     be.forward(rel(fwd.col), &owner.name, event, &params, out);
+                } else {
+                    // The parent does not handle this event: `=> $^` is a no-op (the parent
+                    // state's dispatch would run and do nothing). Emit a no-op so the enclosing
+                    // block is not left empty — a `pass` on python, nothing on brace targets.
+                    be.noop(rel(fwd.col), out);
                 }
             }
         }

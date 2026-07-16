@@ -145,6 +145,12 @@ impl Backend for Python {
         out.frame(&format!("{p}self._{owner}_{}({})\n", py_ident(event), param_names(params)));
     }
 
+    /// Python is indent-delimited: a no-op slot (e.g. `=> $^` to a non-handling parent, alone
+    /// in an `if x:` block) must be a real `pass`, or the block is a syntax error.
+    fn noop(&self, rel: u32, out: &mut Sink) {
+        out.frame(&format!("{}pass\n", self.pad(rel)));
+    }
+
     fn route(
         &self,
         _sym: &SystemSym,
