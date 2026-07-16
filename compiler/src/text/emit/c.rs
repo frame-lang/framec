@@ -452,8 +452,18 @@ impl Backend for C {
         // build-time diagnostic — an undefined-reference link error naming the exact hook —
         // never a silent miscompile (the cleanroom posture). Scalars/strings need no hook.
         let mut hook_types: Vec<String> = Vec::new();
+        let mut has_signed_int = false;
+        let mut has_unsigned_int = false;
         let mut note = |ty: &str| {
-            if !c_is_scalar(ty) && !c_is_string(ty) && !hook_types.iter().any(|h| h == ty) {
+            if c_is_string(ty) || c_is_float(ty) {
+                // no hook, no integer helper
+            } else if c_is_scalar(ty) {
+                if c_is_unsigned_int(ty) {
+                    has_unsigned_int = true;
+                } else {
+                    has_signed_int = true;
+                }
+            } else if !hook_types.iter().any(|h| h == ty) {
                 hook_types.push(ty.to_string());
             }
         };
@@ -464,6 +474,18 @@ impl Backend for C {
             for (_, t) in st.vars.iter().chain(&st.args) {
                 note(t);
             }
+        }
+        // Lossless integer marshalling: an integer is packed as a STRING (a cJSON number is a
+        // double, which corrupts values above 2^53). Emitted only for the signedness present.
+        if has_signed_int {
+            out.frame(&format!(
+                "static cJSON* {nm}__pack_i64(long long v) {{ char b[32]; snprintf(b, sizeof(b), \"%lld\", v); return cJSON_CreateString(b); }}\n"
+            ));
+        }
+        if has_unsigned_int {
+            out.frame(&format!(
+                "static cJSON* {nm}__pack_u64(unsigned long long v) {{ char b[32]; snprintf(b, sizeof(b), \"%llu\", v); return cJSON_CreateString(b); }}\n"
+            ));
         }
         if !hook_types.is_empty() {
             out.frame("/* AUTHOR MUST DEFINE these marshalling hooks for the user-typed persisted\n");
@@ -705,29 +727,68 @@ fn c_type_ident(ty: &str) -> String {
     s.trim_matches('_').to_string()
 }
 
-/// A cJSON* expression that marshals `expr` (an lvalue of type `ty`) — a scalar/string
-/// directly, a user type through the author's pack hook. Type-ignorant: it branches only on
-/// framec's own scalar/string vocabulary, never on a user type name.
+/// A cJSON* expression that marshals `expr` (an lvalue of type `ty`). A FLOAT goes through a
+/// cJSON number (a double, its natural JSON type). An INTEGER goes through a STRING, NOT a
+/// number: cJSON stores every number as a `double`, whose 53-bit mantissa silently corrupts an
+/// integer above 2^53 — so `<sys>__pack_i64`/`_u64` snprintf it losslessly. A string field is
+/// a string; a user type goes through the author's pack hook. Type-ignorant: it branches only
+/// on framec's own scalar/string vocabulary, never on a user type name.
 fn c_pack_value(sys: &str, expr: &str, ty: &str) -> String {
     if c_is_string(ty) {
         format!("(({expr}) ? cJSON_CreateString({expr}) : cJSON_CreateNull())")
-    } else if c_is_scalar(ty) {
+    } else if c_is_float(ty) {
         format!("cJSON_CreateNumber((double)({expr}))")
+    } else if c_is_scalar(ty) {
+        if c_is_unsigned_int(ty) {
+            format!("{sys}__pack_u64((unsigned long long)({expr}))")
+        } else {
+            format!("{sys}__pack_i64((long long)({expr}))")
+        }
     } else {
         format!("{sys}_persist_pack_field_{}(&({expr}))", c_type_ident(ty))
     }
 }
 
-/// A C statement that reads cJSON `item` into the lvalue `target` of type `ty` — a
-/// scalar/string directly, a user type through the author's unpack hook.
+/// A C statement that reads cJSON `item` into the lvalue `target` of type `ty` — a float from
+/// the number, an integer from its lossless STRING form (`strtoll`/`strtoull`), a string
+/// directly, a user type through the author's unpack hook.
 fn c_unpack_into(sys: &str, item: &str, target: &str, ty: &str) -> String {
     if c_is_string(ty) {
         format!("{{ const cJSON* __i = {item}; {target} = (__i && __i->valuestring) ? strdup(__i->valuestring) : 0; }}")
-    } else if c_is_scalar(ty) {
+    } else if c_is_float(ty) {
         format!("{{ const cJSON* __i = {item}; {target} = ({ty})(__i ? __i->valuedouble : 0); }}")
+    } else if c_is_scalar(ty) {
+        let parse = if c_is_unsigned_int(ty) { "strtoull" } else { "strtoll" };
+        format!("{{ const cJSON* __i = {item}; {target} = ({ty})((__i && __i->valuestring) ? {parse}(__i->valuestring, 0, 10) : 0); }}")
     } else {
         format!("{sys}_persist_unpack_field_{}({item}, &({target}));", c_type_ident(ty))
     }
+}
+
+/// A C floating type — marshalled through a cJSON number (a double round-trips a double
+/// exactly, and `float`->`double`->`float` is exact).
+fn c_is_float(t: &str) -> bool {
+    matches!(t.trim(), "float" | "double" | "long double")
+}
+
+/// An unsigned C integer type — decides `strtoull` + `%llu` over `strtoll` + `%lld`, so a
+/// value near `UINT64_MAX` round-trips without being read as negative.
+fn c_is_unsigned_int(t: &str) -> bool {
+    matches!(
+        t.split_whitespace().collect::<Vec<_>>().join(" ").as_str(),
+        "unsigned"
+            | "unsigned int"
+            | "unsigned long"
+            | "unsigned long long"
+            | "unsigned short"
+            | "unsigned char"
+            | "size_t"
+            | "uintptr_t"
+            | "uint8_t"
+            | "uint16_t"
+            | "uint32_t"
+            | "uint64_t"
+    )
 }
 
 /// Is this field a C string (quoted in the snapshot; `strdup`'d back)? Keyed on the C

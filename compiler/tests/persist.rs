@@ -951,10 +951,10 @@ fn c_emits_an_author_hook_for_a_user_type() {
         code.contains("Bag_persist_pack_field_Point(&(self->p))"),
         "framec must call the pack hook for the user field:\n{code}"
     );
-    // The scalar is marshalled directly (no hook).
+    // The scalar `int` marshals directly (no hook) — as a lossless string, not a lossy double.
     assert!(
-        code.contains("cJSON_AddItemToObject(__root, \"n\", cJSON_CreateNumber((double)(self->n)))"),
-        "the scalar field marshals directly:\n{code}"
+        code.contains("cJSON_AddItemToObject(__root, \"n\", Bag__pack_i64((long long)(self->n)))"),
+        "the scalar int field marshals directly (lossless integer):\n{code}"
     );
 }
 

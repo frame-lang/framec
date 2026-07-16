@@ -172,9 +172,9 @@ fn b217_218() -> Status {
         "framec must hand the args over UNSPLIT (inside the Object[] literal):\n{code}"
     );
     assert!(
-        code.contains(r#"__next.msg = ((String) __a[0]);"#)
-            && code.contains(r#"__next.arr = ((int[]) __a[2]);"#),
-        "framec indexes the javac-split array positionally into typed fields:\n{code}"
+        code.contains(r#"__next.__a_msg = ((String) __a[0]);"#)
+            && code.contains(r#"__next.__a_arr = ((int[]) __a[2]);"#),
+        "framec indexes the javac-split array positionally into typed (namespaced) arg fields:\n{code}"
     );
     Impossible
 }

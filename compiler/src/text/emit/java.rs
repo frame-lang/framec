@@ -226,7 +226,7 @@ impl Backend for Java {
         // framec binds it as a local by reading the already-typed field off the current
         // state's concrete `<State>Comp` — a cast, no container extraction, no unbox.
         for (n, t) in &self.state_params(state) {
-            out.frame(&format!("        {t} {n} = {};\n", java_ctx_read(state, n)));
+            out.frame(&format!("        {t} {n} = {};\n", java_ctx_read(state, &format!("__a_{n}"))));
         }
     }
 
@@ -382,8 +382,13 @@ impl Backend for Java {
             // write is an lvalue on a cast: `((<State>Comp) compartment).x = rhs;` — the
             // cast parenthesizes, and a field access on a parenthesized cast IS assignable
             // in Java. No `Map.put`, no boxing.
-            RefKind::StateVar | RefKind::ContextData => {
+            RefKind::StateVar => {
                 out.frame(&format!("{p}{} = ", java_ctx_read(state, &lhs.name)));
+                out.native(rhs);
+                out.frame(";\n");
+            }
+            RefKind::ContextData => {
+                out.frame(&format!("{p}{} = ", java_ctx_read(state, &format!("__a_{}", lhs.name))));
                 out.native(rhs);
                 out.frame(";\n");
             }
@@ -420,7 +425,8 @@ impl Backend for Java {
             // `((<State>Comp) compartment).x`. `Atom::cast` PARENTHESIZES the cast (that is
             // #213 — a bare `(T) compartment.x` would bind `.x` to `compartment`), and the
             // field is already the declared type, so there is no unbox.
-            RefKind::StateVar | RefKind::ContextData => java_ctx_read(state, &r.name),
+            RefKind::StateVar => java_ctx_read(state, &r.name),
+            RefKind::ContextData => java_ctx_read(state, &format!("__a_{}", r.name)),
             // `this.field`. An identifier chain — already an atom, and it MUST NOT be
             // parenthesized, because it is also an lvalue root (`@@:self.field = 3`).
             // That asymmetry is exactly why `Place` is a separate type from `Atom`.
@@ -524,7 +530,7 @@ impl Java {
                 for (i, p) in st.state_params.iter().enumerate() {
                     let ty = st.state_param_types.get(p).cloned().unwrap_or_else(|| "Object".into());
                     let slot = java_unbox(&ty, Atom::ident(format!("__a[{i}]")));
-                    out.frame(&format!("        {var}.{p} = {slot};\n"));
+                    out.frame(&format!("        {var}.__a_{p} = {slot};\n"));
                 }
             }
         }
@@ -550,7 +556,7 @@ impl Java {
                 .chain(&sym.params.domain)
                 .any(|x| &x.name == p);
             if in_scope {
-                out.frame(&format!("        {var}.{p} = {p};\n"));
+                out.frame(&format!("        {var}.__a_{p} = {p};\n"));
             }
         }
     }
@@ -596,9 +602,13 @@ fn emit_comp_types(sym: &SystemSym, out: &mut Sink) {
         for v in &st.state_vars {
             out.frame(&format!("        public {} {};\n", java_field_ty(&v.ty), v.name));
         }
+        // Args are namespaced `__a_<name>` so a state that declares BOTH a `$.x` var and an
+        // `(x)` param does not collide into one duplicate field (Rust/C keep vars and args in
+        // separate enums/structs; Java folds them into one class, so the prefix restores the
+        // separation). No user name reaches `__a_*`.
         for p in &st.state_params {
             let ty = st.state_param_types.get(p).cloned().unwrap_or_else(|| "Object".into());
-            out.frame(&format!("        public {ty} {p};\n"));
+            out.frame(&format!("        public {ty} __a_{p};\n"));
         }
         out.frame("    }\n");
     }
