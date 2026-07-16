@@ -674,10 +674,12 @@ fn control_state_round_trips_on_c() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────
-// FIXED-TYPE ROUTE (Java, Regime A per RFC-0056) via Gson. Java delegates to Gson: a user
-// type self-marshals (Gson reflects over its fields into the declared type). framec writes
-// no per-type code. Needs Gson on the classpath, so these tests discover a gson jar in the
-// local caches and SKIP if none is found. Proven by RUNNING javac/java.
+// FIXED-TYPE ROUTE (Java, Regime A per RFC-0056) via Jackson. Java delegates to Jackson: a
+// user type self-marshals (Jackson reflects over its fields into the declared type), and the
+// polymorphic control state round-trips from framec-generated @JsonTypeInfo/@JsonSubTypes
+// annotations (keyed on framec's OWN states — type-ignorant, closed-world). framec writes no
+// per-type code. Needs jackson-databind (+core +annotations) on the classpath, so these tests
+// discover the jars in the local caches and SKIP if any is missing. Proven by RUNNING javac/java.
 // ─────────────────────────────────────────────────────────────────────────────────────
 
 use frame_compiler::text::emit::java::Java;
@@ -689,11 +691,15 @@ fn emit_java(frm: &str) -> String {
     driver::emit(&src, &ast, &syms, &Java::new())
 }
 
-/// Locate a gson jar in the usual local caches (maven/gradle). None → the Java tests SKIP.
-fn gson_jar() -> Option<String> {
+/// Locate one jar matching `pattern` in the usual local caches (homebrew/maven/gradle).
+fn find_jar(pattern: &str) -> Option<String> {
     let home = std::env::var("HOME").unwrap_or_default();
-    for root in ["/opt/homebrew/Cellar".to_string(), format!("{home}/.gradle")] {
-        if let Ok(o) = Command::new("find").arg(&root).args(["-name", "gson-*.jar"]).output() {
+    for root in [
+        "/opt/homebrew/Cellar".to_string(),
+        format!("{home}/.gradle"),
+        format!("{home}/.m2"),
+    ] {
+        if let Ok(o) = Command::new("find").arg(&root).args(["-name", pattern]).output() {
             if let Some(j) = String::from_utf8_lossy(&o.stdout).lines().find(|l| !l.is_empty()) {
                 return Some(j.to_string());
             }
@@ -702,9 +708,25 @@ fn gson_jar() -> Option<String> {
     None
 }
 
-/// Compile the generated Java plus a `main` (Gson on the classpath) and run `Main`; stdout.
+/// The Jackson classpath: databind + core + annotations, `:`-joined. core and annotations are
+/// taken from the SAME directory as databind so the three versions MATCH (a 2.8 databind with a
+/// 2.18 core fails at runtime). None if a co-located matching set is not found → the Java persist
+/// tests SKIP (they cannot prove anything without the serializer).
+fn jackson_cp() -> Option<String> {
+    let databind = find_jar("jackson-databind-*.jar")?;
+    let dir = std::path::Path::new(&databind).parent()?;
+    let sibling = |pat: &str| -> Option<String> {
+        let o = Command::new("find").arg(dir).args(["-maxdepth", "1", "-name", pat]).output().ok()?;
+        String::from_utf8_lossy(&o.stdout).lines().find(|l| !l.is_empty()).map(str::to_string)
+    };
+    let core = sibling("jackson-core-*.jar")?;
+    let annotations = sibling("jackson-annotations-*.jar")?;
+    Some(format!("{databind}:{core}:{annotations}"))
+}
+
+/// Compile the generated Java plus a `main` (Jackson on the classpath) and run `Main`; stdout.
 fn run_java(frm: &str, main: &str, dir: &str) -> String {
-    let gson = match gson_jar() {
+    let cp = match jackson_cp() {
         Some(j) => j,
         None => return "SKIP".into(),
     };
@@ -723,7 +745,7 @@ fn run_java(frm: &str, main: &str, dir: &str) -> String {
     std::fs::write(d.join(format!("{cls}.java")), format!("{code}\n{main}\n")).unwrap();
     let o = Command::new("javac")
         .arg("-cp")
-        .arg(&gson)
+        .arg(&cp)
         .arg(format!("{cls}.java"))
         .current_dir(&d)
         .output()
@@ -731,7 +753,7 @@ fn run_java(frm: &str, main: &str, dir: &str) -> String {
     assert!(o.status.success(), "javac rejected:\n{}", String::from_utf8_lossy(&o.stderr));
     let o = Command::new("java")
         .arg("-cp")
-        .arg(format!(".:{gson}"))
+        .arg(format!(".:{cp}"))
         .arg("Main")
         .current_dir(&d)
         .output()

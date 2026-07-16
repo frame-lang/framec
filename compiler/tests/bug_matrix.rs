@@ -165,10 +165,16 @@ fn b217_218() -> Status {
 }
 "#;
     let code = emit(frm, Target::Java);
-    // The args go over as ONE BLOB to a varargs helper. framec never splits them.
+    // The args go over as ONE BLOB inside an `Object[]` literal — javac splits it, framec
+    // never does. framec only INDEXES the array positionally by declared param order.
     assert!(
-        code.contains(r#"__seedArgs(__next, new String[]{"msg", "n", "arr"}, "hello, world", 9, new int[]{1, 2});"#),
-        "framec must hand the args over UNSPLIT:\n{code}"
+        code.contains(r#"Object[] __a = new Object[]{ "hello, world", 9, new int[]{1, 2} };"#),
+        "framec must hand the args over UNSPLIT (inside the Object[] literal):\n{code}"
+    );
+    assert!(
+        code.contains(r#"__next.msg = ((String) __a[0]);"#)
+            && code.contains(r#"__next.arr = ((int[]) __a[2]);"#),
+        "framec indexes the javac-split array positionally into typed fields:\n{code}"
     );
     Impossible
 }

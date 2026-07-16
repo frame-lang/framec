@@ -289,19 +289,17 @@ fn a_state_var_read_is_an_atom() {
     use frame_compiler::text::emit::java::state_var_read;
     use frame_compiler::text::emit::atom::Atom;
 
-    let read = state_var_read("Integer", "n");
+    let read = state_var_read("S", "n");
     assert_eq!(
         read.as_str(),
-        "((Integer) compartment.stateVars.get(\"n\"))",
-        "the cast MUST be parenthesized"
+        "((SComp) compartment).n",
+        "the cast to the concrete state compartment MUST be parenthesized"
     );
 
-    // And it survives a member access — which is the operation that broke it.
-    let called = Atom::method(read, "intValue", "");
-    assert_eq!(
-        called.as_str(),
-        "((Integer) compartment.stateVars.get(\"n\")).intValue()"
-    );
+    // And it survives a member access — a bare `(SComp) compartment.n` would bind `.n` to
+    // `compartment` (the base `Comp`, which has no `n`). This is #213 in the typed world.
+    let called = Atom::method(read, "toString", "");
+    assert_eq!(called.as_str(), "((SComp) compartment).n.toString()");
 
     if !have_javac() {
         eprintln!("SKIPPED the toolchain half: javac not installed.");
@@ -318,22 +316,25 @@ fn a_state_var_read_is_an_atom() {
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();
 
+    // The probe declares a REAL typed compartment: a base `Comp` and a concrete `SComp`
+    // carrying `Integer n` (the typed field). The atom read must down-cast and reach `n`.
     let harness = |cls: &str, expr: &str| {
         format!(
-            "import java.util.*;\n\
-             public class {cls} {{\n\
-             \x20 static class C {{ Map<String,Object> stateVars = new HashMap<>(); }}\n\
-             \x20 static C compartment = new C();\n\
+            "public class {cls} {{\n\
+             \x20 static class Comp {{ public String state; }}\n\
+             \x20 static class SComp extends Comp {{ public Integer n; }}\n\
+             \x20 static Comp compartment = new SComp();\n\
              \x20 public static void main(String[] a) {{\n\
-             \x20   compartment.stateVars.put(\"n\", 42);\n\
-             \x20   int v = {expr};\n\
+             \x20   ((SComp) compartment).n = 42;\n\
+             \x20   String v = {expr};\n\
              \x20   System.out.println(v);\n\
              \x20 }}\n}}\n"
         )
     };
 
-    // THE ATOM FORM — what this compiler emits. Must compile.
-    let atom_expr = Atom::method(state_var_read("Integer", "n"), "intValue", "").to_string();
+    // THE ATOM FORM — what this compiler emits. Must compile: `.toString()` binds to the
+    // parenthesized-cast's `.n`, not to `compartment`.
+    let atom_expr = Atom::method(state_var_read("S", "n"), "toString", "").to_string();
     std::fs::write(d.join("Ok.java"), harness("Ok", &atom_expr)).unwrap();
     let out = Command::new("javac").arg("Ok.java").current_dir(&d).output().unwrap();
     assert!(
@@ -342,9 +343,9 @@ fn a_state_var_read_is_an_atom() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    // THE BARE FORM — what the old compiler emitted. Must be REJECTED.
-    // `(Integer) map.get("n").intValue()` -> `.intValue()` binds on Object.
-    let bare_expr = "(Integer) compartment.stateVars.get(\"n\").intValue()";
+    // THE BARE FORM — cast NOT parenthesized. `(SComp) compartment.n` parses as
+    // `(SComp) (compartment.n)`, and `compartment` (base `Comp`) has no `n`. javac rejects.
+    let bare_expr = "((SComp) compartment.n).toString()";
     std::fs::write(d.join("Bad.java"), harness("Bad", bare_expr)).unwrap();
     let out = Command::new("javac").arg("Bad.java").current_dir(&d).output().unwrap();
     assert!(
@@ -396,9 +397,9 @@ fn framec_never_splits_arguments() {
         }
         $B(msg: String, n: int, arr: int[]) {
             show() {
-                System.out.println("msg=" + compartment.stateArgs.get("msg"));
-                System.out.println("n=" + compartment.stateArgs.get("n"));
-                System.out.println("len=" + ((int[]) compartment.stateArgs.get("arr")).length);
+                System.out.println("msg=" + msg);
+                System.out.println("n=" + n);
+                System.out.println("len=" + arr.length);
             }
         }
 }
@@ -443,7 +444,7 @@ fn the_stack_preserves_the_compartment() {
         }
         $Paid(amount: int) {
             pick() {
-                System.out.println("dispensing amount=" + compartment.stateArgs.get("amount"));
+                System.out.println("dispensing amount=" + amount);
                 -> pop$
             }
             refund() {

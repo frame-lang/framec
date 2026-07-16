@@ -94,7 +94,7 @@ fn the_same_machine_runs_on_both_targets() {
         }
         $Paid(item: String, amount: int) {
             pick() {
-                System.out.println("item=" + compartment.stateArgs.get("item") + " amount=" + compartment.stateArgs.get("amount"));
+                System.out.println("item=" + item + " amount=" + amount);
                 -> pop$
             }
         }

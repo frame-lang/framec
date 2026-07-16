@@ -63,32 +63,15 @@ impl Backend for Java {
     fn open_system(&self, sym: &SystemSym, out: &mut Sink) {
         let name = &sym.name;
         out.frame(&format!("public class {name} {{\n"));
-        out.frame("    static class Compartment {\n");
-        out.frame("        String state;\n");
-        out.frame("        Map<String, Object> stateVars = new HashMap<>();\n");
-        out.frame("        Map<String, Object> stateArgs = new HashMap<>();\n");
-        out.frame("        Compartment(String s) { this.state = s; }\n");
-        out.frame("    }\n\n");
-        out.frame("    private Compartment compartment;\n");
+        // The TYPED per-state compartment (RFC-0056): a base `Comp` + one `<State>Comp` per
+        // state holding that state's typed vars/args. Jackson round-trips the polymorphic
+        // control state from framec-generated annotations when the system persists. No
+        // `Map<String,Object>`, no `__seedArgs` blob helper (args now split by javac through
+        // an `Object[]` literal, indexed positionally — framec still never splits the blob).
+        emit_comp_types(sym, out);
+        out.frame("    private Comp compartment;\n");
         // `push$`/`pop$` is a genuine PUSHDOWN. Frame has always had one.
-        out.frame("    private Deque<Compartment> stack = new ArrayDeque<>();\n\n");
-
-        // *** framec DOES NOT SPLIT THE ARGS. ***
-        //
-        // It hands them to a VARARGS helper and lets javac split them — correctly, for
-        // free, arity error included.
-        //
-        // #218: in C++, `f(a < b, c > d)` (two comparisons) and `f(std::map<int,int>())`
-        // (one generic) are the SAME token shape. Separating them needs name lookup over
-        // the user's types — which a lexer cannot do, and which C++'s own grammar cannot
-        // do either. A smarter splitter is not the answer, and neither is a parser. The
-        // answer is to not compute the fact at all.
-        out.frame(
-            "    private static void __seedArgs(Compartment c, String[] names, Object... vals) {\n",
-        );
-        out.frame("        for (int i = 0; i < names.length && i < vals.length; i++) {\n");
-        out.frame("            c.stateArgs.put(names[i], vals[i]);\n");
-        out.frame("        }\n    }\n\n");
+        out.frame("    private Deque<Comp> stack = new ArrayDeque<>();\n\n");
 
         // Domain fields. The type is emitted VERBATIM — Frame has no type system, and
         // the alias table (str->String, …) was exterminated as a contract violation.
@@ -112,28 +95,11 @@ impl Backend for Java {
         // The constructor takes the header params — state, then enter, then domain (§203).
         let plist = self.param_list(&super::driver::ctor_params_text(&sym.params));
         out.frame(&format!("    public {name}({plist}) {{\n"));
-        out.frame(&format!(
-            "        this.compartment = new Compartment(\"{first}\");\n"
-        ));
-        if let Some(st) = sym.states.iter().find(|s| s.name == first) {
-            for v in &st.state_vars {
-                // The initializer is the USER'S — emitted verbatim, exactly as Rust/C do.
-                // Seeding a hardcoded `0` dropped `$.n: int = 21` on the floor.
-                let val = java_state_seed(v);
-                out.frame(&format!(
-                    "        this.compartment.stateVars.put(\"{}\", {val});\n",
-                    v.name
-                ));
-            }
-        }
-        // State/enter params seed the start compartment's args (spec §203). The cleanroom
-        // keeps one `stateArgs` map; a distinct `enter_args` is a deferred refinement.
-        for p in sym.params.state.iter().chain(&sym.params.enter) {
-            out.frame(&format!(
-                "        this.compartment.stateArgs.put(\"{}\", {});\n",
-                p.name, p.name
-            ));
-        }
+        // The start compartment, TYPED: vars seed from their inits; the start state's args
+        // seed from same-named header (state/enter) params (§203; a distinct `enter_args` is
+        // a deferred refinement).
+        self.build_comp_ctor(sym, first, "__c", out);
+        out.frame("        this.compartment = __c;\n");
         // Domain field assignments — now that domain params are in scope.
         for f in &sym.domain {
             let init = match (&f.init_system, &f.init_text) {
@@ -195,7 +161,7 @@ impl Backend for Java {
             "    public {rt} {event}({}) {{\n",
             self.param_list(params)
         ));
-        out.frame("        switch (this.compartment.state) {\n");
+        out.frame("        switch (this.compartment.__frame_state) {\n");
         // `state` is where the machine IS; `owner` is whose handler RUNS. Under HSM they
         // differ — the driver already resolved the parent chain.
         for (state, owner) in arms {
@@ -252,20 +218,15 @@ impl Backend for Java {
             java_ident(event),
             self.param_list(params)
         ));
-        out.frame("        Compartment compartment = this.compartment;\n");
+        out.frame("        Comp compartment = this.compartment;\n");
         // *** BIND THE STATE PARAMS. ***
         //
         // `$Holding(value: int)` declares a state param, and the handler body refers to
-        // it by bare name (`@@:(value)`). It lives in the compartment, so framec must
-        // bind it as a local — otherwise the name simply does not exist in the method.
+        // it by bare name (`@@:(value)`). It lives in this state's TYPED compartment, so
+        // framec binds it as a local by reading the already-typed field off the current
+        // state's concrete `<State>Comp` — a cast, no container extraction, no unbox.
         for (n, t) in &self.state_params(state) {
-            // Declared type VERBATIM; the RHS is a container extraction (Q3/Q4).
-            let get = Atom::method(
-                Atom::field(Atom::ident("compartment"), "stateArgs"),
-                "get",
-                format!("\"{n}\""),
-            );
-            out.frame(&format!("        {t} {n} = {};\n", java_unbox(t, get)));
+            out.frame(&format!("        {t} {n} = {};\n", java_ctx_read(state, n)));
         }
     }
 
@@ -329,7 +290,7 @@ impl Backend for Java {
             self.return_type(ret),
             self.param_list(params)
         ));
-        out.frame("        Compartment compartment = this.compartment;\n");
+        out.frame("        Comp compartment = this.compartment;\n");
     }
 
     fn close_action(&self, out: &mut Sink) {
@@ -367,6 +328,10 @@ impl Backend for Java {
         out.frame("        this.compartment = this.stack.pop();\n");
     }
 
+    // NOTE: `enter` (below) builds a typed `<Target>Comp __next` — push/pop are unchanged
+    // because the stack is now `Deque<Comp>` and a `Comp` reference carries its concrete
+    // per-state subtype (and thus its typed vars/args) intact across the push/pop.
+
     fn lifecycle_call(&self, _rel: u32, _sym: &SystemSym, state: &str, event: &str, args: Option<&str>, out: &mut Sink) {
         out.frame(&format!("        {state}_{}({});\n", java_ident(event), args.unwrap_or("")));
     }
@@ -376,7 +341,7 @@ impl Backend for Java {
         for st in &sym.states {
             if super::driver::has_lifecycle(sym, &st.name, "$>") {
                 out.frame(&format!(
-                    "        if (this.compartment.state.equals(\"{}\")) {}_{}({a});\n",
+                    "        if (this.compartment.__frame_state.equals(\"{}\")) {}_{}({a});\n",
                     st.name, st.name, java_ident("$>")
                 ));
             }
@@ -390,7 +355,7 @@ impl Backend for Java {
     fn assign(
         &self,
         _sym: &SystemSym,
-        _state: &str,
+        state: &str,
         lhs: &FrameRef,
         rhs: NativeText,
         rel: u32,
@@ -413,23 +378,14 @@ impl Backend for Java {
                 // on other paths (#229).
                 out.frame(";\n");
             }
-            // A state variable lives in a Map. There is NO lvalue: it is a container
-            // operation. A different statement, not a different spelling.
-            RefKind::StateVar => {
-                out.frame(&format!(
-                    "        compartment.stateVars.put(\"{}\", ",
-                    lhs.name
-                ));
+            // A state var / arg is a TYPED field of the current state's compartment. The
+            // write is an lvalue on a cast: `((<State>Comp) compartment).x = rhs;` — the
+            // cast parenthesizes, and a field access on a parenthesized cast IS assignable
+            // in Java. No `Map.put`, no boxing.
+            RefKind::StateVar | RefKind::ContextData => {
+                out.frame(&format!("{p}{} = ", java_ctx_read(state, &lhs.name)));
                 out.native(rhs);
-                out.frame(");\n");
-            }
-            RefKind::ContextData => {
-                out.frame(&format!(
-                    "        compartment.stateArgs.put(\"{}\", ",
-                    lhs.name
-                ));
-                out.native(rhs);
-                out.frame(");\n");
+                out.frame(";\n");
             }
             // `@@:return = e` / `@@:(e)` — set the return value. Without a context slot,
             // that is `return e;` (matching the concise `@@:(e)` form). The `_` fallthrough
@@ -456,45 +412,21 @@ impl Backend for Java {
         Atom::method(Atom::field(Atom::ident("this"), &ec.field), &ec.method, &ec.args)
     }
 
-    fn lower_ref(&self, sym: &SystemSym, state: &str, r: &FrameRef) -> Atom {
+    fn lower_ref(&self, _sym: &SystemSym, state: &str, r: &FrameRef) -> Atom {
         let comp = Atom::ident("compartment");
         match r.kind {
-            // A state variable lives in a `Map<String,Object>`, so reading it needs a
-            // cast — and `Atom::cast` PARENTHESIZES. That is #213, and it is not
-            // something this function has to remember: there is no constructor that
-            // would produce the bare form.
-            RefKind::StateVar => {
-                let ty = sym
-                    .states
-                    .iter()
-                    .find(|s| s.name == state)
-                    .and_then(|s| s.state_vars.iter().find(|v| v.name == r.name))
-                    .and_then(|v| match &v.ty {
-                        TypeRef::Opaque(t) => Some(t.clone()),
-                        _ => None,
-                    })
-                    .unwrap_or_else(|| "Object".to_string());
-                // Container extraction out of framec's own `Map<String,Object>` — Q3.
-                java_unbox(
-                    &ty,
-                    Atom::method(
-                        Atom::field(comp, "stateVars"),
-                        "get",
-                        format!("\"{}\"", r.name),
-                    ),
-                )
-            }
-            RefKind::ContextData => Atom::method(
-                Atom::field(comp, "stateArgs"),
-                "get",
-                format!("\"{}\"", r.name),
-            ),
+            // A state var / arg is a TYPED field of the current state's compartment. The
+            // read casts the base `compartment` down to `<State>Comp` and takes the field:
+            // `((<State>Comp) compartment).x`. `Atom::cast` PARENTHESIZES the cast (that is
+            // #213 — a bare `(T) compartment.x` would bind `.x` to `compartment`), and the
+            // field is already the declared type, so there is no unbox.
+            RefKind::StateVar | RefKind::ContextData => java_ctx_read(state, &r.name),
             // `this.field`. An identifier chain — already an atom, and it MUST NOT be
             // parenthesized, because it is also an lvalue root (`@@:self.field = 3`).
             // That asymmetry is exactly why `Place` is a separate type from `Atom`.
             RefKind::ContextSelf => Atom::field(Atom::ident("this"), &r.name),
             RefKind::ContextParams => Atom::ident(&r.name),
-            RefKind::ContextSystemState => Atom::field(comp, "state"),
+            RefKind::ContextSystemState => Atom::field(comp, "__frame_state"),
             RefKind::ContextReturn | RefKind::ContextEvent | RefKind::SelfCall => {
                 Atom::ident(&r.name)
             }
@@ -502,44 +434,58 @@ impl Backend for Java {
     }
 
     fn persist(&self, m: &super::persist::PersistManifest, out: &mut Sink) {
-        // FIXED-TYPE ROUTE (Regime A) via Gson — RFC-0056. A user type self-marshals through
-        // the host serializer; framec names the fields and Gson does ALL type work — nesting,
-        // collections, user types, string escaping. Strictly type-IGNORANT: no `match
-        // user_type`. Gson deserializes each field INTO its declared type (read off the `__Snap`
-        // field via reflection), never a type name from the blob — immune to #233 by
-        // construction. Java permits a `static` nested class inside the class, so `__Snap` (the
-        // schema + control state + fields) lives here beside its use. Requires Gson on the
-        // classpath (the self-marshalling requirement). `_schema` is checked first (E751).
+        // FIXED-TYPE ROUTE (Regime A) via Jackson — RFC-0056. A user type self-marshals through
+        // the host serializer; framec names the fields and Jackson does ALL type work — nesting,
+        // collections, user types, string escaping. Strictly type-IGNORANT: no `match user_type`.
+        //
+        // The FULL control state round-trips: `_control` is the whole typed compartment (a
+        // polymorphic `Comp`) and `_stack` is the whole compartment stack — not just a state
+        // name. Jackson resolves each `Comp`'s concrete `<State>Comp` from the `state`
+        // discriminant against the emitted `@JsonSubTypes` allowlist (a closed world, keyed on
+        // framec's OWN states — never a user type; immune to the Id.CLASS/default-typing gadget
+        // CVEs). A user value lives one level down inside a typed var field, so the `state` tag
+        // cannot collide with a user key (not the #233 inline-tag hazard). `_schema` is checked
+        // first (E751). Requires jackson-databind on the classpath.
         let schema = m.schema();
 
         out.frame(&format!("    public String {}() {{\n", m.save));
         out.frame("        __Snap __s = new __Snap();\n");
         out.frame(&format!("        __s._schema = \"{schema}\";\n"));
-        out.frame("        __s._control = this.compartment.state;\n");
+        out.frame("        __s._control = this.compartment;\n");
+        out.frame("        __s._stack = new java.util.ArrayList<>(this.stack);\n");
         for (n, _) in &m.fields {
             out.frame(&format!("        __s.{n} = this.{n};\n"));
         }
-        out.frame("        return new com.google.gson.Gson().toJson(__s);\n");
+        out.frame("        try {\n");
+        out.frame("            return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(__s);\n");
+        out.frame("        } catch (Exception __e) { throw new RuntimeException(__e); }\n");
         out.frame("    }\n\n");
 
         out.frame(&format!("    public void {}(String data) {{\n", m.load));
-        out.frame("        __Snap __s = new com.google.gson.Gson().fromJson(data, __Snap.class);\n");
+        out.frame("        __Snap __s;\n");
+        out.frame("        try {\n");
+        out.frame("            __s = new com.fasterxml.jackson.databind.ObjectMapper().readValue(data, __Snap.class);\n");
+        out.frame("        } catch (Exception __e) { throw new RuntimeException(__e); }\n");
         out.frame(&format!("        if (!__s._schema.equals(\"{schema}\")) {{\n"));
         out.frame("            throw new RuntimeException(\"E751: persist restore refused - snapshot schema does not match this program\");\n");
         out.frame("        }\n");
-        out.frame("        this.compartment.state = __s._control;\n");
+        out.frame("        this.compartment = __s._control;\n");
+        out.frame("        this.stack = new java.util.ArrayDeque<>(__s._stack);\n");
         for (n, _) in &m.fields {
             out.frame(&format!("        this.{n} = __s.{n};\n"));
         }
         out.frame("    }\n\n");
 
-        // The snapshot shape — a plain data class Gson reflects over. Each field carries its
-        // DECLARED Java type, so `fromJson` reconstructs into exactly that type.
+        // The snapshot shape — a plain data class Jackson reflects over. Public fields so
+        // Jackson's default visibility sees them; each carries its DECLARED type, so
+        // `readValue` reconstructs into exactly that type. `_control`/`_stack` are the typed
+        // (polymorphic) compartment + stack.
         out.frame("    private static class __Snap {\n");
-        out.frame("        String _schema;\n");
-        out.frame("        String _control;\n");
+        out.frame("        public String _schema;\n");
+        out.frame("        public Comp _control;\n");
+        out.frame("        public java.util.List<Comp> _stack;\n");
         for (n, t) in &m.fields {
-            out.frame(&format!("        {t} {n};\n"));
+            out.frame(&format!("        public {t} {n};\n"));
         }
         out.frame("    }\n\n");
     }
@@ -554,32 +500,125 @@ impl Backend for Java {
 }
 
 impl Java {
+    /// Build `__next`, the TYPED compartment for entering `target` (used by transition/push).
     fn enter(&self, sym: &SystemSym, target: &str, args: Option<&str>, out: &mut Sink) {
-        out.frame(&format!(
-            "        Compartment __next = new Compartment(\"{target}\");\n"
-        ));
-        if let Some(st) = sym.states.iter().find(|s| s.name == target) {
-            for v in &st.state_vars {
-                let val = java_state_seed(v);
-                out.frame(&format!(
-                    "        __next.stateVars.put(\"{}\", {val});\n",
-                    v.name
-                ));
-            }
-            if let Some(a) = args.map(str::trim).filter(|a| !a.is_empty()) {
-                if !st.state_params.is_empty() {
-                    let names = st
-                        .state_params
-                        .iter()
-                        .map(|p| format!("\"{p}\""))
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    out.frame(&format!(
-                        "        __seedArgs(__next, new String[]{{{names}}}, {a});\n"
-                    ));
+        self.build_comp_enter(sym, target, args, "__next", out);
+    }
+
+    /// Emit `<Target>Comp <var> = new <Target>Comp(); <var>.__frame_state = "..."; <var>.<v> = seed;`
+    /// plus the state's args. **Args still are NOT split by framec** — the unsplit blob goes
+    /// into an `Object[]` literal (`new Object[]{ <blob> }`), which *javac* splits; framec
+    /// only indexes the array positionally by the state's declared param order (#218). Each
+    /// slot is unboxed to its declared field type — Java's own Object→value rule on framec's
+    /// own array, never a branch on a user type.
+    fn build_comp_enter(&self, sym: &SystemSym, target: &str, args: Option<&str>, var: &str, out: &mut Sink) {
+        out.frame(&format!("        {target}Comp {var} = new {target}Comp();\n"));
+        out.frame(&format!("        {var}.__frame_state = \"{target}\";\n"));
+        let Some(st) = sym.states.iter().find(|s| s.name == target) else { return };
+        for v in &st.state_vars {
+            out.frame(&format!("        {var}.{} = {};\n", v.name, java_state_seed(v)));
+        }
+        if let Some(a) = args.map(str::trim).filter(|a| !a.is_empty()) {
+            if !st.state_params.is_empty() {
+                out.frame(&format!("        Object[] __a = new Object[]{{ {a} }};\n"));
+                for (i, p) in st.state_params.iter().enumerate() {
+                    let ty = st.state_param_types.get(p).cloned().unwrap_or_else(|| "Object".into());
+                    let slot = java_unbox(&ty, Atom::ident(format!("__a[{i}]")));
+                    out.frame(&format!("        {var}.{p} = {slot};\n"));
                 }
             }
         }
+    }
+
+    /// Build the START compartment `<var>` for the constructor: vars seed from their inits;
+    /// the start state's args seed from same-named header (state/enter/domain) params, which
+    /// ARE in scope here (a start-state param with no matching header param stays default —
+    /// the deferred enter_args nuance).
+    fn build_comp_ctor(&self, sym: &SystemSym, state: &str, var: &str, out: &mut Sink) {
+        out.frame(&format!("        {state}Comp {var} = new {state}Comp();\n"));
+        out.frame(&format!("        {var}.__frame_state = \"{state}\";\n"));
+        let Some(st) = sym.states.iter().find(|s| s.name == state) else { return };
+        for v in &st.state_vars {
+            out.frame(&format!("        {var}.{} = {};\n", v.name, java_state_seed(v)));
+        }
+        for p in &st.state_params {
+            let in_scope = sym
+                .params
+                .state
+                .iter()
+                .chain(&sym.params.enter)
+                .chain(&sym.params.domain)
+                .any(|x| &x.name == p);
+            if in_scope {
+                out.frame(&format!("        {var}.{p} = {p};\n"));
+            }
+        }
+    }
+}
+
+/// Emit the per-system TYPED compartment classes (RFC-0056): a base `Comp` carrying the
+/// `state` discriminant, and one `<State>Comp extends Comp` per state holding that state's
+/// typed `$.` vars and `(param)` args as PUBLIC fields (Jackson's default visibility). When
+/// the system persists, the base gets Jackson polymorphism annotations keyed on `state`
+/// with an explicit `@JsonSubTypes` allowlist — generated from framec's OWN state list, so
+/// codegen stays type-ignorant, and the allowlist doubles as the closed-world type registry.
+/// `As.EXISTING_PROPERTY` reuses the real `state` field as the discriminant (no duplicate
+/// key on write; `visible = true` keeps it populated on read for the routing `switch`).
+fn emit_comp_types(sym: &SystemSym, out: &mut Sink) {
+    if sym.persist.is_some() {
+        // WRAPPER_OBJECT = EXTERNAL tagging: the state name is the wrapper KEY
+        // (`{"Outer":{...}}`), not a property sibling of the vars. So a user `$.state` var
+        // cannot collide with the discriminant (it lives inside the wrapper, one level
+        // below the key), and the wire shape matches Rust's serde external tagging. The
+        // runtime routing field is the reserved `__frame_state` (below), never a user name.
+        out.frame(
+            "    @com.fasterxml.jackson.annotation.JsonTypeInfo(use = com.fasterxml.jackson.annotation.JsonTypeInfo.Id.NAME, include = com.fasterxml.jackson.annotation.JsonTypeInfo.As.WRAPPER_OBJECT)\n",
+        );
+        out.frame("    @com.fasterxml.jackson.annotation.JsonSubTypes({\n");
+        let n = sym.states.len();
+        for (i, st) in sym.states.iter().enumerate() {
+            let comma = if i + 1 < n { "," } else { "" };
+            out.frame(&format!(
+                "        @com.fasterxml.jackson.annotation.JsonSubTypes.Type(value = {}Comp.class, name = \"{}\"){comma}\n",
+                st.name, st.name
+            ));
+        }
+        out.frame("    })\n");
+    }
+    // `__frame_state` (reserved) is the runtime routing tag — read by the dispatch `switch`.
+    // Under WRAPPER_OBJECT it is redundant with the wrapper key on the wire (harmless), and
+    // its reserved name cannot clash with a user `$.state` var.
+    out.frame("    static class Comp {\n");
+    out.frame("        public String __frame_state;\n");
+    out.frame("    }\n");
+    for st in &sym.states {
+        out.frame(&format!("    static class {}Comp extends Comp {{\n", st.name));
+        for v in &st.state_vars {
+            out.frame(&format!("        public {} {};\n", java_field_ty(&v.ty), v.name));
+        }
+        for p in &st.state_params {
+            let ty = st.state_param_types.get(p).cloned().unwrap_or_else(|| "Object".into());
+            out.frame(&format!("        public {ty} {p};\n"));
+        }
+        out.frame("    }\n");
+    }
+    out.frame("\n");
+}
+
+/// `((<State>Comp) compartment).<name>` — read/write a typed var/arg field off the current
+/// state's concrete compartment. `Atom::cast` PARENTHESIZES the cast (#213: a bare `(T)
+/// compartment.x` would bind `.x` to `compartment`). An atom, and a valid lvalue.
+fn java_ctx_read(state: &str, name: &str) -> Atom {
+    Atom::field(Atom::cast(format!("{state}Comp"), Atom::ident("compartment")), name)
+}
+
+/// A field/type text for a `TypeRef`, emitted VERBATIM (Frame has no type system).
+fn java_field_ty(ty: &TypeRef) -> String {
+    match ty {
+        TypeRef::Opaque(t) => t.clone(),
+        TypeRef::System(s) => s.clone(),
+        TypeRef::WrappedSystem { text, .. } => text.clone(),
+        TypeRef::None => "Object".to_string(),
     }
 }
 
@@ -649,15 +688,10 @@ fn java_box_name(t: &str) -> String {
 }
 
 /// Exposed for the acceptance test: the state-var read must be an ATOM.
-pub fn state_var_read(java_type: &str, name: &str) -> Atom {
-    Atom::cast(
-        java_type,
-        Atom::method(
-            Atom::field(Atom::ident("compartment"), "stateVars"),
-            "get",
-            format!("\"{name}\""),
-        ),
-    )
+/// Exposed for the acceptance test: the state-var read is `((<State>Comp) compartment).name`
+/// — a field access on a PARENTHESIZED cast, so it stays an atom under member access (#213).
+pub fn state_var_read(state: &str, name: &str) -> Atom {
+    java_ctx_read(state, name)
 }
 
 
