@@ -1,0 +1,41 @@
+@@[target("rust")]
+@@[scan(u8)]
+
+// Balanced-`{}` extent recognizer, dogfooded as an `@@[scan(u8)]` system — a COUNTER automaton
+// (framec's bracket scanners count openers against closers). From a `{` at the cursor it finds
+// the matching `}`, leaving cursor one past it. Used by StringScan to skip a Python interpolation
+// hole (`{…}`) whole, so a delimiter inside the hole does not end the string.
+//
+// Unlike ParenBalance this is NOT string-aware: it counts raw `{`/`}`, matching the hand
+// `Lexer::hole_at`, which brace-balances the hole contents without skipping strings inside.
+// Rejects (no accept) if the `{` is never closed — the caller then treats it as a non-hole.
+//
+// Regen: framec-ng -l rust --emit brace_balance.frs | grep -v '^#!\[allow' > brace_balance.gen.rs
+
+@@system BraceBalance {
+    interface:
+        step()
+    machine:
+        $Scan {
+            step() {
+                if self.cursor >= self.src.fsm_len() {
+                    -> $Reject
+                }
+                let b = self.src.fsm_get(self.cursor);
+                self.cursor = self.cursor + 1;
+                if b == 123 {
+                    self.depth = self.depth + 1;
+                }
+                if b == 125 {
+                    self.depth = self.depth - 1;
+                    if self.depth == 0 {
+                        -> $Accept
+                    }
+                }
+            }
+        }
+        $Accept { }
+        $Reject { }
+    domain:
+        depth: i32 = 0
+}

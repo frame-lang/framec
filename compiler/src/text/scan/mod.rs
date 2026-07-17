@@ -16,6 +16,12 @@ pub mod sections;
 pub mod string_scan;
 /// Balanced-`()` extent, dogfooded as a Frame `@@[scan(u8)]` counter automaton.
 pub mod paren_balance;
+/// Balanced-`{}` extent (Python holes), dogfooded as a Frame `@@[scan(u8)]` counter automaton.
+pub mod brace_balance;
+/// Rust raw-string extent, dogfooded as a Frame `@@[scan(u8)]` counter automaton.
+pub mod raw_string;
+/// Full string+comment skipper (per-target), dogfooded as a Frame `@@[scan(u8)]` system.
+pub mod opaque_scan;
 /// Composition proof: a scan system that composes StringScan (docs/JOURNAL.md).
 pub mod string_counter;
 /// The item-level segmenter walk, dogfooded as a Frame @@[scan(u8)] system.
@@ -78,7 +84,7 @@ pub fn segment(src: &Source, target: Target) -> Result<FileAst, SegmentError> {
     // to the file it arrived in). The old compiler had neither behaviour: it saw
     // 0xEF where it expected '@', decided line 1 had no pragma, and silently
     // classified the entire `@@system` as native text (#214).
-    let mut i = src.content_start();
+    let i = src.content_start();
     if i > 0 {
         items.push(Item::Bom(BomItem {
             span: Span::new(0, i),
@@ -134,7 +140,6 @@ pub fn segment(src: &Source, target: Target) -> Result<FileAst, SegmentError> {
 /// top-level `@@`-item start offsets at or after `from`, skipping strings/comments and item
 /// bodies.
 pub fn hand_item_starts(bytes: &[u8], from: usize, target: Target) -> Vec<usize> {
-    use crate::tree::Node;
     let lx = Lexer::new(bytes, target);
     let n = bytes.len();
     let mut starts = Vec::new();
@@ -177,7 +182,6 @@ pub fn hand_item_starts(bytes: &[u8], from: usize, target: Target) -> Vec<usize>
 /// hand `read_pragma` — item construction is transformation, legitimately native. On an
 /// unclosed item, consume to end-of-input.
 pub fn item_end_at(bytes: &[u8], at: usize, target: Target) -> usize {
-    use crate::tree::Node;
     let lx = Lexer::new(bytes, target);
     match read_pragma(&lx, bytes, at) {
         Ok(item) => item.span().end,
@@ -188,7 +192,19 @@ pub fn item_end_at(bytes: &[u8], at: usize, target: Target) -> usize {
 /// Leaf for the `Segmenter` system: if a comment or literal starts at `i`, its end offset;
 /// otherwise `i`. The per-target forms come from `target` — this is exactly the opaque-skip
 /// the walk needs so a `@@` inside a string or comment is never mistaken for an item.
+///
+/// **Now the dogfooded `OpaqueScan` system** (`opaque_scan.frs`): the string/comment recognition
+/// is a Frame `@@[scan(u8)]` machine, proven byte-for-byte identical to the retired hand lexer by
+/// `tests/opaque_scan.rs` at every position. The old `comment_at`/`literal_at` funnel is gone.
 pub fn skip_opaque_at(bytes: &[u8], i: usize, target: Target) -> usize {
+    opaque_scan::opaque_extent(bytes, i, target).unwrap_or(i)
+}
+
+/// The retired hand implementation, kept ONLY as the differential-test oracle
+/// (`tests/opaque_scan.rs`) until the parity is locked and the hand lexer recognition is
+/// deleted. Not used in production.
+#[doc(hidden)]
+pub fn skip_opaque_at_hand(bytes: &[u8], i: usize, target: Target) -> usize {
     let lx = Lexer::new(bytes, target);
     if let Ok(Some(end)) = lx.comment_at(i) {
         return end;
@@ -405,26 +421,6 @@ fn parse_one_param(body: &str) -> Param {
         None => (lhs.to_string(), None),
     };
     Param { name, ty, default }
-}
-
-fn read_name_then_brace(bytes: &[u8], mut i: usize) -> Result<(String, usize), SegmentError> {
-    while i < bytes.len() && (bytes[i] == b' ' || bytes[i] == b'\t') {
-        i += 1;
-    }
-    let ns = i;
-    let ne = read_word(bytes, i);
-    let name = String::from_utf8_lossy(&bytes[ns..ne]).into_owned();
-    let mut j = ne;
-    while j < bytes.len() && bytes[j] != b'{' {
-        j += 1;
-    }
-    if j >= bytes.len() {
-        return Err(SegmentError::UnclosedBody {
-            open: Span::new(ns, bytes.len()),
-            name,
-        });
-    }
-    Ok((name, j))
 }
 
 /// Find the `}` matching the `{` at `open` — **literal- and comment-aware**.

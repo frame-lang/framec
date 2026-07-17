@@ -1,0 +1,93 @@
+@@[target("rust")]
+@@[scan(u8)]
+
+// Rust raw-string EXTENT recognizer, dogfooded as an `@@[scan(u8)]` COUNTER automaton — the
+// `@@system` that replaces the hand `Lexer::rust_raw`. Recognizes `r"…"`, `r#"…"#`,
+// `r##"…"##`, and the `b`/`br` byte-string variants: an optional `b`, then `r`, then N `#`,
+// then `"`; the close is `"` followed by EXACTLY N `#`. No escapes, no interpolation. Counting
+// the openers and matching the same count of closers is the counter the journal blesses — the
+// hand lexer's own comment says the hash count "cannot be expressed in a table". Leaves the
+// extent one past the close in `cursor`; rejects if it is not a raw string here (e.g. `read`).
+//
+// A `"` inside the body that is NOT followed by N `#` is content: it is consumed and scanning
+// continues — no backtrack, so it stays a forward counter machine.
+//
+// Regen: framec-ng -l rust --emit raw_string.frs | grep -v '^#!\[allow' > raw_string.gen.rs
+
+@@system RawString {
+    interface:
+        step()
+    machine:
+        $Start {
+            step() {
+                if self.src.fsm_get(self.cursor) == 98 {
+                    self.cursor = self.cursor + 1;
+                }
+                -> $ExpectR
+            }
+        }
+        $ExpectR {
+            step() {
+                if self.cursor >= self.src.fsm_len() {
+                    -> $Reject
+                }
+                if self.src.fsm_get(self.cursor) != 114 {
+                    -> $Reject
+                }
+                self.cursor = self.cursor + 1;
+                -> $CountOpen
+            }
+        }
+        $CountOpen {
+            step() {
+                if self.cursor >= self.src.fsm_len() {
+                    -> $Reject
+                }
+                let b = self.src.fsm_get(self.cursor);
+                if b == 35 {
+                    self.hashes = self.hashes + 1;
+                    self.cursor = self.cursor + 1;
+                    -> $CountOpen
+                }
+                if b == 34 {
+                    self.cursor = self.cursor + 1;
+                    -> $Body
+                }
+                -> $Reject
+            }
+        }
+        $Body {
+            step() {
+                if self.cursor >= self.src.fsm_len() {
+                    -> $Reject
+                }
+                if self.src.fsm_get(self.cursor) == 34 {
+                    self.seen = 0;
+                    self.cursor = self.cursor + 1;
+                    -> $MaybeClose
+                }
+                self.cursor = self.cursor + 1;
+            }
+        }
+        $MaybeClose {
+            step() {
+                if self.seen == self.hashes {
+                    -> $Accept
+                }
+                if self.cursor >= self.src.fsm_len() {
+                    -> $Reject
+                }
+                if self.src.fsm_get(self.cursor) == 35 {
+                    self.seen = self.seen + 1;
+                    self.cursor = self.cursor + 1;
+                    -> $MaybeClose
+                }
+                -> $Body
+            }
+        }
+        $Accept { }
+        $Reject { }
+    domain:
+        hashes: i32 = 0
+        seen: i32 = 0
+}

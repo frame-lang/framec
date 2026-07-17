@@ -11,21 +11,17 @@
 //! `.gen.rs` regen: `framec-ng -l rust --emit native_parts_scan.frs | grep -v '^#!\[allow' >
 //! native_parts_scan.gen.rs`.
 
-use super::lex::Lexer;
 use super::literals::Target;
 use super::{embed_scan, inst_scan, ref_scan};
 
 /// Try the island recognizers at `i`, in `native_parts` order. Returns `(kind, end)`:
 /// 0=none 1=Literal(comment or string) 2=Ref 3=Instantiate 4=EmbedCall.
 fn try_island(src: &[u8], i: usize, target: Target) -> (i32, usize) {
-    let lx = Lexer::new(src, target);
-    if let Ok(Some(end)) = lx.comment_at(i) {
-        return (1, end.min(src.len()));
-    }
-    if let Ok(Some(l)) = lx.literal_at(i) {
-        if l.span.end <= src.len() {
-            return (1, l.span.end);
-        }
+    // A comment or string extent — both are kind 1 (Literal) — via the OpaqueScan @@system
+    // (`skip_opaque_at`), not the hand lexer. Extent-only, so this is a clean route (R2).
+    let e = super::skip_opaque_at(src, i, target);
+    if e > i {
+        return (1, e);
     }
     if let Some((_, end)) = inst_scan::scan(src, i) {
         return (3, end);

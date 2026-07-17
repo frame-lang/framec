@@ -1,0 +1,170 @@
+@@[target("rust")]
+@@[scan(u8)]
+
+// The full string+comment+literal EXTENT skipper (OpaqueScan), dogfooded as an `@@[scan(u8)]` system —
+// the `@@system` analogue of the shipping `string_scan_fsm` + the per-target native-region
+// skippers. It recognizes, at the cursor, exactly what `Lexer::comment_at`/`literal_at`
+// recognize for the four cleanroom targets (python/java/rust/c), and leaves the EXTENT END in
+// `cursor` (accept) or rejects (no string/comment opens here). This is where the string-blind
+// `in_string: u8` native local used to live (#209 / P9): the mode is a Frame STATE, not a byte
+// that cannot tell `"` from `}`.
+//
+// framec owns the WALK (dispatch + the per-body scan loops + the nesting depth counter); the
+// native leaves answer only per-target FACTS ("does form X open at i", "is this the close") —
+// no walk lives in a leaf. Every consumer of the hand lexer used only the extent (`.span.end`);
+// holes are dead except that a Python `{…}` is SKIPPED while scanning (it can hide a delim), so
+// `hole_skip` reproduces that one effect on the extent.
+//
+// Forms (Lexer form tables, 4 targets):
+//   C/Java: `//`, `/*…*/`(no nest), `"…"`, `'…'` (escapes)
+//   Rust  : `//`, `/*…*/`(nests), `r#*"…"#*`, `"…"`(multiline), `'…'`
+//   Python: `#`,  `"""…"""`, `'''…'''`, `"…"`, `'…'`  (holes: `{…}`)
+//
+// Regen: framec-ng -l rust --emit opaque_scan.frs | grep -v '^#!\[allow' > opaque_scan.gen.rs
+
+@@system OpaqueScan(target: Target) {
+    interface:
+        step()
+    machine:
+        // Dispatch at the cursor, in the Lexer form-table order: line comment, block comment,
+        // raw string (rust), triple string (python), then a plain quoted string. A leaf that
+        // does not apply to this target returns 0/false, so one order serves all four targets.
+        $Start {
+            step() {
+                if self.cursor >= self.src.fsm_len() {
+                    -> $Reject
+                }
+                let lc = line_comment_len(self.src, self.cursor, self.target);
+                if lc > 0 {
+                    self.cursor = self.cursor + lc;
+                    -> $LineBody
+                }
+                let bo = block_open_len(self.src, self.cursor, self.target);
+                if bo > 0 {
+                    self.nests = block_nests(self.target);
+                    self.depth = 1;
+                    self.cursor = self.cursor + bo;
+                    -> $BlockBody
+                }
+                let rr = raw_scan(self.src, self.cursor, self.target);
+                if rr > self.cursor {
+                    self.cursor = rr;
+                    -> $Accept
+                }
+                let td = triple_delim(self.src, self.cursor, self.target);
+                if td > 0 {
+                    self.delim = td;
+                    self.cursor = self.cursor + 3;
+                    -> $TripleBody
+                }
+                let sd = string_delim(self.src, self.cursor, self.target);
+                if sd > 0 {
+                    self.delim = sd;
+                    self.multiline = string_multiline(self.target, sd);
+                    self.cursor = self.cursor + 1;
+                    -> $StrBody
+                }
+                -> $Reject
+            }
+        }
+        // Line comment: to the newline (extent ends AT the `\n`, matching `to_end_of_line`).
+        $LineBody {
+            step() {
+                if self.cursor >= self.src.fsm_len() {
+                    -> $Accept
+                }
+                if self.src.fsm_get(self.cursor) == 10 {
+                    -> $Accept
+                }
+                self.cursor = self.cursor + 1;
+            }
+        }
+        // Block comment: to the matching close; rust nests. Unterminated → Reject (the hand
+        // path returns Err there, which the callers treat as "not opaque").
+        $BlockBody {
+            step() {
+                if self.cursor >= self.src.fsm_len() {
+                    -> $Reject
+                }
+                if self.nests {
+                    let bo = block_open_len(self.src, self.cursor, self.target);
+                    if bo > 0 {
+                        self.depth = self.depth + 1;
+                        self.cursor = self.cursor + bo;
+                        -> $BlockBody
+                    }
+                }
+                let bc = block_close_len(self.src, self.cursor, self.target);
+                if bc > 0 {
+                    self.depth = self.depth - 1;
+                    self.cursor = self.cursor + bc;
+                    if self.depth == 0 {
+                        -> $Accept
+                    }
+                    -> $BlockBody
+                }
+                self.cursor = self.cursor + 1;
+            }
+        }
+        // Quoted string: `\`-escapes; a bare newline is unterminated unless multiline (rust `"`);
+        // a Python `{…}` hole is skipped whole (it can contain the delimiter).
+        $StrBody {
+            step() {
+                if self.cursor >= self.src.fsm_len() {
+                    -> $Reject
+                }
+                let b = self.src.fsm_get(self.cursor);
+                if b == 92 {
+                    self.cursor = self.cursor + 2;
+                    -> $StrBody
+                }
+                if b == 10 {
+                    if self.multiline {
+                        self.cursor = self.cursor + 1;
+                        -> $StrBody
+                    }
+                    -> $Reject
+                }
+                let hs = hole_skip(self.src, self.cursor, self.target);
+                if hs > self.cursor {
+                    self.cursor = hs;
+                    -> $StrBody
+                }
+                if b == self.delim {
+                    self.cursor = self.cursor + 1;
+                    -> $Accept
+                }
+                self.cursor = self.cursor + 1;
+            }
+        }
+        // Triple-quoted (python `"""` / `'''`): `\`-escapes; holes skipped; close is three delims.
+        $TripleBody {
+            step() {
+                if self.cursor >= self.src.fsm_len() {
+                    -> $Reject
+                }
+                if self.src.fsm_get(self.cursor) == 92 {
+                    self.cursor = self.cursor + 2;
+                    -> $TripleBody
+                }
+                let hs = hole_skip(self.src, self.cursor, self.target);
+                if hs > self.cursor {
+                    self.cursor = hs;
+                    -> $TripleBody
+                }
+                if triple_close(self.src, self.cursor, self.delim) {
+                    self.cursor = self.cursor + 3;
+                    -> $Accept
+                }
+                self.cursor = self.cursor + 1;
+            }
+        }
+        $Accept { }
+        $Reject { }
+    domain:
+        target: Target = target
+        delim: u8 = 0
+        multiline: bool = false
+        nests: bool = false
+        depth: i32 = 0
+}

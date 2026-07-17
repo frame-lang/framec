@@ -1,0 +1,399 @@
+//! **OpaqueScan agrees with the hand lexer at every position — proven by running.**
+//!
+//! `opaque_scan::opaque_extent` is generated from `opaque_scan.frs` (a `@@[scan(u8)]` Frame
+//! system) and computes the SAME string/comment extent as the hand `Lexer::comment_at` +
+//! `literal_at` funneled through `skip_opaque_at` — for all four cleanroom targets, at EVERY
+//! byte position. Every consumer of the hand lexer used only that extent, so this is the parity
+//! gate for retiring the hand recognizer. Raw strings (rust) route through the `RawString`
+//! system and holes (python) through `BraceBalance`; those systems are exercised here too.
+
+use frame_compiler::text::scan::literals::{Form, Target};
+use frame_compiler::text::scan::opaque_scan::opaque_extent;
+use frame_compiler::text::scan::skip_opaque_at_hand;
+
+/// Assert the machine and the hand path agree at every position of `b` for `target`.
+/// The oracle is the retired hand implementation (`skip_opaque_at_hand`), independent of the
+/// machine. Raw bytes (fuzz inputs are not UTF-8).
+fn agree_bytes(b: &[u8], target: Target) {
+    for i in 0..=b.len() {
+        let hand = skip_opaque_at_hand(b, i, target);
+        let machine = opaque_extent(b, i, target).unwrap_or(i);
+        assert_eq!(
+            machine, hand,
+            "target {target:?}, pos {i} of {b:?}: machine={machine} hand={hand}"
+        );
+    }
+}
+
+/// String convenience wrapper.
+fn agree(src: &str, target: Target) {
+    agree_bytes(src.as_bytes(), target);
+}
+
+// ---- C / Java --------------------------------------------------------------
+
+#[test]
+fn c_family_comments_and_strings() {
+    for t in [Target::C, Target::Java] {
+        agree("int x = 1; // a comment\n y=2;", t);
+        agree("a /* block */ b", t);
+        agree("a /* /* not nested */ b */ c", t); // C/Java do NOT nest: closes at first */
+        agree(r#"s = "hello world";"#, t);
+        agree(r#"s = "with \" escaped quote";"#, t);
+        agree(r#"s = "trailing backslash \\";"#, t);
+        agree("c = 'x';", t); // char / single-quote string
+        agree(r#"c = '\'';"#, t);
+        agree(r#"x = "unterminated"#, t); // unterminated string
+        agree("y /* unterminated comment", t);
+        agree(r#"m("a)b", c)"#, t); // paren inside string
+        agree("empty=\"\";", t);
+    }
+}
+
+// ---- Rust ------------------------------------------------------------------
+
+#[test]
+fn rust_nesting_raw_and_multiline() {
+    let t = Target::Rust;
+    agree("x // line\n y", t);
+    agree("a /* one */ b", t);
+    agree("a /* /* nested */ still */ c", t); // Rust DOES nest
+    agree("a /* /* deep /* three */ two */ one */ z", t);
+    agree(r#"let s = "multi
+line ok";"#, t); // rust " is multiline
+    agree(r#"let r = r"no escapes \ here";"#, t);
+    agree(r##"let r = r#"has "quote" inside"#;"##, t);
+    agree(r###"let r = r##"a"#b"##;"###, t); // needs two closing hashes
+    agree("let c = 'a';", t);
+    agree(r#"let c = '\'';"#, t);
+    agree("read_thing(); // r-identifier not raw", t);
+    agree(r#"br"byte raw""#, t);
+    agree("lifetime: &'a str", t); // 'a is a lifetime, not a terminated char — unterminated
+}
+
+// ---- Python ----------------------------------------------------------------
+
+#[test]
+fn python_hashes_triples_and_holes() {
+    let t = Target::Python3;
+    agree("x = 1  # a comment\n y = 2", t);
+    agree(r#"s = "double""#, t);
+    agree("s = 'single'", t);
+    agree(r#"d = """triple
+   spanning
+   lines"""  # ok"#, t);
+    agree("e = '''also triple'''", t);
+    agree(r#"f = f"value is {x + 1}!""#, t); // hole skipped whole
+    agree(r#"g = "brace {a} then {b} done""#, t);
+    agree(r#"h = "escaped {{ not a hole }}""#, t);
+    agree(r#"j = "quote in hole {x['\"']} end""#, t); // delim-looking bytes inside a hole
+    agree(r#"k = "unterminated hole {a + b"#, t);
+    agree(r#"u = "plain unterminated"#, t);
+    agree(r#"nest = f"{ {1:2} }""#, t); // nested braces in a hole
+}
+
+// ---- A realistic mixed handler body per target -----------------------------
+
+#[test]
+fn realistic_mixed_sources() {
+    agree(
+        "void go() {\n  // set up\n  s = \"a } b { c\";\n  t = '/'; /* x */ n++;\n}",
+        Target::C,
+    );
+    agree(
+        "fn go(&mut self) {\n  let s = \"a\\nb\"; // note\n  let r = r#\"raw \" ok\"#;\n}",
+        Target::Rust,
+    );
+    agree(
+        "def go(self):\n  s = \"x { self.n } y\"  # comment\n  t = '''block'''\n",
+        Target::Python3,
+    );
+}
+
+// ============================================================================
+// D4 anti-omission guard — the curated set must exercise EVERY form the target
+// has. This test pins each cleanroom target's `literals()` table to the exact
+// set of forms the curated batteries above cover. If someone ADDS a form to a
+// target's table (e.g. a Rust `TripleQuoted`), this fails LOUDLY — forcing a new
+// curated input + fuzz alphabet entry before the parity claim can be trusted.
+// SCAFFOLDING: reads the internal form table; conversion-internal.
+// ============================================================================
+
+#[test]
+fn curated_set_covers_every_form_of_each_cleanroom_target() {
+    use Form::*;
+    // The forms each battery above demonstrably exercises, per target. Kept in
+    // lock-step with `literals.rs`; a divergence means the curated corpus no longer
+    // covers the target and must be extended (D4 falsifier).
+    let expect: &[(Target, &[Form])] = &[
+        (
+            Target::C,
+            &[
+                LineComment("//"),
+                BlockComment { open: "/*", close: "*/", nests: false },
+                Quoted { delim: b'"', multiline: false, escapes: true },
+                Quoted { delim: b'\'', multiline: false, escapes: true },
+            ],
+        ),
+        (
+            Target::Java,
+            &[
+                LineComment("//"),
+                BlockComment { open: "/*", close: "*/", nests: false },
+                Quoted { delim: b'"', multiline: false, escapes: true },
+                Quoted { delim: b'\'', multiline: false, escapes: true },
+            ],
+        ),
+        (
+            Target::Rust,
+            &[
+                LineComment("//"),
+                BlockComment { open: "/*", close: "*/", nests: true },
+                RustRaw,
+                Quoted { delim: b'"', multiline: true, escapes: true },
+                Quoted { delim: b'\'', multiline: false, escapes: true },
+            ],
+        ),
+        (
+            Target::Python3,
+            &[
+                LineComment("#"),
+                TripleQuoted { delim: b'"' },
+                TripleQuoted { delim: b'\'' },
+                Quoted { delim: b'"', multiline: false, escapes: true },
+                Quoted { delim: b'\'', multiline: false, escapes: true },
+            ],
+        ),
+    ];
+    for (t, forms) in expect {
+        assert_eq!(
+            t.literals().forms,
+            *forms,
+            "target {t:?}: literals() table diverged from the curated coverage set — \
+             a form was added/removed; extend the curated battery + fuzz alphabet before \
+             trusting parity (D4)."
+        );
+    }
+}
+
+// ============================================================================
+// Strengthened curated edges + adversarial (per-form, per the 4 tables).
+// SCAFFOLDING: differential vs the hand oracle at every position.
+// ============================================================================
+
+#[test]
+fn edges_empty_eof_and_escape_at_eof() {
+    for &t in &[Target::C, Target::Java, Target::Rust, Target::Python3] {
+        agree("", t); // empty
+        agree("x", t); // single non-opaque byte
+        agree("\"", t); // a lone opening quote at EOF (unterminated)
+        agree("\"a\\", t); // escape at EOF inside a string (backslash then EOF)
+        agree("\"\\", t); // backslash immediately at EOF
+        agree("'", t); // lone single quote
+        agree("\n", t); // bare newline
+    }
+    // Comment openers truncated at EOF.
+    agree("/", Target::C); // half a `//` / `/*`
+    agree("/*", Target::C); // block opener, no close → unterminated
+    agree("//", Target::C); // line opener, nothing after
+    agree("#", Target::Python3); // python line comment opener at EOF
+    agree("\"\"\"", Target::Python3); // triple opener, no close → unterminated
+    agree("\"\"", Target::Python3); // an EMPTY plain string ("" ), not a triple
+    agree("r", Target::Rust); // lone `r` (identifier start, not raw)
+    agree("r#\"", Target::Rust); // raw opener, no close → unterminated
+    agree("br", Target::Rust); // `br` at EOF
+}
+
+#[test]
+fn adversarial_c_family() {
+    for t in [Target::C, Target::Java] {
+        agree("a /*/ b", t); // `/*/` — opener then a `/` that is NOT a close yet
+        agree("a /**/ b", t); // minimal empty block comment
+        agree("s = \"\\\\\";", t); // string is exactly a doubled backslash then close
+        agree("s = \"\\\"\";", t); // escaped quote then real close
+        agree("'\\''", t); // char: escaped quote inside single quotes
+        agree("x // /* not a block */\n y", t); // block markers inside a line comment
+        agree("s = \"// not a comment\";", t); // comment marker inside a string
+        agree("s = \"/* nor this */\";", t);
+        agree("q = '\n';", t); // newline inside a char literal → unterminated (not multiline)
+        agree("nested = \"a { b } c\";", t); // braces are plain content in C
+        agree("'ab'", t); // multi-byte char literal content
+    }
+}
+
+#[test]
+fn adversarial_rust() {
+    let t = Target::Rust;
+    agree("a /* /* */ b */ c", t); // exactly-two-deep nesting
+    agree("a /* unterminated /* still open", t); // unterminated NESTED block
+    agree("r\"\"", t); // empty zero-hash raw
+    agree("r#\"\"#", t); // empty one-hash raw
+    agree("r###\"x\"###", t); // three hashes
+    agree("r#\"a\"##", t); // close needs ONE hash; the trailing `#` is content-after
+    agree("r#\"a\"b\"#", t); // inner `\"` not followed by a hash is content
+    agree("br#\"raw bytes\"#", t); // byte raw with a hash
+    agree("let s = \"line1\nline2\";", t); // rust `\"` IS multiline — spans the newline
+    agree("let c = '\n';", t); // rust `'` is NOT multiline → unterminated char
+    agree("read_raw(r\"x\")", t); // `read_raw` starts with r but is an ident
+    agree("r\"a\\\"", t); // no escapes in raw: the `\\` is content, `\"` closes
+    agree("'a", t); // unterminated char / lifetime
+}
+
+#[test]
+fn adversarial_python() {
+    let t = Target::Python3;
+    agree("s = \"\"\"\"\"\"", t); // an empty triple string: six quotes
+    agree("s = \"\"\"a\"b\"\"\"", t); // single/double quotes are content inside a triple
+    agree("s = '''it's ok'''", t); // an apostrophe inside a triple-single string
+    agree("f\"{a}{b}{c}\"", t); // three consecutive holes
+    agree("f\"{{}}\"", t); // escaped braces — NOT a hole
+    agree("f\"{ '}' }\"", t); // a `}`-looking byte inside a hole (string-blind hole, matches hand)
+    agree("f\"{ {nested} }\"", t); // nested braces inside a hole
+    agree("f\"{ unclosed\"", t); // hole opens but never closes before the string ends
+    agree("\"# not a comment\"", t); // `#` inside a string is not a line comment
+    agree("# \"not a string\"\n", t); // a `\"` inside a line comment
+    agree("'''\n multi \n line\n'''", t); // triple spanning newlines
+    agree("s = \"a\nb\"", t); // plain python `\"` is NOT multiline → unterminated at the newline
+}
+
+// ============================================================================
+// D4 fuzz/property arm — the missing piece: the curated set above is position-
+// exhaustive but input-sparse (#219 long tail). This feeds `agree()` (machine vs
+// the INDEPENDENT hand oracle, at EVERY position) with deterministically-generated
+// random inputs for EACH cleanroom target: (a) random bytes over the literal
+// long-tail alphabet, (b) random Frame-ish/native source assembled from literal
+// fragments. Determinism: a fixed inline xorshift PRNG over a fixed seed range —
+// no Date/system-random. A failure here is a real machine/oracle divergence and is
+// reproducible from its seed.
+// SCAFFOLDING: differential vs the hand oracle; needs the internal oracle + spans.
+// ============================================================================
+
+/// Inline deterministic PRNG (xorshift64*). No external crates, no system entropy.
+struct Rng(u64);
+impl Rng {
+    fn new(seed: u64) -> Rng {
+        // Avoid the zero fixed-point; splitmix the seed so adjacent seeds diverge fast.
+        let mut s = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(0x1234_5678);
+        if s == 0 {
+            s = 0xDEAD_BEEF;
+        }
+        Rng(s)
+    }
+    fn next_u64(&mut self) -> u64 {
+        let mut x = self.0;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.0 = x;
+        x.wrapping_mul(0x2545_F491_4F6C_DD1D)
+    }
+    fn below(&mut self, n: usize) -> usize {
+        (self.next_u64() % (n as u64)) as usize
+    }
+}
+
+/// The literal long-tail, one byte at a time. All ASCII → always valid UTF-8, so
+/// `agree`'s `&src[..]` slicing stays on char boundaries. Every byte here is a byte
+/// that MATTERS to some form's opener/closer/escape (#219 alphabet).
+const FUZZ_BYTES: &[u8] = b"\"'`/*#-\\{}()[]rbBR=@ \n\txX01;:,";
+
+/// Multi-byte literal fragments — the openers/closers/escapes as whole tokens, so the
+/// generator actually forms `//`, `/*`, `\"\"\"`, `r#\"`, `\"#`, holes, `@@`, etc. instead
+/// of relying on two independent single-byte draws lining up.
+const FUZZ_FRAGMENTS: &[&[u8]] = &[
+    b"\"", b"'", b"`", b"//", b"/*", b"*/", b"#", b"--", b"\"\"\"", b"'''", b"r\"", b"r#\"",
+    b"r##\"", b"\"#", b"\"##", b"##", b"{", b"}", b"{{", b"}}", b"{x}", b"${", b"\\", b"\\\"",
+    b"\\n", b"\n", b"\t", b" ", b"@@", b"@@system X {", b"abc", b"br\"", b"=", b";", b"(", b")",
+    b"[", b"]", b"x", b"1",
+];
+
+fn gen_random_bytes(rng: &mut Rng, max_len: usize) -> String {
+    let len = rng.below(max_len + 1);
+    let mut v = Vec::with_capacity(len);
+    for _ in 0..len {
+        v.push(FUZZ_BYTES[rng.below(FUZZ_BYTES.len())]);
+    }
+    // All bytes are ASCII → this is always valid UTF-8.
+    String::from_utf8(v).expect("fuzz bytes are ASCII")
+}
+
+fn gen_frame_ish(rng: &mut Rng, max_frags: usize) -> String {
+    let n = rng.below(max_frags + 1);
+    let mut v: Vec<u8> = Vec::new();
+    for _ in 0..n {
+        v.extend_from_slice(FUZZ_FRAGMENTS[rng.below(FUZZ_FRAGMENTS.len())]);
+    }
+    String::from_utf8(v).expect("fuzz fragments are ASCII")
+}
+
+/// A failing seed prints itself; re-run `agree(gen_*(…, seed), target)` to reproduce.
+#[test]
+fn fuzz_random_bytes_every_position_all_targets() {
+    let targets = [Target::C, Target::Java, Target::Rust, Target::Python3];
+    for &t in &targets {
+        for seed in 0u64..2000 {
+            let mut rng = Rng::new(seed ^ 0xA5A5_0000);
+            let src = gen_random_bytes(&mut rng, 22);
+            // `agree` asserts machine == hand at EVERY byte position; a divergence panics
+            // with the target/pos/source, and this seed reproduces it.
+            agree(&src, t);
+        }
+    }
+}
+
+#[test]
+fn fuzz_frame_ish_source_every_position_all_targets() {
+    let targets = [Target::C, Target::Java, Target::Rust, Target::Python3];
+    for &t in &targets {
+        for seed in 0u64..2000 {
+            let mut rng = Rng::new(seed ^ 0x5A5A_FFFF);
+            let src = gen_frame_ish(&mut rng, 9);
+            agree(&src, t);
+        }
+    }
+}
+
+/// A generator that can't produce an opening string/comment tests nothing (a #232 lie).
+/// Prove both arms have TEETH: over the same seed range, they must (1) be diverse and
+/// (2) actually reach an ACCEPTING scan (some form opens and closes) many times, and
+/// (3) reach the RUST-RAW and PYTHON-HOLE delegated sub-systems specifically.
+#[test]
+fn fuzz_corpus_has_teeth() {
+    use std::collections::HashSet;
+    let mut distinct = HashSet::new();
+    let mut accepts = 0usize;
+    let mut raw_accepts = 0usize;
+    let mut hole_effect = 0usize;
+    for seed in 0u64..2000 {
+        let mut rb = Rng::new(seed ^ 0xA5A5_0000);
+        distinct.insert(gen_random_bytes(&mut rb, 22));
+        let mut rf = Rng::new(seed ^ 0x5A5A_FFFF);
+        let s = gen_frame_ish(&mut rf, 9);
+        let b = s.as_bytes();
+        // A Rust raw string opening somewhere → exercises the RawString sub-system to Accept.
+        for i in 0..b.len() {
+            if opaque_extent(b, i, Target::Rust).map_or(false, |e| e > i) {
+                accepts += 1;
+                if b[i] == b'r' || b[i] == b'b' {
+                    raw_accepts += 1;
+                }
+            }
+        }
+        // A Python string carrying a `{…}` hole → exercises the BraceBalance sub-system.
+        if s.contains('{') {
+            for i in 0..b.len() {
+                if (b[i] == b'"' || b[i] == b'\'')
+                    && opaque_extent(b, i, Target::Python3).map_or(false, |e| e > i + 1)
+                {
+                    hole_effect += 1;
+                    break;
+                }
+            }
+        }
+        distinct.insert(s);
+    }
+    assert!(distinct.len() > 2000, "generator not diverse: {} distinct", distinct.len());
+    assert!(accepts > 200, "too few accepting scans ({accepts}) — arm lacks teeth");
+    assert!(raw_accepts > 5, "RawString sub-system barely exercised by fuzz ({raw_accepts})");
+    assert!(hole_effect > 5, "BraceBalance/hole path barely exercised by fuzz ({hole_effect})");
+}

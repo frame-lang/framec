@@ -67,6 +67,21 @@ fn main() -> ExitCode {
         }
     };
 
+    // The cleanroom models the string/comment forms of exactly four targets, so `segment`
+    // (which runs OpaqueScan to skip strings/comments) would UNDER-recognize any other target —
+    // and disagree with itself where hand code still runs. Refuse an unsupported target here, at
+    // parse, rather than silently scan it wrong (RFC-0042.1 / conversion-plan R3).
+    if !matches!(
+        target,
+        Target::Python3 | Target::Java | Target::Rust | Target::C
+    ) {
+        eprintln!(
+            "target `{}` is not supported by the cleanroom (python_3, java, rust, c).",
+            target.name()
+        );
+        return ExitCode::from(2);
+    }
+
     let ast = match segment(&src, target) {
         Ok(a) => a,
         Err(e) => {
