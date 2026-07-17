@@ -298,6 +298,34 @@ The plan is a contract; it changes only through a recorded, evaluated process �
   change. Same conservative direction as R12 (only named oracles excluded; nothing production
   hides as oracle).
 
+- *2026-07-17* — **BodyBalance DISCHARGED (Item 2 residual closed; Mark chose Option A).** Empirical
+  check before forcing the consolidation (warden's condition 2) caught that `close_brace` and
+  `balanced`/DelimBalance have DIFFERENT unterminated-opaque policies — `close_brace` FAILS on an
+  unterminated body (safe; a `}` buried in a never-closed string can't spuriously close it),
+  `balanced` TOLERATES (treats it as bytes, keeps counting). Not the same machine — a real finding,
+  surfaced to Mark. **Decision (Mark): Option A — parameterize DelimBalance** with a `fail_unterm:
+  bool` config (bool ctor param verified expressible; survives scan_at) + an `opaque_unterminated`
+  leaf. `balanced()` passes false (TOLERATE, unchanged); new `balanced_strict()` passes true (FAIL).
+  `close_brace` now delegates to `balanced_strict` — its hand `{}` counter loop GONE (BodyBalance
+  discharged; the Item 2 residual is closed). Byte-behavior preserved: close_brace_tests 7→8 green
+  (added `fail_unterm_policy_is_load_bearing` — proves the flag BITES: on `{ "unterminated }`,
+  FAIL→Err while TOLERATE→Some, and close_brace picks FAIL, matching close_brace_hand). D2 fixpoint
+  stable; full suite green. **Production HAND_SCAN_LOOPS 81→80** (close_brace's counter retired).
+  No new system (DelimBalance extended, not duplicated).
+
+- *2026-07-17* — **BodyBalance cleanups (from-scratch source review + Mark "best methodical thing").**
+  #1 DRY: `balanced`/`balanced_strict` folded onto a private `run(…, fail_unterm)` helper (was two
+  copies differing only in the bool). #2 dual-arm: added `balanced_strict_hand` (the INDEPENDENT
+  FAIL-policy hand oracle — opaque_at_hand + skip_opaque_hand, no OpaqueScan) and a full STRICT
+  differential arm in tests/delim_balance.rs — `balanced_strict==balanced_strict_hand` over BOTH
+  pairs, every opener × every limit (incl. limit<len) × 4 targets + fuzz, closing the gap that
+  balanced_strict was only proven transitively via close_brace (`{}`, limit=len). Teeth: FAIL
+  diverges from TOLERATE non-vacuously (14 explicit + 127 fuzz: TOLERATE Some vs FAIL None). Tests
+  15→21 (delim); full suite green. Behavior-preserving (DRY) + test-only additions. Metrics:
+  oracle HAND_SCAN_LOOPS 5→6 (balanced_strict_hand, transient). Residual note (maintenance, not
+  correctness): the STRICT arm's CURATED_CORPUS mirrors the TOLERATE arm's inline strings — a
+  future consolidation could share one const.
+
 ### Audit Log (append-only — warden verdicts)
 - *2026-07-17* — GATE-A dry-run, Item 1 "opaque skip": **FAIL** (D4 no fuzz) / GATE-B **FAIL**
   (D5/D6 surviving hand consumers close_brace + machine.rs::skip_opaque; D9 uncommitted). The DoD
@@ -309,6 +337,13 @@ The plan is a contract; it changes only through a recorded, evaluated process �
   wired to the system; every residual hand-lexer caller is an oracle or a named+scheduled residual
   (close_brace→Item 2, skip_opaque→Item 3, native_parts→Item 4); suite green; drift none. D9 (the
   only open predicate) is intentionally uncommitted → LAND the atomic commit.
+- *2026-07-17* — GATE-B (re-grade, final), Item 3b "BodyBalance discharge + cleanups": **PASS
+  pending commit.** close_brace→balanced_strict (hand {} counter gone); DRY behavior-preserving;
+  balanced_strict now DIRECTLY dual-armed vs independent balanced_strict_hand (hand Lexer, not
+  OpaqueScan) — every pos × every limit (incl. <len) × both pairs × 4 targets + fuzz, teeth ≥14
+  explicit / >20 fuzz. D1–D8 + R13 verified by run/grep; regen byte-identical; census oracle loops
+  5→6, prod loops 80, recognition 11, SYSTEMS 16, no prod mis-bucketed. D9 open → land the 6-file
+  atomic commit.
 - *2026-07-17* — GATE-A+B, Item 3b "DelimBalance": **PASS pending commit.** machine.rs::balanced/
   matching_brace routed off the hand counter onto the DelimBalance @@[scan(u8)] Dyck-1 counter
   (opaque-aware via OpaqueScan); D1–D8 + R13 verified by run/grep (regen byte-identical across
@@ -476,7 +511,7 @@ survive as oracles + un-converted consumers — tracked here, not forgotten.
 |---|---|---|---|
 | 1 OpaqueScan | **warden PASS (GATE-A + GATE-B) — committed** | OpaqueScan, RawString, BraceBalance | skip path is the system; try_island routed; residual = holes (Item 4), close_brace (Item 2), machine skip (Item 3), + 3 oracles — all named; batteries+fuzz+milestone green |
 | 2 Segmenter | **close_brace capability: warden PASS (GATE-A+B, pending commit).** Body-end recognition off the hand Lexer onto OpaqueScan (`opaque_at`, 3-way signal). Remaining Item-2 scope: `hand_item_starts` oracle (→ C-final sweep) + `BodyBalance` `{}`-counter sub-system (named, before close) | segmenter, +OpaqueScan `kind`/`unterminated` registers | close_brace: yes. Item-2 whole: no (oracle + brace-counter named) |
-| 3 Grammar | **3a skip_opaque: DONE (committed fbde61e).** **3b DelimBalance: DONE (pending commit)** — retires balanced/matching_brace only; differential green no-mismatch, SYSTEMS 15→16. close_brace's `{}` counter (BodyBalance) = NAMED follow-on, NOT yet discharged. 3c dispatch walks: designed, ahead | stmt_scan (partial); **DelimBalance (16th system)** | 3a: yes. 3b: balanced/matching_brace yes; BodyBalance pending. 3c: designed |
+| 3 Grammar | **3a skip_opaque: DONE (fbde61e).** **3b DelimBalance: DONE (03671f1)** — balanced/matching_brace, SYSTEMS 15→16. **BodyBalance DISCHARGED (pending commit)** — DelimBalance `fail_unterm` policy (Option A); close_brace→balanced_strict, its counter gone; load-bearing test green. 3c dispatch walks: designed, ahead | stmt_scan (partial); **DelimBalance** (16th, both policies) | 3a/3b/BodyBalance: yes. 3c: designed |
 | 4 Islands | not started | ref/inst/embed_scan (partial) | no |
 | 5 Validators | not started | hsm_cycle, reachability | no |
 | 6 EmitDriver | not started | — | n/a (transducer, last) |

@@ -20,6 +20,12 @@ use std::any::Any;
 // OpaqueScan and applies the grammar's kind-aware limit policy (comment clamps, literal rejects
 // on overrun) — no walk lives in the leaf (D3).
 //
+// `fail_unterm` is the unterminated-opaque POLICY (the two callers genuinely differ, empirically):
+//   false — TOLERATE (the hand `machine.rs::balanced`): an unterminated region is treated as
+//           ordinary bytes and counting continues.
+//   true  — FAIL (the hand `close_brace`): an unterminated body is malformed → Reject, so a
+//           delimiter buried in an unterminated string can never spuriously close the group.
+//
 // Regen: framec-ng -l rust --emit delim_balance.frs | grep -v '^#!\[allow' > delim_balance.gen.rs
 
 pub trait DelimBalanceInput { fn fsm_get(&self, i: usize) -> u8; fn fsm_len(&self) -> usize; }
@@ -53,13 +59,14 @@ pub struct DelimBalance<'a> {
     pub open: u8,
     pub close: u8,
     pub limit: usize,
+    pub fail_unterm: bool,
     pub depth: i32,
 }
 
 impl<'a> DelimBalance<'a> {
-    pub fn over(src: &'a [u8], target: Target, open: u8, close: u8, limit: usize) -> Self {
+    pub fn over(src: &'a [u8], target: Target, open: u8, close: u8, limit: usize, fail_unterm: bool) -> Self {
         let compartment = DelimBalanceComp { state: "Scan".to_string(), vars: DelimBalanceVars::Scan {  }, args: DelimBalanceArgs::Scan {  } };
-        DelimBalance { src, cursor: 0, compartment, stack: Vec::new(), target: target, open: open, close: close, limit: limit, depth: 0 }
+        DelimBalance { src, cursor: 0, compartment, stack: Vec::new(), target: target, open: open, close: close, limit: limit, fail_unterm: fail_unterm, depth: 0 }
     }
 
     pub fn scan_at(&mut self, start: usize) -> bool {
@@ -87,6 +94,16 @@ impl<'a> DelimBalance<'a> {
             let mut __next = DelimBalanceComp { state: "Reject".to_string(), vars: DelimBalanceVars::Reject {  }, args: DelimBalanceArgs::Reject { } };
             self.compartment = __next;
             return Default::default();
+        }
+        // FAIL policy: an opaque region that OPENS here but never closes makes the body
+        // malformed — reject before counting, so a `}`/`)` inside it cannot spuriously
+        // balance the group (the hand `close_brace` semantics).
+        if self.fail_unterm {
+            if opaque_unterminated(self.src, self.cursor, self.target) {
+                let mut __next = DelimBalanceComp { state: "Reject".to_string(), vars: DelimBalanceVars::Reject {  }, args: DelimBalanceArgs::Reject { } };
+                self.compartment = __next;
+                return Default::default();
+            }
         }
         // Skip a whole opaque region (comment/literal) first, so a delimiter inside it
         // is not counted. The leaf returns `cursor` unchanged when nothing opaque opens.

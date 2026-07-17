@@ -19,9 +19,15 @@
 // OpaqueScan and applies the grammar's kind-aware limit policy (comment clamps, literal rejects
 // on overrun) — no walk lives in the leaf (D3).
 //
+// `fail_unterm` is the unterminated-opaque POLICY (the two callers genuinely differ, empirically):
+//   false — TOLERATE (the hand `machine.rs::balanced`): an unterminated region is treated as
+//           ordinary bytes and counting continues.
+//   true  — FAIL (the hand `close_brace`): an unterminated body is malformed → Reject, so a
+//           delimiter buried in an unterminated string can never spuriously close the group.
+//
 // Regen: framec-ng -l rust --emit delim_balance.frs | grep -v '^#!\[allow' > delim_balance.gen.rs
 
-@@system DelimBalance(target: Target, open: u8, close: u8, limit: usize) {
+@@system DelimBalance(target: Target, open: u8, close: u8, limit: usize, fail_unterm: bool) {
     interface:
         step()
     machine:
@@ -29,6 +35,14 @@
             step() {
                 if self.cursor >= self.limit {
                     -> $Reject
+                }
+                // FAIL policy: an opaque region that OPENS here but never closes makes the body
+                // malformed — reject before counting, so a `}`/`)` inside it cannot spuriously
+                // balance the group (the hand `close_brace` semantics).
+                if self.fail_unterm {
+                    if opaque_unterminated(self.src, self.cursor, self.target) {
+                        -> $Reject
+                    }
                 }
                 // Skip a whole opaque region (comment/literal) first, so a delimiter inside it
                 // is not counted. The leaf returns `cursor` unchanged when nothing opaque opens.
@@ -57,5 +71,6 @@
         open: u8 = open
         close: u8 = close
         limit: usize = limit
+        fail_unterm: bool = fail_unterm
         depth: i32 = 0
 }

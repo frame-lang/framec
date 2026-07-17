@@ -452,50 +452,25 @@ fn parse_one_param(body: &str) -> Param {
 /// This is the whole of #219 in one function. The old compiler had fifteen separate
 /// brace-counters, each of which had learned a different subset of its own language's
 /// literals, so a `}` inside a Ruby heredoc / a JS regex / a Lua long string closed a
-/// block that was never open. Here there is one counter, and the opaque-region skip is the
-/// dogfooded `OpaqueScan` @@system (`opaque_at`) — the same recognizer the Segmenter walk asks,
-/// with no hand `Lexer` anywhere in this function. An opaque body that OPENS but never closes
-/// (`OpaqueAt::Unterminated`) aborts the scan as a malformed body — the hand path did the same
-/// via its `?` (which returned an `Err`); the `close_brace_tests` module below locks the
-/// `is_err` parity.
+/// block that was never open. Here there is one counter — **the dogfooded `DelimBalance`
+/// @@system** (`balanced_strict`), the same machine `machine.rs::balanced` uses, run with the
+/// FAIL unterminated policy: an opaque body that OPENS but never closes makes the body malformed
+/// (`None` → `UnclosedBody`), so a `}` buried in an unterminated string can never spuriously
+/// close it. This discharges Item 2's BodyBalance residual onto DelimBalance. The
+/// `close_brace_tests` module below locks the `is_err`/`Ok` parity against `close_brace_hand`.
 fn close_brace(
     bytes: &[u8],
     open: usize,
     name: &str,
     target: Target,
 ) -> Result<usize, SegmentError> {
-    let mut i = open;
-    let mut depth = 0i32;
-    while i < bytes.len() {
-        match opaque_scan::opaque_at(bytes, i, target) {
-            opaque_scan::OpaqueAt::Comment(end) | opaque_scan::OpaqueAt::Literal(end) => {
-                i = end;
-                continue;
-            }
-            opaque_scan::OpaqueAt::Unterminated => {
-                return Err(SegmentError::UnclosedBody {
-                    open: Span::new(open, bytes.len()),
-                    name: name.to_string(),
-                });
-            }
-            opaque_scan::OpaqueAt::None => {}
-        }
-        match bytes[i] {
-            b'{' => depth += 1,
-            b'}' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Ok(i + 1);
-                }
-            }
-            _ => {}
-        }
-        i += 1;
+    match delim_balance::balanced_strict(bytes, open, bytes.len(), b'{', b'}', target) {
+        Some(end) => Ok(end),
+        None => Err(SegmentError::UnclosedBody {
+            open: Span::new(open, bytes.len()),
+            name: name.to_string(),
+        }),
     }
-    Err(SegmentError::UnclosedBody {
-        open: Span::new(open, bytes.len()),
-        name: name.to_string(),
-    })
 }
 
 // (differential unit tests for `close_brace` live in the `close_brace_tests` module at the
@@ -648,6 +623,39 @@ mod close_brace_tests {
         agree_all("{ \"\"\"unterminated triple", Target::Python3);
         agree_all("{ r#\"unterminated raw", Target::Rust);
         agree_all("{ s = \"line\nbreak\" }", Target::C); // newline-in-string → Unterminated → Err
+    }
+
+    // The `fail_unterm` policy is LOAD-BEARING, not a no-op. A `}` is buried inside an
+    // UNTERMINATED string: the two DelimBalance policies must DIVERGE on it, and close_brace must
+    // pick the safe one. Without this, `unterminated_bodies` (whose bodies hide no closer) would
+    // pass even if `fail_unterm` were wired as a no-op — both policies return Err when there is
+    // no buried `}`. Here there IS one, so:
+    //   · TOLERATE (`balanced`) treats the never-closed `"` as bytes → finds the buried `}` → Some
+    //   · FAIL (`balanced_strict`, used by `close_brace`) rejects the malformed body → None → Err
+    // The oracle (`close_brace_hand`, hand `Lexer` with `?`) also Errs, so the flag is proven to
+    // change the outcome in the direction close_brace requires.
+    #[test]
+    fn fail_unterm_policy_is_load_bearing() {
+        // `{ "unterminated } ` — a `}` at index 16, inside a string with no closing quote.
+        let src = b"{ \"unterminated } ";
+        for &t in &TARGETS {
+            // FAIL policy (production close_brace) + its hand oracle both reject.
+            assert!(
+                super::close_brace(src, 0, "X", t).is_err(),
+                "close_brace (FAIL) must reject a `}}` buried in an unterminated string ({t:?})"
+            );
+            assert!(
+                super::close_brace_hand(src, 0, "X", t).is_err(),
+                "close_brace_hand oracle must reject too ({t:?})"
+            );
+            // TOLERATE policy finds the buried closer — proving the policies genuinely diverge
+            // here, i.e. `fail_unterm` is what makes close_brace safe (not a no-op).
+            assert_eq!(
+                super::delim_balance::balanced(src, 0, src.len(), b'{', b'}', t),
+                Some(17),
+                "TOLERATE (balanced) must find the `}}` buried in the unterminated string ({t:?})"
+            );
+        }
     }
 
     // ---- Deterministic xorshift fuzz: `{` + random literal-long-tail body, swept. ----

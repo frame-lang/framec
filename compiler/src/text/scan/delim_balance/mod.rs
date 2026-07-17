@@ -33,6 +33,13 @@ fn opaque_skip(src: &[u8], i: usize, limit: usize, target: Target) -> usize {
     }
 }
 
+/// Does an opaque region OPEN at `i` but never close? The `fail_unterm` policy leaf: under FAIL,
+/// the machine rejects here so a delimiter buried in an unterminated string/comment cannot
+/// spuriously balance the group. Only runs OpaqueScan — no walk (D3).
+fn opaque_unterminated(src: &[u8], i: usize, target: Target) -> bool {
+    matches!(opaque_at(src, i, target), OpaqueAt::Unterminated)
+}
+
 mod fsm {
     #![allow(
         dead_code,
@@ -42,27 +49,44 @@ mod fsm {
         unused_mut,
         unused_imports
     )]
-    use super::{opaque_skip, Target};
+    use super::{opaque_skip, opaque_unterminated, Target};
     include!("delim_balance.gen.rs");
 }
 
-/// From an `open` byte at `bytes[open]`, return the offset one past the matching `close` (bounded
-/// by `limit`), or `None` if it never balances. A delimiter inside an opaque region is skipped,
-/// not counted. The machine finds the extent; this wrapper only runs it.
-pub fn balanced(
+/// Run the `DelimBalance` machine over `bytes[open..]` for the `(o, c)` pair, bounded by `limit`,
+/// under the given unterminated-opaque policy. Accept → offset one past the matching close;
+/// Reject → `None`. The only difference between the two public entry points is `fail_unterm`.
+fn run(
     bytes: &[u8],
     open: usize,
     limit: usize,
     o: u8,
     c: u8,
     target: Target,
+    fail_unterm: bool,
 ) -> Option<usize> {
-    let mut m = fsm::DelimBalance::over(bytes, target, o, c, limit);
+    let mut m = fsm::DelimBalance::over(bytes, target, o, c, limit, fail_unterm);
     if m.scan_at(open) {
         Some(m.cursor)
     } else {
         None
     }
+}
+
+/// From an `open` byte at `bytes[open]`, return the offset one past the matching `close` (bounded
+/// by `limit`), or `None` if it never balances. A delimiter inside an opaque region is skipped,
+/// not counted. **TOLERATE policy**: an unterminated opaque region is treated as ordinary bytes
+/// (the hand `machine.rs::balanced`).
+pub fn balanced(bytes: &[u8], open: usize, limit: usize, o: u8, c: u8, target: Target) -> Option<usize> {
+    run(bytes, open, limit, o, c, target, false)
+}
+
+/// As [`balanced`], but with the **FAIL policy**: an unterminated opaque region makes the group
+/// malformed → `None`, so a delimiter buried in an unterminated string/comment can never
+/// spuriously balance it (the hand `close_brace` semantics). This is how `close_brace` (Item 2's
+/// BodyBalance residual) is discharged onto DelimBalance without changing `balanced`'s behavior.
+pub fn balanced_strict(bytes: &[u8], open: usize, limit: usize, o: u8, c: u8, target: Target) -> Option<usize> {
+    run(bytes, open, limit, o, c, target, true)
 }
 
 /// The retired hand implementation — kept ONLY as the `balanced` differential-test oracle until
@@ -81,6 +105,44 @@ pub fn balanced_hand(
     let mut i = open;
     let mut depth = 0i32;
     while i < limit {
+        if let Some(next) = super::machine::skip_opaque_hand(bytes, i, limit, target) {
+            i = next;
+            continue;
+        }
+        if bytes[i] == o {
+            depth += 1;
+        } else if bytes[i] == c {
+            depth -= 1;
+            if depth == 0 {
+                return Some(i + 1);
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+/// The FAIL-policy differential oracle for [`balanced_strict`] — the hand analogue that rejects
+/// on an unterminated opaque region. Fully independent of the system under test: the
+/// unterminated check uses the hand `opaque_at_hand` and the skip uses the hand
+/// `skip_opaque_hand` (both the retired hand `Lexer`), never OpaqueScan. `#[doc(hidden)]`,
+/// test-only, deleted at C-final with the other oracles.
+#[doc(hidden)]
+pub fn balanced_strict_hand(
+    bytes: &[u8],
+    open: usize,
+    limit: usize,
+    o: u8,
+    c: u8,
+    target: Target,
+) -> Option<usize> {
+    let mut i = open;
+    let mut depth = 0i32;
+    while i < limit {
+        // FAIL: an opaque region that opens here but never closes makes the group malformed.
+        if matches!(super::opaque_at_hand(bytes, i, target), OpaqueAt::Unterminated) {
+            return None;
+        }
         if let Some(next) = super::machine::skip_opaque_hand(bytes, i, limit, target) {
             i = next;
             continue;
