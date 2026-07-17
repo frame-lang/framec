@@ -31,6 +31,26 @@ pub mod reindent;
 
 use super::NativeText;
 
+/// The argument-list text of a `@@Sys(...)` field initializer — everything between the first
+/// `(` and the last `)`. `@@Inner(42)` → `42`; `@@Inner()` / `@@Inner` → "". These are the
+/// verbatim args the user wrote; the domain-init and state-var-seed emitters had been
+/// discarding them and hardcoding an empty argument list, dropping e.g. `@@Inner(42)` to
+/// `Inner()`. `init_system` gives the name; this recovers the args that sit beside it in
+/// `init_text`. Whole-arg-string (not comma-split): each backend's `system_ctor_call` joins a
+/// single-element list to itself, so `Inner(1, 2)` round-trips without re-parsing commas.
+pub fn ctor_init_args(init_text: Option<&str>) -> String {
+    let Some(t) = init_text else {
+        return String::new();
+    };
+    let (Some(open), Some(close)) = (t.find('('), t.rfind(')')) else {
+        return String::new();
+    };
+    if close <= open + 1 {
+        return String::new();
+    }
+    t[open + 1..close].trim().to_string()
+}
+
 /// Accumulates the target file. Text goes IN; it never comes back out.
 ///
 /// There is deliberately no `fn text(&self) -> &str`, no `Deref`, no `Display`. Once

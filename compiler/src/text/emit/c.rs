@@ -126,7 +126,7 @@ impl Backend for C {
             // `= @@Inner()` is FRAME's instantiation syntax -> the C constructor. Any
             // other init is the user's native expression, verbatim.
             let init = match &f.init_system {
-                Some(s) => format!("{s}_new()"),
+                Some(s) => format!("{s}_new({})", super::ctor_init_args(f.init_text.as_deref())),
                 None => f.init_text.clone().unwrap_or_else(|| "0".into()),
             };
             out.frame(&format!("    self->{} = {init};\n", f.name));
@@ -662,7 +662,7 @@ fn c_box_type(v: &crate::resolve::FieldSym) -> String {
 /// user's init verbatim, else 0.
 fn seed_var(comp: &str, state: &str, v: &crate::resolve::FieldSym, out: &mut Sink) {
     let init = match &v.init_system {
-        Some(s) => format!("{s}_new()"),
+        Some(s) => format!("{s}_new({})", super::ctor_init_args(v.init_text.as_deref())),
         None => v.init_text.clone().unwrap_or_else(|| "0".into()),
     };
     out.frame(&format!("    {comp}->vars.{state}.{} = ({init});\n", v.name));

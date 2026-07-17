@@ -88,7 +88,7 @@ impl Backend for Python {
             // `= @@Inner()` is FRAME's instantiation syntax -> the Python constructor. Any
             // other init is the user's native expression, verbatim.
             let init = match &f.init_system {
-                Some(s) => format!("{s}()"),
+                Some(s) => format!("{s}({})", super::ctor_init_args(f.init_text.as_deref())),
                 None => f.init_text.clone().unwrap_or_else(|| "None".into()),
             };
             out.frame(&format!("        self.{} = {init}\n", f.name));
@@ -629,7 +629,7 @@ def _seed_args(c, names, *vals):\n\
 /// else the user's init verbatim, else `None`.
 fn py_state_seed(v: &crate::resolve::FieldSym) -> String {
     match &v.init_system {
-        Some(s) => format!("{s}()"),
+        Some(s) => format!("{s}({})", super::ctor_init_args(v.init_text.as_deref())),
         None => v
             .init_text
             .as_deref()

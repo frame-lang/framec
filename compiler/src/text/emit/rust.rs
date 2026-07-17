@@ -93,7 +93,7 @@ impl Backend for Rust {
             // `= @@Inner()` is FRAME's instantiation syntax -> the Rust constructor. Any
             // other init is the user's native expression, verbatim.
             let init = match &f.init_system {
-                Some(s) => format!("{s}::new()"),
+                Some(s) => format!("{s}::new({})", super::ctor_init_args(f.init_text.as_deref())),
                 None => f.init_text.clone().unwrap_or_else(|| "Default::default()".into()),
             };
             out.frame(&format!(", {}: {init}", f.name));
@@ -650,7 +650,7 @@ fn state_var_ty(v: &crate::resolve::FieldSym) -> String {
 /// and re-entry so both agree (re-entry used to drop the init and always `default()`).
 fn state_seed_value(v: &crate::resolve::FieldSym) -> String {
     match &v.init_system {
-        Some(s) => format!("{s}::new()"),
+        Some(s) => format!("{s}::new({})", super::ctor_init_args(v.init_text.as_deref())),
         None => v
             .init_text
             .clone()
@@ -735,7 +735,7 @@ impl Rust {
         out.frame(&format!("        {name} {{ src, cursor: 0, compartment, stack: Vec::new()"));
         for f in &sym.domain {
             let init = match &f.init_system {
-                Some(s) => format!("{s}::new()"),
+                Some(s) => format!("{s}::new({})", super::ctor_init_args(f.init_text.as_deref())),
                 None => f.init_text.clone().unwrap_or_else(|| "Default::default()".into()),
             };
             out.frame(&format!(", {}: {init}", f.name));
@@ -760,7 +760,7 @@ impl Rust {
                 continue;
             }
             let init = match &f.init_system {
-                Some(s) => format!("{s}::new()"),
+                Some(s) => format!("{s}::new({})", super::ctor_init_args(f.init_text.as_deref())),
                 None => f.init_text.clone().unwrap_or_else(|| "Default::default()".into()),
             };
             out.frame(&format!("        self.{} = {init};\n", f.name));

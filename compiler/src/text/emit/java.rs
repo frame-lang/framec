@@ -103,7 +103,7 @@ impl Backend for Java {
         // Domain field assignments — now that domain params are in scope.
         for f in &sym.domain {
             let init = match (&f.init_system, &f.init_text) {
-                (Some(s), _) => format!("new {s}()"),
+                (Some(s), _) => format!("new {s}({})", super::ctor_init_args(f.init_text.as_deref())),
                 (None, Some(init)) => init.clone(),
                 (None, None) => "null".to_string(),
             };
@@ -646,7 +646,7 @@ fn java_field_ty(ty: &TypeRef) -> String {
 /// syntax), else the user's init verbatim, else `null`.
 fn java_state_seed(v: &crate::resolve::FieldSym) -> String {
     match &v.init_system {
-        Some(s) => format!("new {s}()"),
+        Some(s) => format!("new {s}({})", super::ctor_init_args(v.init_text.as_deref())),
         None => v
             .init_text
             .as_deref()
