@@ -87,6 +87,8 @@ pub struct Persist {
 pub struct SystemSym {
     pub name: String,
     pub span: Span,
+    /// `@@system private Name` — reduced class visibility on targets that have it (Java).
+    pub private: bool,
     /// `@@[async]` — the system's interface is asynchronous.
     pub is_async: bool,
     /// The persistence contract, if any (`@@[persist(..)]` + `@@[save]` + `@@[load]`).
@@ -269,6 +271,7 @@ pub fn resolve(ast: &FileAst) -> (SymbolTable, Vec<Diagnostic>) {
         let mut sym = SystemSym {
             name: sys.name.clone(),
             span: sys.span,
+            private: sys.private,
             is_async: attrs.iter().any(|a| a == "async"),
             persist,
             // `@@[scan(u8)]` — the positioned-scanner element type (RFC-0042.1 / #209).

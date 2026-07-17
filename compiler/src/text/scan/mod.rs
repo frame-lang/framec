@@ -207,7 +207,7 @@ fn read_pragma(lx: &Lexer, bytes: &[u8], at: usize) -> Result<Item, SegmentError
 
     match word_text {
         "system" => {
-            let (name, params, brace) = read_name_params_brace(bytes, word)?;
+            let (name, private, params, brace) = read_name_params_brace(bytes, word)?;
             let end = close_brace(lx, bytes, brace, &name)?;
             let span = Span::new(at, end);
             Ok(Item::System(SystemItem {
@@ -215,10 +215,11 @@ fn read_pragma(lx: &Lexer, bytes: &[u8], at: usize) -> Result<Item, SegmentError
                 name,
                 sections: sections::sections(lx, bytes, span),
                 params,
+                private,
             }))
         }
         "fsm" => {
-            let (name, _params, brace) = read_name_params_brace(bytes, word)?;
+            let (name, _private, _params, brace) = read_name_params_brace(bytes, word)?;
             let end = close_brace(lx, bytes, brace, &name)?;
             Ok(Item::Efsm(EfsmItem {
                 span: Span::new(at, end),
@@ -273,7 +274,31 @@ fn read_word(bytes: &[u8], mut i: usize) -> usize {
 fn read_name_params_brace(
     bytes: &[u8],
     mut i: usize,
-) -> Result<(String, SystemParams, usize), SegmentError> {
+) -> Result<(String, bool, SystemParams, usize), SegmentError> {
+    let read_word = |bytes: &[u8], mut i: usize| -> (usize, usize, usize) {
+        while i < bytes.len() && (bytes[i] == b' ' || bytes[i] == b'\t') {
+            i += 1;
+        }
+        let s = i;
+        while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+            i += 1;
+        }
+        (s, i, i)
+    };
+    // An optional visibility modifier — `@@system private Name` / `@@system public Name`. It
+    // is a modifier only when ANOTHER identifier (the real name) follows; `@@system private {`
+    // treats `private` as the name (an odd but unambiguous read). `public` is recognised here
+    // so it is not mistaken for the name; its redundancy is diagnosed at resolve.
+    let (fs, fe, after_first) = read_word(bytes, i);
+    let first = String::from_utf8_lossy(&bytes[fs..fe]).into_owned();
+    let mut private = false;
+    if first == "private" || first == "public" {
+        let (ss, se, _) = read_word(bytes, after_first);
+        if se > ss {
+            private = first == "private";
+            i = ss;
+        }
+    }
     while i < bytes.len() && (bytes[i] == b' ' || bytes[i] == b'\t') {
         i += 1;
     }
@@ -318,7 +343,7 @@ fn read_name_params_brace(
             name,
         });
     }
-    Ok((name, params, j))
+    Ok((name, private, params, j))
 }
 
 /// Split `$(a: T), $>(b: T), c: T = d` into the three groups. Sigil decides the group;

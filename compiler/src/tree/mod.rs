@@ -109,6 +109,11 @@ pub struct SystemItem {
     /// Domain params become constructor args (in scope for domain inits); state/enter
     /// params seed the start compartment. Verbatim types; framec reorders, never parses.
     pub params: SystemParams,
+    /// `@@system private Name` — the system is emitted with reduced (package/module-private)
+    /// visibility on targets that have class-level visibility (Java: `class` not `public
+    /// class`). `public` is the default; the redundant keyword and `private` on a target
+    /// without class visibility are diagnosed at resolve.
+    pub private: bool,
 }
 
 /// The three header param groups of `@@system Name(...)`.

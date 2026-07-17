@@ -62,7 +62,10 @@ impl Backend for Java {
 
     fn open_system(&self, sym: &SystemSym, out: &mut Sink) {
         let name = &sym.name;
-        out.frame(&format!("public class {name} {{\n"));
+        // `@@system private Name` -> package-private `class Name` (so a file's lone public
+        // class rule still lets a sibling be public); default is `public class`.
+        let vis = if sym.private { "" } else { "public " };
+        out.frame(&format!("{vis}class {name} {{\n"));
         // The TYPED per-state compartment (RFC-0056): a base `Comp` + one `<State>Comp` per
         // state holding that state's typed vars/args. Jackson round-trips the polymorphic
         // control state from framec-generated annotations when the system persists. No
