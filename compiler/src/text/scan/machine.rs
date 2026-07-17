@@ -9,6 +9,7 @@
 //! There is no "just formatting" and there is no blob.
 
 use super::lex::Lexer;
+use super::literals::Target;
 use super::parts::native_parts;
 use crate::tree::body::{
     AssignStmt, Body, NativeStmt, ReturnCallStmt, SelfCallStmt, SimpleStmt, Stmt, TransitionStmt,
@@ -26,7 +27,7 @@ pub fn machine_section(lx: &Lexer, bytes: &[u8], span: Span, kw: Span) -> Machin
     let mut cursor = kw.end;
 
     while i < span.end {
-        if let Some(next) = skip_opaque(lx, i, span.end) {
+        if let Some(next) = skip_opaque(bytes, i, span.end, lx.target()) {
             i = next;
             continue;
         }
@@ -124,7 +125,7 @@ fn state(lx: &Lexer, bytes: &[u8], at: usize, limit: usize) -> StateNode {
     let mut cursor = i;
 
     while i < close {
-        if let Some(next) = skip_opaque(lx, i, close) {
+        if let Some(next) = skip_opaque(bytes, i, close, lx.target()) {
             i = next;
             continue;
         }
@@ -294,7 +295,7 @@ pub fn body(lx: &Lexer, bytes: &[u8], span: Span) -> Body {
             cursor = i;
             continue;
         }
-        if let Some(next) = skip_opaque(lx, i, span.end) {
+        if let Some(next) = skip_opaque(bytes, i, span.end, lx.target()) {
             i = next;
             continue;
         }
@@ -706,11 +707,35 @@ fn target_of(bytes: &[u8], from: usize, to: usize) -> Option<String> {
 
 /// Skip a comment or a literal. Returns the offset past it, if there was one.
 ///
-/// **One lexer, asked by everyone.** The old compiler had fifteen hand-written brace
-/// counters, each of which had learned a different subset of its own language's
-/// literals — so a `}` inside a Ruby heredoc, a JS regex, or a Lua long string closed a
-/// block that was never open (#219).
-fn skip_opaque(lx: &Lexer, i: usize, limit: usize) -> Option<usize> {
+/// **The dogfooded `OpaqueScan` system** (`opaque_at`) — the same recognizer the Segmenter and
+/// `close_brace` ask; no hand `Lexer` here. The limit policy is `kind`-aware (Item 2's 3-way
+/// signal, not just the extent): a COMMENT clamps to `limit` (a `//`/`/*` may legitimately run
+/// past a span end and is still consumed up to it), while a LITERAL that OVERRUNS `limit` is
+/// REJECTED (a string must fit inside the span to count). An unterminated body → `None`, exactly
+/// as the hand path's `Err`-then-fallthrough did. (#219: one recognizer, asked by everyone —
+/// never the fifteen per-language brace counters that each learned a different literal subset.)
+fn skip_opaque(bytes: &[u8], i: usize, limit: usize, target: Target) -> Option<usize> {
+    match super::opaque_scan::opaque_at(bytes, i, target) {
+        super::opaque_scan::OpaqueAt::Comment(end) => Some(end.min(limit).max(i + 1)),
+        super::opaque_scan::OpaqueAt::Literal(end) => {
+            if end <= limit {
+                Some(end.max(i + 1))
+            } else {
+                None
+            }
+        }
+        super::opaque_scan::OpaqueAt::None | super::opaque_scan::OpaqueAt::Unterminated => None,
+    }
+}
+
+/// The retired hand implementation — kept ONLY as the `skip_opaque` differential-test oracle
+/// (the `machine_opaque_tests` module below) until the parity is locked and the hand lexer
+/// recognition is deleted (Item 4). Self-contained (builds its own `Lexer`); not used in
+/// production. Mirrors the hand policy exactly: comment clamps, literal rejects-on-overrun, an
+/// `Err` (unterminated) or `Ok(None)` falls through to `None`.
+#[doc(hidden)]
+pub fn skip_opaque_hand(bytes: &[u8], i: usize, limit: usize, target: Target) -> Option<usize> {
+    let lx = Lexer::new(bytes, target);
     if let Ok(Some(e)) = lx.comment_at(i) {
         return Some(e.min(limit).max(i + 1));
     }
@@ -730,7 +755,7 @@ fn balanced(lx: &Lexer, bytes: &[u8], open: usize, limit: usize, o: u8, c: u8) -
     let mut i = open;
     let mut depth = 0i32;
     while i < limit {
-        if let Some(next) = skip_opaque(lx, i, limit) {
+        if let Some(next) = skip_opaque(bytes, i, limit, lx.target()) {
             i = next;
             continue;
         }
@@ -776,7 +801,7 @@ pub fn decl_section(lx: &Lexer, bytes: &[u8], span: Span, kw: Span, with_bodies:
     let mut cursor = kw.end;
 
     while i < span.end {
-        if let Some(next) = skip_opaque(lx, i, span.end) {
+        if let Some(next) = skip_opaque(bytes, i, span.end, lx.target()) {
             i = next;
             continue;
         }
@@ -1162,5 +1187,321 @@ fn consume_terminator(bytes: &[u8], mut at: usize, limit: usize) -> usize {
         at + 1
     } else {
         at
+    }
+}
+
+// ============================================================================
+// skip_opaque differential parity — Item 3a (retire machine.rs::skip_opaque).
+//
+// `skip_opaque` (PRODUCTION) runs the dogfooded OpaqueScan system (`opaque_at`)
+// under a KIND-AWARE limit policy; `skip_opaque_hand` (the retired hand `Lexer`,
+// `comment_at`/`literal_at`) is the INDEPENDENT differential oracle. They must be
+// equal at EVERY position i, over MULTIPLE limits per input.
+//
+// The whole point of the kind-aware policy is an ASYMMETRY the extent number alone
+// cannot see:
+//   * a COMMENT whose extent runs past `limit` still CLAMPS to `limit` (a `//`/`/*`
+//     may legitimately overrun a span end and is consumed up to it);
+//   * a LITERAL whose extent runs past `limit` is REJECTED to `None` (a string must
+//     fit inside the span to count).
+// So the corpus and the fuzz arm both drive `limit` into the INTERIOR of each opaque
+// form (a full i x limit cross-product), and a TEETH gate asserts a clamp AND a
+// reject actually fired (counts > 0) — the asymmetry is exercised, not agreed-upon
+// vacuously. A mismatch here is a real machine/oracle divergence and is a finding.
+//
+// SCAFFOLDING: conversion-internal — calls the private `skip_opaque` and the hand
+// oracle, and reads the internal `OpaqueAt` classification. NEVER promotes (needs the
+// hand oracle + internal registers; not emitted-code behavior).
+// ============================================================================
+#[cfg(test)]
+mod skip_opaque_tests {
+    use super::{skip_opaque, skip_opaque_hand};
+    use crate::text::scan::literals::Target;
+    use crate::text::scan::opaque_scan::{opaque_at, OpaqueAt};
+
+    const TARGETS: [Target; 4] = [Target::C, Target::Java, Target::Rust, Target::Python3];
+
+    /// Machine vs the INDEPENDENT hand oracle at one `(i, limit)`. Returns the machine
+    /// result so the caller can account teeth. A divergence panics with a reproducer.
+    fn agree_one(b: &[u8], i: usize, limit: usize, t: Target) -> Option<usize> {
+        let m = skip_opaque(b, i, limit, t);
+        let h = skip_opaque_hand(b, i, limit, t);
+        assert_eq!(
+            m, h,
+            "skip_opaque parity broke: target {t:?}, i {i}, limit {limit} of {b:?}: \
+             machine={m:?} hand={h:?}"
+        );
+        m
+    }
+
+    /// Teeth accounting: prove BOTH outcomes (Some/None) occur AND that a real clamp
+    /// (comment overruns limit → result == limit) AND a real reject (literal overruns
+    /// limit → None) actually happen, classified against the INTERNAL `opaque_at`.
+    #[derive(Default)]
+    struct Teeth {
+        somes: usize,
+        nones: usize,
+        clamps: usize,
+        rejects: usize,
+    }
+    impl Teeth {
+        fn observe(&mut self, b: &[u8], i: usize, limit: usize, t: Target, m: Option<usize>) {
+            match m {
+                Some(_) => self.somes += 1,
+                None => self.nones += 1,
+            }
+            match opaque_at(b, i, t) {
+                // Comment extent runs PAST limit, with limit at/after the opener: the
+                // kind-aware policy CLAMPS, so the result must be exactly `limit`.
+                OpaqueAt::Comment(end) if end > limit && limit >= i + 1 => {
+                    if m == Some(limit) {
+                        self.clamps += 1;
+                    }
+                }
+                // Literal extent runs PAST limit: the policy REJECTS to `None`.
+                OpaqueAt::Literal(end) if end > limit => {
+                    if m.is_none() {
+                        self.rejects += 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Full `i` x `limit` cross-product sweep — every position as an opener AND every
+    /// limit (crucially the ones that fall INSIDE a comment and INSIDE a string, which
+    /// is where the clamp-vs-reject asymmetry bites). Feeds the shared teeth accumulator.
+    fn sweep(src: &str, t: Target, teeth: &mut Teeth) {
+        let b = src.as_bytes();
+        for i in 0..=b.len() {
+            for limit in 0..=b.len() {
+                let m = agree_one(b, i, limit, t);
+                teeth.observe(b, i, limit, t, m);
+            }
+        }
+    }
+
+    /// The opaque-form corpus (adapted from `tests/opaque_scan.rs`): every form the four
+    /// cleanroom targets recognize, plus the edges, run under the FULL limit sweep so a
+    /// `limit` lands inside each form. Returns teeth for the caller's gate.
+    fn run_corpus() -> Teeth {
+        let mut teeth = Teeth::default();
+
+        // ---- C / Java: //, /*…*/ (no nest), "…", '…' ----
+        for t in [Target::C, Target::Java] {
+            sweep("int x = 1; // a comment\n y=2;", t, &mut teeth);
+            sweep("a /* block */ b", t, &mut teeth);
+            sweep("a /* /* not nested */ b */ c", t, &mut teeth);
+            sweep(r#"s = "hello world";"#, t, &mut teeth);
+            sweep(r#"s = "with \" escaped quote";"#, t, &mut teeth);
+            sweep(r#"s = "trailing backslash \\";"#, t, &mut teeth);
+            sweep("c = 'x';", t, &mut teeth);
+            sweep(r#"c = '\'';"#, t, &mut teeth);
+            sweep(r#"x = "unterminated"#, t, &mut teeth); // unterminated literal
+            sweep("y /* unterminated comment", t, &mut teeth); // unterminated comment
+            sweep(r#"m("a)b", c)"#, t, &mut teeth);
+            sweep("empty=\"\";", t, &mut teeth);
+            sweep("a /**/ b", t, &mut teeth); // minimal empty block
+            sweep("s = \"a\nb\";", t, &mut teeth); // newline in string → unterminated
+        }
+
+        // ---- Rust: nesting /*…*/, r"…", r#"…"#, "…" multiline, '…' ----
+        {
+            let t = Target::Rust;
+            sweep("x // line\n y", t, &mut teeth);
+            sweep("a /* /* nested */ still */ c", t, &mut teeth);
+            sweep("a /* /* deep /* three */ two */ one */ z", t, &mut teeth);
+            sweep(r#"let s = "multi
+line ok";"#, t, &mut teeth);
+            sweep(r#"let r = r"no escapes \ here";"#, t, &mut teeth);
+            sweep(r##"let r = r#"has "quote" inside"#;"##, t, &mut teeth);
+            sweep(r###"let r = r##"a"#b"##;"###, t, &mut teeth);
+            sweep("let c = 'a';", t, &mut teeth);
+            sweep(r#"br"byte raw""#, t, &mut teeth);
+            sweep("a /* unterminated /* still open", t, &mut teeth); // unterminated nested
+            sweep("r#\"unterminated raw", t, &mut teeth);
+            sweep("let c = '\n';", t, &mut teeth); // char is not multiline
+        }
+
+        // ---- Python: #, "…", '…', """…""", '''…''', f"…{hole}…" ----
+        {
+            let t = Target::Python3;
+            sweep("x = 1  # a comment\n y = 2", t, &mut teeth);
+            sweep(r#"s = "double""#, t, &mut teeth);
+            sweep("s = 'single'", t, &mut teeth);
+            sweep(r#"d = """triple
+   spanning
+   lines"""  # ok"#, t, &mut teeth);
+            sweep("e = '''also triple'''", t, &mut teeth);
+            sweep(r#"f = f"value is {x + 1}!""#, t, &mut teeth); // hole
+            sweep(r#"j = "quote in hole {x['\"']} end""#, t, &mut teeth);
+            sweep(r#"k = "unterminated hole {a + b"#, t, &mut teeth);
+            sweep("\"\"\"unterminated triple", t, &mut teeth);
+            sweep("s = \"a\nb\"", t, &mut teeth); // plain string not multiline
+        }
+
+        // ---- Edges: empty, EOF, escape-at-EOF, lone openers ----
+        for &t in &TARGETS {
+            sweep("", t, &mut teeth);
+            sweep("x", t, &mut teeth);
+            sweep("\"", t, &mut teeth); // lone opening quote at EOF
+            sweep("\"a\\", t, &mut teeth); // escape at EOF inside a string
+            sweep("'", t, &mut teeth);
+            sweep("\n", t, &mut teeth);
+        }
+        sweep("/*", Target::C, &mut teeth);
+        sweep("//", Target::C, &mut teeth);
+        sweep("#", Target::Python3, &mut teeth);
+        sweep("\"\"\"", Target::Python3, &mut teeth);
+        sweep("r#\"", Target::Rust, &mut teeth);
+
+        teeth
+    }
+
+    /// The differential over the whole corpus, plus the teeth gate. A single named test
+    /// so a corpus regression AND a "the asymmetry never fired" regression both fail here.
+    #[test]
+    fn corpus_parity_and_teeth() {
+        let teeth = run_corpus();
+        assert!(teeth.somes > 0, "no Some outcome — vacuous");
+        assert!(teeth.nones > 0, "no None outcome — vacuous");
+        assert!(
+            teeth.clamps > 0,
+            "CLAMP arm never fired: no comment overran its limit — the kind-aware clamp \
+             is untested (a #232 lie)"
+        );
+        assert!(
+            teeth.rejects > 0,
+            "REJECT arm never fired: no literal overran its limit — the reject-on-overrun \
+             asymmetry is untested"
+        );
+    }
+
+    /// Oracle-INDEPENDENT anchors: hand-computed expected values pinning the clamp-vs-reject
+    /// asymmetry with a `limit` DELIBERATELY inside each form. These survive the hand oracle's
+    /// retirement (they assert known extents, not `== hand`).
+    #[test]
+    fn limit_inside_form_known_extents() {
+        // A C line comment `// comment` occupies indices 0..=9; `\n` at 10 is the extent.
+        // opaque_at(0) == Comment(10).
+        let c = b"// comment\nX";
+        assert_eq!(opaque_at(c, 0, Target::C), OpaqueAt::Comment(10));
+        // limit INSIDE the comment CLAMPS to the limit.
+        assert_eq!(skip_opaque(c, 0, 5, Target::C), Some(5));
+        assert_eq!(skip_opaque(c, 0, 9, Target::C), Some(9));
+        // limit AT the extent (or past) yields the full extent.
+        assert_eq!(skip_opaque(c, 0, 10, Target::C), Some(10));
+        assert_eq!(skip_opaque(c, 0, 12, Target::C), Some(10));
+        // limit == i clamps up to i+1 (min(limit) then max(i+1)); not < i+1.
+        assert_eq!(skip_opaque(c, 0, 0, Target::C), Some(1));
+
+        // A C string "abcdef" occupies indices 0..=7; extent is 8 (past the close).
+        let s = b"\"abcdef\"";
+        assert_eq!(opaque_at(s, 0, Target::C), OpaqueAt::Literal(8));
+        // limit INSIDE the string REJECTS to None (a string must fit the span).
+        assert_eq!(skip_opaque(s, 0, 4, Target::C), None);
+        assert_eq!(skip_opaque(s, 0, 7, Target::C), None); // one short of the extent
+        // limit AT the extent (or past) ACCEPTS the full extent.
+        assert_eq!(skip_opaque(s, 0, 8, Target::C), Some(8));
+
+        // Every one of the above also equals the hand oracle (belt and suspenders).
+        for (b, i, lim) in [
+            (&c[..], 0usize, 5usize),
+            (&c[..], 0, 10),
+            (&c[..], 0, 0),
+            (&s[..], 0, 4),
+            (&s[..], 0, 8),
+        ] {
+            assert_eq!(
+                skip_opaque(b, i, lim, Target::C),
+                skip_opaque_hand(b, i, lim, Target::C)
+            );
+        }
+    }
+
+    // ---- Deterministic xorshift fuzz: frame-ish bytes, random limit per position. ----
+
+    struct Rng(u64);
+    impl Rng {
+        fn new(seed: u64) -> Rng {
+            let mut s = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(0x1234_5678);
+            if s == 0 {
+                s = 0xDEAD_BEEF;
+            }
+            Rng(s)
+        }
+        fn next_u64(&mut self) -> u64 {
+            let mut x = self.0;
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            self.0 = x;
+            x.wrapping_mul(0x2545_F491_4F6C_DD1D)
+        }
+        fn below(&mut self, n: usize) -> usize {
+            (self.next_u64() % (n as u64)) as usize
+        }
+    }
+
+    /// Multi-byte literal fragments so the generator actually forms `//`, `/*`, `"""`,
+    /// `r#"`, `"#`, holes, escapes — not two independent single-byte draws lining up.
+    const FRAGMENTS: &[&[u8]] = &[
+        b"\"", b"'", b"//", b"/*", b"*/", b"#", b"\"\"\"", b"'''", b"r\"", b"r#\"", b"\"#",
+        b"{", b"}", b"{x}", b"\\", b"\\\"", b"\n", b" ", b"@@", b"abc", b"br\"", b";", b"1",
+    ];
+
+    fn gen_frame_ish(rng: &mut Rng, max_frags: usize) -> String {
+        let n = rng.below(max_frags + 1);
+        let mut v: Vec<u8> = Vec::new();
+        for _ in 0..n {
+            v.extend_from_slice(FRAGMENTS[rng.below(FRAGMENTS.len())]);
+        }
+        String::from_utf8(v).expect("fragments are ASCII")
+    }
+
+    /// Fuzz: frame-ish source, EVERY position, a RANDOM limit per position, ALL 4 targets.
+    /// Differential vs the hand oracle throughout; teeth gated so the asymmetry fires here
+    /// too (not only in the curated cross-product). A failing seed reproduces from its index.
+    #[test]
+    fn fuzz_random_limit_every_position_all_targets() {
+        let mut teeth = Teeth::default();
+        for &t in &TARGETS {
+            for seed in 0u64..1500 {
+                let mut rng = Rng::new(seed ^ 0xC3C3_0F0F);
+                let src = gen_frame_ish(&mut rng, 9);
+                let b = src.as_bytes();
+                for i in 0..=b.len() {
+                    // A random limit per position, spanning [0, len] so it can land
+                    // before, inside, or past whatever opens at `i`.
+                    let limit = rng.below(b.len() + 1);
+                    let m = agree_one(b, i, limit, t);
+                    teeth.observe(b, i, limit, t, m);
+                }
+            }
+        }
+        // The fuzz arm alone must exhibit both outcomes and both asymmetry directions.
+        assert!(teeth.somes > 0 && teeth.nones > 0, "fuzz not diverse in outcome");
+        assert!(
+            teeth.clamps > 0,
+            "fuzz never clamped a comment at a mid-comment limit — arm lacks teeth"
+        );
+        assert!(
+            teeth.rejects > 0,
+            "fuzz never rejected a literal at a mid-string limit — arm lacks teeth"
+        );
+    }
+
+    /// The fuzz generator must be diverse (a generator that can't open a form tests
+    /// nothing — the #232 lie). Determinism + spread check, independent of parity.
+    #[test]
+    fn fuzz_corpus_is_diverse() {
+        use std::collections::HashSet;
+        let mut distinct = HashSet::new();
+        for seed in 0u64..1500 {
+            let mut rng = Rng::new(seed ^ 0xC3C3_0F0F);
+            distinct.insert(gen_frame_ish(&mut rng, 9));
+        }
+        assert!(distinct.len() > 900, "generator not diverse: {} distinct", distinct.len());
     }
 }

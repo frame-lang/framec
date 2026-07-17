@@ -250,6 +250,32 @@ The plan is a contract; it changes only through a recorded, evaluated process �
   body-structure recognizer. To build alongside the remaining Segmenter work, before campaign
   close. Named owner recorded; not unowned residue.
 
+- *2026-07-17* — **Item 3 DESIGN (inline synthesis; two design subagents stalled early).** The
+  fsm-designer + compiler-architect agents both stalled ~early (architect still opening prior-art
+  files) with no doc + no completion after ~50 min — stopped and re-derived inline from a full
+  read of machine.rs + prior-art systems. Design → `_scratch/item3_grammar_design.md`. Findings:
+  the grammar is **(regular per-level dispatch) ∘ (Dyck-1 counter) ∘ (OpaqueScan)** — no true PDA
+  at any layer; `balanced`/`matching_brace` is a literal-aware Dyck-1 counter (composes
+  `skip_opaque`), the SAME machine as `close_brace`'s counter (the BodyBalance residual) and
+  stronger than `ParenBalance` (which skips only `"` via `skip_string`). Consolidation:
+  **ONE `DelimBalance` system** (opaque-aware Dyck-1 over a configurable open/close pair, cursor-
+  bounded by a `limit`) retires `balanced` + `matching_brace` + `close_brace`'s counter — i.e.
+  **discharges the BodyBalance named-residual.** Sub-capabilities: **3a** skip_opaque→opaque_at
+  (DONE); **3b** DelimBalance; **3c** the dispatch walks (machine_section/state/handler_at/body),
+  decided per-walk against the `segment()` precedent (a native driver over sub-systems may be
+  legitimate — judge after 3b). **OPEN (verify with frame-fsm-expert before 3b):** is the
+  @@[scan] dialect expressive enough for a multi-param constructor (`target,open,close,limit`),
+  a domain-`limit` cursor bound, and configurable delimiter bytes — else escalate, do not
+  hand-roll. I1 (byte-coverage/partition) is the 3c invariant: span-partition differential +
+  `check_coverage`.
+- *2026-07-17* — **Item 3a EXECUTED (implementer).** `machine.rs::skip_opaque` rewritten off the
+  hand `Lexer` onto `opaque_at`, kind-aware limit policy (comment CLAMPS via `.min(limit)`,
+  literal REJECTS on overrun, None/Unterminated→None); 5 call sites pass `bytes,…,lx.target()`.
+  `skip_opaque_hand` added as the `#[doc(hidden)]` oracle. Differential (`skip_opaque_tests`,
+  test-author): 4 green, NO mismatch at every position × every limit × 4 targets; clamp+reject
+  teeth fired non-vacuously (corpus 238/842, fuzz 780/4887). Full suite green. Production
+  hand-lexer recognition **13→11**, oracle 8→10 (transient, `skip_opaque_hand`).
+
 ### Audit Log (append-only — warden verdicts)
 - *2026-07-17* — GATE-A dry-run, Item 1 "opaque skip": **FAIL** (D4 no fuzz) / GATE-B **FAIL**
   (D5/D6 surviving hand consumers close_brace + machine.rs::skip_opaque; D9 uncommitted). The DoD
@@ -261,6 +287,13 @@ The plan is a contract; it changes only through a recorded, evaluated process �
   wired to the system; every residual hand-lexer caller is an oracle or a named+scheduled residual
   (close_brace→Item 2, skip_opaque→Item 3, native_parts→Item 4); suite green; drift none. D9 (the
   only open predicate) is intentionally uncommitted → LAND the atomic commit.
+- *2026-07-17* — GATE-A+B, Item 3a "skip_opaque → opaque_at": **PASS pending commit.** Production
+  skip_opaque routed off the hand Lexer onto OpaqueScan under a kind-aware clamp(comment)/reject
+  (literal) policy; D1,D3–D8 + R12 verified by run/grep (skip_opaque==skip_opaque_hand every pos ×
+  every limit × 4 targets, teeth non-vacuous; census production 13→11, oracle 8→10, machine.rs
+  prod=0). No drift. D9 open → land the 2-file atomic commit (machine.rs + plan). Ruled: 3b
+  proceeds to the frame-fsm-expert expressibility check FIRST (Q1–Q3), escalate-not-hand-roll if
+  inexpressible; re-verify the DelimBalance/close_brace consolidation at 3b GATE-A.
 - *2026-07-17* — GATE-A+B, Item 2 "close_brace / body-end": **PASS pending commit.** close_brace
   routed off the hand Lexer onto OpaqueScan (`opaque_at`) with a 3-way None/Comment-Literal/
   Unterminated register signal; D1–D8 + R12 verified by run/grep (regen byte-identical across
@@ -414,7 +447,7 @@ survive as oracles + un-converted consumers — tracked here, not forgotten.
 |---|---|---|---|
 | 1 OpaqueScan | **warden PASS (GATE-A + GATE-B) — committed** | OpaqueScan, RawString, BraceBalance | skip path is the system; try_island routed; residual = holes (Item 4), close_brace (Item 2), machine skip (Item 3), + 3 oracles — all named; batteries+fuzz+milestone green |
 | 2 Segmenter | **close_brace capability: warden PASS (GATE-A+B, pending commit).** Body-end recognition off the hand Lexer onto OpaqueScan (`opaque_at`, 3-way signal). Remaining Item-2 scope: `hand_item_starts` oracle (→ C-final sweep) + `BodyBalance` `{}`-counter sub-system (named, before close) | segmenter, +OpaqueScan `kind`/`unterminated` registers | close_brace: yes. Item-2 whole: no (oracle + brace-counter named) |
-| 3 Grammar | not started | stmt_scan (partial) | no |
+| 3 Grammar | **3a skip_opaque: DONE (pending commit)** — off hand Lexer onto opaque_at (kind-aware clamp/reject), differential green no-mismatch. 3b DelimBalance (retires balanced/matching_brace + close_brace's counter = BodyBalance) + 3c dispatch walks: designed, ahead | stmt_scan (partial); DelimBalance planned | 3a: yes. 3b/3c: designed |
 | 4 Islands | not started | ref/inst/embed_scan (partial) | no |
 | 5 Validators | not started | hsm_cycle, reachability | no |
 | 6 EmitDriver | not started | — | n/a (transducer, last) |
