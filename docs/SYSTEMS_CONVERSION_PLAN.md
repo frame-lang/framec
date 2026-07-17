@@ -276,6 +276,28 @@ The plan is a contract; it changes only through a recorded, evaluated process �
   teeth fired non-vacuously (corpus 238/842, fuzz 780/4887). Full suite green. Production
   hand-lexer recognition **13→11**, oracle 8→10 (transient, `skip_opaque_hand`).
 
+- *2026-07-17* — **Item 3b EXECUTED (build + machine.rs wire).** DelimBalance expressibility PROVEN
+  by a compiled probe (`_scratch/delim_probe.frs` → clean Rust; `scan_at` resets only cursor/depth,
+  so ctor-config `open`/`close`/`limit` survive per scan — Q1/Q2/Q3 all YES, no escalation).
+  NEW system `delim_balance/{delim_balance.frs,.gen.rs}`: `DelimBalance(target,open,close,limit)`,
+  opaque-aware Dyck-1 counter composing OpaqueScan via the `opaque_skip` leaf (grammar limit
+  policy: comment clamps, literal rejects on overrun — the walk stays in OpaqueScan, D3). mod.rs:
+  `balanced()` wrapper + `balanced_hand()` `#[doc(hidden)]` oracle. `machine.rs::balanced` now
+  delegates to `delim_balance::balanced` (hand counter loop GONE); `matching_brace` routes here.
+  Build clean; D2 fixpoint byte-identical across rebuild; full suite green. **SYSTEMS 15→16;
+  production HAND_SCAN_LOOPS 86→81** (the balanced counter retired). Differential (test-author,
+  running) + warden GATE next. close_brace's `{}` counter (BodyBalance) discharge = a follow-on
+  bite (same system, mod.rs).
+- *2026-07-17* — **R13 (tooling refinement; warden to confirm).** Extended R12's oracle-bucketing
+  to `HAND_SCAN_LOOPS`: a `while` loop inside a `*_hand`/`hand_*` differential oracle is transient
+  scaffolding (deleted at C-final), so the census now reports HAND_SCAN_LOOPS split production
+  (C1 ratchet) vs oracle. Rationale: retiring a production walk into a system must not read as
+  no-progress just because the `*_hand` oracle keeps a copy of the loop (3b removed `balanced`'s
+  production loop but `balanced_hand` re-adds one). Post-3b: production loops 81, oracle 5
+  (balanced_hand, close_brace_hand, hand_item_starts, frame_stmt_hand, …). No production behavior
+  change. Same conservative direction as R12 (only named oracles excluded; nothing production
+  hides as oracle).
+
 ### Audit Log (append-only — warden verdicts)
 - *2026-07-17* — GATE-A dry-run, Item 1 "opaque skip": **FAIL** (D4 no fuzz) / GATE-B **FAIL**
   (D5/D6 surviving hand consumers close_brace + machine.rs::skip_opaque; D9 uncommitted). The DoD
@@ -287,6 +309,13 @@ The plan is a contract; it changes only through a recorded, evaluated process �
   wired to the system; every residual hand-lexer caller is an oracle or a named+scheduled residual
   (close_brace→Item 2, skip_opaque→Item 3, native_parts→Item 4); suite green; drift none. D9 (the
   only open predicate) is intentionally uncommitted → LAND the atomic commit.
+- *2026-07-17* — GATE-A+B, Item 3b "DelimBalance": **PASS pending commit.** machine.rs::balanced/
+  matching_brace routed off the hand counter onto the DelimBalance @@[scan(u8)] Dyck-1 counter
+  (opaque-aware via OpaqueScan); D1–D8 + R13 verified by run/grep (regen byte-identical across
+  rebuild; balanced==balanced_hand every pos × every limit × both pairs × 4 targets, teeth
+  non-vacuous opaque_matters≫20; census SYSTEMS 16, prod loops 81, oracle 5; R3 gate makes
+  4-target coverage complete). D9 open → land the 8-file atomic commit. Finding (fixed): ledger
+  row corrected — BodyBalance/close_brace counter is a NAMED follow-on, not discharged by 3b.
 - *2026-07-17* — GATE-A+B, Item 3a "skip_opaque → opaque_at": **PASS pending commit.** Production
   skip_opaque routed off the hand Lexer onto OpaqueScan under a kind-aware clamp(comment)/reject
   (literal) policy; D1,D3–D8 + R12 verified by run/grep (skip_opaque==skip_opaque_hand every pos ×
@@ -447,7 +476,7 @@ survive as oracles + un-converted consumers — tracked here, not forgotten.
 |---|---|---|---|
 | 1 OpaqueScan | **warden PASS (GATE-A + GATE-B) — committed** | OpaqueScan, RawString, BraceBalance | skip path is the system; try_island routed; residual = holes (Item 4), close_brace (Item 2), machine skip (Item 3), + 3 oracles — all named; batteries+fuzz+milestone green |
 | 2 Segmenter | **close_brace capability: warden PASS (GATE-A+B, pending commit).** Body-end recognition off the hand Lexer onto OpaqueScan (`opaque_at`, 3-way signal). Remaining Item-2 scope: `hand_item_starts` oracle (→ C-final sweep) + `BodyBalance` `{}`-counter sub-system (named, before close) | segmenter, +OpaqueScan `kind`/`unterminated` registers | close_brace: yes. Item-2 whole: no (oracle + brace-counter named) |
-| 3 Grammar | **3a skip_opaque: DONE (pending commit)** — off hand Lexer onto opaque_at (kind-aware clamp/reject), differential green no-mismatch. 3b DelimBalance (retires balanced/matching_brace + close_brace's counter = BodyBalance) + 3c dispatch walks: designed, ahead | stmt_scan (partial); DelimBalance planned | 3a: yes. 3b/3c: designed |
+| 3 Grammar | **3a skip_opaque: DONE (committed fbde61e).** **3b DelimBalance: DONE (pending commit)** — retires balanced/matching_brace only; differential green no-mismatch, SYSTEMS 15→16. close_brace's `{}` counter (BodyBalance) = NAMED follow-on, NOT yet discharged. 3c dispatch walks: designed, ahead | stmt_scan (partial); **DelimBalance (16th system)** | 3a: yes. 3b: balanced/matching_brace yes; BodyBalance pending. 3c: designed |
 | 4 Islands | not started | ref/inst/embed_scan (partial) | no |
 | 5 Validators | not started | hsm_cycle, reachability | no |
 | 6 EmitDriver | not started | — | n/a (transducer, last) |

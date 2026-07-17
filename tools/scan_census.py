@@ -19,7 +19,11 @@ What it counts (excludes generated `*.gen.rs` and `#[cfg(test)]`/`tests/`):
         campaign end, so oracles cannot hide forever.
     Only the PRODUCTION bucket is the C2 ratchet.
   - HAND_SCAN_LOOPS — `while <ident> < ...` byte-loops in scan/*.rs (a proxy for hand walks).
-    Campaign DoD C1 target: only Category-A leaves + allowlisted glue remain; ratchet down.
+    Split production vs oracle on the SAME rule as HAND_LEXER_RECOGNITION (a loop inside a
+    `*_hand`/`hand_*` differential oracle is transient scaffolding, deleted at C-final): retiring
+    a production walk into a system must not read as no-progress just because its `*_hand` oracle
+    keeps a copy of the loop. Campaign DoD C1 target (production): only Category-A leaves +
+    allowlisted glue remain; ratchet down. Oracle bucket → 0 by C-final.
   - SYSTEMS — the number of `.frs` @@systems under scan/ (should grow).
 
 Usage:
@@ -87,7 +91,7 @@ def main() -> int:
         print(f"error: run from the cleanroom repo root (no {SCAN})", file=sys.stderr)
         return 2
 
-    lexer_defs = prod_calls = oracle_calls = hand_loops = 0
+    lexer_defs = prod_calls = oracle_calls = prod_loops = oracle_loops = 0
     per_file = []
     for p in rs_files():
         body = strip_tests(p.read_text(encoding="utf-8", errors="replace"))
@@ -95,13 +99,15 @@ def main() -> int:
         d = len(LEXER_FN_DEFS.findall(body))
         pc = sum(1 for m in LEXER_CALLS.finditer(body) if not in_any(m.start(), spans))
         oc = sum(1 for m in LEXER_CALLS.finditer(body) if in_any(m.start(), spans))
-        w = len(HAND_LOOP.findall(body))
+        pw = sum(1 for m in HAND_LOOP.finditer(body) if not in_any(m.start(), spans))
+        ow = sum(1 for m in HAND_LOOP.finditer(body) if in_any(m.start(), spans))
         lexer_defs += d
         prod_calls += pc
         oracle_calls += oc
-        hand_loops += w
-        if d or pc or oc or w:
-            per_file.append((str(p.relative_to(SCAN)), d, pc, oc, w))
+        prod_loops += pw
+        oracle_loops += ow
+        if d or pc or oc or pw or ow:
+            per_file.append((str(p.relative_to(SCAN)), d, pc, oc, pw, ow))
 
     systems = len(list(SCAN.rglob("*.frs")))
     # Definitions live in lex.rs (the recognizer itself) — a production surface until Item 4
@@ -110,19 +116,20 @@ def main() -> int:
 
     print("== scan_census ==")
     print(
-        f"  {'file':<28} {'lexer_defs':>10} {'prod_calls':>10} "
-        f"{'oracle_calls':>12} {'hand_loops':>10}"
+        f"  {'file':<28} {'lex_defs':>8} {'prod_call':>9} "
+        f"{'orc_call':>8} {'prod_loop':>9} {'orc_loop':>8}"
     )
-    for name, d, pc, oc, w in per_file:
-        print(f"  {name:<28} {d:>10} {pc:>10} {oc:>12} {w:>10}")
+    for name, d, pc, oc, pw, ow in per_file:
+        print(f"  {name:<28} {d:>8} {pc:>9} {oc:>8} {pw:>9} {ow:>8}")
     print(
-        f"  {'TOTAL':<28} {lexer_defs:>10} {prod_calls:>10} "
-        f"{oracle_calls:>12} {hand_loops:>10}"
+        f"  {'TOTAL':<28} {lexer_defs:>8} {prod_calls:>9} "
+        f"{oracle_calls:>8} {prod_loops:>9} {oracle_loops:>8}"
     )
     print()
     print(f"HAND_LEXER_RECOGNITION (production) = {prod_hand_lexer}   (C2 target: 0)")
     print(f"HAND_LEXER_RECOGNITION (oracle)     = {oracle_calls}   (transient; → 0 by C-final)")
-    print(f"HAND_SCAN_LOOPS                     = {hand_loops}   (C1: ratchet down)")
+    print(f"HAND_SCAN_LOOPS (production)        = {prod_loops}   (C1: ratchet down)")
+    print(f"HAND_SCAN_LOOPS (oracle)            = {oracle_loops}   (transient; → 0 by C-final)")
     print(f"SYSTEMS (.frs)                      = {systems}")
 
     if "--gate" in sys.argv and prod_hand_lexer > 0:

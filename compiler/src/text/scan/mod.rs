@@ -22,6 +22,8 @@ pub mod brace_balance;
 pub mod raw_string;
 /// Full string+comment skipper (per-target), dogfooded as a Frame `@@[scan(u8)]` system.
 pub mod opaque_scan;
+/// Opaque-aware balanced-delimiter extent, dogfooded as a Frame `@@[scan(u8)]` counter automaton.
+pub mod delim_balance;
 /// Composition proof: a scan system that composes StringScan (docs/JOURNAL.md).
 pub mod string_counter;
 /// The item-level segmenter walk, dogfooded as a Frame @@[scan(u8)] system.

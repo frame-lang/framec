@@ -751,25 +751,13 @@ fn matching_brace(lx: &Lexer, bytes: &[u8], open: usize, limit: usize) -> usize 
     balanced(lx, bytes, open, limit, b'{', b'}').unwrap_or(limit)
 }
 
+/// The matching-closer finder — **now the dogfooded `DelimBalance` system**
+/// (`delim_balance.frs`): an opaque-aware Dyck-1 counter over the `(o, c)` pair, bounded by
+/// `limit`. The hand counter loop (and its per-language-brace-counter ancestors, #219) is gone;
+/// `delim_balance::balanced_hand` survives as the differential oracle. `matching_brace` and the
+/// state/handler param scans all route here.
 fn balanced(lx: &Lexer, bytes: &[u8], open: usize, limit: usize, o: u8, c: u8) -> Option<usize> {
-    let mut i = open;
-    let mut depth = 0i32;
-    while i < limit {
-        if let Some(next) = skip_opaque(bytes, i, limit, lx.target()) {
-            i = next;
-            continue;
-        }
-        if bytes[i] == o {
-            depth += 1;
-        } else if bytes[i] == c {
-            depth -= 1;
-            if depth == 0 {
-                return Some(i + 1);
-            }
-        }
-        i += 1;
-    }
-    None
+    super::delim_balance::balanced(bytes, open, limit, o, c, lx.target())
 }
 
 fn to_end_of_line(bytes: &[u8], mut i: usize, limit: usize) -> usize {
