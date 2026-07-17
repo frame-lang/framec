@@ -119,18 +119,39 @@ fn string_multiline(target: Target, delim: u8) -> bool {
     false
 }
 
-/// Category-B, delegated to a system: a Rust raw string at `i` via the `RawString` @@system.
-/// Returns the extent end, or `i` if there is no raw string (or the target has no raw form).
-fn raw_scan(src: &[u8], i: usize, target: Target) -> usize {
-    let has_raw = target
+/// Does this target have a raw-string form at all?
+fn has_raw_form(target: Target) -> bool {
+    target
         .literals()
         .forms
         .iter()
-        .any(|f| matches!(f, Form::RustRaw));
-    if !has_raw {
+        .any(|f| matches!(f, Form::RustRaw))
+}
+
+/// Category-B, delegated to a system: a Rust raw string at `i` via the `RawString` @@system.
+/// Returns the extent end, or `i` if there is no *closed* raw string (none opens, or one opens
+/// but never closes — the unterminated case is reported separately by [`raw_unterminated`]).
+fn raw_scan(src: &[u8], i: usize, target: Target) -> usize {
+    if !has_raw_form(target) {
         return i;
     }
-    super::raw_string::scan(src, i).unwrap_or(i)
+    match super::raw_string::scan_kind(src, i) {
+        super::raw_string::RawAt::Extent(end) => end,
+        _ => i,
+    }
+}
+
+/// Category-B, delegated: does a raw string OPEN at `i` but never close? Splits the raw dispatch
+/// so `OpaqueScan` can distinguish an unterminated literal (a Reject carrying `unterminated`)
+/// from "nothing opens here" — the `#`-counting stays entirely in the `RawString` sub-system.
+fn raw_unterminated(src: &[u8], i: usize, target: Target) -> bool {
+    if !has_raw_form(target) {
+        return false;
+    }
+    matches!(
+        super::raw_string::scan_kind(src, i),
+        super::raw_string::RawAt::Unterminated
+    )
 }
 
 /// Category-B, delegated to a system: a Python interpolation hole `{…}` at `i`, brace-balanced
@@ -158,23 +179,53 @@ mod fsm {
     )]
     use super::{
         block_close_len, block_nests, block_open_len, hole_skip, line_comment_len, raw_scan,
-        string_delim, string_multiline, triple_close, triple_delim, Target,
+        raw_unterminated, string_delim, string_multiline, triple_close, triple_delim, Target,
     };
     include!("opaque_scan.gen.rs");
 }
 
-/// If a string or comment opens at `bytes[i]` for `target`, return the offset one past it;
-/// otherwise `None`. This is the production string/comment recognizer — the `@@system`
-/// replacement for `Lexer::comment_at`/`literal_at` (which every consumer used only for the
-/// extent). The machine finds the extent; this wrapper only runs it and reads `cursor`.
-pub fn opaque_extent(bytes: &[u8], i: usize, target: Target) -> Option<usize> {
+/// The full three-way classification of position `i` for `target`, exposing the machine's
+/// `kind` and `unterminated` registers: nothing opaque opens here; a comment (with extent end);
+/// a string/char literal (with extent end); or a body that OPENS here but never closes (the
+/// hand `Lexer` returns `Err` in exactly this case). This is the signal `close_brace` (Item 2)
+/// needs — an unterminated body must abort the scan the way the hand path's `?` did, and a
+/// consumer that limits comments differently from literals (Item 3) needs the `kind`.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum OpaqueAt {
+    None,
+    Comment(usize),
+    Literal(usize),
+    Unterminated,
+}
+
+/// Classify what opens at `bytes[i]` for `target`. The machine finds the extent and records
+/// `kind`/`unterminated`; this wrapper only runs it and reads those registers.
+pub fn opaque_at(bytes: &[u8], i: usize, target: Target) -> OpaqueAt {
     if i >= bytes.len() {
-        return None;
+        return OpaqueAt::None;
     }
     let mut m = fsm::OpaqueScan::over(bytes, target);
     if m.scan_at(i) {
-        Some(m.cursor)
+        if m.kind == 1 {
+            OpaqueAt::Comment(m.cursor)
+        } else {
+            OpaqueAt::Literal(m.cursor)
+        }
+    } else if m.unterminated {
+        OpaqueAt::Unterminated
     } else {
-        None
+        OpaqueAt::None
+    }
+}
+
+/// If a string or comment opens *and closes* at `bytes[i]` for `target`, return the offset one
+/// past it; otherwise `None`. This is the production string/comment recognizer — the `@@system`
+/// replacement for `Lexer::comment_at`/`literal_at` (which every consumer used only for the
+/// extent). Extent-only adapter over [`opaque_at`]; an unterminated body maps to `None`, exactly
+/// as the hand path's `Err` did to every extent-only caller.
+pub fn opaque_extent(bytes: &[u8], i: usize, target: Target) -> Option<usize> {
+    match opaque_at(bytes, i, target) {
+        OpaqueAt::Comment(end) | OpaqueAt::Literal(end) => Some(end),
+        OpaqueAt::None | OpaqueAt::Unterminated => None,
     }
 }

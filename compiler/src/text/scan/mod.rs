@@ -215,6 +215,28 @@ pub fn skip_opaque_at_hand(bytes: &[u8], i: usize, target: Target) -> usize {
     i
 }
 
+/// The retired hand implementation of the FULL three-way classification — the differential-test
+/// oracle for [`opaque_scan::opaque_at`] (`tests/opaque_scan.rs`). Not used in production. Maps
+/// the hand `Lexer` verdicts to `OpaqueAt`: `comment_at` Ok(Some) → `Comment`, `literal_at`
+/// Ok(Some) → `Literal`, an `Err` from either recognizer (an unterminated body) → `Unterminated`,
+/// and Ok(None) from both → `None`. The dispatch order (comment before literal) mirrors the
+/// machine's `$Start`.
+#[doc(hidden)]
+pub fn opaque_at_hand(bytes: &[u8], i: usize, target: Target) -> opaque_scan::OpaqueAt {
+    use opaque_scan::OpaqueAt;
+    let lx = Lexer::new(bytes, target);
+    match lx.comment_at(i) {
+        Ok(Some(end)) => return OpaqueAt::Comment(end),
+        Err(_) => return OpaqueAt::Unterminated,
+        Ok(None) => {}
+    }
+    match lx.literal_at(i) {
+        Ok(Some(l)) => OpaqueAt::Literal(l.span.end),
+        Err(_) => OpaqueAt::Unterminated,
+        Ok(None) => OpaqueAt::None,
+    }
+}
+
 /// Read one `@@…` island starting at `at` (which points at the first `@`).
 fn read_pragma(lx: &Lexer, bytes: &[u8], at: usize) -> Result<Item, SegmentError> {
     let after = at + 2;
@@ -225,7 +247,7 @@ fn read_pragma(lx: &Lexer, bytes: &[u8], at: usize) -> Result<Item, SegmentError
         "system" => {
             let (name, private, public_keyword, params, brace) =
                 read_name_params_brace(bytes, word)?;
-            let end = close_brace(lx, bytes, brace, &name)?;
+            let end = close_brace(bytes, brace, &name, lx.target())?;
             let span = Span::new(at, end);
             Ok(Item::System(SystemItem {
                 span,
@@ -238,7 +260,7 @@ fn read_pragma(lx: &Lexer, bytes: &[u8], at: usize) -> Result<Item, SegmentError
         }
         "fsm" => {
             let (name, _private, _public, _params, brace) = read_name_params_brace(bytes, word)?;
-            let end = close_brace(lx, bytes, brace, &name)?;
+            let end = close_brace(bytes, brace, &name, lx.target())?;
             Ok(Item::Efsm(EfsmItem {
                 span: Span::new(at, end),
                 name,
@@ -428,9 +450,70 @@ fn parse_one_param(body: &str) -> Param {
 /// This is the whole of #219 in one function. The old compiler had fifteen separate
 /// brace-counters, each of which had learned a different subset of its own language's
 /// literals, so a `}` inside a Ruby heredoc / a JS regex / a Lua long string closed a
-/// block that was never open. Here there is one counter, and it asks the *same lexer*
-/// that everything else asks.
-fn close_brace(lx: &Lexer, bytes: &[u8], open: usize, name: &str) -> Result<usize, SegmentError> {
+/// block that was never open. Here there is one counter, and the opaque-region skip is the
+/// dogfooded `OpaqueScan` @@system (`opaque_at`) — the same recognizer the Segmenter walk asks,
+/// with no hand `Lexer` anywhere in this function. An opaque body that OPENS but never closes
+/// (`OpaqueAt::Unterminated`) aborts the scan as a malformed body — the hand path did the same
+/// via its `?` (which returned an `Err`); the `close_brace_tests` module below locks the
+/// `is_err` parity.
+fn close_brace(
+    bytes: &[u8],
+    open: usize,
+    name: &str,
+    target: Target,
+) -> Result<usize, SegmentError> {
+    let mut i = open;
+    let mut depth = 0i32;
+    while i < bytes.len() {
+        match opaque_scan::opaque_at(bytes, i, target) {
+            opaque_scan::OpaqueAt::Comment(end) | opaque_scan::OpaqueAt::Literal(end) => {
+                i = end;
+                continue;
+            }
+            opaque_scan::OpaqueAt::Unterminated => {
+                return Err(SegmentError::UnclosedBody {
+                    open: Span::new(open, bytes.len()),
+                    name: name.to_string(),
+                });
+            }
+            opaque_scan::OpaqueAt::None => {}
+        }
+        match bytes[i] {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Ok(i + 1);
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    Err(SegmentError::UnclosedBody {
+        open: Span::new(open, bytes.len()),
+        name: name.to_string(),
+    })
+}
+
+// (differential unit tests for `close_brace` live in the `close_brace_tests` module at the
+// bottom of this file — they must call the PRIVATE `close_brace`, so they cannot be an
+// integration test in `compiler/tests/`.)
+
+/// The retired hand `}`-matcher, kept ONLY as the differential-test oracle for `close_brace`
+/// (the `close_brace_tests` module below) until the parity is locked and the hand lexer
+/// recognition is deleted. Self-contained (builds its own `Lexer`); not used in production. Its `?` on an
+/// unterminated body yields `Err(SegmentError::Lex(..))`; production maps the same situation to
+/// `UnclosedBody` — the oracle asserts `is_err` parity, not variant equality (a better
+/// diagnostic for the same refusal).
+#[doc(hidden)]
+pub fn close_brace_hand(
+    bytes: &[u8],
+    open: usize,
+    name: &str,
+    target: Target,
+) -> Result<usize, SegmentError> {
+    let lx = Lexer::new(bytes, target);
     let mut i = open;
     let mut depth = 0i32;
     while i < bytes.len() {
@@ -458,4 +541,186 @@ fn close_brace(lx: &Lexer, bytes: &[u8], open: usize, name: &str) -> Result<usiz
         open: Span::new(open, bytes.len()),
         name: name.to_string(),
     })
+}
+
+// ============================================================================
+// LEVEL-2: `close_brace` `}`-matcher parity — differential vs the retired hand matcher
+// (`close_brace_hand`), the INDEPENDENT oracle. `close_brace` is a PRIVATE `fn`, so this
+// is a unit-test module (option (b)) that calls it directly — it cannot be an integration
+// test in `compiler/tests/`. At EVERY open position of every curated + fuzz input, across
+// all four cleanroom targets, it asserts `is_err` parity and — when BOTH are `Ok` — extent
+// equality. (Not variant equality: on an unterminated body production returns `UnclosedBody`
+// while the hand `?` returns `Lex(..)`; both are refusals, so `is_err` is the contract.)
+// The Unterminated→Err arm is driven by unterminated strings/comments/raw-strings; `}` bytes
+// hidden inside strings/comments/raw-strings/triples/holes must NOT close the body.
+// SCAFFOLDING: conversion-internal; needs the private `close_brace` + the hand oracle.
+// ============================================================================
+#[cfg(test)]
+mod close_brace_tests {
+    use super::literals::Target;
+
+    const TARGETS: [Target; 4] = [Target::C, Target::Java, Target::Rust, Target::Python3];
+
+    /// Machine (`close_brace`) vs the hand oracle (`close_brace_hand`) at a single open.
+    fn agree_cb(bytes: &[u8], open: usize, target: Target) {
+        let m = super::close_brace(bytes, open, "X", target);
+        let h = super::close_brace_hand(bytes, open, "X", target);
+        assert_eq!(
+            m.is_err(),
+            h.is_err(),
+            "is_err parity broke: target {target:?}, open {open} of {bytes:?}: \
+             machine={m:?} hand={h:?}"
+        );
+        if let (Ok(a), Ok(b)) = (&m, &h) {
+            assert_eq!(
+                a, b,
+                "Ok extents differ: target {target:?}, open {open} of {bytes:?}"
+            );
+        }
+    }
+
+    /// Sweep EVERY position as the `open` — strictly stronger than only the real `{`
+    /// offsets, and both functions receive the SAME open so the differential is exact.
+    fn agree_all(src: &str, target: Target) {
+        let b = src.as_bytes();
+        for open in 0..b.len() {
+            agree_cb(b, open, target);
+        }
+    }
+
+    #[test]
+    fn balanced_and_nested() {
+        for &t in &TARGETS {
+            agree_all("{}", t);
+            agree_all("{ }", t);
+            agree_all("{{{}}}", t); // deeply nested, all on one line
+            agree_all("{ a { b } c }", t);
+            agree_all("x = { one { two { three {} } } } y", t);
+            agree_all("@@system X { -machine- state A {} state B {} }", t);
+        }
+    }
+
+    #[test]
+    fn brace_in_comment() {
+        for &t in &[Target::C, Target::Java, Target::Rust] {
+            agree_all("{ // } not a close\n }", t); // `}` in a line comment
+            agree_all("{ /* } still open */ }", t); // `}` in a block comment
+            agree_all("{ /* } */ /* } */ }", t); // two block comments each hiding a `}`
+        }
+        agree_all("{ # } in a python comment\n }", Target::Python3); // `}` in a `#` comment
+    }
+
+    #[test]
+    fn brace_in_string() {
+        for &t in &TARGETS {
+            agree_all("{ \"a } b\" }", t); // `}` inside a `"` string
+            agree_all("{ s = \"}}}}\"; }", t); // a run of `}` all inside a string
+            agree_all("{ '}' }", t); // `}` inside a `'` (char/string) form
+            agree_all("{ \"a \\\" } still in\" }", t); // escaped quote then a hidden `}`
+        }
+    }
+
+    #[test]
+    fn brace_in_rust_raw_and_python_triple() {
+        // Rust raw strings — the `}` (and even a stray `"`) inside must not close.
+        agree_all("{ r#\"a } b\"# }", Target::Rust);
+        agree_all("{ let r = r\"}\"; }", Target::Rust);
+        agree_all("{ br#\"}}}}\"# }", Target::Rust);
+        agree_all("{ r##\"a\"# } still raw\"## }", Target::Rust); // `}` inside a 2-hash raw
+        // Python triple strings and f-string holes.
+        agree_all("{ x = \"\"\"a } b\"\"\" }", Target::Python3);
+        agree_all("{ y = '''}''' }", Target::Python3);
+        agree_all("{ f\"{a}\" }", Target::Python3); // an f-string hole `{a}` inside the body
+        agree_all("{ f\"pre {b} post\" }", Target::Python3);
+    }
+
+    #[test]
+    fn unterminated_bodies() {
+        for &t in &TARGETS {
+            agree_all("{ a b c", t); // never closes → Err (both)
+            agree_all("{ x = \"unterminated string", t); // Unterminated literal → Err
+        }
+        for &t in &[Target::C, Target::Java, Target::Rust] {
+            agree_all("{ /* unterminated comment", t); // Unterminated comment → Err
+        }
+        agree_all("{ \"\"\"unterminated triple", Target::Python3);
+        agree_all("{ r#\"unterminated raw", Target::Rust);
+        agree_all("{ s = \"line\nbreak\" }", Target::C); // newline-in-string → Unterminated → Err
+    }
+
+    // ---- Deterministic xorshift fuzz: `{` + random literal-long-tail body, swept. ----
+
+    struct Rng(u64);
+    impl Rng {
+        fn new(seed: u64) -> Rng {
+            let mut s = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(0x1234_5678);
+            if s == 0 {
+                s = 0xDEAD_BEEF;
+            }
+            Rng(s)
+        }
+        fn next_u64(&mut self) -> u64 {
+            let mut x = self.0;
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            self.0 = x;
+            x.wrapping_mul(0x2545_F491_4F6C_DD1D)
+        }
+        fn below(&mut self, n: usize) -> usize {
+            (self.next_u64() % (n as u64)) as usize
+        }
+    }
+
+    // Fragments biased toward the constructs that make `}`-matching hard: nested braces,
+    // every comment/string/raw/triple opener+closer, and escapes.
+    const FRAGS: &[&[u8]] = &[
+        b"{", b"}", b"{{", b"}}", b"//", b"/*", b"*/", b"#", b"\"", b"'", b"\"\"\"", b"'''",
+        b"r\"", b"r#\"", b"\"#", b"\\", b"\\\"", b"\n", b" ", b"a", b";", b"=", b"@@", b"br#\"",
+    ];
+
+    fn gen_body(rng: &mut Rng, max_frags: usize) -> Vec<u8> {
+        let n = rng.below(max_frags + 1);
+        let mut v = vec![b'{']; // the body always OPENS with a real `{` at index 0
+        for _ in 0..n {
+            v.extend_from_slice(FRAGS[rng.below(FRAGS.len())]);
+        }
+        v
+    }
+
+    #[test]
+    fn fuzz_close_brace_all_targets() {
+        for &t in &TARGETS {
+            for seed in 0u64..1500 {
+                let mut rng = Rng::new(seed ^ 0xC10B_E5A5);
+                let b = gen_body(&mut rng, 10);
+                for open in 0..b.len() {
+                    agree_cb(&b, open, t); // machine == hand at every open; a divergence
+                                           // panics with the target/open/body — reproducible
+                                           // from this seed.
+                }
+            }
+        }
+    }
+
+    /// A fuzz arm that only ever produced `Err` (or only `Ok`) would test nothing. Prove the
+    /// generated bodies reach BOTH a real matched close (`Ok`) and a refusal (`Err`,
+    /// unterminated) many times, from `open == 0` (a guaranteed real `{`).
+    #[test]
+    fn fuzz_close_brace_has_teeth() {
+        let mut oks = 0usize;
+        let mut errs = 0usize;
+        for &t in &TARGETS {
+            for seed in 0u64..1500 {
+                let mut rng = Rng::new(seed ^ 0xC10B_E5A5);
+                let b = gen_body(&mut rng, 10);
+                match super::close_brace(&b, 0, "X", t) {
+                    Ok(_) => oks += 1,
+                    Err(_) => errs += 1,
+                }
+            }
+        }
+        assert!(oks > 50, "too few Ok (matched close) results ({oks}) — fuzz lacks teeth");
+        assert!(errs > 50, "too few Err (unterminated) results ({errs}) — fuzz lacks teeth");
+    }
 }

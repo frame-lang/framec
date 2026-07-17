@@ -34,13 +34,17 @@
                 if self.cursor >= self.src.fsm_len() {
                     -> $Reject
                 }
+                // `kind` (1=comment, 2=literal) is written at dispatch and read on Accept — the
+                // register that lets a consumer apply a comment-vs-literal policy (Item 3).
                 let lc = line_comment_len(self.src, self.cursor, self.target);
                 if lc > 0 {
+                    self.kind = 1;
                     self.cursor = self.cursor + lc;
                     -> $LineBody
                 }
                 let bo = block_open_len(self.src, self.cursor, self.target);
                 if bo > 0 {
+                    self.kind = 1;
                     self.nests = block_nests(self.target);
                     self.depth = 1;
                     self.cursor = self.cursor + bo;
@@ -48,17 +52,27 @@
                 }
                 let rr = raw_scan(self.src, self.cursor, self.target);
                 if rr > self.cursor {
+                    self.kind = 2;
                     self.cursor = rr;
                     -> $Accept
                 }
+                // A raw string OPENS here but never closes: RawString itself reports it (its own
+                // register), so the `#`-counter stays in the sub-system. `unterminated` distinguishes
+                // this Reject from a plain "nothing opened" Reject.
+                if raw_unterminated(self.src, self.cursor, self.target) {
+                    self.unterminated = true;
+                    -> $Reject
+                }
                 let td = triple_delim(self.src, self.cursor, self.target);
                 if td > 0 {
+                    self.kind = 2;
                     self.delim = td;
                     self.cursor = self.cursor + 3;
                     -> $TripleBody
                 }
                 let sd = string_delim(self.src, self.cursor, self.target);
                 if sd > 0 {
+                    self.kind = 2;
                     self.delim = sd;
                     self.multiline = string_multiline(self.target, sd);
                     self.cursor = self.cursor + 1;
@@ -84,6 +98,7 @@
         $BlockBody {
             step() {
                 if self.cursor >= self.src.fsm_len() {
+                    self.unterminated = true;
                     -> $Reject
                 }
                 if self.nests {
@@ -111,6 +126,7 @@
         $StrBody {
             step() {
                 if self.cursor >= self.src.fsm_len() {
+                    self.unterminated = true;
                     -> $Reject
                 }
                 let b = self.src.fsm_get(self.cursor);
@@ -123,6 +139,7 @@
                         self.cursor = self.cursor + 1;
                         -> $StrBody
                     }
+                    self.unterminated = true;
                     -> $Reject
                 }
                 let hs = hole_skip(self.src, self.cursor, self.target);
@@ -141,6 +158,7 @@
         $TripleBody {
             step() {
                 if self.cursor >= self.src.fsm_len() {
+                    self.unterminated = true;
                     -> $Reject
                 }
                 if self.src.fsm_get(self.cursor) == 92 {
@@ -167,4 +185,8 @@
         multiline: bool = false
         nests: bool = false
         depth: i32 = 0
+        // Output channel (read on Accept/Reject by `opaque_at`): `kind` = 1 comment / 2 literal;
+        // `unterminated` = a body OPENED here but never closed (the hand lexer returns Err there).
+        unterminated: bool = false
+        kind: i32 = 0
 }

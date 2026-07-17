@@ -59,6 +59,7 @@
         $Body {
             step() {
                 if self.cursor >= self.src.fsm_len() {
+                    self.unterminated = true;
                     -> $Reject
                 }
                 if self.src.fsm_get(self.cursor) == 34 {
@@ -75,6 +76,7 @@
                     -> $Accept
                 }
                 if self.cursor >= self.src.fsm_len() {
+                    self.unterminated = true;
                     -> $Reject
                 }
                 if self.src.fsm_get(self.cursor) == 35 {
@@ -90,4 +92,7 @@
     domain:
         hashes: i32 = 0
         seen: i32 = 0
+        // Output channel (read on Reject by `scan_kind`): a raw string OPENED here (past the
+        // opening `"`) but never closed — the hand `rust_raw` returns Err in exactly this case.
+        unterminated: bool = false
 }

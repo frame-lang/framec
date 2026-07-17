@@ -63,12 +63,14 @@ pub struct OpaqueScan<'a> {
     pub multiline: bool,
     pub nests: bool,
     pub depth: i32,
+    pub unterminated: bool,
+    pub kind: i32,
 }
 
 impl<'a> OpaqueScan<'a> {
     pub fn over(src: &'a [u8], target: Target) -> Self {
         let compartment = OpaqueScanComp { state: "Start".to_string(), vars: OpaqueScanVars::Start {  }, args: OpaqueScanArgs::Start {  } };
-        OpaqueScan { src, cursor: 0, compartment, stack: Vec::new(), target: target, delim: 0, multiline: false, nests: false, depth: 0 }
+        OpaqueScan { src, cursor: 0, compartment, stack: Vec::new(), target: target, delim: 0, multiline: false, nests: false, depth: 0, unterminated: false, kind: 0 }
     }
 
     pub fn scan_at(&mut self, start: usize) -> bool {
@@ -77,6 +79,8 @@ impl<'a> OpaqueScan<'a> {
         self.multiline = false;
         self.nests = false;
         self.depth = 0;
+        self.unterminated = false;
+        self.kind = 0;
         self.compartment = OpaqueScanComp { state: "Start".to_string(), vars: OpaqueScanVars::Start {  }, args: OpaqueScanArgs::Start {  } };
         let mut __steps: usize = 0;
         while self.compartment.state != "Accept" && self.compartment.state != "Reject" {
@@ -104,8 +108,11 @@ impl<'a> OpaqueScan<'a> {
             self.compartment = __next;
             return Default::default();
         }
+        // `kind` (1=comment, 2=literal) is written at dispatch and read on Accept — the
+        // register that lets a consumer apply a comment-vs-literal policy (Item 3).
         let lc = line_comment_len(self.src, self.cursor, self.target);
         if lc > 0 {
+            self.kind = 1;
             self.cursor = self.cursor + lc;
             let mut __next = OpaqueScanComp { state: "LineBody".to_string(), vars: OpaqueScanVars::LineBody {  }, args: OpaqueScanArgs::LineBody { } };
             self.compartment = __next;
@@ -113,6 +120,7 @@ impl<'a> OpaqueScan<'a> {
         }
         let bo = block_open_len(self.src, self.cursor, self.target);
         if bo > 0 {
+            self.kind = 1;
             self.nests = block_nests(self.target);
             self.depth = 1;
             self.cursor = self.cursor + bo;
@@ -122,13 +130,24 @@ impl<'a> OpaqueScan<'a> {
         }
         let rr = raw_scan(self.src, self.cursor, self.target);
         if rr > self.cursor {
+            self.kind = 2;
             self.cursor = rr;
             let mut __next = OpaqueScanComp { state: "Accept".to_string(), vars: OpaqueScanVars::Accept {  }, args: OpaqueScanArgs::Accept { } };
             self.compartment = __next;
             return Default::default();
         }
+        // A raw string OPENS here but never closes: RawString itself reports it (its own
+        // register), so the `#`-counter stays in the sub-system. `unterminated` distinguishes
+        // this Reject from a plain "nothing opened" Reject.
+        if raw_unterminated(self.src, self.cursor, self.target) {
+            self.unterminated = true;
+            let mut __next = OpaqueScanComp { state: "Reject".to_string(), vars: OpaqueScanVars::Reject {  }, args: OpaqueScanArgs::Reject { } };
+            self.compartment = __next;
+            return Default::default();
+        }
         let td = triple_delim(self.src, self.cursor, self.target);
         if td > 0 {
+            self.kind = 2;
             self.delim = td;
             self.cursor = self.cursor + 3;
             let mut __next = OpaqueScanComp { state: "TripleBody".to_string(), vars: OpaqueScanVars::TripleBody {  }, args: OpaqueScanArgs::TripleBody { } };
@@ -137,6 +156,7 @@ impl<'a> OpaqueScan<'a> {
         }
         let sd = string_delim(self.src, self.cursor, self.target);
         if sd > 0 {
+            self.kind = 2;
             self.delim = sd;
             self.multiline = string_multiline(self.target, sd);
             self.cursor = self.cursor + 1;
@@ -165,6 +185,7 @@ impl<'a> OpaqueScan<'a> {
 
     fn BlockBody_step(&mut self) {
         if self.cursor >= self.src.fsm_len() {
+            self.unterminated = true;
             let mut __next = OpaqueScanComp { state: "Reject".to_string(), vars: OpaqueScanVars::Reject {  }, args: OpaqueScanArgs::Reject { } };
             self.compartment = __next;
             return Default::default();
@@ -197,6 +218,7 @@ impl<'a> OpaqueScan<'a> {
 
     fn StrBody_step(&mut self) {
         if self.cursor >= self.src.fsm_len() {
+            self.unterminated = true;
             let mut __next = OpaqueScanComp { state: "Reject".to_string(), vars: OpaqueScanVars::Reject {  }, args: OpaqueScanArgs::Reject { } };
             self.compartment = __next;
             return Default::default();
@@ -215,6 +237,7 @@ impl<'a> OpaqueScan<'a> {
                 self.compartment = __next;
                 return Default::default();
             }
+            self.unterminated = true;
             let mut __next = OpaqueScanComp { state: "Reject".to_string(), vars: OpaqueScanVars::Reject {  }, args: OpaqueScanArgs::Reject { } };
             self.compartment = __next;
             return Default::default();
@@ -237,6 +260,7 @@ impl<'a> OpaqueScan<'a> {
 
     fn TripleBody_step(&mut self) {
         if self.cursor >= self.src.fsm_len() {
+            self.unterminated = true;
             let mut __next = OpaqueScanComp { state: "Reject".to_string(), vars: OpaqueScanVars::Reject {  }, args: OpaqueScanArgs::Reject { } };
             self.compartment = __next;
             return Default::default();

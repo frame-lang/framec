@@ -188,6 +188,68 @@ The plan is a contract; it changes only through a recorded, evaluated process �
   with OpaqueScan on well-formed input (differential-proven), so the residual dual window is benign
   until its owning item.
 
+- *2026-07-17* — **Item 2 DESIGN accepted (frame-fsm-designer).** The 3-way opaque signal is a
+  DOMAIN REGISTER, not a new terminal state or a state-name read (both blocked: `scan_at` halts
+  only on Accept/Reject; `compartment` is private — zero-codegen-change is the register).
+  OpaqueScan gains `unterminated: bool` (set on the 4 body-reject edges + the raw arm) and
+  `kind: i32` (1=comment/2=literal, set on the 5 accept edges); RawString gains `unterminated`
+  (set on its `$Body`/`$MaybeClose` EOF rejects) and a `RawAt`/`scan_kind` 3-way, composed by
+  OpaqueScan via two run-and-unwrap leaves (the `#`-counter stays IN RawString — no walk in a
+  leaf, D3 holds). Wrapper: `OpaqueAt { None, Comment(usize), Literal(usize), Unterminated }` +
+  `opaque_at()`; `opaque_extent()` becomes a thin adapter (extent-only consumers byte-unchanged).
+  `kind` also serves Item 3's `machine.rs::skip_opaque` (comment→clamp, literal→reject) — one
+  mechanism, built once. **DECISION (mine, within protocol):** `Unterminated`→a single
+  `UnclosedBody` error (names the system — a better diagnostic than the hand `UnterminatedComment`/
+  `String`); the differential gates `is_err()`-parity on unterminated, not variant-equality.
+  **Capability FILED (not a blocker): R10** — a real Frame-level scan-system→sub-system invocation
+  reading the sub-machine's terminal classification in-Frame; would make raw single-run and reduce
+  the run-and-unwrap wrapper growth in Items 3/4. To weigh before Item 4.
+  Gate: Level-1 `opaque_at` vs a new `opaque_at_hand` 4-way oracle at every position + fuzz (the
+  current extent test is blind to this class); Level-2 `close_brace` vs `close_brace_hand`.
+
+- *2026-07-17* — **Item 2 EXECUTED (implementer).** As designed. OpaqueScan `opaque_scan.frs`:
+  `unterminated: bool` set on the 4 body-reject edges ($BlockBody/$StrBody-EOF, $StrBody-newline,
+  $TripleBody-EOF) + a new raw-unterminated arm in $Start; `kind: i32` written at dispatch (1 on
+  the two comment dispatches, 2 on raw/triple/string). RawString `raw_string.frs`: `unterminated`
+  on $Body/$MaybeClose EOF. Both `.gen.rs` regenerated + **D2 fixpoint byte-identical across a
+  rebuild**. mod.rs: `OpaqueAt`/`opaque_at` + extent-only `opaque_extent` adapter; `RawAt`/
+  `scan_kind` + `scan` adapter; `raw_scan`/`raw_unterminated` leaves compose RawString (counter
+  stays in the sub-system — D3). `scan/mod.rs`: `close_brace` rewritten off the hand `Lexer` onto
+  `opaque_at` (Unterminated→`UnclosedBody`); `close_brace_hand` + `opaque_at_hand` added as
+  `#[doc(hidden)]` differential oracles. Tests (frame-test-author, all green, mutation-verified
+  teeth): opaque_scan.rs 14 (4-way `opaque_at`==`opaque_at_hand` at every position + Unterminated
+  arm + all-variants-occur + fuzz); `close_brace_tests` 7 (is_err parity + Ok-equality, `}` hidden
+  in every opaque form + unterminated + xorshift fuzz 1500×4 both-arm teeth-gated); raw_string
+  `scan_kind` battery +3 (NotRaw/Extent/Unterminated). Full suite green; clippy clean on touched
+  code. Production `close_brace` no longer touches the hand lexer.
+- *2026-07-17* — **R12 (tooling refinement; warden to confirm).** `tools/scan_census.py` now
+  SPLITS `HAND_LEXER_RECOGNITION` into **production** (C2 ratchet → 0) and **oracle** (recognition
+  inside a `*_hand`/`hand_*` `#[doc(hidden)]` differential oracle — transient, deleted at C-final
+  per D6). Rationale: a differential oracle uses the hand lexer ON PURPOSE (it is the independent
+  check the system is proven against); counting it as production made Item 2 read as a ratchet
+  regression (19→21) when production recognition actually **DROPPED** (close_brace: 15→13). The
+  split measures what C2 means; `--gate` now trips only on the production bucket; the oracle bucket
+  is reported and must ALSO reach 0 by campaign end (oracles cannot hide). No production behavior
+  change. Post-Item-2: production=13 (lex.rs 7 defs + machine.rs 2 + parts.rs 2 + sections.rs 2 —
+  all owned by Items 3/4), oracle=8, loops=86, systems=15.
+
+- *2026-07-17* — **Item 2 scope split + two deferrals (warden GATE-A+B PASS-pending-commit
+  findings 2 & 3; within guardrails).** This execution delivers the **`close_brace` / body-end
+  capability** in full — NOT all of Item 2. Two named residuals remain:
+  (a) **`hand_item_starts` (the Segmenter differential oracle) is NOT retired.** It is still live
+  and `tests/segmenter.rs` compares `segmenter::item_starts` against it. Retiring it now would
+  delete the Segmenter's independent check while its parity is still oracle-gated. DEFERRED to the
+  **C-final oracle sweep** (owned with the other `*_hand` oracles — all die when Item 4 deletes the
+  lex.rs `comment_at`/`literal_at` defs they call). Census now counts its 2 lexer calls as ORACLE
+  (R12), consistent with this. So **do not mark Item 2 "hand-path fully retired"** — only the
+  close_brace capability is retired this commit.
+  (b) **`close_brace` still contains a native `{}` depth-counter** (a literal-aware Dyck-1 walk;
+  counted under `HAND_SCAN_LOOPS`, the C1 ratchet — not overclaimed). Per guardrail 4 (recognition
+  = counting/balancing → sub-system) it must become a system. FILED as **item "BodyBalance"** — an
+  OpaqueScan-composing brace counter (skip opaque via `opaque_at`, count `{`/`}`), the Segmenter's
+  body-structure recognizer. To build alongside the remaining Segmenter work, before campaign
+  close. Named owner recorded; not unowned residue.
+
 ### Audit Log (append-only — warden verdicts)
 - *2026-07-17* — GATE-A dry-run, Item 1 "opaque skip": **FAIL** (D4 no fuzz) / GATE-B **FAIL**
   (D5/D6 surviving hand consumers close_brace + machine.rs::skip_opaque; D9 uncommitted). The DoD
@@ -199,6 +261,15 @@ The plan is a contract; it changes only through a recorded, evaluated process �
   wired to the system; every residual hand-lexer caller is an oracle or a named+scheduled residual
   (close_brace→Item 2, skip_opaque→Item 3, native_parts→Item 4); suite green; drift none. D9 (the
   only open predicate) is intentionally uncommitted → LAND the atomic commit.
+- *2026-07-17* — GATE-A+B, Item 2 "close_brace / body-end": **PASS pending commit.** close_brace
+  routed off the hand Lexer onto OpaqueScan (`opaque_at`) with a 3-way None/Comment-Literal/
+  Unterminated register signal; D1–D8 + R12 verified by run/grep (regen byte-identical across
+  rebuild; 4-way `opaque_at`==`opaque_at_hand` + close_brace `is_err`/Ok differentials, both
+  fuzz-gated with teeth; production recognition 15→13). D9 uncommitted → land the 10-file atomic
+  commit. Findings resolved pre-commit: stale `tests/close_brace.rs` doc refs fixed (→ in-file
+  `close_brace_tests`); `hand_item_starts` retirement + close_brace's `{}`-counter→`BodyBalance`
+  sub-system deferred with named owners (Change Log above) — Item 2 marked **close_brace capability
+  done, NOT hand-path fully retired.**
 
 ## Review revisions (frame-fsm-designer + frame-compiler-architect, both grounded in the code)
 
@@ -341,8 +412,8 @@ survive as oracles + un-converted consumers — tracked here, not forgotten.
 
 | Item | State | Systems | Hand path retired? |
 |---|---|---|---|
-| 1 OpaqueScan | **warden PASS (GATE-A + GATE-B pending commit)** — landing | OpaqueScan, RawString, BraceBalance | skip path is the system; try_island routed; residual = holes (Item 4), close_brace (Item 2), machine skip (Item 3), + 3 oracles — all named; batteries+fuzz+milestone green |
-| 2 Segmenter | system exists; oracle not self-contained | segmenter | no (oracle) |
+| 1 OpaqueScan | **warden PASS (GATE-A + GATE-B) — committed** | OpaqueScan, RawString, BraceBalance | skip path is the system; try_island routed; residual = holes (Item 4), close_brace (Item 2), machine skip (Item 3), + 3 oracles — all named; batteries+fuzz+milestone green |
+| 2 Segmenter | **close_brace capability: warden PASS (GATE-A+B, pending commit).** Body-end recognition off the hand Lexer onto OpaqueScan (`opaque_at`, 3-way signal). Remaining Item-2 scope: `hand_item_starts` oracle (→ C-final sweep) + `BodyBalance` `{}`-counter sub-system (named, before close) | segmenter, +OpaqueScan `kind`/`unterminated` registers | close_brace: yes. Item-2 whole: no (oracle + brace-counter named) |
 | 3 Grammar | not started | stmt_scan (partial) | no |
 | 4 Islands | not started | ref/inst/embed_scan (partial) | no |
 | 5 Validators | not started | hsm_cycle, reachability | no |

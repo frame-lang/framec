@@ -52,18 +52,20 @@ pub struct RawString<'a> {
     stack: Vec<RawStringComp>,
     pub hashes: i32,
     pub seen: i32,
+    pub unterminated: bool,
 }
 
 impl<'a> RawString<'a> {
     pub fn over(src: &'a [u8]) -> Self {
         let compartment = RawStringComp { state: "Start".to_string(), vars: RawStringVars::Start {  }, args: RawStringArgs::Start {  } };
-        RawString { src, cursor: 0, compartment, stack: Vec::new(), hashes: 0, seen: 0 }
+        RawString { src, cursor: 0, compartment, stack: Vec::new(), hashes: 0, seen: 0, unterminated: false }
     }
 
     pub fn scan_at(&mut self, start: usize) -> bool {
         self.cursor = start;
         self.hashes = 0;
         self.seen = 0;
+        self.unterminated = false;
         self.compartment = RawStringComp { state: "Start".to_string(), vars: RawStringVars::Start {  }, args: RawStringArgs::Start {  } };
         let mut __steps: usize = 0;
         while self.compartment.state != "Accept" && self.compartment.state != "Reject" {
@@ -138,6 +140,7 @@ impl<'a> RawString<'a> {
 
     fn Body_step(&mut self) {
         if self.cursor >= self.src.fsm_len() {
+            self.unterminated = true;
             let mut __next = RawStringComp { state: "Reject".to_string(), vars: RawStringVars::Reject {  }, args: RawStringArgs::Reject { } };
             self.compartment = __next;
             return Default::default();
@@ -159,6 +162,7 @@ impl<'a> RawString<'a> {
             return Default::default();
         }
         if self.cursor >= self.src.fsm_len() {
+            self.unterminated = true;
             let mut __next = RawStringComp { state: "Reject".to_string(), vars: RawStringVars::Reject {  }, args: RawStringArgs::Reject { } };
             self.compartment = __next;
             return Default::default();

@@ -8,20 +8,38 @@
 //! system and holes (python) through `BraceBalance`; those systems are exercised here too.
 
 use frame_compiler::text::scan::literals::{Form, Target};
-use frame_compiler::text::scan::opaque_scan::opaque_extent;
-use frame_compiler::text::scan::skip_opaque_at_hand;
+use frame_compiler::text::scan::opaque_scan::{opaque_at, opaque_extent, OpaqueAt};
+use frame_compiler::text::scan::{opaque_at_hand, skip_opaque_at_hand};
 
 /// Assert the machine and the hand path agree at every position of `b` for `target`.
-/// The oracle is the retired hand implementation (`skip_opaque_at_hand`), independent of the
-/// machine. Raw bytes (fuzz inputs are not UTF-8).
+///
+/// TWO independent parity checks at every position, both against the retired hand
+/// implementation (independent of the machine), raw bytes (fuzz inputs are not UTF-8):
+///
+/// 1. **extent-only** (`opaque_extent` vs `skip_opaque_at_hand`) — the original gate.
+/// 2. **4-way** (`opaque_at` vs `opaque_at_hand`, exact `OpaqueAt` equality) — STRICTLY
+///    STRONGER: it also pins the comment-vs-literal `kind` register AND the `Unterminated`
+///    arm, neither of which the extent number can distinguish (both a `None` and an
+///    `Unterminated` collapse to the same extent `i`). Every curated + adversarial + fuzz
+///    input that flows through `agree*` is therefore now checked both ways.
 fn agree_bytes(b: &[u8], target: Target) {
     for i in 0..=b.len() {
         let hand = skip_opaque_at_hand(b, i, target);
         let machine = opaque_extent(b, i, target).unwrap_or(i);
         assert_eq!(
             machine, hand,
-            "target {target:?}, pos {i} of {b:?}: machine={machine} hand={hand}"
+            "extent: target {target:?}, pos {i} of {b:?}: machine={machine} hand={hand}"
         );
+        // 4-way exact classification at every real byte position.
+        if i < b.len() {
+            let hand_at = opaque_at_hand(b, i, target);
+            let machine_at = opaque_at(b, i, target);
+            assert_eq!(
+                machine_at, hand_at,
+                "opaque_at: target {target:?}, pos {i} of {b:?}: \
+                 machine={machine_at:?} hand={hand_at:?}"
+            );
+        }
     }
 }
 
@@ -396,4 +414,104 @@ fn fuzz_corpus_has_teeth() {
     assert!(accepts > 200, "too few accepting scans ({accepts}) — arm lacks teeth");
     assert!(raw_accepts > 5, "RawString sub-system barely exercised by fuzz ({raw_accepts})");
     assert!(hole_effect > 5, "BraceBalance/hole path barely exercised by fuzz ({hole_effect})");
+}
+
+// ============================================================================
+// LEVEL-1: opaque_at 4-way parity, Unterminated-arm-specific inputs.
+// `agree_bytes` already checks `opaque_at == opaque_at_hand` at every position of the
+// ENTIRE curated + adversarial + fuzz corpus (it is strictly stronger than the extent
+// check). These inputs specifically drive the `Unterminated` arm — the one the extent
+// number cannot see — so a regression that mis-classifies an unterminated body as
+// `None` (or vice versa) fails a NAMED test even though its extent is unchanged.
+// SCAFFOLDING: differential vs the hand oracle; needs the internal oracle + registers.
+// ============================================================================
+
+#[test]
+fn unterminated_arm_four_way() {
+    // Unterminated block comment (every target that has a block comment).
+    for t in [Target::C, Target::Java, Target::Rust] {
+        agree("/* never closes", t);
+        agree("a = 1; /* still open", t);
+    }
+    agree("a /* /* nested still open", Target::Rust); // unterminated NESTED (rust nests)
+
+    // Unterminated plain string, and escape-consumes-EOF, on every target.
+    for t in [Target::C, Target::Java, Target::Rust, Target::Python3] {
+        agree("\"abc", t); // opener + body, no close
+        agree("\"a\\", t); // escape then EOF → the `\` consumes the (missing) next byte
+        agree("'ab", t); // single-quote form, unterminated
+    }
+
+    // Bare newline inside a NON-multiline string → Unterminated (NOT swallow-to-EOF).
+    agree("\"a\nb\";", Target::C);
+    agree("x = 'p\nq';", Target::Java);
+    agree("let c = '\n';", Target::Rust); // rust char is NOT multiline
+    agree("s = \"a\nb\"", Target::Python3); // plain python `\"` is NOT multiline
+
+    // Unterminated triple (python).
+    agree("\"\"\"abc", Target::Python3);
+    agree("'''abc", Target::Python3);
+    agree("d = \"\"\"open\n spanning", Target::Python3);
+
+    // Unterminated raw (rust), including the wrong-hash-count close.
+    agree("r#\"abc", Target::Rust);
+    agree("r\"abc", Target::Rust);
+    agree("r##\"x\"#", Target::Rust); // one closing hash where two are needed
+    agree("br#\"open", Target::Rust);
+}
+
+/// The 4-way check is only meaningful if every `OpaqueAt` variant is actually produced.
+/// A classifier that could only ever emit `None`/`Literal` would be a #232 lie. Prove all
+/// four variants (None, Comment, Literal, Unterminated) occur — across a curated set AND
+/// the frame-ish fuzz corpus — as observed from the MACHINE (`opaque_at`).
+#[test]
+fn opaque_at_variants_all_occur() {
+    use std::collections::HashSet;
+    fn tag(o: OpaqueAt) -> u8 {
+        match o {
+            OpaqueAt::None => 0,
+            OpaqueAt::Comment(_) => 1,
+            OpaqueAt::Literal(_) => 2,
+            OpaqueAt::Unterminated => 3,
+        }
+    }
+    let targets = [Target::C, Target::Java, Target::Rust, Target::Python3];
+    let mut seen: HashSet<u8> = HashSet::new();
+
+    let curated: &[&str] = &[
+        "plain identifier",
+        "// a line comment\n",
+        "/* a block comment */",
+        "\"a string literal\"",
+        "/* unterminated block",
+        "\"unterminated string",
+        "r\"raw\"",
+        "\"\"\"triple\"\"\"",
+        "'''unterminated triple",
+        "r#\"unterminated raw",
+    ];
+    for &t in &targets {
+        for s in curated {
+            let b = s.as_bytes();
+            for i in 0..b.len() {
+                seen.insert(tag(opaque_at(b, i, t)));
+            }
+        }
+    }
+    for seed in 0u64..2000 {
+        let mut rf = Rng::new(seed ^ 0x5A5A_FFFF);
+        let s = gen_frame_ish(&mut rf, 9);
+        let b = s.as_bytes();
+        for &t in &targets {
+            for i in 0..b.len() {
+                seen.insert(tag(opaque_at(b, i, t)));
+            }
+        }
+    }
+    for (v, name) in [(0u8, "None"), (1, "Comment"), (2, "Literal"), (3, "Unterminated")] {
+        assert!(
+            seen.contains(&v),
+            "OpaqueAt::{name} never produced across corpus+fuzz — the 4-way check lacks teeth"
+        );
+    }
 }
