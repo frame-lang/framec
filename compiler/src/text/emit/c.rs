@@ -503,14 +503,36 @@ impl Backend for C {
                 "static cJSON* {nm}__pack_u64(unsigned long long v) {{ char b[32]; snprintf(b, sizeof(b), \"%llu\", v); return cJSON_CreateString(b); }}\n"
             ));
         }
-        if !hook_types.is_empty() {
+        // A hook type that is a PERSIST-ENABLED sub-system is framec's to marshal, not the
+        // author's: the field holds a `<Sub>*`, and the sub-system already knows how to snapshot
+        // itself. framec emits the hook to DELEGATE to `<Sub>_<save>` / `<Sub>_<load>` (parse the
+        // sub-system's own blob into the parent's tree, and restore into the field's existing
+        // instance — factory-rebuild, never a reflective walk of the nested compartment). A user
+        // type still gets an author `extern`. Forward-declare the sub-system's save/load so the
+        // hook does not depend on source order.
+        let (sub_hooks, user_hooks): (Vec<&String>, Vec<&String>) = hook_types
+            .iter()
+            .partition(|ty| m.persist_methods.contains_key(ty.as_str()));
+        for ty in &sub_hooks {
+            let id = c_type_ident(ty);
+            let (save, load) = &m.persist_methods[ty.as_str()];
+            out.frame(&format!("char* {ty}_{save}({ty}*);\n"));
+            out.frame(&format!("void {ty}_{load}({ty}*, const char*);\n"));
+            out.frame(&format!(
+                "static cJSON* {nm}_persist_pack_field_{id}(void* v) {{ {ty}* __c = *({ty}**)v; char* __s = {ty}_{save}(__c); cJSON* __o = cJSON_Parse(__s); free(__s); return __o; }}\n"
+            ));
+            out.frame(&format!(
+                "static void {nm}_persist_unpack_field_{id}(cJSON* j, void* v) {{ {ty}* __c = *({ty}**)v; char* __s = cJSON_PrintUnformatted(j); {ty}_{load}(__c, __s); free(__s); }}\n"
+            ));
+        }
+        if !user_hooks.is_empty() {
             out.frame("/* AUTHOR MUST DEFINE these marshalling hooks for the user-typed persisted\n");
             out.frame("   fields below; a missing definition is a link-time error, not a silent drop.\n");
             out.frame("   The `void*` signature matches the shipping compiler's convention, so the\n");
             out.frame("   SAME author hook works on both: define e.g.\n");
             out.frame("     cJSON* <Sys>_persist_pack_field_<Type>(void* p) { <Type>* v = (<Type>*)p; ... }\n");
             out.frame("     void   <Sys>_persist_unpack_field_<Type>(cJSON* j, void* p) { ... } */\n");
-            for ty in &hook_types {
+            for ty in &user_hooks {
                 let id = c_type_ident(ty);
                 out.frame(&format!(
                     "extern cJSON* {nm}_persist_pack_field_{id}(void* v);\n"

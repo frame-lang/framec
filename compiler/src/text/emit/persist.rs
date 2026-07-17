@@ -127,6 +127,12 @@ pub struct PersistManifest {
     /// program — the name would collide at resolve time — so membership is an exact,
     /// type-ignorant signal, not a heuristic. The list drives an emitted literal set.
     pub systems: Vec<String>,
+    /// Every PERSIST-ENABLED system in the program → its `(save, load)` method names. A
+    /// sub-system domain field of a persisted type is marshalled by DELEGATING to these — the
+    /// sub-system already knows how to snapshot itself (C: call `<Sub>_<save>` / `<Sub>_<load>`),
+    /// so framec emits the field hook rather than declaring an author `extern`. A sub-system
+    /// that is not itself persisted is absent here and falls back to an author hook.
+    pub persist_methods: std::collections::HashMap<String, (String, String)>,
 }
 
 impl PersistManifest {
@@ -191,6 +197,15 @@ impl PersistManifest {
                 .collect(),
             known_types: Vec::new(),
             systems: syms.systems.iter().map(|s| s.name.clone()).collect(),
+            persist_methods: syms
+                .systems
+                .iter()
+                .filter_map(|s| {
+                    s.persist
+                        .as_ref()
+                        .map(|p| (s.name.clone(), (p.save.clone(), p.load.clone())))
+                })
+                .collect(),
         }
     }
 
