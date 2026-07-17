@@ -127,7 +127,7 @@ impl Backend for C {
             // other init is the user's native expression, verbatim.
             let init = match &f.init_system {
                 Some(s) => format!("{s}_new({})", super::ctor_init_args(f.init_text.as_deref())),
-                None => f.init_text.clone().unwrap_or_else(|| "0".into()),
+                None => c_init_expr(&f.init_text.clone().unwrap_or_else(|| "0".into()), &field_type(f)),
             };
             out.frame(&format!("    self->{} = {init};\n", f.name));
         }
@@ -730,6 +730,18 @@ fn emit_comp_types(sym: &SystemSym, out: &mut Sink) {
     out.frame(&format!("static {name}_Comp* {name}_Comp_new(const char* s) {{\n"));
     out.frame(&format!("    {name}_Comp* c = calloc(1, sizeof({name}_Comp)); c->state = s; return c;\n}}\n"));
     out.frame(&format!("static void {name}_Comp_free({name}_Comp* c) {{ free(c); }}\n\n"));
+}
+
+/// Emit a C initializer expression for an assignment/`(...)` context. A brace initializer
+/// `{ ... }` for an aggregate is NOT a valid expression on its own — `self->v = { 0, 0 };` is
+/// a syntax error — it must be a compound literal `(<ty>){ ... }`. A scalar/call/string init is
+/// already an expression and passes through verbatim.
+fn c_init_expr(init_text: &str, ty: &str) -> String {
+    if init_text.trim_start().starts_with('{') {
+        format!("({ty}){init_text}")
+    } else {
+        init_text.to_string()
+    }
 }
 
 fn field_type(f: &crate::resolve::FieldSym) -> String {
