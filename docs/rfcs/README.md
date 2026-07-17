@@ -75,7 +75,6 @@ numbers are not re-used.
 | [0056](rfc-0056.md) | Foundations — framec as a real compiler | Draft | principles for the rebuild; see [0056.1](rfc-0056-1.md), [0057](rfc-0057.md) |
 | [0056.1](rfc-0056-1.md) | The Descent — the most restrictive machine that solves each problem | Draft | companion to [0056](rfc-0056.md) |
 | [0057](rfc-0057.md) | The Compiler — architecture of the rebuilt framec | Draft | implements [0056](rfc-0056.md), [0056.1](rfc-0056-1.md) |
-| [0058](rfc-0058.md) | The multi-agent development method — design, plan, execute, test under a falsifiable contract | Draft | process RFC; builds on [0031](rfc-0031.md); governs campaigns against [0057](rfc-0057.md) |
 
 ## Other documents in this directory
 
