@@ -89,6 +89,13 @@ pub struct SystemSym {
     pub span: Span,
     /// `@@system private Name` — reduced class visibility on targets that have it (Java).
     pub private: bool,
+    /// Does this system's value get embedded in a persisted snapshot — either it is itself
+    /// `@@[persist]`, or it is transitively a domain-field sub-system of one? On typed backends
+    /// (Rust: serde) that decides whether the system STRUCT and its compartment must derive the
+    /// serializer traits: a sub-system embedded in a parent's snapshot must be serializable/
+    /// cloneable, while an ordinary system must NOT force the crate to depend on serde. Computed
+    /// once, after all systems are known. See the reachability pass in `resolve`.
+    pub persist_reachable: bool,
     /// `@@[async]` — the system's interface is asynchronous.
     pub is_async: bool,
     /// The persistence contract, if any (`@@[persist(..)]` + `@@[save]` + `@@[load]`).
@@ -272,6 +279,7 @@ pub fn resolve(ast: &FileAst) -> (SymbolTable, Vec<Diagnostic>) {
             name: sys.name.clone(),
             span: sys.span,
             private: sys.private,
+            persist_reachable: false, // filled by the reachability pass below
             is_async: attrs.iter().any(|a| a == "async"),
             persist,
             // `@@[scan(u8)]` — the positioned-scanner element type (RFC-0042.1 / #209).
@@ -419,6 +427,47 @@ pub fn resolve(ast: &FileAst) -> (SymbolTable, Vec<Diagnostic>) {
         }
 
         systems.push(sym);
+    }
+
+    // Persist-reachability: seed with the `@@[persist]` systems, then close over domain-field
+    // edges — if a reachable system holds `field: Sub` (or `= @@Sub()`), `Sub`'s value is
+    // embedded in that snapshot and `Sub` is reachable too. A typed backend (Rust/serde) derives
+    // the serializer on exactly this set; every member's fields are serde by the persist contract
+    // (a persisted system's domain must be serializable, transitively), so deriving is always
+    // sound here and never forced on an unrelated system.
+    let field_system = |f: &FieldSym| -> Option<String> {
+        match (&f.init_system, &f.ty) {
+            (Some(s), _) => Some(s.clone()),
+            (None, TypeRef::System(s))
+            | (None, TypeRef::WrappedSystem { system: s, .. }) => Some(s.clone()),
+            _ => None,
+        }
+    };
+    let mut reachable: std::collections::HashSet<String> = systems
+        .iter()
+        .filter(|s| s.persist.is_some())
+        .map(|s| s.name.clone())
+        .collect();
+    loop {
+        let mut added = false;
+        for s in &systems {
+            if !reachable.contains(&s.name) {
+                continue;
+            }
+            for f in &s.domain {
+                if let Some(sub) = field_system(f) {
+                    if reachable.insert(sub) {
+                        added = true;
+                    }
+                }
+            }
+        }
+        if !added {
+            break;
+        }
+    }
+    for s in &mut systems {
+        s.persist_reachable = reachable.contains(&s.name);
     }
 
     (SymbolTable { systems }, diags)

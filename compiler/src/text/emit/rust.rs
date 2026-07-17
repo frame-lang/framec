@@ -58,6 +58,13 @@ impl Backend for Rust {
         }
 
         emit_compartment_types(sym, out);
+        // A persist-reachable system is embedded BY VALUE in a parent's snapshot struct
+        // (`inner: Inner`), so its own struct must clone + serialize + deserialize — serde then
+        // recurses the whole sub-system (compartment, stack, domain) with no reflection and no
+        // qualname lookup. An ordinary system derives nothing here (unchanged).
+        if sym.persist_reachable {
+            out.frame("#[derive(Clone, serde::Serialize, serde::Deserialize)]\n");
+        }
         out.frame(&format!("pub struct {name} {{\n"));
         out.frame(&format!("    compartment: {name}Comp,\n"));
         out.frame(&format!("    stack: Vec<{name}Comp>,\n"));
@@ -529,7 +536,10 @@ fn typed_read(sym: &SystemSym, state: &str, kind: &str, container: &str, field: 
 /// marshals the vars/args natively; framec writes no `downcast`, no `Box<dyn Any>`.
 fn emit_compartment_types(sym: &SystemSym, out: &mut Sink) {
     let name = &sym.name;
-    let derive = if sym.persist.is_some() {
+    // serde on the compartment when the system's value can land in a snapshot — its own
+    // `@@[persist]` OR embedded as a sub-system field of one (persist_reachable). An ordinary
+    // system stays serde-free.
+    let derive = if sym.persist_reachable {
         "#[derive(Clone, serde::Serialize, serde::Deserialize)]\n"
     } else {
         "#[derive(Clone)]\n"
