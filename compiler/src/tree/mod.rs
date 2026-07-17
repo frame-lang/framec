@@ -114,6 +114,9 @@ pub struct SystemItem {
     /// class`). `public` is the default; the redundant keyword and `private` on a target
     /// without class visibility are diagnosed at resolve.
     pub private: bool,
+    /// The redundant `@@system public Name` keyword was written explicitly. Systems are public
+    /// by default, so this is diagnosed (E730) — kept distinct from the no-modifier default.
+    pub public_keyword: bool,
 }
 
 /// The three header param groups of `@@system Name(...)`.

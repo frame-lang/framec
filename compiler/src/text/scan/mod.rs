@@ -207,7 +207,8 @@ fn read_pragma(lx: &Lexer, bytes: &[u8], at: usize) -> Result<Item, SegmentError
 
     match word_text {
         "system" => {
-            let (name, private, params, brace) = read_name_params_brace(bytes, word)?;
+            let (name, private, public_keyword, params, brace) =
+                read_name_params_brace(bytes, word)?;
             let end = close_brace(lx, bytes, brace, &name)?;
             let span = Span::new(at, end);
             Ok(Item::System(SystemItem {
@@ -216,10 +217,11 @@ fn read_pragma(lx: &Lexer, bytes: &[u8], at: usize) -> Result<Item, SegmentError
                 sections: sections::sections(lx, bytes, span),
                 params,
                 private,
+                public_keyword,
             }))
         }
         "fsm" => {
-            let (name, _private, _params, brace) = read_name_params_brace(bytes, word)?;
+            let (name, _private, _public, _params, brace) = read_name_params_brace(bytes, word)?;
             let end = close_brace(lx, bytes, brace, &name)?;
             Ok(Item::Efsm(EfsmItem {
                 span: Span::new(at, end),
@@ -274,7 +276,7 @@ fn read_word(bytes: &[u8], mut i: usize) -> usize {
 fn read_name_params_brace(
     bytes: &[u8],
     mut i: usize,
-) -> Result<(String, bool, SystemParams, usize), SegmentError> {
+) -> Result<(String, bool, bool, SystemParams, usize), SegmentError> {
     let read_word = |bytes: &[u8], mut i: usize| -> (usize, usize, usize) {
         while i < bytes.len() && (bytes[i] == b' ' || bytes[i] == b'\t') {
             i += 1;
@@ -292,10 +294,12 @@ fn read_name_params_brace(
     let (fs, fe, after_first) = read_word(bytes, i);
     let first = String::from_utf8_lossy(&bytes[fs..fe]).into_owned();
     let mut private = false;
+    let mut public_keyword = false;
     if first == "private" || first == "public" {
         let (ss, se, _) = read_word(bytes, after_first);
         if se > ss {
             private = first == "private";
+            public_keyword = first == "public";
             i = ss;
         }
     }
@@ -343,7 +347,7 @@ fn read_name_params_brace(
             name,
         });
     }
-    Ok((name, private, params, j))
+    Ok((name, private, public_keyword, params, j))
 }
 
 /// Split `$(a: T), $>(b: T), c: T = d` into the three groups. Sigil decides the group;

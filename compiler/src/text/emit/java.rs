@@ -39,6 +39,11 @@ impl Backend for Java {
         "java"
     }
 
+    /// Java has class-level visibility: `@@system private` -> package-private `class`.
+    fn supports_class_visibility(&self) -> bool {
+        true
+    }
+
     /// Java: `int amount`. Type first, name second. The TYPE is the user's text.
     fn param_list(&self, params_text: &str) -> String {
         params_split(params_text)

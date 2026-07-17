@@ -281,6 +281,14 @@ pub trait Backend {
         true
     }
 
+    /// Does this target have class-level visibility, so `@@system private Name` can be realized
+    /// (Java: `class` vs `public class`; Rust: `struct` vs `pub struct`)? Targets with no such
+    /// concept (Python, C, …) return `false`, turning `private` into an E731 rather than a
+    /// silently-ignored modifier. Default `false` — a backend opts IN.
+    fn supports_class_visibility(&self) -> bool {
+        false
+    }
+
 }
 
 /// Target-aware validation: diagnostics that depend on the BACKEND's capabilities, not
@@ -311,6 +319,23 @@ pub fn target_diagnostics(
                 message: format!(
                     "system `{}` is async, but target `{}` has no async runtime — \
                      `@@[async]` cannot be realized here",
+                    sym.name,
+                    be.name()
+                ),
+            });
+        }
+
+        // E731 — `@@system private Name` on a target without class-level visibility (Python, C,
+        // …). Realizing it is impossible, and silently ignoring it would leave the user believing
+        // a system is hidden when it is not. Java/Rust (which have visibility) opt in and are fine.
+        if sym.private && !be.supports_class_visibility() {
+            out.push(crate::resolve::Diagnostic {
+                code: "E731",
+                severity: crate::resolve::Severity::Error,
+                span: sym.span,
+                message: format!(
+                    "system `{}` is `private`, but target `{}` has no class-level visibility — \
+                     the modifier cannot be realized here; drop it for this target.",
                     sym.name,
                     be.name()
                 ),

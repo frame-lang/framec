@@ -282,6 +282,49 @@ fn async_is_fine_on_an_async_capable_target() {
     assert!(diags.is_empty(), "async on Rust must NOT raise E722; got {diags:#?}");
 }
 
+/// **`@@system private` on C is E731, not a silently-ignored modifier.** C has no class-level
+/// visibility, so framec refuses rather than emit a public class the user believes is hidden.
+#[test]
+fn private_on_c_is_rejected_e731() {
+    let frm = r#"@@system private Helper {
+    interface:
+        go()
+    machine:
+        $A { go() { } }
+}
+"#;
+    let src = Source::new("t.frm", frm.as_bytes().to_vec()).unwrap();
+    let ast = segment(&src, Target::C).unwrap();
+    let (syms, _) = resolve(&ast);
+    let diags = driver::target_diagnostics(&ast, &syms, &C::new());
+    assert!(
+        diags.iter().any(|d| d.code == "E731"),
+        "@@system private on C must raise E731; got {diags:#?}"
+    );
+}
+
+/// The same `private` on a visibility-capable target (Java) raises no E731 — the gate is scoped
+/// to targets without class-level visibility.
+#[test]
+fn private_is_fine_on_a_visibility_capable_target() {
+    use frame_compiler::text::emit::java::Java;
+    let frm = r#"@@system private Helper {
+    interface:
+        go()
+    machine:
+        $A { go() { } }
+}
+"#;
+    let src = Source::new("t.frm", frm.as_bytes().to_vec()).unwrap();
+    let ast = segment(&src, Target::Java).unwrap();
+    let (syms, _) = resolve(&ast);
+    let diags = driver::target_diagnostics(&ast, &syms, &Java::new());
+    assert!(
+        diags.iter().all(|d| d.code != "E731"),
+        "private on Java must NOT raise E731; got {diags:#?}"
+    );
+}
+
 /// **A `@@Sub()` initializer on a STATE var is lowered** (not emitted raw), same as a
 /// domain field. On C the box carries a `Sub*` holding `Sub_new()`; reading it back and
 /// calling the child's interface returns the child's value. Compiles AND runs.

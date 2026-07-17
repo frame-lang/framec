@@ -199,6 +199,42 @@ fn the_three_attribute_persist_form_is_accepted() {
     assert_eq!(p.load, "thaw");
 }
 
+/// E730 — `@@system public S` is redundant (systems are public by default) and rejected. The
+/// real name still resolves to `S`, not the modifier keyword.
+#[test]
+fn redundant_public_is_rejected_e730() {
+    let src = r#"@@system public S {
+    interface:
+        go()
+    machine:
+        $A { go() { } }
+}"#;
+    let ast = tree(src, Target::Java);
+    let (syms, diags) = resolve(&ast);
+    let e730: Vec<_> = diags.iter().filter(|d| d.code == "E730").collect();
+    assert_eq!(e730.len(), 1, "@@system public must be E730: {diags:#?}");
+    assert_eq!(e730[0].severity, Severity::Error);
+    assert_eq!(syms.systems[0].name, "S", "the name is S, not the `public` keyword");
+    assert!(!syms.systems[0].private, "public is not private");
+}
+
+/// `@@system private S` is NOT E730 — reducing visibility is legitimate; only the redundant
+/// `public` is rejected. (Whether `private` is realizable is the separate per-target E731.)
+#[test]
+fn private_is_not_redundant_public_e730() {
+    let src = r#"@@system private S {
+    interface:
+        go()
+    machine:
+        $A { go() { } }
+}"#;
+    let ast = tree(src, Target::Java);
+    let (syms, diags) = resolve(&ast);
+    assert!(diags.iter().all(|d| d.code != "E730"), "private is not redundant: {diags:#?}");
+    assert!(syms.systems[0].private, "private is carried");
+    assert_eq!(syms.systems[0].name, "S", "the name is S, not the `private` keyword");
+}
+
 /// **The types are the user's. framec carries them and does not look inside.**
 #[test]
 fn a_type_is_opaque_text() {

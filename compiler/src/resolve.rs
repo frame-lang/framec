@@ -236,6 +236,22 @@ pub fn resolve(ast: &FileAst) -> (SymbolTable, Vec<Diagnostic>) {
         };
         let attrs = std::mem::take(&mut pending);
 
+        // E730 — `@@system public Name` is redundant: systems are public by default. Diagnosed
+        // target-agnostically (it is redundant everywhere), unlike `private` on a target without
+        // class visibility (E731, which needs the target and lives in `target_diagnostics`).
+        if sys.public_keyword {
+            diags.push(Diagnostic {
+                code: "E730",
+                severity: Severity::Error,
+                span: sys.span,
+                message: format!(
+                    "system `{}` declares redundant `public` — systems are public by default; \
+                     drop the keyword (use `private` only to reduce visibility).",
+                    sys.name
+                ),
+            });
+        }
+
         // The three-attribute persistence contract. `@@[persist(<type>)]` names the blob type;
         // `@@[save(<name>)]` / `@@[load(<name>)]` name the generated methods. Bare `@@[persist]`
         // — or a persist attribute missing either method name — is E814: framec will not invent

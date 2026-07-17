@@ -32,6 +32,11 @@ impl Backend for Rust {
         "rust"
     }
 
+    /// Rust has visibility: `@@system private` -> a crate-private `struct` (no `pub`).
+    fn supports_class_visibility(&self) -> bool {
+        true
+    }
+
     fn file_header(&self, out: &mut Sink) {
         // Inner attributes at the crate root: the generated file is compiled as a lib,
         // and Frame scaffolding has unused params / mut by construction.
@@ -65,7 +70,10 @@ impl Backend for Rust {
         if sym.persist_reachable {
             out.frame("#[derive(Clone, serde::Serialize, serde::Deserialize)]\n");
         }
-        out.frame(&format!("pub struct {name} {{\n"));
+        // `@@system private` -> a crate-private `struct` (no `pub`); the `pub fn` methods stay
+        // usable within the crate. Default is `pub struct`.
+        let svis = if sym.private { "" } else { "pub " };
+        out.frame(&format!("{svis}struct {name} {{\n"));
         out.frame(&format!("    compartment: {name}Comp,\n"));
         out.frame(&format!("    stack: Vec<{name}Comp>,\n"));
         // Domain fields — the user's declared type, VERBATIM. `pub`, like a scanner's: the
@@ -700,7 +708,8 @@ impl Rust {
         //    can read the match extent after a scan. Its compartment is TYPED per system,
         //    like an ordinary system's (a scanner never persists, so no serde is derived).
         emit_compartment_types(sym, out);
-        out.frame(&format!("pub struct {name}<'a> {{\n"));
+        let svis = if sym.private { "" } else { "pub " };
+        out.frame(&format!("{svis}struct {name}<'a> {{\n"));
         out.frame("    src: &'a [u8],\n");
         out.frame("    pub cursor: usize,\n");
         out.frame(&format!("    compartment: {name}Comp,\n"));
