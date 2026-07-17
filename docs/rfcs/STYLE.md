@@ -52,7 +52,10 @@ something stable rather than invented.
   codemod or tool by name in one sentence; don't enumerate how many fixtures it
   touched.
 - **References** — links to related RFCs, to the [language reference](../frame_language.md),
-  to the [glossary](../glossary.md), and to `CHANGELOG.md`. Nothing else.
+  to the [glossary](../glossary.md), and to `CHANGELOG.md`. One optional
+  traceability line to the originating tracker item is allowed here (the
+  Motivation still describes the problem in prose — the tracker link lives only
+  in References). Nothing else.
 
 ## What does NOT belong in an RFC
 
@@ -80,6 +83,13 @@ or `Status: Draft` — and nothing more.
   never after.
 - Use the canonical name. When a term has been renamed, an RFC uses the current
   name; the glossary carries the parenthetical note about the old one.
+- Each RFC's front-matter carries a `**New terms:**` line naming exactly the
+  glossary entries added with it, or `none`. This turns "did you owe the
+  glossary anything?" from a manual audit into a diff check: the review confirms
+  those entries appear in the same change.
+- A coined term **MUST NOT** collide with a Frame keyword, operator, sigil, or
+  probe name (e.g. don't coin "pre-emit checklist" in a document that defines
+  `@@:emit`).
 
 ## Structure
 
@@ -94,10 +104,12 @@ markers are what keep each field on its own line.
 ```markdown
 # RFC-NNNN: <Short Title>
 
-- **Status:** <Draft | Accepted | Shipped in framec X.Y.Z — see CHANGELOG | Superseded by RFC-MMMM>
+- **Status:** <Draft | Accepted | Accepted (breaking; unimplemented — see Migration) | Shipped in framec X.Y.Z — see CHANGELOG | Superseded by RFC-MMMM>
 - **Author:** <name> <email>
 - **Created:** <YYYY-MM-DD>
+- **New terms:** <glossary entries added with this RFC, or `none`>
 - **Builds on:** RFC-AAAA, RFC-BBBB        (optional)
+- **Part of:** RFC-XXXX–RFC-YYYY set        (optional; see RFC sets)
 - **Supersedes:** RFC-CCCC                  (optional)
 - **Superseded in part by:** RFC-DDDD       (optional; name which part)
 
@@ -127,7 +139,9 @@ The designs considered and rejected, each with its rejection reason.
 ## Migration
 
 What existing code/users must do. If nothing: "Source-additive; no breaking
-change."
+change." **Required** whenever the change alters any shipped behavior — name
+each alteration alongside its rewrite; do not omit the section on the grounds
+that the change is "obvious."
 
 ## References
 
@@ -180,6 +194,30 @@ Prefer a fresh top-level number for anything that's really a new feature; reserv
 the sub-RFC form for "this thing was buried in / underspecified by RFC-NNNN".
 This style guide and the [glossary](../glossary.md) are *not* RFCs.
 
+## RFC sets
+
+A design too large for one document is a **set**: contiguous RFC numbers, an
+index in the lowest-numbered member, and a `**Part of:**` front-matter line in
+every member. Cross-reference between members by RFC number only — never
+"Document N", "Part II", or a filename; ad-hoc labels like "Document 4" are the
+first thing to rot when the set is reordered. Reserving a number for anticipated
+future work is a one-line note in the index RFC; a silent gap in a set reads as
+a lost document, not a reservation.
+
+## Headings and register
+
+RFC 7322's "write for a reader outside the working group" applies hardest to
+headings, because headings are the navigation surface: prose drift gets caught
+in review, heading drift often doesn't. The operative test for every heading is
+*would this make sense to a reader who has read only the [glossary](../glossary.md)?*
+A document drafted during a design conversation inherits that conversation's
+private dialect — sweep for it explicitly before merging.
+
+Concretely: prefer descriptive noun phrases; avoid bare imperatives or lone
+adjectives as headings ("Never", "Skeletons — copy, then adapt"); no version
+tags or status markers in a heading ("The surprise ledger (v3-current)"); and a
+coined term appears in a heading only after, or in, the section that defines it.
+
 ## When to write an RFC vs. a doc edit
 
 Write an RFC for a change to the **language** — new syntax, a changed
@@ -200,5 +238,14 @@ contract; that's a CHANGELOG entry and, if the docs were unclear, a doc edit.
       link the superseding RFC.
 - [ ] Runnable code samples compile and run; illustrative ones are clearly
       schematic.
+- [ ] If any shipped behavior changes: a Migration section exists and names
+      each change with its rewrite.
+- [ ] A References section exists and contains only the permitted targets (plus
+      at most one traceability line).
+- [ ] `New terms:` front-matter line is present and matches the glossary diff.
+- [ ] Set membership: if part of a set, `Part of:` is present and every
+      cross-reference uses an RFC number, not "Document N" or a filename.
+- [ ] Headings pass the glossary-only-reader test; no design-conversation
+      coinages, version tags, or bare imperatives.
 - [ ] The document reads top to bottom for someone with no project-internal
       context.

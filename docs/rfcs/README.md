@@ -70,6 +70,12 @@ numbers are not re-used.
 | [0051](rfc-0051.md) | Structured handler-body lowering for transforming backends | Draft | — |
 | [0052](rfc-0052.md) | Maximal per-language coverage fixtures + attribute affinity | Draft | — |
 | [0053](rfc-0053.md) | Faithful persistence — round-trip fidelity as the foundational contract | Accepted | builds on [0012](rfc-0012.md), [0015](rfc-0015.md), [0016.1](rfc-0016-1.md), [0049](rfc-0049.md); foundation accepted, layers deferred; first instance #174 (Python), precedent #176 (Dart) |
+| [0054](rfc-0054.md) | Persistence type manifest — one algorithm for preserving and reviving types | Draft | builds on [0012](rfc-0012.md), [0053](rfc-0053.md) |
+| [0055](rfc-0055.md) | Persistence architecture — faithful save/restore and per-language type identity | Draft | builds on [0012](rfc-0012.md), [0053](rfc-0053.md), [0054](rfc-0054.md), [0016.1](rfc-0016-1.md), [0015](rfc-0015.md); foundation-plus-layers reference |
+| [0056](rfc-0056.md) | Foundations — framec as a real compiler | Draft | principles for the rebuild; see [0056.1](rfc-0056-1.md), [0057](rfc-0057.md) |
+| [0056.1](rfc-0056-1.md) | The Descent — the most restrictive machine that solves each problem | Draft | companion to [0056](rfc-0056.md) |
+| [0057](rfc-0057.md) | The Compiler — architecture of the rebuilt framec | Draft | implements [0056](rfc-0056.md), [0056.1](rfc-0056-1.md) |
+| [0058](rfc-0058.md) | The multi-agent development method — design, plan, execute, test under a falsifiable contract | Draft | process RFC; builds on [0031](rfc-0031.md); governs campaigns against [0057](rfc-0057.md) |
 
 ## Other documents in this directory
 
