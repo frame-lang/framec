@@ -75,6 +75,8 @@ numbers are not re-used.
 | [0056](rfc-0056.md) | Foundations — framec as a real compiler | Draft | principles for the rebuild; see [0056.1](rfc-0056-1.md), [0057](rfc-0057.md) |
 | [0056.1](rfc-0056-1.md) | The Descent — the most restrictive machine that solves each problem | Draft | companion to [0056](rfc-0056.md) |
 | [0057](rfc-0057.md) | The Compiler — architecture of the rebuilt framec | Draft | implements [0056](rfc-0056.md), [0056.1](rfc-0056-1.md) |
+| 0058 | — | (unassigned) | numbering retired; pre-public exploratory draft, not promoted |
+| [0059](rfc-0059.md) | Discovery: the latent machine — findings, evidence, and process adoption | Draft (Discovery) | canonical companion: [*Shadows on the Wall*](../articles/Shadows_on_the_Wall.md); first of the discovery genre |
 
 ## Other documents in this directory
 
@@ -101,6 +103,11 @@ numbers are not re-used.
   commitment.
 - **Draft (Forward-looking)** — design captured; pending a
   prioritization decision.
+- **Draft (Discovery)** — records a validated finding plus
+  proposed process changes; the evidence is settled, the
+  normative rules await acceptance (expected terminal status:
+  Accepted (Process)). See the glossary's
+  [discovery RFC](../glossary.md#discovery-rfc) entry.
 - **Status report** — captures current state of a subsystem
   without committing to changes.
 

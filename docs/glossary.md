@@ -106,6 +106,25 @@ then run the [start state](#start-state)'s `$Start(...)` body and its
 construction is the [factory](#factory). Contrast [no-initialization](#no-initialization).
 See [RFC-0015](rfcs/rfc-0015.md).
 
+### costuming
+
+Naming states that are not load-bearing — reifying a
+[latent machine](#latent-machine) at a quotient finer than its behavior
+warrants (e.g. `$Step1 → $Step2` around straight-line code with no branching,
+no failure structure, and no observable intermediate states). The opposite
+failure mode of [glossing](#glossing). The discriminator: a named state that
+could be deleted, its transitions fused, with no observable or comprehension
+change was a costume. Defined in
+[*Shadows on the Wall* § 6.2](articles/Shadows_on_the_Wall.md); process rules
+in [RFC-0059](rfcs/rfc-0059.md).
+
+### discovery RFC
+
+An RFC genre that records something the project *learned* rather than a
+feature it designed: the finding, the evidence that validated it, and the
+process changes the finding forces. Precedent and template:
+[RFC-0059](rfcs/rfc-0059.md).
+
 ### dispatch
 
 The runtime act of routing an incoming [frame event](#frame-event) to the
@@ -232,6 +251,16 @@ The formal project name for [framec](#framec) — the Frame
 the project/repository name, while `framec` is the binary and the name used
 throughout the guides. Architecture: [framepiler design](framepiler_design.md).
 
+### glossing
+
+Leaving real states of a [latent machine](#latent-machine) unnamed — modes
+flattened into boolean flags, distinct terminal and error states merged into
+one error value, initialization phases hidden in call order. The quotient too
+coarse; the opposite failure mode of [costuming](#costuming). Initialization
+and error states are the most-glossed states in practice. Defined in
+[*Shadows on the Wall* §§ 5–6](articles/Shadows_on_the_Wall.md); process rules
+in [RFC-0059](rfcs/rfc-0059.md).
+
 ### hierarchical state machine (HSM)
 
 A [state machine](#machine) in which a [state](#state) may declare a parent
@@ -254,6 +283,19 @@ the kernel, which calls the [router](#router) and then drains any pending
 [transitions](#transition). One kernel per system; it holds no state-selection
 logic itself. See
 [runtime walkthrough § Step 2](frame_runtime.md#step-2--adding-a-state).
+
+### latent machine
+
+The state machine present in every piece of imperative code that has no
+explicit one — its states encoded as program points, flags, and merged
+returns; its transitions as statements and control flow. Existence is a
+theorem, not a judgment (every sequential program mechanically
+defunctionalizes to a first-order machine; recursion is a pushdown machine
+whose stack lives in the host call stack); the design question is only
+whether *naming* the machine pays. See [glossing](#glossing) and
+[costuming](#costuming) for the two ways the naming goes wrong. Canonical
+statement: [*Shadows on the Wall*](articles/Shadows_on_the_Wall.md); process
+rules in [RFC-0059](rfcs/rfc-0059.md).
 
 ### load
 
@@ -289,6 +331,18 @@ bypassing the [casing](#casing)'s gate. It is internal: user code must not name
 `_<Name>Machine` directly. Distinct from [machine](#machine) (the `machine:`
 block of states) and from the colloquial use of *machine* for the whole
 automaton. Introduced in [RFC-0043](rfcs/rfc-0043.md).
+
+### machine inventory
+
+The deliverable of a machine-finding scan over a codebase or specification:
+one entry per [latent machine](#latent-machine) found — evidence, states
+(initialization and the *full* set of distinct terminal and error states,
+latent ones included), transitions, classification, current encoding, and a
+disposition (reify, or leave latent with a stated plea) — closed by the list
+of symptoms no machine yet owns and the register of earned exemptions. Method
+and entry shape: [*Shadows on the Wall* § 7](articles/Shadows_on_the_Wall.md);
+required by [RFC-0059](rfcs/rfc-0059.md) as the entry gate for conversion
+work.
 
 ### no-initialization
 

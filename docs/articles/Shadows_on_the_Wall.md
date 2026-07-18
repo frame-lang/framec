@@ -1,0 +1,952 @@
+---
+title: "Shadows on the Wall — The Latent Machine"
+parent: Articles
+nav_order: 4
+---
+
+# Shadows on the Wall — The Latent Machine
+
+*Computation as the unwitting construction of state machines*
+
+*Prompt Engineer and Editor: Mark Truluck <mark@frame-lang.org>*
+
+> "For quite a while, I've been disturbed by the emphasis on language in computer
+> science." — Leslie Lamport, *Computation and State Machines* [7]
+
+## Abstract
+
+This paper defends a strong claim: **every program is a state machine, and every
+programmer is a state-machine author** — most of them unknowingly, in languages
+that provide no way to say so. We show that the claim is not a metaphor or a
+methodological preference but a theorem, provable three independent ways: from
+the formal semantics of programming languages, by mechanical construction, and
+from the accumulated engineering record. We then draw the claim's one honest
+boundary — the class of artifacts that genuinely are not state machines, which
+turn out to be precisely the artifacts that are not computations — and sharpen
+that boundary from a vague intuition ("data things") into a precise criterion
+(the value/process distinction, cut at the spec/engine seam). We catalog the
+disguises under which machines hide in ordinary code, name the two symmetric
+failure modes of state-machine authorship (glossing and costuming), and derive
+the design discipline that follows: the existence of the machine is never in
+question; the only engineering decision is whether to *name* it, and the burden
+of proof belongs to not naming it. Finally, we give a practical method — top-down
+and iterative — for recovering the latent machines in any specification or
+codebase. The intended audience is both human and artificial: this paper is
+written to retrain the working worldview of anyone, person or model, who reads
+and writes programs.
+
+---
+
+## 1. Introduction
+
+In Plato's allegory, the prisoners of the cave face a wall, watching shadows
+cast by things they cannot turn to see — and, knowing nothing else, they take
+the shadows for the things themselves. The working programmer occupies a
+similar position through no fault of their own: **our languages face us toward
+the wall.** What we read and write all day — the functions, branches, flags,
+and early returns — are shadows. The thing casting them, always, is a state
+machine. This paper is about turning around.
+
+Ask a working programmer what they did today and they will answer in the
+vocabulary of their language: they wrote functions, classes, handlers, queries.
+Ask what those artifacts *are*, operationally — what happens when they run — and
+the answer is uniform across every language, paradigm, and era:
+**a machine moved through a sequence of states.**
+
+This is not a figure of speech. It is the literal content of how we define what
+programs do, how processors execute them, and how the operational account of
+computation has modeled them since 1936. Yet almost no mainstream language lets
+the programmer *write down* the state structure of what they are building. The
+states are there — they are always there — but they live encoded in program
+counters, boolean flags, enum columns, early returns, call stacks, and the
+positions of instruction pointers inside suspended coroutines. The machine is
+real; only its *name* is missing.
+
+The thesis of this paper is that this situation should invert the default
+posture of software design. The question practitioners habitually ask — *"is
+this a state machine problem?"* — is malformed, because it presumes the machine
+is sometimes absent. The machine is never absent from computation. The
+well-formed question is: *"here is the machine I am necessarily building — does
+it pay to write it down?"* That inversion, from *whether* to *whether to name*,
+changes what code review looks for, what languages should provide, and how both
+humans and AI systems should be trained to read code.
+
+We proceed as follows. Section 2 proves the claim three ways. Section 3 makes
+it precise — what exactly is a state, what is a transition, and why the claim
+is scale-invariant. Section 4 draws the boundary: what genuinely is not a
+state machine, and why that class is exactly the class of non-computations.
+Section 5 catalogs where machines hide in ordinary code. Section 6 derives the
+naming discipline and its two failure modes. Section 7 gives a method for
+finding the machines in an arbitrary codebase. Section 8 draws implications.
+
+---
+
+## 2. Three Proofs
+
+The claim — *all computation is state machinery* — can be established from
+semantics, by construction, and from practice. The first two each suffice on
+their own; the third corroborates them from the engineering record. Together
+they leave no room for the claim to be a matter of taste.
+
+### 2.1 The semantic proof: meaning is a transition system
+
+When the field formalized what a program *means*, the formalism it converged on
+was a transition system. Gordon Plotkin's structural operational semantics [2]
+— the standard method for specifying language behavior — defines the meaning of
+a program as a relation between *configurations*:
+
+```
+⟨ statement, store ⟩  →  ⟨ statement′, store′ ⟩
+```
+
+A configuration pairs a control point with a memory state; the semantics is the
+set of permitted transitions between configurations. There is no rival account
+of what it is to *run* a program. The denotational account — which assigns a
+program a timeless mathematical value — is not a rival but the other pole of a
+dichotomy this paper will draw in §4, and it is answerable to the transition
+system through adequacy results. To execute is to traverse the transition
+relation; a run of the program *is* a path through a state space. This is likewise the picture the hardware presents: a processor is a
+finite-state control (the pipeline and its program counter) acting on a store,
+and since physical memory is finite, every real program execution is — in the
+strict, unromantic sense — a walk through a finite (astronomically large, but
+finite) state machine.
+
+The lineage runs straight back to the founding document. Turing's machine [1]
+is a finite table of *m-configurations* — his term for states — governing a
+head over a tape. The finite control was not incidental apparatus; it was
+Turing's model of the human computer's "state of mind." Computation was born as
+state machinery, and the operational semantics of every language since has
+preserved that shape.
+
+> **The Turing machine, in one breath.** A finite table of states; an
+> unbounded tape of symbols; a head reading one symbol at a time. Each table
+> entry says: *in this state, reading this symbol — write that symbol, move
+> one cell left or right, enter that state.* That is the entire model, and
+> everything computable is computable by it. Every machine in this paper is,
+> at bottom, a descendant of this table.
+
+### 2.2 The constructive proof: the machine is mechanically recoverable
+
+A skeptic might grant that execution is *describable* as a state machine while
+denying that any particular program *contains* one in a recoverable sense.
+John Reynolds closed that escape in 1972 [3]. The two-step transformation he
+introduced — convert a program to continuation-passing style, then
+**defunctionalize** the continuations — takes any *sequential* program, in any
+style, and mechanically produces a first-order state machine: a data type of
+continuations, whose constructors are the machine's control states and whose
+values are its stack, together with a first-order step function. (A concurrent
+program defunctionalizes thread by thread, the scheduler joining the
+composition as one more machine; §3 completes that picture.) Danvy and Nielsen
+later showed how routine and general the technique is [4]. Nothing about the
+source program needs to look "machine-like" for the transformation to succeed,
+because the machine was never absent; it was merely encoded in the program's
+control structure. Defunctionalization is not an
+analysis that sometimes finds a machine. It is a change of representation that
+always exhibits one.
+
+> **Two terms, quickly.** *Continuation-passing style* rewrites a program so
+> that "what happens next" — the continuation — is passed along as an explicit
+> value rather than living implicitly in the call stack.
+> *Defunctionalization* then replaces those continuation values with plain
+> data: an enumeration of the finitely many shapes "what happens next" can
+> take, plus a first-order step function that interprets them. An enumeration
+> of nexts is a set of states; the function that steps through them is a
+> transition table.
+
+The same closure applies to the classic objection from recursion. A recursive
+descent parser "isn't a state machine," the folklore says — it's a program. But
+a recursive parser is precisely a pushdown machine — a finite-state control
+augmented with a stack — whose stack is the host language's call stack. The machine did not disappear into the recursion; its
+most important component was silently outsourced to the runtime. This
+distinction matters in practice: the moment such a parser must suspend, resume,
+or report *where it was* when input ran out, the hidden stack must be dug back
+out — which is defunctionalization again, performed under deadline pressure.
+
+### 2.3 The engineering record: compilers already reify the machine
+
+The third proof is empirical: wherever software *needs* the machine to be a
+first-class value, tooling **reifies** it — that is, makes the abstract
+concrete: turns structure that until then existed only in behavior into an
+explicit object the program can hold and inspect. The recovery is mechanical,
+performed on "ordinary" code — demonstrating that the machine was there all
+along.
+
+- **Coroutines and `async/await`.** When a function must suspend mid-body and
+  resume later, the toolchain must hold its machine explicitly. Compilers for
+  C# (a synthesized state field driving `MoveNext`), Rust (an enum whose
+  discriminant *is* the state, resumed via `poll`), Kotlin (a label-dispatching
+  `invokeSuspend`), and JavaScript (switch-dispatch machines in engines and
+  transpilers alike) reify the linear-looking function into an object with an
+  explicit state field and a resume method; CPython instead suspends the
+  interpreter frame itself, storing the resume offset — the same machine, held
+  by the runtime rather than synthesized by the compiler. Either way, a state
+  machine emerges from code whose author may never have thought the word
+  "state," which is possible only because the machine was already present in
+  the control structure.
+- **Regular expressions.** A pattern is compiled to an automaton and executed
+  as one; automaton-based engines descend from Ken Thompson's 1968
+  construction [5].
+- **Reactive interfaces.** The front-end ecosystem spent a decade rediscovering
+  that interface logic scattered across callbacks and flags is an unmanaged
+  state machine, and converged on tools that reify it — a practical vindication
+  of David Harel's argument, three decades earlier, that complex reactive
+  behavior demands an explicit state formalism [6]. Harel's *statecharts* —
+  the notation that later became UML's state diagrams — are that formalism:
+  plain state machines extended with **hierarchy** (states nested inside
+  states, so one parent transition serves a whole family) and
+  **orthogonality** (independent regions running side by side) — the two
+  devices that let a dozen drawn states govern behavior that flat code spreads
+  across hundreds of branches.
+- **Distributed systems.** The entire theory of fault-tolerant replication
+  rests on modeling a service *as* a deterministic state machine, replicating
+  it, and ensuring every replica applies the same requests in the same order
+  [8]. The approach extends to arbitrary services because any service can be
+  *rendered as* such a machine — the engineering content of the method is
+  exactly that determinization, which presupposes, and thereby evidences, the
+  underlying machine.
+- **Specification.** Leslie Lamport — Turing laureate for the foundations of
+  distributed computing, and for decades the field's most insistent advocate
+  of the state-machine view — specifies programs, protocols, and hardware
+  alike as state machines in TLA+ [9]: a behavior is a sequence of states, and
+  a specification is the machine that generates the permitted behaviors.
+  Lamport has pressed the general point throughout, arguing that our fixation
+  on *language* obscures the underlying invariant: that what a program
+  describes is a state machine, and that computer science pays a price for
+  teaching syntax before teaching this [7].
+
+Three proofs, one conclusion. The state machine is not a design pattern to be
+selected when appropriate. It is what computation *is*. What varies between
+programs is only whether the machine is written down.
+
+---
+
+## 3. Precision: States, Transitions, and the Tower of Quotients
+
+A claim this strong must be stated exactly, or it degrades into slogan. Three
+refinements make it rigorous.
+
+**Statements are transitions; program points are states.** In the operational
+picture of §2.1, an executable statement is an *edge*: it transforms one
+configuration into the next. The *nodes* are the program points between
+statements. A straight-line program of *n* statements is therefore an
+(*n*+1)-state machine — a linear chain in which each state has exactly one
+outgoing transition. This is the degenerate pole of the claim: perfectly true,
+and perfectly uninformative, because the chain's state structure carries no
+information beyond the program counter, which the language already maintains
+for free. The degenerate case is important not because anyone should reify it
+but because it establishes that machine-hood is *never* the question. Even the
+blandest code is a machine; the interesting property lies elsewhere.
+
+**The structure is fractal.** Each transition, examined closely, decomposes
+into a finer machine. A single expression is itself a fine-grained process —
+which is why C must legislate sequence points, the instants by which its
+micro-steps' side effects must have completed, and why an `await` can suspend
+execution *inside* an expression. Below that, the processor's own pipeline is a machine
+executing micro-transitions. There is no bottom at which the machine view
+stops applying; there are only levels of description.
+
+**Abstraction is quotienting.** If the structure is fractal, which machine is
+*the* machine of a program? The answer is that every coarser machine is a
+**quotient** of a finer one: a partitioning of many low-level configurations
+into a few named modes, with transitions inherited across the partition. When a
+designer says a connection is `CONNECTING`, `OPEN`, or `CLOSED`, they have
+quotiented billions of byte-level configurations into three modes that predict
+behavior. Not every partition qualifies: the induced transitions predict
+behavior only when the partition respects the underlying dynamics — when
+configurations grouped together move to the same groups. **Choosing the
+quotient — a partition that is both meaningful and faithful — is the design
+act.** It is the same
+intellectual move as choosing an abstraction — indeed it *is* choosing an
+abstraction, stated operationally. The skill of state-machine authorship is not
+inventing states; the states exist at every granularity. The skill is selecting
+the level at which the mode structure is meaningful: few modes governing much
+behavior, with boundaries that fall where the *observable* differences fall.
+
+**Concurrency multiplies machines; it does not escape them.** A concurrent or
+distributed program is not one sequential walk but a composition of component
+machines whose steps interleave nondeterministically. The composition is
+itself a state machine — its configurations drawn from the product of its
+components', its transition relation the union of their steps — which is
+precisely how TLA+ specifies such systems [9] and how the replication
+literature exploits them [8]. Concurrency adds machines (one per thread, plus
+the scheduler) and adds nondeterminism to the walk; it widens the tower rather
+than standing outside it.
+
+With these refinements, the claim of §2 can be restated in its exact form:
+*every program is a tower of state machines related by quotients; the
+programmer's control structures select one level of the tower and then encode
+it namelessly.* What remains is to ask what, if anything, stands outside the
+tower.
+
+---
+
+## 4. The Boundary: What Is Not a Machine
+
+An honest maximalism must locate its own limit. There are artifacts in software
+practice that resist the machine description — a database schema, a type
+definition, a configuration file, a SQL query, an algebraic identity. The
+tempting move is to carve out a domain exemption: *data things* aren't state
+machines. The intuition is pointing at something real, but domain is the wrong
+axis to cut along, and finding the right one sharpens the entire thesis.
+
+### 4.1 The dichotomy: process versus value
+
+Begin from Lamport's identification: a computation is a sequence of steps —
+in the state-based view he adopts, a sequence of states [7]. Take it seriously
+in both directions. If computation is state sequence,
+then whatever genuinely escapes the machine view escapes *by not being a
+computation*. It is not a process but a **value** — or a **space** of values,
+or a **description** awaiting an engine. The dichotomy is exhaustive and clean:
+
+- A **schema** or **type definition** is not a machine — and not a computation.
+  It *defines a state space*: the set of configurations an entity may occupy.
+  It has no transitions and no time axis. Note carefully that this makes data
+  modeling not the *rival* of the machine view but its **other half**: a
+  machine is a state space plus a transition structure, and data modeling
+  supplies the first component. (A state-machine language reflects this
+  directly: a machine declaration contains its data model — the variables whose
+  values, jointly with the named mode, constitute a configuration.)
+- A **pure total function**, viewed denotationally, is a timeless mapping from
+  inputs to outputs — a value in the mathematical sense. Its *evaluation* is a
+  computation (and thus a machine, per §2.1), but when no intermediate state of
+  that evaluation is observable — it cannot fail partway, suspend, or be
+  interrupted in any way the rest of the system can detect — the mapping view
+  is honest, and the artifact may be treated as a value.
+- A **specification** — a regex pattern, a SQL query, a build file, a grammar —
+  is data that *describes* behavior without performing it.
+
+### 4.2 The right cut: spec versus engine
+
+The specification case exposes the correct boundary. Every one of those
+"non-machine" artifacts is animated, somewhere, by an engine — **and the engine
+is always a machine:**
+
+| The value (not a machine, not a computation) | Its engine (always a machine) |
+|---|---|
+| Regular-expression pattern | The matcher: a finite automaton [5] |
+| SQL query (relational algebra) | The executor: per-operator `open`/`next`/`close` state protocols [10] |
+| Stream pipeline `map f ∘ filter p` | The consumer: a transducer (a machine that emits output as it consumes input) with buffering, end-of-stream, error, and backpressure states |
+| Build file | The build executor: a scheduler over task states |
+| Type/schema definition | The validator, migrator, and every lifecycle that moves instances through time |
+| State-machine *description* itself | The generated or interpreted machine that runs it |
+
+The cut that separates machine from non-machine therefore falls not along
+*domain* ("data-ish things are exempt") but along *role*: the **spec/engine
+seam** — equivalently, value versus process, the denotational view versus the
+operational one. If you are writing the description, you are writing data. If
+you are writing the thing that animates the description, you are writing a
+machine, whatever your language calls it.
+
+### 4.3 Streaming, and data across time
+
+Streaming is the case that breaks the domain exemption and confirms the
+role-based one. A "stream" sounds like data — and the pipeline *algebra* (the
+composition of maps and filters, as an expression) is indeed a value. But a
+stream is data with a **time axis**, and the moment time enters, machines
+return: the consumer that processes arriving chunks is a transducer; a
+resumable stream protocol is an automaton with a position register; every
+backpressure scheme is a protocol machine. The same reintroduction happens
+inside the most data-centric practice: a schema *migration* is a transition
+between versions of a state space; an entity *lifecycle* (`draft → review →
+published → archived`) is a machine that manages data; and the ubiquitous
+`status` column — consulted by conditionals scattered across a dozen handlers —
+is among the most common latent machines in industrial software.
+
+The boundary, stated as a maxim: **data at rest is a state; data across time
+is a machine.** The exemption from the machine view is real, but it is narrow
+and must be *earned* — by showing the artifact has no observable intermediate
+states, no time axis, and no failure/suspension/resumption structure; that is,
+by showing it is a value, a space, or a spec whose engine lives elsewhere. An
+exemption claimed on those grounds should also say *where* the engine lives,
+because someone owns it, and that someone is writing a state machine.
+
+---
+
+## 5. Where Machines Hide: A Field Guide to Latent State
+
+If every program encodes a machine, ordinary language features must be the
+encoding. They are. Structured programming itself can be read this way: the
+Böhm–Jacopini result [11] showed that sequencing, selection, and iteration
+suffice to express any computable control flow — which is to say, **structured
+control flow is a complete notation for writing automata without ever naming
+their states.** An `if` is a two-way branch between anonymous states; a loop is
+an anonymous cycle; a function call pushes a frame of an unnamed pushdown
+machine. The historical triumph of structured programming was the taming of
+explicit control transfer — and its side effect was to render state structure
+invisible at exactly the moment it became universal.
+
+The disguises are few and recur everywhere. A reader trained to see them can
+recover the machine from almost any code:
+
+| Disguise | What it actually is |
+|---|---|
+| Boolean flag (`connected`, `dirty`, `initialized`) | One bit of the mode register — a state distinction demoted to data |
+| Enum/`status`/`phase`/`mode` field | The mode register itself, with transitions scattered as assignments across the codebase |
+| `Option`/`Result`/nullable return | A fork to distinct terminal states, erased into the value channel |
+| Early `return` / `break` / `continue` | An unnamed transition, often to an unnamed terminal state |
+| Exception / `try–catch` | A non-local transition into an error state whose existence the happy path never acknowledges |
+| Loop counter / depth counter | The register of a counter automaton tracking the walk |
+| The call stack | The stack of a pushdown machine outsourced to the runtime |
+| Callback / async continuation | A suspension state, reified by the compiler but unnamed in the source |
+| Retry/backoff/timeout logic | A protocol machine's error-recovery states, inlined |
+| Constructor/setup ordering (fields that must be set before others are valid) | An initialization phase — states the object passes through before its steady modes, encoded as call order |
+| A timestamp or version column | A time axis — the signature that a machine governs this data (§4.3) |
+
+(Appendix A draws each row of this table: the code shape, and beneath it the
+machine it encodes.)
+
+Two entries in this table deserve emphasis because they name the most costly
+gloss in practice — the failure mode §6.2 will name *glossing*. **Initialization and error conditions are states** — and
+they are the states most consistently flattened into flags, early returns, and
+merged failure enums. A parser is mostly its edge cases: end-of-input,
+malformed constructs, the unterminated string. Code that models its steady-state loop
+carefully while compressing six distinct failure modes into one boolean has not
+avoided building a machine; it has built one with its most operationally
+important states unlabeled. When such code is later "converted" to an explicit
+machine by faithfully transcribing its control flow, the gloss survives the
+conversion — the machine is *code-faithful* without being *state-faithful*. The
+test of a faithful machine is that its init and terminal structure is as
+articulated as its processing structure.
+
+---
+
+## 6. When to Name the Machine
+
+Everything above establishes that the machine's *existence* is never at issue.
+The engineering question — the only one — is whether to **name** it: to reify
+states, transitions, and events as first-class, inspectable structure rather
+than leaving them encoded in control flow and flags. This question has a
+disciplined answer.
+
+### 6.1 The three payoffs
+
+Naming the machine pays on exactly three grounds, and a proposal to reify
+should be able to point to at least one:
+
+1. **Compression.** When a few modes govern many statements — when the
+   quotient is steep — the named machine is a shorter, clearer description of
+   behavior than the code that encodes it. This is Harel's original argument
+   for statecharts [6]: the formalism earns its keep by compressing complex
+   reactive behavior into hierarchy and orthogonality that flat code (and flat
+   machines) cannot express legibly.
+2. **Observability.** When intermediate states are operationally significant —
+   when the system must suspend and resume, persist and restore, report where
+   it is, or distinguish its failure modes — the states must be values, not
+   positions in control flow. A program counter cannot be serialized to disk,
+   displayed on a dashboard, or pattern-matched in an error handler; a named
+   state can.
+3. **Verifiability.** A named machine can be checked: its state space
+   enumerated, its transitions tested one by one, unreachable modes detected,
+   illegal transitions made unrepresentable, and its behavior compared
+   state-for-state against an oracle. A latent machine offers no such surface —
+   its states can be reached but not enumerated, exercised but not asserted on.
+
+### 6.2 The two failure modes: glossing and costuming
+
+State-machine authorship fails in two symmetric ways, and both are errors of
+**quotient selection** (§3).
+
+**Glossing** is under-naming: writing the machine but hiding its states — the
+boolean that is really a mode, the merged error terminals, the initialization
+phase living in a constructor's implicit sequencing. Glossed code passes tests
+on the happy path and fails at the edge cases, because the edge cases are
+precisely the states that were never named. Glossing selects a quotient too coarse for the
+observable behavior.
+
+**Costuming** is over-naming: reifying states that carry no information — the
+degenerate (*n*+1)-chain of §3 dressed in state syntax, `Step1 → Step2 →
+Step3` wrapped around straight-line code with no re-entry, no branching, no
+observable intermediates, and no failure structure. A costume adds ceremony
+without adding a single bit beyond the program counter. Costuming selects a
+quotient too fine to be meaningful.
+
+The discriminator between a real machine and a costume — and between honest
+data and a gloss — is that **named states must be load-bearing**: each must
+carry information about future behavior that is not already explicit in the
+code's structure. A state that could be deleted, with its transitions fused,
+without changing any observable behavior or any reader's understanding, was a
+costume. A flag whose value changes which transitions are possible was always
+a state.
+
+### 6.3 The inversion of the burden of proof
+
+Here is the discipline in one sentence. Under the traditional posture, a
+designer asks *"is this a state machine problem?"* and the default answer is
+no; machinery must argue its way in. Under the posture this paper defends, the
+machine's presence is settled by theorem, so the question becomes *"this is a
+state machine — justify leaving it latent,"* and the admissible pleas are
+exactly three. The first is the plea §4 established: *this artifact is a
+value, a space, or a spec, and its engine lives elsewhere.* The second, for a
+fragment of genuine process: *it is pure, total, and none of its intermediate
+states are observable.* The third, licensed by §6.2: *the machine at this
+level is degenerate — its states carry nothing beyond the program counter, so
+naming it would be costume.* The theorem settles existence, not significance;
+significance is settled by the load-bearing test, and the burden of
+justification therefore attaches where the signatures of §5 — the flags, the
+mode fields, the merged terminals, the retry logic — evidence a non-degenerate
+quotient. Where they do, and no plea holds, the latent machine is a design
+decision that was made silently, and silence is the wrong way to make it.
+
+This inversion is not maximalism about reification — §6.2's costume warning
+stands. It is maximalism about **honesty**: the machine may reasonably remain
+latent, but only as a *stated* decision with a *stated* justification, exactly
+as one would justify any other abstraction choice.
+
+---
+
+## 7. Finding the Machines: A Method
+
+The worldview implies a practice: given an arbitrary specification or
+codebase, recover its latent machines. The method that follows is **top-down
+in its structure and iterative in its execution** — top-down because the outermost
+machine (the system's lifecycle) is the quotient under which every inner
+machine is a refinement, and iterative because in real code one usually
+encounters *evidence* of machines long before the machines themselves become
+identifiable. The method embraces that: it gathers symptoms first, relates
+them, and only then names the machine that manages them.
+
+**Phase 1 — Symptoms.** Survey the artifact for the signatures of latent state
+(the field guide of §5): flags, `status`/`mode`/`phase` fields, `Option`/
+`Result` returns, early returns and breaks, exception structure, retry and
+timeout logic, counters and depths, recursion, suspension points, timestamps
+and version fields. Record each *symptom* with its location and the data it
+reads or writes. At this stage, resist the urge to declare machines; a
+symptom is not a diagnosis.
+
+**Phase 2 — Relations.** Cluster the symptoms. Which flags co-vary? Which
+functions consult the same mode data? Which error paths belong to the same
+lifecycle? Which symptoms share a time axis? The clusters are hypotheses of the
+form *"these symptoms are governed by one machine."* Some symptoms will resist
+clustering — hold them; their machine has not yet surfaced, and forcing them
+into the nearest cluster is how false machines get drawn.
+
+**Phase 3 — Machines.** For each cluster, name the machine that manages it:
+its states — **including, with particular care, its initialization states and
+its full set of distinct terminal and error states**, since these are the
+most-glossed (§5); its transitions and the events that drive them; its
+classification (a mode dispatcher, a counter automaton, a transducer, a
+pushdown machine, a protocol controller); its current encoding (which flags,
+returns, and control structures presently carry it); and its position on the
+spec/engine seam (§4.2) — is this code the description or the animator? Then
+choose the quotient deliberately: the level at which the mode structure is
+load-bearing.
+
+> **The classifications, one line each.** A *mode dispatcher* selects among
+> behaviors by a current mode. A *counter automaton* is finite control plus a
+> counter or two — a depth, a retry budget. A *transducer* emits output as it
+> consumes input. A *pushdown machine* is finite control plus a stack — the
+> shape of recursion. A *protocol controller* sequences an interaction with
+> another party, its timeouts and retries included.
+
+**Iterate.** Descend: each named machine's states may themselves decompose
+(§3), and the scan repeats within them. Ascend: newly named machines may
+reveal that previously orphaned symptoms belong to a larger lifecycle not yet
+drawn. The scan converges when every symptom is either owned by a named machine
+or covered by an earned exemption (§4.3's plea: value, space, or
+spec-with-engine-elsewhere).
+
+The deliverable of the method is a **machine inventory**: the census of a
+system's machines. Each entry has a fixed shape:
+
+- **Machine** — its name;
+- **Evidence** — the symptoms that betray it, with locations;
+- **States** — initialization, steady, and the *full* set of distinct
+  terminal/error states, latent ones included;
+- **Events and transitions** — what drives movement between them;
+- **Classification** — dispatcher, counter, transducer, pushdown, protocol
+  controller;
+- **Current encoding** — which flags, returns, and control structures carry it
+  today;
+- **Disposition** — *reify*, naming which of §6.1's payoffs, or *leave
+  latent*, with the plea §6.3 demands.
+
+An inventory of this kind is, in a precise sense, the operational truth of a
+codebase: it answers what the system *does* in the only vocabulary computation
+actually has.
+
+### A worked miniature
+
+The method deserves to be seen once at full magnification. Here is an entirely
+ordinary helper — no machine in sight:
+
+```python
+def upload(path, client):
+    connected = False
+    retries = 0
+    data = read_file(path)          # may raise
+    while retries < 3:
+        if not connected:
+            client.open()
+            connected = True
+        try:
+            client.send(data)
+            return True             # success
+        except TransientError:
+            retries += 1
+            connected = False
+        except Exception:
+            return False            # failure
+    return False                    # gave up
+```
+
+**Phase 1 — Symptoms.** `connected` (a boolean flag, written on two paths);
+`retries` (a bounded counter); three exits (`return True` once, `return False`
+twice); a two-armed `try/except` (two error families treated differently); and
+one symptom that is easy to miss — `read_file` can raise *before the loop*, an
+exit that appears nowhere in the function's visible returns.
+
+**Phase 2 — Relations.** `connected` and `retries` co-vary: both are written
+on the `TransientError` path, so one lifecycle governs them. The three
+`return` statements are not one outcome in three places but three *distinct*
+outcomes — success, permanent failure, retries exhausted. The unguarded
+`read_file` refuses to join any cluster: it is an orphan symptom, held until
+the machine surfaces.
+
+**Phase 3 — The machine.** Now the cluster names itself:
+
+- **Machine:** `UploadSession`
+- **Evidence:** the `connected` flag, the `retries` counter, three returns,
+  two `except` arms, the unguarded `read_file`
+- **States:** init `Reading`, `Connecting`; steady `Sending`; terminals
+  `Done`, `Failed`, `RetriesExhausted` — and the latent **`ReadFailed`**, an
+  exit the code takes (an exception escaping the function) but never
+  acknowledges: the orphan symptom was an unnamed terminal all along
+- **Events/transitions:** read ok → `Connecting`; send ok → `Done`;
+  `TransientError` → `Connecting` (incrementing the bound; at 3 →
+  `RetriesExhausted`); any other error → `Failed`
+- **Classification:** protocol controller with a bounded-retry counter
+- **Current encoding:** two mutable locals, three returns, exception structure
+- **Disposition:** *reify* — on observability (four distinct terminals
+  currently collapsed into `True`/`False`/an uncaught raise) and verifiability
+  (a retry bound that can be asserted per state)
+
+The point of the miniature is not that fifteen lines deserved a formalism. It
+is that the machine, its four terminals, and its unacknowledged
+initialization failure were all already there. The inventory added no
+structure. It disclosed it.
+
+---
+
+## 8. Implications
+
+**For programmers.** This reframing asks nothing new of practice except
+honesty about what practice already is. Every working programmer is a prolific author
+of state machines; the flags, enums, and early returns of their daily work are
+machine notation, unnamed. What changes under it is stewardship:
+error paths are read as terminal states and articulated rather than merged;
+initialization is read as a phase with structure rather than a prologue;
+`status` fields are recognized as mode registers whose transition rules
+deserve one home instead of a dozen scattered conditionals. Nothing about this
+requires a new language — only a new reading of the old one.
+
+**For language design.** The engineering record (§2.3) shows compilers
+routinely *reifying* machines from unannotated code the moment the runtime
+needs them. That capability is an argument, not a convenience: if the machine
+can be recovered mechanically downstream, it could have been written directly
+upstream — with its states named by the person who conceived them rather than
+synthesized namelessly by a lowering pass. A language in which the machine is
+the source artifact makes the latent explicit by construction; this is the
+design position that Frame occupies. (Companion pieces on this site survey the
+history of such attempts and the pathologies of state's absence; this paper's
+argument stands independently of them, on the primary literature.)
+
+**For artificial intelligence.** Language models learn to program from corpora
+in which virtually every machine is latent — and so, we conjecture and our
+experience suggests, they tend to reproduce the gloss: generated code that
+handles the happy path and flattens the edge cases, flags where there should
+be modes, merged failures where there should be terminals. A model trained — or
+instructed — to hold this paper's worldview should read and write differently:
+asking *where is the machine* before asking *what is the code*, treating an
+`Option` return as a fork in a lifecycle, and regarding an unarticulated error
+path as an unfinished design rather than a style choice.
+As AI systems take on more of the authorship of software, the worldview they
+hold about what software *is* stops being philosophy and becomes output. This
+paper is written to be that worldview, for both kinds of reader.
+
+---
+
+## 9. Conclusion
+
+The claim with which we began — that all code hides a state machine — turns
+out to be understated. Code does not hide *a* machine; code **is** machine
+notation, top to bottom, a tower of quotients from the system lifecycle down
+through every branch and loop to the sequence points inside expressions. The
+formal semantics say so; the mechanical transformations prove it constructively;
+the engineering record demonstrates it every time a compiler reifies a
+coroutine or a replication protocol demands the explicit representation. What
+stands outside the claim is exactly what stands outside computation: values,
+spaces, and specifications — data at rest — and even these are animated by
+engines that are machines, and governed across time by machines the moment
+they acquire a lifecycle.
+
+From the theorem follows the discipline of §6, compressed to a sentence:
+existence is never the question; naming is — and the burden of proof falls on
+leaving the machine latent, not on writing it down. A machine left unwritten
+should be a decision with a justification, not a default with a history.
+
+The programmer who accepts this does not begin doing something new. They begin
+*seeing* what they were doing all along. The shadows on the wall were never
+false — they were cast by something real. Turned around, the machines can
+finally be written down.
+
+---
+
+## References
+
+[1] A. M. Turing, "On Computable Numbers, with an Application to the
+Entscheidungsproblem," *Proceedings of the London Mathematical Society*,
+s2-42(1), pp. 230–265, 1936–7.
+
+[2] G. D. Plotkin, "A Structural Approach to Operational Semantics," Technical
+Report DAIMI FN-19, Computer Science Department, Aarhus University, 1981.
+Reprinted in *Journal of Logic and Algebraic Programming*, 60–61, 2004.
+
+[3] J. C. Reynolds, "Definitional Interpreters for Higher-Order Programming
+Languages," *Proceedings of the ACM Annual Conference*, 1972. Reprinted in
+*Higher-Order and Symbolic Computation*, 11(4), 1998.
+
+[4] O. Danvy and L. R. Nielsen, "Defunctionalization at Work," *Proceedings of
+the 3rd International Conference on Principles and Practice of Declarative
+Programming (PPDP)*, 2001.
+
+[5] K. Thompson, "Programming Techniques: Regular Expression Search
+Algorithm," *Communications of the ACM*, 11(6), 1968.
+
+[6] D. Harel, "Statecharts: A Visual Formalism for Complex Systems," *Science
+of Computer Programming*, 8(3), 1987.
+
+[7] L. Lamport, "Computation and State Machines," unpublished manuscript,
+2008. Available from the author's collected writings.
+
+[8] F. B. Schneider, "Implementing Fault-Tolerant Services Using the State
+Machine Approach: A Tutorial," *ACM Computing Surveys*, 22(4), 1990.
+
+[9] L. Lamport, *Specifying Systems: The TLA+ Language and Tools for Hardware
+and Software Engineers*, Addison-Wesley, 2002.
+
+[10] G. Graefe, "Volcano — An Extensible and Parallel Query Evaluation
+System," *IEEE Transactions on Knowledge and Data Engineering*, 6(1), 1994.
+
+[11] C. Böhm and G. Jacopini, "Flow Diagrams, Turing Machines and Languages
+with Only Two Formation Rules," *Communications of the ACM*, 9(5), 1966.
+
+---
+
+## Appendix A — The Disguises, Drawn
+
+Each entry below takes one row of §5's field guide and draws it: a minimal
+code shape, and beneath it the machine that shape encodes. The notation is
+uniform:
+
+```text
+*           start
+(Name)      state
+((Name))    terminal state
+--label-->  transition, labeled with its event or condition
+~~~~~~~~>   non-local transition — an edge control takes
+            without the code ever drawing it
+```
+
+**A.1 The boolean flag** — one bit of mode register.
+
+```python
+connected = False
+...
+if not connected:
+    client.open()
+    connected = True
+```
+
+```text
+             open()
+*--> (Disconnected) ----------> (Connected)
+          ^                          |
+          +------ drop / reset ------+
+```
+
+The flag's two values are two states. Every `if not connected` in the
+codebase is a guard on the current mode; every assignment is a transition.
+
+**A.2 The status field** — the mode register, transitions scattered.
+
+```python
+order.status = "submitted"   # checkout.py
+order.status = "shipped"     # fulfillment.py
+order.status = "delivered"   # tracking.py
+```
+
+```text
+*--> (Draft) --> (Submitted) --> (Shipped) --> ((Delivered))
+```
+
+The machine is real; no single file contains it. Its transition rules live as
+assignments in three modules, and nothing prevents `fulfillment.py` from
+shipping a draft.
+
+**A.3 The `Option`/`Result` return** — terminal states erased into the value
+channel.
+
+```rust
+fn parse(s: &str) -> Option<Ast>
+```
+
+```text
+                 ok
+*--> (Parsing) ------> ((Some(Ast)))
+        |
+        +-- malformed --------+
+        +-- empty input ------+--> ((None))
+        +-- depth exceeded ---+
+```
+
+Three distinct failure terminals reach the caller as one undifferentiated
+`None`. The fork is real; the value type flattened it.
+
+**A.4 The early return** — an unnamed transition to an unnamed terminal.
+
+```python
+if not valid(x):
+    return None
+process(x)
+```
+
+```text
+*--> (Validating) --valid--> (Processing) --> ((Done))
+          |
+          +--invalid--> ((Rejected))      # no name in the code
+```
+
+The `return` is a transition; the state it enters has no name and no other
+acknowledgment anywhere in the program.
+
+**A.5 The exception** — a non-local transition the happy path never draws.
+
+```python
+data = fetch()        # can raise
+result = transform(data)
+```
+
+```text
+*--> (Fetching) --ok--> (Transforming) --> ((Done))
+          |
+          +~~~~ raise ~~~~> ((FetchFailed))
+```
+
+The code draws only the top row. The wavy edge exists at runtime — it is
+taken, it has a destination — but the source text acknowledges it nowhere.
+
+**A.6 The counter** — a register riding the walk.
+
+```python
+depth = 0
+for ch in text:
+    if ch == '{': depth += 1
+    if ch == '}': depth -= 1
+```
+
+```text
+        '{' / depth+1
+       +-------------+
+       |             |
+*--> (Scanning, depth)      # one drawn mode; the true state
+       |             ^      # is the pair (mode, register)
+       +-------------+
+        '}' / depth-1
+```
+
+A counter automaton: finitely many drawn modes, plus a register. The state
+space is larger than the diagram — which is exactly what the register is for.
+
+**A.7 The call stack** — a pushdown machine's stack, outsourced.
+
+```python
+def expr():   ... term() ...
+def term():   ... factor() ...
+def factor(): ... '(' expr() ')' ...
+```
+
+```text
+*--> (expr) --call--> (term) --call--> (factor)
+        ^                                 |
+        +--------- return (pop) ----------+
+
+stack: [ expr | term | factor | expr | ... ]   # lives in the runtime
+```
+
+The recursion is a pushdown machine. Its control states are the functions;
+its stack is the host language's call stack — present, load-bearing, and
+invisible until the day the parse must suspend or resume (§2.2).
+
+**A.8 The `await`** — a suspension state, synthesized downstream.
+
+```js
+const data = await fetch(url);   // L1
+render(data);
+```
+
+```text
+*--> (Running) --await--> (Suspended@L1) --resolve--> (Running′) --> ((Done))
+                               |
+                               +--reject--> ((Failed))
+```
+
+`Suspended@L1` appears nowhere in the source. The compiler synthesizes it —
+an object with a state field and a resume method — because the runtime cannot
+hold a suspension without it (§2.3).
+
+**A.9 Retry logic** — a protocol machine's recovery states, inlined.
+
+```python
+while retries < 3:
+    try:
+        send(); break
+    except TransientError:
+        retries += 1; sleep(backoff)
+```
+
+```text
+                send ok
+*--> (Sending) -----------> ((Done))
+       |    ^
+ transient  | after backoff / retries+1
+       v    |
+     (Waiting) --retries == 3--> ((GaveUp))
+```
+
+Two modes, a bounded counter, and two terminals — compressed into a `while`,
+a `try`, and two mutable locals.
+
+**A.10 Constructor ordering** — an initialization phase encoded as call
+order.
+
+```python
+s = Server()
+s.load_config()
+s.bind()
+s.serve()
+```
+
+```text
+*--> (Allocated) --load_config--> (Configured) --bind--> (Bound)
+                                                            |
+                                                          serve
+                                                            v
+                                                        (Serving)
+```
+
+Calling `serve()` on an `(Allocated)` server is an illegal transition — one
+the diagram makes unrepresentable and the API leaves as a runtime surprise.
+
+**A.11 The version column** — a time axis; a machine governs this data.
+
+```sql
+ALTER TABLE orders ADD COLUMN version INT, updated_at TIMESTAMP;
+```
+
+```text
+(v1) --migration--> (v2) --migration--> (v3)
+```
+
+Each row's `version` names the state in which the schema's machine last left
+it. The migrations are that machine's transitions — run by an engine (§4.2)
+that someone owns.
