@@ -1,0 +1,54 @@
+@@[target("rust")]
+@@[scan(u8)]
+
+// The STATE-member dispatch walk, dogfooded as an `@@[scan(u8)]` system — the member-level
+// analogue of `MachineWalk` (state level) and `Segmenter` (item level). It walks a state BODY
+// span and ACCUMULATES the member-START offsets into `starts`: a `$.x` state variable or a
+// handler head (`ev(...) {`, `$>() {`, `<$() {`). It skips opaque regions and skips each member's
+// whole extent (a state var to end-of-line; a handler to past its body), so a `$.x` or a `}`
+// inside a handler body is never a member start. `target`/`limit` are construction config (they
+// survive `scan_at`); `starts` is the accumulated output.
+//
+// framec owns the WALK (the `$Scan` step loop); the leaves do only transformation, each a proven
+// system or a shared helper: `skip` = the opaque skip (OpaqueScan), `member_end` = the member's
+// extent (a state var via `machine::to_end_of_line`; a handler via `machine::handler_end` →
+// `handler_head`, the SAME source `handler_at` builds the node from, via DelimBalance — so the
+// found boundary and the built extent cannot drift), `record` is trivial. `state()`'s member loop
+// is now a thin native driver over these positions.
+//
+// Regen: framec-ng -l rust --emit state_walk.frs | grep -v '^#!\[allow' > state_walk.gen.rs
+
+@@system StateWalk(target: Target, limit: usize) {
+    interface:
+        step()
+    machine:
+        $Scan {
+            step() {
+                if self.cursor >= self.limit {
+                    -> $Accept
+                }
+                // Skip a whole opaque region (a `$.` or handler-looking text inside it is not a
+                // member).
+                let sk = skip(self.src, self.cursor, self.limit, self.target);
+                if sk > self.cursor {
+                    self.cursor = sk;
+                } else {
+                    // A member opens here iff `member_end` reports an extent past the cursor (a
+                    // state var → end-of-line; a handler → past its body). Record its start, then
+                    // jump past its extent so the next thing we see is the next member.
+                    let me = member_end(self.src, self.cursor, self.limit, self.target);
+                    if me > self.cursor {
+                        record(&mut self.starts, self.cursor);
+                        self.cursor = me;
+                    } else {
+                        self.cursor = self.cursor + 1;
+                    }
+                }
+            }
+        }
+        $Accept { }
+    domain:
+        target: Target = target
+        limit: usize = limit
+        starts: Vec<usize> = Vec::new()
+}

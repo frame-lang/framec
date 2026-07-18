@@ -26,6 +26,8 @@ pub mod opaque_scan;
 pub mod delim_balance;
 /// The machine-section state-start walk, dogfooded as a Frame `@@[scan(u8)]` system.
 pub mod machine_walk;
+/// The state-member start walk, dogfooded as a Frame `@@[scan(u8)]` system.
+pub mod state_walk;
 /// Composition proof: a scan system that composes StringScan (docs/JOURNAL.md).
 pub mod string_counter;
 /// The item-level segmenter walk, dogfooded as a Frame @@[scan(u8)] system.

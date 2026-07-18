@@ -59,19 +59,19 @@ pub fn machine_section(lx: &Lexer, bytes: &[u8], span: Span, kw: Span) -> Machin
 
 /// `$Name(params) { …handlers… }`
 fn state(lx: &Lexer, bytes: &[u8], at: usize, limit: usize) -> StateNode {
-    let mut j = at + 1;
-    let ns = j;
-    while j < limit && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') {
-        j += 1;
-    }
-    let name = String::from_utf8_lossy(&bytes[ns..j]).into_owned();
+    // Name, opening `{`, and its matching `}` — all from the shared `state_extent` (the SAME
+    // source the `MachineWalk` system's `state_end` leaf uses), so the boundary the walk finds and
+    // the extent this node carries cannot drift, and the name-skip is done exactly once.
+    let (name_end, open, end) = state_extent(bytes, at, limit, lx.target());
+    let close = end.saturating_sub(1);
+    let name = String::from_utf8_lossy(&bytes[at + 1..name_end]).into_owned();
 
     // `$B(n: int, m: str)` — the declared parameter NAMES.
     let mut params = Vec::new();
     let mut param_types = std::collections::HashMap::new();
-    if j < limit && bytes[j] == b'(' {
-        if let Some(pe) = balanced(lx, bytes, j, limit, b'(', b')') {
-            let inner = String::from_utf8_lossy(&bytes[j + 1..pe.saturating_sub(1)]).into_owned();
+    if name_end < limit && bytes[name_end] == b'(' {
+        if let Some(pe) = balanced(lx, bytes, name_end, limit, b'(', b')') {
+            let inner = String::from_utf8_lossy(&bytes[name_end + 1..pe.saturating_sub(1)]).into_owned();
             for (n, t) in super::super::emit::driver::params_split(&inner) {
                 if let Some(t) = t {
                     param_types.insert(n.clone(), t);
@@ -84,7 +84,7 @@ fn state(lx: &Lexer, bytes: &[u8], at: usize, limit: usize) -> StateNode {
     // `=> $Parent` — the state's parent. This is the whole of HSM.
     let mut parent = None;
     {
-        let mut k = j;
+        let mut k = name_end;
         while k < limit && bytes[k] != b'{' && bytes[k] != b'\n' {
             if starts(bytes, k, b"=>", limit) {
                 let mut p = k + 2;
@@ -107,48 +107,31 @@ fn state(lx: &Lexer, bytes: &[u8], at: usize, limit: usize) -> StateNode {
         }
     }
 
-    // The opening `{` and its matching `}` — via the shared `state_extent`, the SAME source the
-    // `MachineWalk` system's `state_end` leaf uses, so the boundary the walk finds and the extent
-    // this node carries cannot drift.
-    let (open, end) = state_extent(bytes, at, limit, lx.target());
-    let close = end.saturating_sub(1);
-
+    // The state members — **now a native driver over the dogfooded `StateWalk` system**
+    // (`state_walk::member_starts`): the system finds the member-start offsets (a `$.x` state var
+    // or a handler head), skipping opaque + each member's extent; this driver builds the Trivia +
+    // StateVar/Handler nodes. Each member's extent is re-derived from the SAME shared source the
+    // walk used (`to_end_of_line` / `handler_head`), so they cannot drift.
+    let starts = super::state_walk::member_starts(bytes, open + 1, close, lx.target());
     let mut members = Vec::new();
-    let mut i = open + 1;
-    let mut cursor = i;
+    let mut cursor = open + 1;
 
-    while i < close {
-        if let Some(next) = skip_opaque(bytes, i, close, lx.target()) {
-            i = next;
-            continue;
+    for &start in &starts {
+        if cursor < start {
+            members.push(StateMember::Trivia(TriviaNode {
+                span: Span::new(cursor, start),
+            }));
         }
-        // `$.name: T = init` — a state variable (Frame's own declaration).
-        if bytes[i] == b'$' && bytes.get(i + 1) == Some(&b'.') {
-            if cursor < i {
-                members.push(StateMember::Trivia(TriviaNode {
-                    span: Span::new(cursor, i),
-                }));
-            }
-            let e = to_end_of_line(bytes, i, close);
-            members.push(StateMember::StateVar(decl_of(bytes, i + 2, e, i)));
-            i = e;
-            cursor = i;
-            continue;
-        }
-        // A handler: `name(...) {` / `$>() {` / `<$() {` — anything followed by a
-        // brace at this level.
-        if let Some(h) = handler_at(lx, bytes, i, close) {
-            if cursor < i {
-                members.push(StateMember::Trivia(TriviaNode {
-                    span: Span::new(cursor, i),
-                }));
-            }
-            i = h.span.end;
-            cursor = i;
+        if bytes[start] == b'$' && bytes.get(start + 1) == Some(&b'.') {
+            // `$.name: T = init` — a state variable (Frame's own declaration).
+            let e = to_end_of_line(bytes, start, close);
+            members.push(StateMember::StateVar(decl_of(bytes, start + 2, e, start)));
+            cursor = e;
+        } else if let Some(h) = handler_at(lx, bytes, start, close) {
+            // A handler: `name(...) {` / `$>() {` / `<$() {`.
+            cursor = h.span.end;
             members.push(StateMember::Handler(h));
-            continue;
         }
-        i += 1;
     }
     if cursor < close {
         members.push(StateMember::Trivia(TriviaNode {
@@ -174,8 +157,22 @@ fn state(lx: &Lexer, bytes: &[u8], at: usize, limit: usize) -> StateNode {
     }
 }
 
-/// A handler starting at `i`, if there is one.
-fn handler_at(lx: &Lexer, bytes: &[u8], i: usize, limit: usize) -> Option<HandlerNode> {
+/// The parsed HEADER of a handler starting at `i` (if one is there): the event name, the param
+/// group `(...)`, an optional `: T` return type, the opening `{`, and the body end. **Single
+/// source** — `handler_at` builds the node from it AND the `StateWalk` system's `handler_end`
+/// leaf reads its `.end`, so the member boundary the walk finds and the extent the node carries
+/// cannot drift. Takes `target` (not a `Lexer`) so the leaf can call it. `None` if no handler
+/// opens here (no event name, no `(`, or no `{`).
+struct HandlerHead {
+    name: String,
+    params_open: usize,
+    params_close: usize,
+    return_text: Option<String>,
+    open: usize,
+    end: usize,
+}
+
+fn handler_head(bytes: &[u8], i: usize, limit: usize, target: Target) -> Option<HandlerHead> {
     // The event name: an identifier, or `$>` (enter) / `<$` (exit).
     let (name, mut j) = if bytes[i] == b'$' && bytes.get(i + 1) == Some(&b'>') {
         ("$>".to_string(), i + 2)
@@ -198,8 +195,9 @@ fn handler_at(lx: &Lexer, bytes: &[u8], i: usize, limit: usize) -> Option<Handle
     if j >= limit || bytes[j] != b'(' {
         return None;
     }
-    let pe = balanced(lx, bytes, j, limit, b'(', b')')?;
-    let mut k = pe;
+    let params_open = j;
+    let params_close = super::delim_balance::balanced(bytes, j, limit, b'(', b')', target)?;
+    let mut k = params_close;
     // Optional return type `: T`, then the opening brace. The `: T` SYNTAX is Frame's;
     // the type text is the USER's and is carried verbatim.
     let mut return_text = None;
@@ -224,22 +222,44 @@ fn handler_at(lx: &Lexer, bytes: &[u8], i: usize, limit: usize) -> Option<Handle
         return None;
     }
     let open = k;
-    let end = matching_brace(lx, bytes, open, limit);
-    let close = end.saturating_sub(1);
-
-    Some(HandlerNode {
-        span: Span::new(i, end),
-        event: name,
-        params_text: String::from_utf8_lossy(&bytes[j + 1..pe.saturating_sub(1)]).into_owned(),
+    let end = super::delim_balance::balanced(bytes, open, limit, b'{', b'}', target).unwrap_or(limit);
+    Some(HandlerHead {
+        name,
+        params_open,
+        params_close,
         return_text,
+        open,
+        end,
+    })
+}
+
+/// The offset one past the handler that starts at `i`, or `None` if no handler opens here — the
+/// extent half of [`handler_head`], exposed (hiding the private struct) for the `StateWalk`
+/// system's member walk, which skips a handler body to find the next member.
+pub(crate) fn handler_end(bytes: &[u8], i: usize, limit: usize, target: Target) -> Option<usize> {
+    handler_head(bytes, i, limit, target).map(|h| h.end)
+}
+
+/// A handler starting at `i`, if there is one — built from the shared [`handler_head`].
+fn handler_at(lx: &Lexer, bytes: &[u8], i: usize, limit: usize) -> Option<HandlerNode> {
+    let h = handler_head(bytes, i, limit, lx.target())?;
+    let close = h.end.saturating_sub(1);
+    Some(HandlerNode {
+        span: Span::new(i, h.end),
+        event: h.name,
+        params_text: String::from_utf8_lossy(
+            &bytes[h.params_open + 1..h.params_close.saturating_sub(1)],
+        )
+        .into_owned(),
+        return_text: h.return_text,
         header_node: FrameSpan {
-            span: Span::new(i, open + 1),
+            span: Span::new(i, h.open + 1),
             kind: "HandlerHeader",
         },
         // *** THE TREE THE OLD COMPILER DID NOT HAVE ***
-        body: body(lx, bytes, Span::new(open + 1, close)),
+        body: body(lx, bytes, Span::new(h.open + 1, close)),
         close_node: FrameSpan {
-            span: Span::new(close, end),
+            span: Span::new(close, h.end),
             kind: "Close",
         },
     })
@@ -753,26 +773,29 @@ fn balanced(lx: &Lexer, bytes: &[u8], open: usize, limit: usize, o: u8, c: u8) -
     super::delim_balance::balanced(bytes, open, limit, o, c, lx.target())
 }
 
-/// The `(open, end)` extent of the state that starts at `at` (the `$` position): the opening `{`
-/// offset and the offset one past its matching `}`. **Single source** — used by `state()` (which
-/// builds the node) AND by the `MachineWalk` system's `state_end` leaf (which skips a state body
-/// to find the next state start), so the boundary the walk finds and the extent the node carries
-/// cannot drift. Replicates the hand walk exactly: skip the `$Name`, naive-scan to the first `{`
-/// (the header is not opaque-aware — as the old `state` was), then DelimBalance for the `}`.
-pub fn state_extent(bytes: &[u8], at: usize, limit: usize, target: Target) -> (usize, usize) {
+/// The `(name_end, open, end)` header extent of the state that starts at `at` (the `$`): the
+/// offset past the `$Name`, the opening `{` offset, and the offset one past its matching `}`.
+/// **Single source** — used by `state()` (which builds the node — the name, params, parent, and
+/// extent all key off these) AND by the `MachineWalk` system's `state_end` leaf (which skips a
+/// state body to find the next state start), so the boundary the walk finds and the extent the
+/// node carries cannot drift, and `state()` no longer re-runs the name-skip. Replicates the hand
+/// walk exactly: skip the `$Name`, naive-scan to the first `{` (the header is not opaque-aware —
+/// as the old `state` was), then DelimBalance for the `}`.
+pub fn state_extent(bytes: &[u8], at: usize, limit: usize, target: Target) -> (usize, usize, usize) {
     let mut j = at + 1;
     while j < limit && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') {
         j += 1;
     }
+    let name_end = j;
     while j < limit && bytes[j] != b'{' {
         j += 1;
     }
     let open = j;
     let end = super::delim_balance::balanced(bytes, open, limit, b'{', b'}', target).unwrap_or(limit);
-    (open, end)
+    (name_end, open, end)
 }
 
-fn to_end_of_line(bytes: &[u8], mut i: usize, limit: usize) -> usize {
+pub(crate) fn to_end_of_line(bytes: &[u8], mut i: usize, limit: usize) -> usize {
     while i < limit && bytes[i] != b'\n' {
         i += 1;
     }

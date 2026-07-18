@@ -30,7 +30,7 @@ fn is_state_start(src: &[u8], i: usize) -> bool {
 /// carries (via `machine::state_extent`), so the boundary this walk finds and the node the
 /// driver builds cannot drift.
 fn state_end(src: &[u8], i: usize, limit: usize, target: Target) -> usize {
-    state_extent(src, i, limit, target).1
+    state_extent(src, i, limit, target).2
 }
 
 /// Record a state-start offset. (A leaf so the machine body stays free of `Vec` mechanics.)
@@ -77,7 +77,7 @@ pub fn state_starts_hand(bytes: &[u8], from: usize, limit: usize, target: Target
         }
         if is_state_start(bytes, i) {
             starts.push(i);
-            i = state_extent(bytes, i, limit, target).1;
+            i = state_extent(bytes, i, limit, target).2;
             continue;
         }
         i += 1;

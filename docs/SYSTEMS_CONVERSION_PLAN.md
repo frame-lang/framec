@@ -360,6 +360,22 @@ The plan is a contract; it changes only through a recorded, evaluated process �
   real (dispatch → system, SYSTEMS +1); the proxy is coarse here. Differential
   (state_starts==state_starts_hand + I1 check_coverage, test-author running) + warden GATE next.
 
+- *2026-07-17* — **Item 3c-2 EXECUTED (state's member loop → StateWalk system).** NEW system
+  `state_walk/{state_walk.frs,.gen.rs}`: `StateWalk(target, limit)` walks a state BODY and
+  accumulates member-start offsets (`$.x` state var OR handler head) into a `Vec<usize>`, skipping
+  opaque + each member's extent. mod.rs: `member_starts()` wrapper + `member_starts_hand()` oracle
+  + leaves (skip/member_end/record). `state()`'s member loop rewritten as a native DRIVER.
+  **Drift-safety:** extracted `machine::handler_head` (the handler header parse) — `handler_at`
+  builds the node from it AND the walk's `handler_end` leaf reads its `.end`; `to_end_of_line`/
+  `handler_end` exposed pub(crate). **DRY finding from 3c-1 RESOLVED:** `state_extent` now returns
+  `(name_end, open, end)` and `state()` keys its name/params/parent/extent off it — the duplicate
+  name-skip is gone. Three verified steps, each behavior-preserving (suite green after each): (1)
+  state_extent 3-tuple + state() header restructure, (2) handler_head extraction, (3) StateWalk +
+  driver. Regen + D2 fixpoint byte-identical; full suite green. **Metrics moved this time:**
+  production HAND_SCAN_LOOPS **80→78** (member loop + duplicate name-skip both retired), SYSTEMS
+  **17→18**; oracle loops 7→8 (member_starts_hand, transient). Differential
+  (member_starts==member_starts_hand + I1 check_coverage, test-author running) + warden GATE next.
+
 ### Audit Log (append-only — warden verdicts)
 - *2026-07-17* — GATE-A dry-run, Item 1 "opaque skip": **FAIL** (D4 no fuzz) / GATE-B **FAIL**
   (D5/D6 surviving hand consumers close_brace + machine.rs::skip_opaque; D9 uncommitted). The DoD
@@ -371,6 +387,20 @@ The plan is a contract; it changes only through a recorded, evaluated process �
   wired to the system; every residual hand-lexer caller is an oracle or a named+scheduled residual
   (close_brace→Item 2, skip_opaque→Item 3, native_parts→Item 4); suite green; drift none. D9 (the
   only open predicate) is intentionally uncommitted → LAND the atomic commit.
+- *2026-07-17* — GATE-A+B, Item 3c-2 "state member loop → StateWalk": **PASS pending commit.**
+  state()'s member dispatch is now a native driver over the StateWalk @@[scan(u8)] system
+  (member_starts Vec accumulator); member while-loop + duplicate name-skip retired; 3c-1 DRY
+  finding RESOLVED (state_extent→(name_end,open,end)). D1–D8 verified by run/grep — regen
+  byte-identical across rebuild; 8/8 differential (member_starts==member_starts_hand every
+  (from,close)×4 + fuzz 3000×4, teeth distinct 2494/multi 7525, negative-control non-vacuous); all
+  3 refactors behavior-preserving (name_end≡old j; handler_head.end≡matching_brace, both by
+  construction; suite exercises state-params+HSM-parent); **I1 proven for the member-driver via
+  segment()+check_coverage+unparse+check_total recursion into StateVar/Handler/Trivia**; census
+  SYSTEMS 17→18, prod loops 80→78 (REAL retirement, not reclassification), oracle 7→8, recognition
+  11. Finding (non-blocking, recorded): member_starts_hand has a latent-UNREACHABLE spin if an
+  extent leaf ever returned ==i (guarded by scan_at step-cap; can't happen — statevar advances
+  past `\n`, handler needs a found `{`); optional 1-line oracle hardening deferred. D9 open → land
+  the 7-artifact atomic commit.
 - *2026-07-17* — GATE-A+B, Item 3c-1 "machine_section → MachineWalk": **PASS pending commit.**
   machine_section rewritten as a native driver over the MachineWalk @@[scan(u8)] system
   (state_starts accumulator, Segmenter pattern); dispatch walk retired (grep: no while in
@@ -557,7 +587,7 @@ survive as oracles + un-converted consumers — tracked here, not forgotten.
 |---|---|---|---|
 | 1 OpaqueScan | **warden PASS (GATE-A + GATE-B) — committed** | OpaqueScan, RawString, BraceBalance | skip path is the system; try_island routed; residual = holes (Item 4), close_brace (Item 2), machine skip (Item 3), + 3 oracles — all named; batteries+fuzz+milestone green |
 | 2 Segmenter | **close_brace capability: warden PASS (GATE-A+B, pending commit).** Body-end recognition off the hand Lexer onto OpaqueScan (`opaque_at`, 3-way signal). Remaining Item-2 scope: `hand_item_starts` oracle (→ C-final sweep) + `BodyBalance` `{}`-counter sub-system (named, before close) | segmenter, +OpaqueScan `kind`/`unterminated` registers | close_brace: yes. Item-2 whole: no (oracle + brace-counter named) |
-| 3 Grammar | **3a (fbde61e), 3b (03671f1), BodyBalance (2f9d95c): DONE.** **3c-1 machine_section→MachineWalk: DONE (pending commit)** — Segmenter-pattern state-start accumulator; machine_section now a native driver; I1 proven (check_coverage+check_total+unparse); SYSTEMS 16→17. **3c-2** state member loop + **3c-3** body statement loop: designed, ahead | stmt_scan (partial); DelimBalance; **MachineWalk** (17th) | 3a/3b/BodyBalance/3c-1: yes. 3c-2/3: designed |
+| 3 Grammar | **3a (fbde61e), 3b (03671f1), BodyBalance (2f9d95c), 3c-1 machine_section→MachineWalk (fa38988): DONE.** **3c-2 state member loop→StateWalk: DONE (pending commit)** — member_starts accumulator; state() now a driver; handler_head shared source; 3c-1 DRY resolved; I1 proven; loops 80→78, SYSTEMS 17→18. **3c-3** body statement loop: designed, ahead | stmt_scan (partial); DelimBalance; MachineWalk; **StateWalk** (18th) | 3a/3b/BodyBalance/3c-1/3c-2: yes. 3c-3: designed |
 | 4 Islands | not started | ref/inst/embed_scan (partial) | no |
 | 5 Validators | not started | hsm_cycle, reachability | no |
 | 6 EmitDriver | not started | — | n/a (transducer, last) |
