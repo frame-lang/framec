@@ -1,0 +1,68 @@
+@@[target("rust")]
+@@[scan(u8)]
+
+// The handler-BODY statement dispatch walk, dogfooded as an `@@[scan(u8)]` system — the
+// statement-level analogue of StateWalk/MachineWalk/Segmenter, and the first that FUSES the two
+// shipped machine rungs: a segmenter-style ACCUMULATOR (`starts`) AND a DelimBalance-style running
+// COUNTER (`depth`). It walks a handler body and records each Frame-statement START together with
+// the brace `depth` at that point, skipping opaque regions and skipping each statement's extent.
+//
+// The brace-DEPTH counter is honest machine content: a running, saturating `{`/`}` level over the
+// body's native water (opaque-skipped), sampled at each statement start. It is stateful across the
+// whole traversal, so it MUST ride this walk — a native driver would need its own hand brace-loop
+// to reproduce it (guardrail-4 forbidden). It is NOT DelimBalance (which balances-to-close); it is
+// a running level never "closed".
+//
+// framec owns the WALK (dispatch order frame_call → frame_assign → frame_stmt, then opaque-skip,
+// then brace-count — matching the hand `body()`); the leaves do only transformation: `stmt_end` =
+// the statement extent (the shared `frame_call_end`/`frame_assign_end`/`stmt_scan::classify`
+// heads, `native_parts`-free — the SAME sources the driver builds the nodes from, so found
+// boundary and built extent cannot drift), `skip` = OpaqueScan, `record` is trivial. `body()` is
+// now a thin native driver over `(start, depth)`.
+//
+// Regen: framec-ng -l rust --emit body_walk.frs | grep -v '^#!\[allow' > body_walk.gen.rs
+
+@@system BodyWalk(target: Target, limit: usize) {
+    interface:
+        step()
+    machine:
+        $Scan {
+            step() {
+                if self.cursor >= self.limit {
+                    -> $Accept
+                }
+                // A Frame statement opens here iff `stmt_end` reports an extent past the cursor.
+                // Record its start WITH the current brace depth, then jump past its extent (braces
+                // inside a statement are not counted — matching the hand loop's `i = sp.end`).
+                let se = stmt_end(self.src, self.cursor, self.limit, self.target);
+                if se > self.cursor {
+                    record(&mut self.starts, self.cursor, self.depth);
+                    self.cursor = se;
+                } else {
+                    // Not a statement: skip a whole opaque region, else count one brace of native
+                    // water into `depth` and advance one byte.
+                    let sk = skip(self.src, self.cursor, self.limit, self.target);
+                    if sk > self.cursor {
+                        self.cursor = sk;
+                    } else {
+                        let b = self.src.fsm_get(self.cursor);
+                        if b == 123 {
+                            self.depth = self.depth + 1;
+                        }
+                        if b == 125 {
+                            if self.depth > 0 {
+                                self.depth = self.depth - 1;
+                            }
+                        }
+                        self.cursor = self.cursor + 1;
+                    }
+                }
+            }
+        }
+        $Accept { }
+    domain:
+        target: Target = target
+        limit: usize = limit
+        depth: u32 = 0
+        starts: Vec<(usize, u32)> = Vec::new()
+}

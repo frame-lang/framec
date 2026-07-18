@@ -376,7 +376,66 @@ The plan is a contract; it changes only through a recorded, evaluated process �
   **17→18**; oracle loops 7→8 (member_starts_hand, transient). Differential
   (member_starts==member_starts_hand + I1 check_coverage, test-author running) + warden GATE next.
 
+- *2026-07-17* — **Item 3c-3 DESIGN (fsm agents; Mark delegated the fork to them).** The fork —
+  BodyWalk system (A) vs native-driver-signoff (B) — was put to the two fsm agents (narrow briefs;
+  no stall). **frame-fsm-expert:** (A) is EXPRESSIBLE (compiled probe `_scratch/body_probe.frs`) —
+  one system can hold a `depth: i32` counter AND a `Vec<(usize,i32)>` accumulator; a leaf can take
+  live `self.depth`; already-shipped machine class (DelimBalance counter + segmenter accumulator),
+  no escalation. **frame-fsm-designer:** verdict CONVERT (A), and it REFUTED the double-construction
+  premise (my inline lean to B was WRONG): frame_call extent = `consume_terminator(balanced(...))`,
+  frame_assign extent = `to_end_of_line(rhs_start)` — NOT from native_parts (which only fills the
+  node's expr/rhs field). So a light native_parts-free extent leaf is achievable via the 3c-2
+  `handler_head` mechanism (factor `frame_call_head`/`frame_assign_head`) — no build-and-discard,
+  no drift. **Clincher:** body()'s brace-DEPTH counter is stateful across the whole body; a native
+  driver would have to re-scan the water counting braces = a NEW Category-B hand loop (guardrail-4
+  forbidden) — so the counter REQUIRES the system. body() is NOT the segment() precedent (it runs
+  the dispatch loop + counter by hand, like machine_section/state() pre-conversion). **DECISION:
+  (A) BodyWalk**, built the clean 3c-2 way. `BodyWalk(target, limit)`: `depth: u32` counter +
+  `starts: Vec<(usize, i32, u32)>` (start, kind, depth) accumulator; `stmt_end` leaf dispatching
+  the 3 kinds construction-free; body() → a segment()-shape driver re-running the shared heads +
+  doing the native native_parts/field extraction. Analyses: `_scratch/item3c3_body_*.md`.
+
+- *2026-07-17* — **Item 3c-3 EXECUTED (body's statement loop → BodyWalk system).** NEW system
+  `body_walk/{body_walk.frs,.gen.rs}`: `BodyWalk(target, limit)` — the FIRST system fusing a
+  segmenter ACCUMULATOR (`starts: Vec<(usize, u32)>` = (start, depth)) with a DelimBalance-style
+  running COUNTER (`depth: u32` over native water, opaque-skipped). Walks a handler body, records
+  each Frame-statement start + the brace depth there, skips opaque + each statement's extent.
+  mod.rs: `stmt_starts()` wrapper (returns the pairs + final depth) + `stmt_starts_hand()` oracle
+  + leaves (skip/stmt_end/record). `body()` rewritten as a native DRIVER over `(start, depth)` +
+  final depth. **Drift-safety (3c-2 mechanism, twice):** factored `frame_assign_parse`
+  (+ `frame_assign_end`) and `frame_call_parse` (+ `frame_call_end`) — the builders build from the
+  heads AND the walk's `stmt_end` leaf reads their extent; both `native_parts`-FREE (the designer
+  refuted the double-construction premise — extent = `consume_terminator(balanced)` /
+  `to_end_of_line`, never native_parts). `frame_stmt` uses `stmt_scan::classify`. Three verified
+  steps, each behavior-preserving (suite green after each): (1) frame_assign head, (2) frame_call
+  head, (3) BodyWalk + driver. Regen + D2 fixpoint byte-identical; full suite green (body() drives
+  EVERY handler body — heavy exercise). **Metrics:** production HAND_SCAN_LOOPS **78→77** (body's
+  dispatch loop + the hand brace counter both retired into the system), SYSTEMS **18→19**; oracle
+  loops 8→9 (stmt_starts_hand). **This CLOSES Item 3's dispatch-walk conversion (3c-1/3c-2/3c-3).**
+  Differential (stmt_starts==stmt_starts_hand incl. depth pairs + final depth, teeth on depth
+  variance/nonzero-final/brace-in-string-ignored + I1, test-author running) + warden GATE next.
+
 ### Audit Log (append-only — warden verdicts)
+- *2026-07-18* — GATE-A+B, Item 3c-3 "body statement loop → BodyWalk": **FAIL (D3) → FIXED,
+  re-gate pending.** D1,D2,D4,D5,D7,D8,I1,census + all 3 refactors' behavior-preservation PASSED
+  (regen byte-identical ×2; 11/11 differential incl. depth pairs+final depth, teeth [0,1,2,0]/
+  final-2/brace-in-opaque non-vacuous; SYSTEMS 18→19, prod loops 78→77; BodyWalk honest
+  counter+accumulator, no PDA). **D3 FAIL (warden caught a real drift defect):** the `stmt_end`
+  leaf decided the frame_stmt extent via `frame_stmt_classify` = the StmtScan HAND ORACLE, not the
+  `stmt_scan::classify` SYSTEM the driver's `frame_stmt` uses — wiring a retired hand recognizer
+  into production + contradicting the leaf's own comments. **FIX (warden-prescribed one-liner):**
+  body_walk/mod.rs stmt_end → `stmt_scan::classify` (drop-in, StmtScan-proven-equal, strictly
+  safer — walk-found and driver-built frame_stmt extents now truly single-source; hand oracle
+  removed from production, frame_stmt_classify now has zero production callers). Rebuild + body_walk
+  11/11 + full suite green + census unchanged. Re-gate to confirm D3 PASS, then land.
+- *2026-07-18* — GATE-A+B RE-GATE, Item 3c-3 "body statement loop → BodyWalk": **PASS pending
+  commit.** D3 FIX confirmed — stmt_end leaf calls `stmt_scan::classify` SYSTEM, single-source with
+  the driver's frame_stmt; frame_stmt_classify has ZERO production callers (only the StmtScan
+  oracle test). D1/D2/D4/D5/D7/D8/I1 re-verified green (regen byte-identical; body_walk 11/11; full
+  suite 0-failed); census flat (SYSTEMS 19, prod loops 77, prod recognition 11). **Closes Item 3's
+  dispatch-walk conversion (3c-1 MachineWalk + 3c-2 StateWalk + 3c-3 BodyWalk — all three inner
+  dispatch walks are now @@[scan(u8)] systems).** Stale doc-ref (tests/body_walk.rs:21) fixed. D9
+  open → land the 7-artifact atomic commit.
 - *2026-07-17* — GATE-A dry-run, Item 1 "opaque skip": **FAIL** (D4 no fuzz) / GATE-B **FAIL**
   (D5/D6 surviving hand consumers close_brace + machine.rs::skip_opaque; D9 uncommitted). The DoD
   bit on real, incomplete work.
@@ -587,7 +646,7 @@ survive as oracles + un-converted consumers — tracked here, not forgotten.
 |---|---|---|---|
 | 1 OpaqueScan | **warden PASS (GATE-A + GATE-B) — committed** | OpaqueScan, RawString, BraceBalance | skip path is the system; try_island routed; residual = holes (Item 4), close_brace (Item 2), machine skip (Item 3), + 3 oracles — all named; batteries+fuzz+milestone green |
 | 2 Segmenter | **close_brace capability: warden PASS (GATE-A+B, pending commit).** Body-end recognition off the hand Lexer onto OpaqueScan (`opaque_at`, 3-way signal). Remaining Item-2 scope: `hand_item_starts` oracle (→ C-final sweep) + `BodyBalance` `{}`-counter sub-system (named, before close) | segmenter, +OpaqueScan `kind`/`unterminated` registers | close_brace: yes. Item-2 whole: no (oracle + brace-counter named) |
-| 3 Grammar | **3a (fbde61e), 3b (03671f1), BodyBalance (2f9d95c), 3c-1 machine_section→MachineWalk (fa38988): DONE.** **3c-2 state member loop→StateWalk: DONE (pending commit)** — member_starts accumulator; state() now a driver; handler_head shared source; 3c-1 DRY resolved; I1 proven; loops 80→78, SYSTEMS 17→18. **3c-3** body statement loop: designed, ahead | stmt_scan (partial); DelimBalance; MachineWalk; **StateWalk** (18th) | 3a/3b/BodyBalance/3c-1/3c-2: yes. 3c-3: designed |
+| 3 Grammar | **COMPLETE (pending 3c-3 commit).** 3a (fbde61e), 3b (03671f1), BodyBalance (2f9d95c), 3c-1 MachineWalk (fa38988), 3c-2 StateWalk (c7637b3), **3c-3 body→BodyWalk** (warden PASS after D3 fix). All three inner dispatch walks (machine_section/state-member/body) are @@[scan(u8)] systems; BodyWalk fuses a brace COUNTER + a (start,depth) ACCUMULATOR. I1 proven each; loops 86→77, SYSTEMS 15→19. | stmt_scan; DelimBalance; MachineWalk; StateWalk; **BodyWalk** (19th) | 3a/3b/BodyBalance/3c-1/3c-2/3c-3: yes |
 | 4 Islands | not started | ref/inst/embed_scan (partial) | no |
 | 5 Validators | not started | hsm_cycle, reachability | no |
 | 6 EmitDriver | not started | — | n/a (transducer, last) |

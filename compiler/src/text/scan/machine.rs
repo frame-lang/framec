@@ -12,7 +12,8 @@ use super::lex::Lexer;
 use super::literals::Target;
 use super::parts::native_parts;
 use crate::tree::body::{
-    AssignStmt, Body, NativeStmt, ReturnCallStmt, SelfCallStmt, SimpleStmt, Stmt, TransitionStmt,
+    AssignStmt, Body, FrameRef, NativeStmt, ReturnCallStmt, SelfCallStmt, SimpleStmt, Stmt,
+    TransitionStmt,
 };
 use crate::tree::{
     BodyDecl, Decl, DeclSection, FrameSpan, HandlerNode, MachineMember, MachineSection, MemberDecl,
@@ -266,63 +267,42 @@ fn handler_at(lx: &Lexer, bytes: &[u8], i: usize, limit: usize) -> Option<Handle
 }
 
 /// A handler body: statements, and the trivia between them. **Partitions the span.**
+///
+/// **Now a native driver over the dogfooded `BodyWalk` system** (`body_walk::stmt_starts`): the
+/// system finds each Frame-statement start paired with the brace **depth** there (skipping opaque
+/// regions + each statement's extent, and counting `{`/`}` of native water into a running depth),
+/// plus the final depth at `span.end`. This driver builds the Native gaps + Frame-statement nodes
+/// from those positions. The statement extent the walk used and the node this driver builds share
+/// one source (`frame_call_end`/`frame_assign_end`/`stmt_scan::classify` vs the builders), so they
+/// cannot drift. Retires the hand statement-dispatch loop AND the brace counter (a stateful
+/// counter that had to ride the walk — a native driver would need its own hand brace-loop, which
+/// guardrail-4 forbids); the oracle survives as `body_walk::stmt_starts_hand`.
+///
+/// Depth is a NUMBER, never a KIND: framec counts braces; it never asks whether the block is an
+/// `if`, a `while`, or a lambda — that would be a parse of native code, which framec does not do.
 pub fn body(lx: &Lexer, bytes: &[u8], span: Span) -> Body {
+    let (starts, final_depth) =
+        super::body_walk::stmt_starts(bytes, span.start, span.end, lx.target());
     let mut stmts = Vec::new();
-    let mut i = span.start;
     let mut cursor = span.start;
-    // Brace depth WITHIN the body. Tracked here, once, by the lexer that already
-    // knows what a brace is — never re-derived later from emitted text.
-    let mut depth = 0u32;
 
-    while i < span.end {
-        // A FRAME ASSIGNMENT: `@@:self.x = expr`, `$.x = expr`, `@@:data.k = expr`.
-        //
-        // Frame's own statement — framec owns it, terminator and all. The old compiler
-        // had no node for this: `@@:self` was a REFERENCE and the ` = expr` fell out as
-        // untyped native text, so nothing could ask whether it was terminated and framec
-        // searched its own emitted output to guess (#173, #229).
-        if let Some(st) = frame_call(lx, bytes, i, span.end, depth, column_of(bytes, i, 0)) {
+    for &(start, depth) in &starts {
+        let col = column_of(bytes, start, 0);
+        // Re-derive + build in body()'s order (frame_call → frame_assign → frame_stmt). The walk
+        // recorded `start` because one of these opens there (via the shared extent heads), so one
+        // returns `Some`. `depth` is the recorded brace depth at `start` — used for BOTH the native
+        // gap before the statement and the statement node's own `depth` field.
+        let st = frame_call(lx, bytes, start, span.end, depth, col)
+            .or_else(|| frame_assign(lx, bytes, start, span.end, col))
+            .or_else(|| frame_stmt(bytes, start, span.end, depth, col));
+        if let Some(st) = st {
             let sp = stmt_span(&st);
             push_native(lx, bytes, &mut stmts, cursor, sp.start, span.start, depth, target(lx));
             stmts.push(st);
-            i = sp.end;
-            cursor = i;
-            continue;
+            cursor = sp.end;
         }
-        if let Some(st) = frame_assign(lx, bytes, i, span.end, column_of(bytes, i, 0)) {
-            let sp = stmt_span(&st);
-            push_native(lx, bytes, &mut stmts, cursor, sp.start, span.start, depth, target(lx));
-            stmts.push(st);
-            i = sp.end;
-            cursor = i;
-            continue;
-        }
-        // Frame's other statements. Everything else is native, and native code is
-        // carried verbatim — but TOKENIZED (its literals and its Frame refs are nodes).
-        if let Some(st) = frame_stmt(bytes, i, span.end, depth, column_of(bytes, i, 0)) {
-            let s = stmt_span(&st);
-            // Whatever came before it is a native statement (or trivia).
-            push_native(lx, bytes, &mut stmts, cursor, s.start, span.start, depth, target(lx));
-            stmts.push(st);
-            i = s.end;
-            cursor = i;
-            continue;
-        }
-        if let Some(next) = skip_opaque(bytes, i, span.end, lx.target()) {
-            i = next;
-            continue;
-        }
-        // Depth is a NUMBER, never a KIND. framec counts braces; it never asks
-        // whether the block is an `if`, a `while`, or a lambda — and it must not,
-        // because that question is a parse, and framec does not parse native code.
-        match bytes[i] {
-            b'{' => depth += 1,
-            b'}' => depth = depth.saturating_sub(1),
-            _ => {}
-        }
-        i += 1;
     }
-    push_native(lx, bytes, &mut stmts, cursor, span.end, span.start, depth, target(lx));
+    push_native(lx, bytes, &mut stmts, cursor, span.end, span.start, final_depth, target(lx));
 
     Body { span, stmts }
 }
@@ -1073,11 +1053,27 @@ fn args_of(bytes: &[u8], from: usize, to: usize) -> Option<String> {
 /// The LHS is Frame's syntax. The RHS is the user's expression (tokenized, never
 /// interpreted). A trailing terminator is **part of Frame's statement** and is consumed
 /// here, at scan time, by the delimiter — not guessed later by re-reading emitted text.
-fn frame_assign(lx: &Lexer, bytes: &[u8], i: usize, limit: usize, col: u32) -> Option<Stmt> {
+/// The parsed geometry of a `$.x = …` frame assignment at `i` (if one is there). **Single
+/// source** — `frame_assign` builds the node from it AND the `BodyWalk` system's `stmt_end` leaf
+/// reads its `.eol` (the extent), so the statement boundary the walk finds and the extent the
+/// node carries cannot drift. `native_parts`-FREE (the extent never reads it — `native_parts`
+/// only fills the node's `rhs`), and target-free (`frame_ref_at_pub` is RefScan-backed). `None`
+/// if no single-`=` assignment opens here.
+struct AssignHead {
+    lhs: FrameRef,
+    lhs_end: usize,
+    rhs_start: usize,
+    rhs_end: usize,
+    eol: usize,
+    terminator: Option<Span>,
+}
+
+fn frame_assign_parse(bytes: &[u8], i: usize, limit: usize) -> Option<AssignHead> {
     let lhs = super::parts::frame_ref_at_pub(bytes, i, limit)?;
+    let lhs_end = lhs.span.end;
 
     // A single `=` must follow (not `==`, not `+=` — see below).
-    let mut j = lhs.span.end;
+    let mut j = lhs_end;
     while j < limit && (bytes[j] == b' ' || bytes[j] == b'\t') {
         j += 1;
     }
@@ -1107,75 +1103,90 @@ fn frame_assign(lx: &Lexer, bytes: &[u8], i: usize, limit: usize, col: u32) -> O
         rhs_end -= 1;
     }
 
-    let lhs_end = lhs.span.end;
-    Some(Stmt::Assign(AssignStmt {
-        span: Span::new(i, eol),
-        col,
+    Some(AssignHead {
         lhs,
+        lhs_end,
+        rhs_start,
+        rhs_end,
+        eol,
+        terminator,
+    })
+}
+
+fn frame_assign(lx: &Lexer, bytes: &[u8], i: usize, limit: usize, col: u32) -> Option<Stmt> {
+    let h = frame_assign_parse(bytes, i, limit)?;
+    Some(Stmt::Assign(AssignStmt {
+        span: Span::new(i, h.eol),
+        col,
+        lhs: h.lhs,
         op: TriviaNode {
-            span: Span::new(lhs_end, rhs_start),
+            span: Span::new(h.lhs_end, h.rhs_start),
         },
-        rhs: native_parts(lx, bytes, rhs_start, rhs_end),
-        rhs_span: Span::new(rhs_start, rhs_end),
-        tail: if rhs_end < eol {
+        rhs: native_parts(lx, bytes, h.rhs_start, h.rhs_end),
+        rhs_span: Span::new(h.rhs_start, h.rhs_end),
+        tail: if h.rhs_end < h.eol {
             Some(TriviaNode {
-                span: Span::new(rhs_end, eol),
+                span: Span::new(h.rhs_end, h.eol),
             })
         } else {
             None
         },
-        terminator,
+        terminator: h.terminator,
     }))
 }
 
+/// The offset one past a `$.x = …` assignment that starts at `i`, or `None` — the extent half of
+/// [`frame_assign_parse`], for the `BodyWalk` walk. `native_parts`-free.
+pub(crate) fn frame_assign_end(bytes: &[u8], i: usize, limit: usize) -> Option<usize> {
+    frame_assign_parse(bytes, i, limit).map(|h| h.eol)
+}
 
-/// `@@:return(<expr>)` and `@@:self.method(<args>)` — **Frame statements**, both of them.
-///
-/// framec authored these calls, so framec terminates them. The old compiler lowered the
-/// `@@:self` part to a *reference* and left `.report()` as native text with no
-/// terminator (#229) — because there was no node to ask.
-fn frame_call(lx: &Lexer, bytes: &[u8], i: usize, limit: usize, depth: u32, col: u32) -> Option<Stmt> {
+
+/// The parsed geometry of a `@@:…` frame call at `i` (if one is there): which form, the `(…)`
+/// paren offsets, and the extent end. **Single source** — `frame_call` builds the node from it AND
+/// the `BodyWalk` system's `stmt_end` leaf reads its `.end`, so the statement boundary the walk
+/// finds and the extent the node carries cannot drift. `native_parts`-FREE (the extent =
+/// `consume_terminator(balanced(open))`, never reads `native_parts`, which only fills the node's
+/// `expr`). `None` if no `@@:…` call opens here.
+enum CallHeadKind {
+    /// `@@:(expr)` / `@@:return(expr)` — both build a `ReturnCall`. `open` is the `(`.
+    Return { open: usize, close: usize },
+    /// `@@:self.method(args)`. `name` = `[name_start, name_end)`, `open` = `name_end` (the `(`).
+    SelfCall {
+        name_start: usize,
+        name_end: usize,
+        close: usize,
+    },
+}
+
+struct CallHead {
+    kind: CallHeadKind,
+    end: usize,
+}
+
+fn frame_call_parse(bytes: &[u8], i: usize, limit: usize, target: Target) -> Option<CallHead> {
     if !starts(bytes, i, b"@@:", limit) {
         return None;
     }
-    // `@@:(expr)` — the CONCISE return form. Same statement as `@@:return(expr)`:
-    // set the return value and exit. framec owns it and terminates it.
+    // `@@:(expr)` — the CONCISE return form. Same statement as `@@:return(expr)`.
     if starts(bytes, i, b"@@:(", limit) {
         let open = i + b"@@:".len();
-        let close = balanced(lx, bytes, open, limit, b'(', b')')?;
-        let e = consume_terminator(bytes, close, limit);
-        return Some(Stmt::ReturnCall(ReturnCallStmt {
-            span: Span::new(i, e),
-            col,
-            head: TriviaNode {
-                span: Span::new(i, open + 1),
-            },
-            tail: TriviaNode {
-                span: Span::new(close - 1, e),
-            },
-            depth,
-            expr: native_parts(lx, bytes, open + 1, close - 1),
-            expr_span: Span::new(open + 1, close - 1),
-        }));
+        let close = super::delim_balance::balanced(bytes, open, limit, b'(', b')', target)?;
+        let end = consume_terminator(bytes, close, limit);
+        return Some(CallHead {
+            kind: CallHeadKind::Return { open, close },
+            end,
+        });
     }
     // `@@:return(`
     if starts(bytes, i, b"@@:return(", limit) {
         let open = i + b"@@:return".len();
-        let close = balanced(lx, bytes, open, limit, b'(', b')')?;
-        let e = consume_terminator(bytes, close, limit);
-        return Some(Stmt::ReturnCall(ReturnCallStmt {
-            span: Span::new(i, e),
-            col,
-            head: TriviaNode {
-                span: Span::new(i, open + 1),
-            },
-            tail: TriviaNode {
-                span: Span::new(close - 1, e),
-            },
-            depth,
-            expr: native_parts(lx, bytes, open + 1, close - 1),
-            expr_span: Span::new(open + 1, close - 1),
-        }));
+        let close = super::delim_balance::balanced(bytes, open, limit, b'(', b')', target)?;
+        let end = consume_terminator(bytes, close, limit);
+        return Some(CallHead {
+            kind: CallHeadKind::Return { open, close },
+            end,
+        });
     }
     // `@@:self.method(`
     if starts(bytes, i, b"@@:self.", limit) {
@@ -1185,18 +1196,61 @@ fn frame_call(lx: &Lexer, bytes: &[u8], i: usize, limit: usize, depth: u32, col:
             j += 1;
         }
         if j > ns && j < limit && bytes[j] == b'(' {
-            let close = balanced(lx, bytes, j, limit, b'(', b')')?;
-            let e = consume_terminator(bytes, close, limit);
-            return Some(Stmt::SelfCall(SelfCallStmt {
-                span: Span::new(i, e),
-                col,
-                method: String::from_utf8_lossy(&bytes[ns..j]).into_owned(),
-                args_text: String::from_utf8_lossy(&bytes[j + 1..close.saturating_sub(1)])
-                    .into_owned(),
-            }));
+            let close = super::delim_balance::balanced(bytes, j, limit, b'(', b')', target)?;
+            let end = consume_terminator(bytes, close, limit);
+            return Some(CallHead {
+                kind: CallHeadKind::SelfCall {
+                    name_start: ns,
+                    name_end: j,
+                    close,
+                },
+                end,
+            });
         }
     }
     None
+}
+
+/// `@@:return(<expr>)` / `@@:(<expr>)` / `@@:self.method(<args>)` — **Frame statements**, built
+/// from the shared [`frame_call_parse`].
+///
+/// framec authored these calls, so framec terminates them. The old compiler lowered the
+/// `@@:self` part to a *reference* and left `.report()` as native text with no
+/// terminator (#229) — because there was no node to ask.
+fn frame_call(lx: &Lexer, bytes: &[u8], i: usize, limit: usize, depth: u32, col: u32) -> Option<Stmt> {
+    let h = frame_call_parse(bytes, i, limit, lx.target())?;
+    match h.kind {
+        CallHeadKind::Return { open, close } => Some(Stmt::ReturnCall(ReturnCallStmt {
+            span: Span::new(i, h.end),
+            col,
+            head: TriviaNode {
+                span: Span::new(i, open + 1),
+            },
+            tail: TriviaNode {
+                span: Span::new(close - 1, h.end),
+            },
+            depth,
+            expr: native_parts(lx, bytes, open + 1, close - 1),
+            expr_span: Span::new(open + 1, close - 1),
+        })),
+        CallHeadKind::SelfCall {
+            name_start,
+            name_end,
+            close,
+        } => Some(Stmt::SelfCall(SelfCallStmt {
+            span: Span::new(i, h.end),
+            col,
+            method: String::from_utf8_lossy(&bytes[name_start..name_end]).into_owned(),
+            args_text: String::from_utf8_lossy(&bytes[name_end + 1..close.saturating_sub(1)])
+                .into_owned(),
+        })),
+    }
+}
+
+/// The offset one past a `@@:…` frame call that starts at `i`, or `None` — the extent half of
+/// [`frame_call_parse`], for the `BodyWalk` walk. `native_parts`-free.
+pub(crate) fn frame_call_end(bytes: &[u8], i: usize, limit: usize, target: Target) -> Option<usize> {
+    frame_call_parse(bytes, i, limit, target).map(|h| h.end)
 }
 
 /// A trailing target terminator is **part of Frame's statement** and is consumed here,
