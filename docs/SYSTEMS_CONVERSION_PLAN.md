@@ -326,6 +326,40 @@ The plan is a contract; it changes only through a recorded, evaluated process �
   correctness): the STRICT arm's CURATED_CORPUS mirrors the TOLERATE arm's inline strings — a
   future consolidation could share one const.
 
+- *2026-07-17* — **Item 3c DESIGN (inline; segmenter precedent).** The `segmenter` system is the
+  pattern: a `@@[scan(u8)]` system walks a span and ACCUMULATES boundary positions into a
+  `Vec<usize>` domain field, leaves do the transformations (extent-skip via DelimBalance,
+  opaque-skip), and a thin NATIVE driver builds the AST nodes from those positions (the
+  recognition/construction seam). 3c applies this to the three inner dispatch loops; linear
+  header-parsing/tokenization stays native. Three bites, lowest-risk first: **3c-1**
+  `machine_section` → a system accumulating `$Name` state-start positions (skipping opaque +
+  skipping each state body via a `state_end` leaf); machine_section becomes a driver building
+  Trivia+State nodes. **Safety:** extract `state_extent(bytes,at,limit,target)` used by BOTH
+  `state()` and the `state_end` leaf so the found boundary and the built extent cannot drift.
+  **3c-2** `state`'s member loop → `(pos,kind)` system + handler_at-extent leaf. **3c-3** `body`'s
+  statement loop (already StmtScan-dispatched) + brace-depth. Per bite: system + native driver +
+  `*_hand` oracle + differential (positions match the hand walk at every input) + **I1 byte-
+  partition check** (node spans identical to the hand walk, `check_coverage` green) + warden gate.
+  Expressibility already proven (segmenter uses a `Vec<usize>` accumulator + config `target`;
+  DelimBalance proved multi-param config + `limit` bound) — no new dialect unknowns for 3c-1.
+
+- *2026-07-17* — **Item 3c-1 EXECUTED (machine_section → MachineWalk system).** NEW system
+  `machine_walk/{machine_walk.frs,.gen.rs}`: `MachineWalk(target, limit)` walks a `machine:` span
+  and accumulates `$Name` state-start offsets into a `Vec<usize>` (the Segmenter accumulator
+  pattern), skipping opaque + each state body via a `state_end` leaf. mod.rs: `state_starts()`
+  wrapper + `state_starts_hand()` oracle + leaves (skip/is_state_start/state_end/record).
+  `machine.rs::machine_section` rewritten as a thin NATIVE DRIVER over the positions (builds
+  Trivia+State nodes). **Drift-safety:** extracted `machine::state_extent(bytes,at,limit,target)`
+  = the (open,end) state extent, used by BOTH `state()` (node) AND the `state_end` leaf (walk) —
+  one source, verified behavior-preserving (full suite green before + after). `skip_opaque` →
+  pub(crate) for the leaf. Regen + D2 fixpoint byte-identical; SYSTEMS 16→17; full suite green.
+  **HONEST CENSUS NOTE:** production HAND_SCAN_LOOPS stayed 80 — the machine_section DISPATCH walk
+  (recognition) moved into the system, but `state_extent`'s two extracted LINEAR leaf scans
+  (name-skip, brace-find) are legitimate native tokenization (Category-A-ish, no dispatch/nesting),
+  not recognition walks, and the `while <ident> <` proxy can't tell them apart. The conversion is
+  real (dispatch → system, SYSTEMS +1); the proxy is coarse here. Differential
+  (state_starts==state_starts_hand + I1 check_coverage, test-author running) + warden GATE next.
+
 ### Audit Log (append-only — warden verdicts)
 - *2026-07-17* — GATE-A dry-run, Item 1 "opaque skip": **FAIL** (D4 no fuzz) / GATE-B **FAIL**
   (D5/D6 surviving hand consumers close_brace + machine.rs::skip_opaque; D9 uncommitted). The DoD
@@ -337,6 +371,18 @@ The plan is a contract; it changes only through a recorded, evaluated process �
   wired to the system; every residual hand-lexer caller is an oracle or a named+scheduled residual
   (close_brace→Item 2, skip_opaque→Item 3, native_parts→Item 4); suite green; drift none. D9 (the
   only open predicate) is intentionally uncommitted → LAND the atomic commit.
+- *2026-07-17* — GATE-A+B, Item 3c-1 "machine_section → MachineWalk": **PASS pending commit.**
+  machine_section rewritten as a native driver over the MachineWalk @@[scan(u8)] system
+  (state_starts accumulator, Segmenter pattern); dispatch walk retired (grep: no while in
+  machine_section). D1–D8 verified by run/grep — regen byte-identical; 8/8 differential
+  (state_starts==state_starts_hand every (from,limit)×4 targets + fuzz 3000×4; teeth
+  multi/zero/buried-in-opaque all fire); **I1 proven through segment() + check_coverage +
+  check_total recursion (Gap/Overlap into State/Trivia) + unparse round-trip**; SYSTEMS 16→17;
+  prod loops 80 (coarse-proxy flat, documented+honest — dispatch→system, residual = state_extent
+  Category-A tokenization); state_starts_hand = C-final oracle. Findings (non-blocking):
+  state_extent duplicates state()'s name-skip (DRY) → RESOLVE in 3c-2 (which restructures state());
+  state_extent not independently `*_hand`-gated (covered by extraction-invariance + delim_balance
+  + I1). D9 open → land the 7-artifact atomic commit.
 - *2026-07-17* — GATE-B (re-grade, final), Item 3b "BodyBalance discharge + cleanups": **PASS
   pending commit.** close_brace→balanced_strict (hand {} counter gone); DRY behavior-preserving;
   balanced_strict now DIRECTLY dual-armed vs independent balanced_strict_hand (hand Lexer, not
@@ -511,7 +557,7 @@ survive as oracles + un-converted consumers — tracked here, not forgotten.
 |---|---|---|---|
 | 1 OpaqueScan | **warden PASS (GATE-A + GATE-B) — committed** | OpaqueScan, RawString, BraceBalance | skip path is the system; try_island routed; residual = holes (Item 4), close_brace (Item 2), machine skip (Item 3), + 3 oracles — all named; batteries+fuzz+milestone green |
 | 2 Segmenter | **close_brace capability: warden PASS (GATE-A+B, pending commit).** Body-end recognition off the hand Lexer onto OpaqueScan (`opaque_at`, 3-way signal). Remaining Item-2 scope: `hand_item_starts` oracle (→ C-final sweep) + `BodyBalance` `{}`-counter sub-system (named, before close) | segmenter, +OpaqueScan `kind`/`unterminated` registers | close_brace: yes. Item-2 whole: no (oracle + brace-counter named) |
-| 3 Grammar | **3a skip_opaque: DONE (fbde61e).** **3b DelimBalance: DONE (03671f1)** — balanced/matching_brace, SYSTEMS 15→16. **BodyBalance DISCHARGED (pending commit)** — DelimBalance `fail_unterm` policy (Option A); close_brace→balanced_strict, its counter gone; load-bearing test green. 3c dispatch walks: designed, ahead | stmt_scan (partial); **DelimBalance** (16th, both policies) | 3a/3b/BodyBalance: yes. 3c: designed |
+| 3 Grammar | **3a (fbde61e), 3b (03671f1), BodyBalance (2f9d95c): DONE.** **3c-1 machine_section→MachineWalk: DONE (pending commit)** — Segmenter-pattern state-start accumulator; machine_section now a native driver; I1 proven (check_coverage+check_total+unparse); SYSTEMS 16→17. **3c-2** state member loop + **3c-3** body statement loop: designed, ahead | stmt_scan (partial); DelimBalance; **MachineWalk** (17th) | 3a/3b/BodyBalance/3c-1: yes. 3c-2/3: designed |
 | 4 Islands | not started | ref/inst/embed_scan (partial) | no |
 | 5 Validators | not started | hsm_cycle, reachability | no |
 | 6 EmitDriver | not started | — | n/a (transducer, last) |

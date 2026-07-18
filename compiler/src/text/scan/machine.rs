@@ -20,31 +20,26 @@ use crate::tree::{
 };
 use crate::Span;
 
-/// A `machine:` section: states, and the trivia between them.
+/// A `machine:` section: states, and the trivia between them. **Now a native driver over the
+/// dogfooded `MachineWalk` system** (`machine_walk::state_starts`): the system finds the `$Name`
+/// state-start offsets (skipping opaque + each state body); this driver builds the Trivia + State
+/// nodes from them. The boundary the system finds and the extent `state()` carries share one
+/// source (`state_extent`), so they cannot drift. (Retires the hand state-dispatch loop; its
+/// oracle survives as `machine_walk::state_starts_hand`.)
 pub fn machine_section(lx: &Lexer, bytes: &[u8], span: Span, kw: Span) -> MachineSection {
+    let starts = super::machine_walk::state_starts(bytes, kw.end, span.end, lx.target());
     let mut members = Vec::new();
-    let mut i = kw.end;
     let mut cursor = kw.end;
 
-    while i < span.end {
-        if let Some(next) = skip_opaque(bytes, i, span.end, lx.target()) {
-            i = next;
-            continue;
+    for &start in &starts {
+        if cursor < start {
+            members.push(MachineMember::Trivia(TriviaNode {
+                span: Span::new(cursor, start),
+            }));
         }
-        // A state begins with `$Name` at this level.
-        if bytes[i] == b'$' && is_name_start(bytes, i + 1) {
-            if cursor < i {
-                members.push(MachineMember::Trivia(TriviaNode {
-                    span: Span::new(cursor, i),
-                }));
-            }
-            let st = state(lx, bytes, i, span.end);
-            i = st.span.end;
-            cursor = i;
-            members.push(MachineMember::State(st));
-            continue;
-        }
-        i += 1;
+        let st = state(lx, bytes, start, span.end);
+        cursor = st.span.end;
+        members.push(MachineMember::State(st));
     }
     if cursor < span.end {
         members.push(MachineMember::Trivia(TriviaNode {
@@ -112,12 +107,10 @@ fn state(lx: &Lexer, bytes: &[u8], at: usize, limit: usize) -> StateNode {
         }
     }
 
-    // Header runs to the state's opening `{`.
-    while j < limit && bytes[j] != b'{' {
-        j += 1;
-    }
-    let open = j;
-    let end = matching_brace(lx, bytes, open, limit);
+    // The opening `{` and its matching `}` — via the shared `state_extent`, the SAME source the
+    // `MachineWalk` system's `state_end` leaf uses, so the boundary the walk finds and the extent
+    // this node carries cannot drift.
+    let (open, end) = state_extent(bytes, at, limit, lx.target());
     let close = end.saturating_sub(1);
 
     let mut members = Vec::new();
@@ -714,7 +707,7 @@ fn target_of(bytes: &[u8], from: usize, to: usize) -> Option<String> {
 /// REJECTED (a string must fit inside the span to count). An unterminated body → `None`, exactly
 /// as the hand path's `Err`-then-fallthrough did. (#219: one recognizer, asked by everyone —
 /// never the fifteen per-language brace counters that each learned a different literal subset.)
-fn skip_opaque(bytes: &[u8], i: usize, limit: usize, target: Target) -> Option<usize> {
+pub(crate) fn skip_opaque(bytes: &[u8], i: usize, limit: usize, target: Target) -> Option<usize> {
     match super::opaque_scan::opaque_at(bytes, i, target) {
         super::opaque_scan::OpaqueAt::Comment(end) => Some(end.min(limit).max(i + 1)),
         super::opaque_scan::OpaqueAt::Literal(end) => {
@@ -758,6 +751,25 @@ fn matching_brace(lx: &Lexer, bytes: &[u8], open: usize, limit: usize) -> usize 
 /// state/handler param scans all route here.
 fn balanced(lx: &Lexer, bytes: &[u8], open: usize, limit: usize, o: u8, c: u8) -> Option<usize> {
     super::delim_balance::balanced(bytes, open, limit, o, c, lx.target())
+}
+
+/// The `(open, end)` extent of the state that starts at `at` (the `$` position): the opening `{`
+/// offset and the offset one past its matching `}`. **Single source** — used by `state()` (which
+/// builds the node) AND by the `MachineWalk` system's `state_end` leaf (which skips a state body
+/// to find the next state start), so the boundary the walk finds and the extent the node carries
+/// cannot drift. Replicates the hand walk exactly: skip the `$Name`, naive-scan to the first `{`
+/// (the header is not opaque-aware — as the old `state` was), then DelimBalance for the `}`.
+pub fn state_extent(bytes: &[u8], at: usize, limit: usize, target: Target) -> (usize, usize) {
+    let mut j = at + 1;
+    while j < limit && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') {
+        j += 1;
+    }
+    while j < limit && bytes[j] != b'{' {
+        j += 1;
+    }
+    let open = j;
+    let end = super::delim_balance::balanced(bytes, open, limit, b'{', b'}', target).unwrap_or(limit);
+    (open, end)
 }
 
 fn to_end_of_line(bytes: &[u8], mut i: usize, limit: usize) -> usize {
