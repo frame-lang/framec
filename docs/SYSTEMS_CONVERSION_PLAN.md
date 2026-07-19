@@ -883,13 +883,26 @@ what each item **retires**.
 (holes+delim), and Items 2/4 make the segmenter/section oracles self-contained. Until then they
 survive as oracles + un-converted consumers — tracked here, not forgotten.
 
-**Residual production recognition after NativeParts Phase 1 (census 9, warden Finding 4):**
-- `sections.rs::section_keyword_starts` — **2 production `comment_at`/`literal_at` calls, named
-  by no item in scope.** R12 says "owned by Items 3/4" but neither item's text names `sections.rs`.
-  **OPEN OWNER QUESTION** before C2 (recognition = 0) can close.
-- `lex.rs` — **7 token definitions** (`lex_defs`). Whether these are C2-scope or belong to the
-  parked `@@fsm` lexical front end (guardrail 1) is itself an owner question.
-These two are the entire distance between the current 9 and C2's 0.
+**Residual production recognition after NativeParts Phase 1 (census 9 — CLASSIFIED, sharpening
+warden Finding 4).** On investigation the "residual 9" is NOT an unowned-scope gap. Every
+remaining `.comment_at(`/`.literal_at(` call sits inside a `_hand` differential oracle
+(`hand_item_starts`, `skip_opaque_at_hand`, `opaque_at_hand`, `close_brace_hand`,
+`skip_opaque_hand`, `native_parts_hand`) — EXCEPT one, and the true count of production
+recognition CALLS on the live compile path is **0**. The 9 decomposes:
+- `sections.rs::section_keyword_starts` (2 calls) — the **SectionScan differential oracle**
+  (`sections.rs:59` "remains only as the differential-test oracle"; production is
+  `section_scan::keyword_starts`; sole caller is `tests/section_scan.rs`). Owned by Item 3;
+  deleted at C-final with the other oracles. The census miscounts it as production ONLY because
+  it lacks the `_hand` name the proxy keys on (PM-4 census blind spot). **Census-honesty fix
+  pending owner nod:** rename → `section_keyword_starts_hand` now (census then reads production
+  recognition CALLS = 0, the truth), or defer to C-final.
+- `lex.rs` — **7 recognizer method DEFINITIONS** (`comment_at`/`literal_at`/`block_comment`/
+  `quoted`/`hole_at`/`triple_quoted`/`rust_raw`). These are the hand Lexer itself; they zero when
+  it is DELETED at C-final (after all callers, now all oracles, are gone). Not per-set scope.
+**Consequence:** C2 (production HAND_LEXER_RECOGNITION = 0) counts definitions, so it is a
+**C-final milestone by construction** — it cannot close until the hand Lexer is deleted. The live
+compile path is already free of hand-Lexer recognition. (The gate metric conflates DEFS + CALLS;
+consider splitting it so "live-path calls = 0" is readable separately from "Lexer deleted".)
 
 ## What "excellent" means for this campaign
 
