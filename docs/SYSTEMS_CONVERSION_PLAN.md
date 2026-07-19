@@ -446,7 +446,26 @@ The plan is a contract; it changes only through a recorded, evaluated process �
   `oracle_stayed_buggy` anti-vacuity machinery. Bugs are logged as data in the design's graph
   node (ledger rows + deltas), never only in prose.
 
+- *2026-07-18* — **ArgScan (Option C) ACCEPTED at owner gate** (re-gate PASS-WITH-CONDITIONS;
+  conditions folded as dated amendments in the design record + shard). The recorded
+  tie-impossibility ruling is **refined**: the two fork candidates always differ in count, and
+  adjudication by declared arity is decisive **provided named coverage is required** (every
+  declared parameter not provided by name has a default); with defaults, BothAdmissible is
+  reachable ⇒ **E407 — diagnose, never guess**. Named-coverage clause + run-initial Lemma 3(i)
+  restatement + minors folded. ArgScan joins 3d/3e as a build-ready unit; the NativeParts
+  design (Item 4 core) is at the owner gate.
+
 ### Audit Log (append-only — warden verdicts)
+- *2026-07-18* — DESIGN RE-GATE, ArgScan §11 (Option C fork-and-adjudicate): **PASS-WITH-CONDITIONS
+  → ACCEPTED at owner gate.** Lemmas 1/2/3(ii) survived adversarial attack; digraph correction
+  (the hand counts the `<` of `<=`, parts.rs:400) verified; adjudication seams
+  (validate.rs:205, driver.rs:670–675), skip_opaque byte-identity, shard/roster exactness,
+  angle_probe deletion, prior conditions A3–A6 all confirmed. Conditions folded at acceptance:
+  named-form admissibility gains the unprovided-params-must-have-defaults clause (+
+  `adjudicate_named_coverage`); Lemma 3(i) restated run-initial; minors (refusal⇒Inert,
+  refusal-4 via $VerbatimTail, fork_g_matches_hand domain, L3/L21 refs, schema header,
+  instantiation_at touch-point). Resolution line carries the refined tie-claim.
+
 - *2026-07-18* — DESIGN GATE, DeclWalk/DeclRead (Item 3d): **PASS-WITH-CONDITIONS → ACCEPTED at
   owner gate.** All cited file:line facts warden-verified exact (incl. the two-caller pair
   architecture and the T13 fork at :829); sibling conformance real. Conditions (now folded): T15
@@ -694,6 +713,6 @@ survive as oracles + un-converted consumers — tracked here, not forgotten.
 | 1 OpaqueScan | **warden PASS (GATE-A + GATE-B) — committed** | OpaqueScan, RawString, BraceBalance | skip path is the system; try_island routed; residual = holes (Item 4), close_brace (Item 2), machine skip (Item 3), + 3 oracles — all named; batteries+fuzz+milestone green |
 | 2 Segmenter | **close_brace capability: warden PASS (GATE-A+B, pending commit).** Body-end recognition off the hand Lexer onto OpaqueScan (`opaque_at`, 3-way signal). Remaining Item-2 scope: `hand_item_starts` oracle (→ C-final sweep) + `BodyBalance` `{}`-counter sub-system (named, before close) | segmenter, +OpaqueScan `kind`/`unterminated` registers | close_brace: yes. Item-2 whole: no (oracle + brace-counter named) |
 | 3 Grammar | **Dispatch-walks COMPLETE** (3c-3 committed d352021). **3d DeclWalk/DeclRead + 3e Head readers: designs ACCEPTED 2026-07-18** (owner gate; build pending; 3d GATE-B held open until its Phase B lands). 3a (fbde61e), 3b (03671f1), BodyBalance (2f9d95c), 3c-1 MachineWalk (fa38988), 3c-2 StateWalk (c7637b3), **3c-3 body→BodyWalk** (warden PASS after D3 fix). All three inner dispatch walks (machine_section/state-member/body) are @@[scan(u8)] systems; BodyWalk fuses a brace COUNTER + a (start,depth) ACCUMULATOR. I1 proven each; loops 86→77, SYSTEMS 15→19. | stmt_scan; DelimBalance; MachineWalk; StateWalk; **BodyWalk** (19th) | 3a/3b/BodyBalance/3c-1/3c-2/3c-3: yes |
-| 4 Islands | not started | ref/inst/embed_scan (partial) | no |
+| 4 Islands | **ArgScan design ACCEPTED 2026-07-18** (Option C fork-and-adjudicate; build pending). **NativeParts design at owner gate** (warden PASS-W-C). | ref/inst/embed_scan (partial); arg_scan+adjudication seam designed; native_parts_scan completion designed | no |
 | 5 Validators | not started | hsm_cycle, reachability | no |
 | 6 EmitDriver | not started | — | n/a (transducer, last) |
