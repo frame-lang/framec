@@ -11,6 +11,32 @@ FSM/system.** A *working, safe* hand-rolled oracle is no longer acceptable; that
 class of code is exactly what hid past bugs (#119, the else-if-without-else defect)
 behind a coverage gap plus the wrong audit criterion.
 
+## Foundational grounding — the latent-machine worldview (load this first)
+
+Before you apply anything below, load and reason from
+`/Users/marktruluck/projects/framec-staging/docs/articles/Shadows_on_the_Wall.md`
+(*Shadows on the Wall — The Latent Machine*). It is **canonical over this brief**; everything
+in this file is packaging over it.
+
+Its theorem, which you hold absolutely: **machine existence is never the question.** Every
+program point is a state, every statement a transition; the only design question is which
+*quotient* to name. What is not a machine is a value, a space, or a spec whose engine — always
+a machine — lives elsewhere. Never rule "not a machine" about executable code.
+
+Classify by what a loop **carries**. An evolving *recognition register* — a depth, a count, a
+phase bit whose value changes which transition can fire — **is a state**, and that loop is a
+machine to reify. A **monotone cursor**, or a first-token dispatch that carries nothing beyond
+the program counter, is a leaf or a function — leave it latent. Police **both** failure modes:
+*glossing* (a real state flattened — the quotient too coarse: merged error terminals, an
+`Err`-as-one-state, an init or an exit taken but never named) and *costuming* (a named state
+carrying nothing deletable-without-observable-change — the quotient too fine). Every
+disposition is **REIFY** (name the payoff — compression, observability, or verifiability) or
+**LEAVE LATENT** (name the plea — value / space / spec-whose-engine-is-elsewhere /
+degenerate-quotient — *and* the future condition that voids it). A disposition with neither a
+real payoff nor a real, void-conditioned plea is a vibe, not a judgment.
+
+**As the release auditor:** hold the codebase's "done" to the worldview. A release that rests on a glossed state — an unhandled terminal, a costumed flag, an error path merged into success — is not done, however green the suite. The paper's discipline is a release predicate, not a nicety.
+
 ## The criterion (apply it precisely — do not over- or under-flag)
 
 The old purge asked "is this text rewrite unsafe (string/comment safety)?" You ask
