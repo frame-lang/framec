@@ -28,7 +28,11 @@ the machine *exists* is therefore not the paper's real news; its consequence is.
 We then draw the claim's one honest boundary — the class of artifacts that genuinely are not state machines, which
 turn out to be precisely the artifacts that are not computations — and sharpen
 that boundary from a vague intuition ("data things") into a precise criterion
-(the value/process distinction, cut at the spec/engine seam). We catalog the
+(the value/process distinction, cut at the spec/engine seam) — and name the
+third role that boundary hides, the **predicate**: a law over a machine's
+behaviors, neither process nor data, where the paper's own verifiability and
+alignment payoffs live. Drawn correctly the ontology is a trichotomy —
+machine, value, predicate. We catalog the
 disguises under which machines hide in ordinary code, name the two symmetric
 failure modes of state-machine authorship (glossing and costuming), and derive
 the design discipline that follows: the existence of the machine is never in
@@ -113,8 +117,8 @@ a program as a relation between *configurations*:
 A configuration pairs a control point with a memory state; the semantics is the
 set of permitted transitions between configurations. There is no rival account
 of what it is to *run* a program. The denotational account — which assigns a
-program a timeless mathematical value — is not a rival but the other pole of a
-dichotomy this paper will draw in §4, and it is answerable to the transition
+program a timeless mathematical value — is not a rival but the value pole of
+the boundary this paper will draw in §4, and it is answerable to the transition
 system through adequacy results. To execute is to traverse the transition
 relation; a run of the program *is* a path through a state space. This is
 likewise the picture the hardware presents: a processor is a finite-state
@@ -318,14 +322,17 @@ tempting move is to carve out a domain exemption: *data things* aren't state
 machines. The intuition is pointing at something real, but domain is the wrong
 axis to cut along, and finding the right one sharpens the entire thesis.
 
-### 4.1 The dichotomy: process versus value
+### 4.1 The trichotomy: process, value, and law
 
 Begin from Lamport's identification: a computation is a sequence of steps —
 in the state-based view he adopts, a sequence of states [7]. Take it seriously
-in both directions. If computation is state sequence,
-then whatever genuinely escapes the machine view escapes *by not being a
-computation*. It is not a process but a **value** — or a **space** of values,
-or a **description** awaiting an engine. The dichotomy is exhaustive and clean:
+in both directions. If computation is state sequence, then whatever genuinely
+escapes the machine view escapes *by not being a computation*. Two different
+kinds of thing do, and both deserve a name.
+
+The first is a **value** — or a **space** of values, or a **description**
+awaiting an engine: data at rest, with neither transitions nor a time axis.
+This is the machine's complement, and it arrives in three familiar shapes:
 
 - A **schema** or **type definition** is not a machine — and not a computation.
   It *defines a state space*: the set of configurations an entity may occupy.
@@ -343,6 +350,23 @@ or a **description** awaiting an engine. The dichotomy is exhaustive and clean:
   is honest, and the artifact may be treated as a value.
 - A **specification** — a regex pattern, a SQL query, a build file, a grammar —
   is data that *describes* behavior without performing it.
+
+The value side of the boundary is sharpened in §4.2–4.3. But there is a
+*second* kind of thing that is not a machine, and the machine-versus-value
+picture drawn so far — the picture most attempts at this ontology stop at —
+misses it entirely. It is a **predicate**: a *law over a machine's behaviors*.
+"The agent never executes without approval"; "every request is eventually
+answered"; a type read as the proposition it obligates. A predicate is not data
+at rest, because it *judges*; and it is not a process, because it has no states
+of its own. It is a third role — developed in §4.4 — and it is precisely where
+this paper's strongest payoffs, verifiability and alignment, turn out to live.
+The ontology in full is therefore not a dichotomy but a **trichotomy —
+machine | value | predicate**: a process, the data it moves, and the laws that
+say whether it moved rightly. These are *roles*, not disjoint substances — one
+artifact can play more than one. A type, by Curry–Howard, is at once a **value**
+(the space of its inhabitants) and a **predicate** (the proposition those
+inhabitants prove); the trichotomy classifies what an artifact is *doing*, not a
+partition of syntactic objects.
 
 ### 4.2 The right cut: spec versus engine
 
@@ -388,6 +412,114 @@ states, no time axis, and no failure/suspension/resumption structure; that is,
 by showing it is a value, a space, or a spec whose engine lives elsewhere. An
 exemption claimed on those grounds should also say *where* the engine lives,
 because someone owns it, and that someone is writing a state machine.
+
+### 4.4 The predicate: the law over the machine
+
+The value is what the machine moves; the predicate is what says whether it
+moved rightly. "Every path to `$Executing` passes through `$Approved`"; "the
+balance is never negative in any configuration"; "every request is eventually
+answered"; a type read, by Curry–Howard, as the proposition it obligates.
+These are neither data at rest nor processes with states of their own. They are
+*laws over a machine's behaviors* — safety and liveness invariants, guards,
+contracts, types-as-propositions — and they are the third role at the boundary.
+
+**Why the predicate is irreducible: the argument from violation.** A value a
+machine computes cannot be *wrong* relative to that machine — its output simply
+is whatever the machine makes it. But a law can be false *of* the very machine
+built to satisfy it; the machine can *break* it. Sharpen this until it bites:
+if a predicate were merely "what the machine calculates or sets," there could
+be **no bugs** — the machine would define its own correctness by fiat, and
+every trace would be correct because *correct* would mean *whatever it did*.
+Incorrectness exists at all only because there is a law whose authority is
+independent of the machine it judges. **The bug is the daylight between the
+predicate and the machine** — and daylight has no home in an ontology of
+machines and values alone.
+
+**The deep form: is and ought.** Sections 2 through 4.3 are a *physics of
+computation* — they say what programs **are** (machines moving values), in the
+declarative register of a natural law. But correctness, verification, and
+alignment are **oughts**, and no accumulation of *is* — no operational
+semantics, however complete — yields "this trace is wrong." The predicate is
+where the *ought* lives, and a purely descriptive ontology, which is what a
+two-category picture is, structurally has no room for it. This is not a
+decorative point: the paper's own headline payoffs depend on it. **Verifiability**
+(§6.1) and any **alignment** guarantee are stated as laws over the transition
+graph — "every route to `$Executing` passes through `$Approved`" is neither a
+state nor a transition — which is exactly why, until the third category is
+admitted, those payoffs float free of the very foundation meant to support them.
+
+**The reduction, and why it fails.** The tempting dissolution: a predicate is
+just "what some machine computes" — a checker evaluates it, so it is a machine
+(the checker) plus a value (the verdict). This conflates three things: the
+**checker** (a machine, granted), the **verdict** (a value, granted), and the
+**predicate itself** — the law — which is neither. The paper already refuses
+this exact move for values (§4.1: a pure function's *evaluation* is a machine,
+yet the mapping may be treated as a value); by the same parity a predicate's
+*checking* is a machine and its *verdict* a value, but the law is irreducible
+to either. There is one consistent escape — a predicate is extensionally a
+*set* of behaviors, hence a value-about-machines — but it does not rescue the
+two-category picture: a **machine's** denotation is *also* a set of behaviors,
+so the very move that folds predicate into value folds machine into value too,
+and lands in denotational **monism** (everything is a value) — coherent,
+useless for design, and flatly not this paper's position. What one cannot
+consistently do is reduce `predicate → value` while shielding `machine → value`
+from the identical argument. That asymmetric halfway house just *is* the
+two-bucket ontology, and it does not stand.
+
+**An emblem, and where it breaks.** A predicate sits at the `machine | value`
+boundary much as a **virus** sits at biology's `alive | inert` boundary, and
+the fit is close. A virus is an obligate parasite — inert on its own, acting
+only through a host's machinery — which is exactly why "predicates are only ever
+computed by machines" is true and yet does *not* dissolve the category. It is
+made of the same substance as the two primary kinds — a virus is ordinary
+biomolecules; a predicate is, extensionally, an ordinary set — but arranged into
+a role neither anticipated. It is identified only *relative* to a host, and it
+is handled by a parallel taxonomy rather than forced into the tree. Then the
+analogy breaks, in the one place that matters. A virus is *causal*: it hijacks
+the cell for its own replication and has no opinion about what the cell *ought*
+to do. A predicate is *normative*: it **judges** the machine and can find it
+guilty. Biology has parasites but no oughts; that residue — **normativity** — is
+precisely what earns the predicate its own category, and precisely what a
+descriptive physics of computation has no word for.
+
+**The predicate in force: the constraint.** A predicate, like the virus, is
+inert until it is *applied*. In a comment or a design note, "balance ≥ 0" does
+nothing; the law acquires force only when it is bound to a site in a machine — a
+guard on a transition, an `assert` at a program point, a validation gate, a pre-
+or post-condition — at which point it becomes an **invariant**: the law in force
+over the machine's runs. This applied form earns a name, because it is what one
+actually meets in code. Call it the **constraint** — the predicate's engine,
+exactly as an interpreter is the engine of a spec (§4.2). The parallel is exact:
+
+|          | at rest       | in force     |
+|----------|---------------|--------------|
+| **data** | value         | machine      |
+| **law**  | predicate     | constraint   |
+
+A value is data at rest; a machine is that data given a transition structure. A
+predicate is a law at rest; a constraint is that law given a site to act at. In
+both rows the animator is the same — a machine — which is why the constraint is
+a **second-order** aspect, not a fourth primitive: it is `predicate ⊗ machine`,
+the way a computation is `value ⊗ machine`, and the trichotomy of primitives
+stays clean. But the working purpose of this paper — training a reader, human or
+model, to categorize real code — makes the constraint something that must be
+**distinguished so it can be identified**. Finding a bare predicate (a law
+stated), finding the machine it ranges over, and finding the constraint that
+binds them (the `if` guard, the `assert`, the validation check, the contract)
+are three different acts of recognition. An inventory that knows only the
+machine reads a guard as mere control flow and an assertion as a dead statement,
+and misses the law each one enforces. The constraint seam is where correctness
+becomes visible in the source — which is exactly where an analyst, having found
+the machine, looks next.
+
+Taken seriously, the third category asks for a first-class place to *write the
+law*, not only the machine — and a language that means this thesis would provide
+one, alongside the machine and the value it already names. That is the direction
+the boundary points. This paper's task is only to draw the boundary correctly,
+and drawn correctly it has three sides, not two: the machine, the value it
+moves, and the law that judges it — with the constraint as the seam, second-order
+but not second-class, where that law is bound to the machine and correctness
+enters the code.
 
 ---
 
@@ -495,6 +627,11 @@ should be able to point to at least one:
    illegal transitions made unrepresentable, and its behavior compared
    state-for-state against an oracle. A latent machine offers no such surface —
    its states can be reached but not enumerated, exercised but not asserted on.
+   Checking, precisely, is holding the machine against a **predicate** (§4.4) —
+   a law over its behaviors; naming the machine is what gives that law a
+   surface to bind to, which is why this payoff, unlike the first two, is
+   really a payoff of the third category resting on the machine the first two
+   reify.
 
 ### 6.2 The two failure modes: glossing and costuming
 
@@ -754,10 +891,14 @@ through every branch and loop to the sequence points inside expressions. The
 formal semantics say so; the mechanical transformations prove it constructively;
 the engineering record demonstrates it every time a compiler reifies a
 coroutine or a replication protocol demands the explicit representation. What
-stands outside the claim is exactly what stands outside computation: values,
-spaces, and specifications — data at rest — and even these are animated by
-engines that are machines, and governed across time by machines the moment
-they acquire a lifecycle.
+stands outside the claim is exactly what stands outside computation, and it is
+of two kinds: on one side the values, spaces, and specifications — data at rest,
+and even these are animated by engines that are machines, and governed across
+time by machines the moment they acquire a lifecycle; on the other the
+**predicates** — the laws that judge the machine, neither process nor data,
+where correctness and alignment are stated. The machine moves the values; the
+predicate says whether it moved rightly. The ontology has three sides, and the
+machine is the load-bearing one.
 
 From this settled identity follows the discipline of §6, compressed to a
 sentence: existence is never the question; naming is — and the burden of proof falls on
