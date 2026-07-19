@@ -1329,3 +1329,180 @@ better algorithm: with unbounded registers, behavioral equivalence is
 undecidable, so the load-bearing choice cannot be automated in general —
 extraction is theorem-grade mechanical, and naming is irreducibly design,
 which is this paper's division of labor stated one last time.
+
+---
+
+## Editorial Review
+
+*An independent critical review, added 2026-07-19. This section is not part
+of the paper's argument; it records a reviewer's principal objection and
+secondary findings, and is retained deliberately so the paper travels with
+its strongest counter-pressure attached.*
+
+The paper is unusually well-made — the cave metaphor is sustained without
+strain, the internal cross-referencing is meticulous, and the two appendices
+are the most concretely useful thing in it. It is also honest enough to
+pre-empt the obvious objections: the tautology worry (§3's degenerate pole),
+the over-reification worry (§6.2 costuming), the unfalsifiability worry (§4's
+earned exemption). The findings below are aimed at the places those
+pre-emptions do not hold.
+
+### Principal finding: the ontology is incomplete — `machine | value` omits `predicate`
+
+The paper's foundational proposition (§4) is a clean dichotomy: every artifact
+is either a **machine** (a process — state plus transitions, data across time)
+or a **value** (data at rest — a space, a spec, a timeless mapping). That
+dichotomy is missing a third, irreducible category: a **predicate** — a *law
+over a machine's behaviors*. "The agent never executes without approval";
+"every request is eventually answered"; a type read as a proposition. These
+are not data at rest, and they are not processes with states. They are
+judgments *about* a machine.
+
+The decisive argument that a predicate is not reducible to the other two is
+**violation.** A value a machine computes cannot be wrong relative to that
+machine — its output simply is whatever it is. But a law can be false *of* the
+very machine built to satisfy it; the machine can *break* it. That gap —
+between what the machine does and what the law says it must do — has no home in
+`machine | value`. Sharpen it: if predicates were merely "what the machine
+calculates or sets," there could be **no bugs** — the machine would define its
+own correctness by fiat, and every trace would be correct because *correct*
+would mean *whatever it did*. Incorrectness exists only because there is a law
+whose authority is independent of the machine it judges. The bug *is* the
+daylight between the predicate and the machine.
+
+This is not an external framework imported to embarrass the paper; it is the
+paper's own foundation. The authority it leans on for "computation is a state
+sequence" is Lamport and TLA+ (§2.1, §4.1; refs [7], [9]) — but a TLA+
+specification is *not* "a machine." It is `Init ∧ □[Next]` (the machine)
+**plus** the temporal properties (`□` safety, `◇` liveness, fairness) the
+machine is checked *against*. The invariant is a first-class, separate part of
+the ontology. And the paper's own strongest payoffs live entirely in that
+third category: **verifiability** (§6.1.3) and the **alignment** argument (§8)
+are stated in the vocabulary of *laws over the transition graph* — "every path
+to `$Executing` passes through `$AwaitingApproval`" is neither a state nor a
+transition. A two-category ontology can build the machine but cannot, in its
+own vocabulary, state what makes the machine *correct*.
+
+**The deep form of the objection.** The paper is a *physics of computation* —
+it says what programs **are** (machine, value; "what computation IS," stated
+like a law of nature). But correctness, verification, and alignment are
+**oughts**, and no amount of *is* — no descriptive operational semantics —
+yields "this trace is wrong." The predicate is where the *ought* lives, and a
+purely descriptive ontology structurally cannot contain it. This is Hume's
+guillotine dropped across §8: the paper's normative selling points rest on a
+base with no room for norms.
+
+**The reduction, and why it fails.** One will be tempted to answer that a
+predicate is just "what some machine computes" — a checker evaluates it, so it
+collapses into machine (the checker) plus value (the verdict). Three things are
+being conflated: the **checker** that evaluates a predicate (a machine, yes);
+the **verdict** it returns (a value, yes); and the **predicate itself** — the
+law — which is neither. The paper already refuses exactly this move *for
+values*: §4.1 grants that a pure function's *evaluation* is a machine "but the
+mapping view is honest, and the artifact may be treated as a value." By parity,
+a predicate's *checking* is a machine, its *verdict* is a value, and the law
+itself is irreducible to either. There is a consistent escape — a predicate is
+extensionally a *set of behaviors*, hence a value-about-machines — but it does
+not rescue the paper's dichotomy: a **machine's** denotation is *also* a set of
+behaviors (a timeless value, per §2.1), so the same reduction that folds
+predicate into value folds machine into value too, landing in denotational
+*monism* (everything is a value) — coherent, but useless for design and flatly
+not the paper's position. What one cannot consistently do is reduce
+`predicate → value` while shielding `machine → value` from the identical
+argument. That asymmetric halfway house *is* the two-bucket ontology.
+
+**A useful emblem.** A predicate sits at the `machine | value` boundary much as
+a *virus* sits at biology's `alive | inert` boundary: an obligate parasite,
+inert on its own and needing a host's machinery to act (which is exactly why
+"predicates are calculated by machines" is true and yet does not dissolve the
+category); made of the same substance as the two primary kinds (a virus is
+ordinary biomolecules; a predicate is, extensionally, an ordinary set) but
+arranged into a role neither one anticipated; identified only *relative* to a
+host; and handled by a parallel taxonomy rather than fitted into the tree. The
+analogy fits point for point — and then breaks in the one place that matters: a
+virus is *causal* (it hijacks the cell for its own replication, with no opinion
+about what the cell *ought* to do), whereas a predicate is *normative* (it
+*judges* the machine and can find it guilty). Biology has parasites but no
+oughts. That residue — normativity — is precisely what earns `predicate` its
+own category, and precisely what a descriptive ontology of computation has no
+word for. Taken seriously, the third category *invites a first-class construct*
+for stating laws over a machine's behavior — a place to write the constraints,
+not just the machine — in any language that means the thesis.
+
+### Secondary findings
+
+1. **"Theorem" is overclaimed (abstract, §2).** The three "proofs" are one
+   *definition*, one *theorem about a different claim*, and one *body of
+   evidence*. §2.1 (semantic) is not a proof but a modeling convention:
+   operational semantics is *defined* as a configuration-transition relation,
+   so it cannot *prove* computation is a transition system. §2.2
+   (defunctionalization) is a genuine theorem, but it yields an *abstract
+   machine* whose "states" are an unbounded continuation type — a
+   pushdown/Turing machine, i.e. machine-hood in the trivial sense, not the
+   design sense the thesis needs. §2.3 is explicitly evidence. "Provable three
+   independent ways" oversells this.
+
+2. **§8's language-design argument is a non-sequitur, and §2.3 cuts against
+   it.** "If the machine can be recovered mechanically downstream, it could
+   have been written directly upstream" does not follow: the entire point of
+   `async/await`, generators, and regex is that one *does not* hand-write the
+   machine — linear/declarative syntax is written and a lowering pass builds
+   the machine, and this is agreed to be the better design. §2.3 is a catalogue
+   of cases where *keeping the machine latent and letting the tool reify it*
+   won. The paper's best evidence is evidence for latency-plus-tooling, not for
+   authoring machines by hand.
+
+3. **The strongest rival is never engaged; §5 mischaracterizes it.** The typed
+   functional-programming discipline — *make illegal states unrepresentable*
+   via algebraic data types and rich `Result` error enums — is a rival
+   reification of the same insight and goes unaddressed. Worse, §5 lists
+   `Option`/`Result` as a *disguise* that "erases terminal states into the
+   value channel," but a `Result<T, RichError>` with a well-designed error enum
+   is *exactly naming the terminals* — a direct counterexample to the claim
+   that a state-machine construct is required to name them. The paper must argue
+   why a named state beats a tagged sum; instead it quietly counts the rival's
+   success (§2.3's compiler reifications) as its own.
+
+4. **§2.1's finite-memory move contradicts the paper's own discipline.**
+   "Physical memory is finite, so every execution is a walk through a finite
+   state machine" is the classic true-but-vacuous argument (a machine with
+   2^(billions) states is not usefully "finite-state"). It belongs in the same
+   "true but uninformative" bin the paper is otherwise scrupulous to quarantine
+   (§3's degenerate pole), yet here it is deployed as if it *strengthens* the
+   thesis.
+
+5. **The foundational cut rests on informal ground, and the conclusion is
+   author-interested.** The value/process identification (§4.1) leans entirely
+   on ref [7], a genuine but unpublished, non-peer-reviewed 2008 manuscript —
+   thin footing for a claim advertised as a theorem. And §8 lands on "the
+   design position that Frame occupies," authored by Frame's creator: the
+   burden-of-proof inversion conveniently makes Frame's value proposition the
+   reader's default. The hedge ("stands independently") is fair, but the reader
+   should be told which document they are holding — a position paper or an
+   advocacy piece.
+
+### What would strengthen the paper
+
+- Drop "theorem / three proofs"; reframe as *one definitional identification
+  plus a design argument*, and own the difference — the honest thesis
+  (existence is settled, *naming* is the decision) is already in §6 and is
+  strong enough without the inflation.
+- **Add the missing category.** State `machine | value | predicate`
+  explicitly, and make §4's boundary a *trichotomy*. This is the single change
+  that would let §6.1.3 and §8 rest on the ontology instead of floating above
+  it.
+- Engage the ADT / "illegal states unrepresentable" rival head-on, and say why
+  a named machine beats a tagged sum (or concede the cases where it does not).
+- Fix §8: concede that `async/await` argues *for* latency-plus-tooling, and
+  rebuild the language-design case on that more honest footing.
+- Anchor the value/process cut in a peer-reviewed source, or present it plainly
+  as a stance rather than settled ground.
+
+*Bottom line:* intellectually ambitious, unusually well-written, and honest
+about its own escape hatches — but it **overclaims its logical status** (a
+near-tautology proven, a design thesis asserted) and **ships an incomplete
+ontology** (`machine | value`, missing `predicate`), which is why its best
+payoffs — verifiability, alignment — float free of its foundation. Both are
+fixable without weakening the real contribution, which is the *lens*: a way to
+see the latent machine in ordinary code, and — once the third category is
+admitted — the latent *law* beside it.
