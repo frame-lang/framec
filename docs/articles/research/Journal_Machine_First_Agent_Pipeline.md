@@ -264,6 +264,29 @@ to escalate). The honest flat number, and the reason for it, rode into the
 landing commit. Item 3d is now complete; the delta landed as two
 file-disjoint commits exactly as the gate prescribed.
 
+**2026-07-19 — the gate-keeper was not grounded in the worldview it
+enforces.** The owner read the warden's ruling that `body_open_at` was
+"design-accepted glue" and asked one question: *is the warden trained on
+the shadows in the cave?* An audit answered it — only two of ten agents
+(the machine-advocate and the source-machine-finder) referenced the
+paper at all; the warden, the machine designer, and the test author, the
+very agents that gate, design, and test a machine-first conversion, had
+zero grounding in the machine-first worldview. To test whether the
+verdict itself was sound, the *grounded* advocate was run on
+`body_open_at` adversarially, without being told the warden's answer: it
+independently ruled LEAVE LATENT and reached it the paper's way — the
+function is a machine, but a degenerate one, a monotone cursor carrying no
+recognition register, every real decision delegated to the two systems it
+calls. So the verdict held; but the warden had reached it through a proxy
+(its own DoD rule D3) whose literal text it had to argue *around* — right
+on this case, unjustifiable on a harder one. The owner's directive: every
+agent involved must be grounded in the document. A canonical worldview
+section — the theorem, the carried-register-versus-cursor test, the
+glossing/costuming policing, the reify-or-leave-latent disposition
+vocabulary — was added to every ungrounded brief (its core verified
+byte-identical across all nineteen copies), and the rule was made standing:
+any new agent, including an ad-hoc builder brief, carries it.
+
 ## 2. Discovery register (the paper-worthy claims, each with evidence)
 
 **D1 — A worldview document alone is sufficient agent training.** Blind
@@ -381,6 +404,26 @@ extents*, not *machine resources* — an earlier pair of overlapped agent
 runs in this campaign produced a toolchain-level test flake on the shared
 machine (PM-6); the build lanes mitigated with separate build caches and
 ran green.)
+
+**D12 — The worldview document is sufficient training only while the agent
+still carries it; enforcing agents drift onto proxies.** D1 measured that
+the paper alone carries the skill and instruction files are packaging.
+The corollary, found the hard way: eight of ten agents' packaging had
+*dropped the paper*, and those agents reverted to role-specific proxies —
+the warden judged machine-honesty by its DoD checklist (D3/D8) rather than
+the paper's carried-register test, reaching the right verdict on an easy
+case by an argument it had to make *around* its own rule's literal text.
+A proxy is downstream of the worldview; it can coincide with the right
+answer without being able to justify it, and that coincidence fails
+silently on the first hard case. The countermeasures are two: re-ground
+every agent in the source document (done — a canonical worldview section,
+byte-identical across all copies), and use a *grounded* peer agent as the
+validator (the machine-advocate confirmed the verdict from first
+principles, which is what told us the proxy had merely gotten lucky). The
+instrument that caught the drift was not any agent layer — it was the
+owner's one-line probe (*"is the warden trained on the shadows?"*), which
+makes the owner gate a grounding check on the agents themselves, not only
+a guardrail-and-scope check (extends D2).
 
 ## 3. Supporting artifacts (where the evidence lives)
 
@@ -522,6 +565,25 @@ metric's shape, not a missing owner. *Improvement proposed:* completion
 claims cite the instrument and the *residual*, never a bare target; and
 the residual must be *classified* (transient oracle vs live path vs
 by-design C-final), because a raw census number conflates all three.
+
+**PM-8 — The foundational worldview was not propagated to the agents that
+enforce it** (2026-07-19). Eight of ten agents — including the warden that
+gates every milestone, the designer that rules dispositions, and the test
+author — carried no reference to `Shadows_on_the_Wall.md`, the document the
+whole pipeline exists to apply. They enforced role-specific proxies instead
+(the warden's D3/D8 checklist), which reached a correct verdict on an easy
+case by reasoning it had to bend around its own rule. *How it survived:*
+agent briefs accreted role machinery over time; nobody re-checked that the
+machinery still traced to the source worldview. *Caught by:* an owner probe,
+not the pipeline. *Correction applied:* a canonical worldview section added
+to every ungrounded brief (core byte-identical across all copies), the
+already-grounded two path-fixed to the absolute paper location, and a
+standing rule that any new agent — including ad-hoc builder briefs — must
+carry the grounding. *Improvement adopted:* grounding is a property to
+*audit*, not assume; a periodic check that every agent's brief references
+the source document belongs in the process doc. Same defect class as PM-1
+and PM-4 — an unvalidated instrument (here, the agents themselves) steering
+decisions until someone calibrated it against ground truth (the paper).
 
 ## 5. Open threads (for the paper's future-work section)
 
