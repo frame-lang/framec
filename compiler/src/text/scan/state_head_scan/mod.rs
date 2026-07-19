@@ -203,11 +203,15 @@ pub fn state_head_hand(bytes: &[u8], at: usize, limit: usize, target: Target) ->
     // LEN-bounded via the shared `is_dollar_name` — the T-S9 straddle, reproduced). Phase 2 D1:
     // opaque-aware via the shared `skip` leaf — a whole comment/string is jumped, so a brace or
     // arrow trapped inside one no longer steers the hunt (T-S3 / H1). Lockstep with $ParentSeek.
+    // Phase 2 D2 (T-S5): both the parent hunt AND the open seek start AFTER a balanced params
+    // group (`hunt_start`), lockstep with the machine (whose fused $ParentSeek starts there),
+    // so a `=>` inside a param default is not read and a real parent after the `)` is found.
     // (This body stays free of brace char-literals so the census oracle-span matcher works.)
+    let hunt_start = if has_params { params_close } else { name_end };
     let mut has_parent = false;
     let mut parent_start = 0usize;
     let mut parent_end = 0usize;
-    let mut k = name_end;
+    let mut k = hunt_start;
     while k < limit {
         let sk = skip(bytes, k, limit, target);
         if sk > k {
@@ -240,8 +244,9 @@ pub fn state_head_hand(bytes: &[u8], at: usize, limit: usize, target: Target) ->
     // `state_extent`'s open seek (crossing newlines) + body extent; the `unwrap_or(limit)` clamp
     // NAMED (`body_clamped` fires only when an open was found — the machine's `$Body` else-arm;
     // with no open, `open == end == limit` and `open_found` stays false, T-S2). Phase 2 D1:
-    // opaque-aware via `skip` (T-S3), lockstep with the machine's $SeekOpen.
-    let mut o = name_end;
+    // opaque-aware via `skip` (T-S3); Phase 2 D2: starts at `hunt_start` (after a balanced params
+    // group), lockstep with the fused machine seek. Both start together — the sequentialization.
+    let mut o = hunt_start;
     while o < limit {
         let sk = skip(bytes, o, limit, target);
         if sk > o {

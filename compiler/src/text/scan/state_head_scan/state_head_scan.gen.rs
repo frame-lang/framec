@@ -143,10 +143,15 @@ impl<'a> StateHeadScan<'a> {
                 self.params_unbalanced = true;
             }
         }
-        // Phase 1 (hand-exact): the parent hunt starts at name_end and scans
-        // THROUGH the params group (T-S5, carried; Phase 2: start at params_close
-        // when has_params).
-        self.cursor = self.name_end;
+        // Phase 2 D2 (T-S5 fixed): the parent/body seek starts AFTER the params group
+        // (params_close) when it is balanced — a `=>` inside a param default is no
+        // longer read as the parent, and a real `=> $Parent` after the `)` is found.
+        // With no (or unbalanced) params the seek starts at name_end, as in Phase 1.
+        if self.has_params {
+            self.cursor = self.params_close;
+        } else {
+            self.cursor = self.name_end;
+        }
         let mut __next = StateHeadScanComp { state: "ParentSeek".to_string(), vars: StateHeadScanVars::ParentSeek {  }, args: StateHeadScanArgs::ParentSeek { } };
         self.compartment = __next;
         return Default::default();

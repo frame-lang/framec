@@ -30,8 +30,9 @@
 //!        route through the shared `skip` (OpaqueScan) leaf; a `{`/`=>` in a comment/string no
 //!        longer steers the head. Opacity is target-sensitive (Python has no `/* */`).
 //!   T-S4 parent on a later line       -> `t_s4_parent_next_line_none_pinned` (grammar fact).
-//!   T-S5 parent hunt scans the params -> `t_s5_arrow_in_params_pinned` (P1 pin, both faces:
-//!        the phantom parent from a default AND the lost real parent after `)`; Phase-2 D2).
+//!   T-S5 parent hunt skips the params (D2 LANDED) -> `t_s5_directed` (P2 directed; replaced
+//!        `t_s5_arrow_in_params_pinned`). The parent/body seek starts at `params_close` when the
+//!        group is balanced: no phantom parent from a default, and a real parent after `)` found.
 //!   T-S6 unbalanced params dropped    -> `t_s6_unbalanced_params_named_pinned` (register).
 //!   T-S7 malformed parent stops hunt  -> `t_s7_malformed_parent_stops_hunt_pinned`.
 //!   T-S8 off-contract `at`            -> no test (position precondition, documented in the
@@ -257,30 +258,37 @@ fn t_s4_parent_next_line_none_pinned() {
     }
 }
 
-/// T-S5 (carry P1 -> fix P2 D2): the parent hunt starts at `name_end` and scans THROUGH the
-/// params group. Both faces pinned: (a) `=> $b` inside a param default is read as a PHANTOM
-/// parent `b`; (b) the in-params arrow consumes the hunt's single `break`, so a REAL
-/// `=> $Real` after the `)` is LOST. Phase-2 D2 starts the hunt at `params_close`.
+/// T-S5 (fix P2 D2): the parent/body seek now starts AFTER a balanced params group
+/// (`params_close`), not at `name_end`, so it no longer scans THROUGH the group. Replaces
+/// `t_s5_arrow_in_params_pinned`. Machine and oracle move together (both starts shift to
+/// `params_close`), so the differential stays LOCKED; this pins the NEW behavior on both faces:
+/// (a) a `=> $b` inside a param default is NO LONGER read as a phantom parent; (b) a REAL
+/// `=> $Real` after the `)` is now FOUND (the hunt was previously consumed inside the params).
 #[test]
-fn t_s5_arrow_in_params_pinned() {
-    // (a) the phantom parent from inside the default.
+fn t_s5_directed() {
+    // (a) the in-params arrow is skipped — no phantom parent.
     let a = b"$S(f: cb = a => $b) { }";
     for t in TARGETS {
         let p = agree(a, 0, a.len(), t);
         assert!(p.has_params, "the group itself is balanced for {t:?}");
         assert_eq!((p.params_open, p.params_close), (2, 19));
-        assert!(p.has_parent, "the in-params arrow IS read for {t:?} (pinned)");
-        assert_eq!(&a[p.parent_start..p.parent_end], b"b");
+        assert!(!p.has_parent, "the in-params `=> $b` is NOT read for {t:?} (D2 fixed)");
+        assert_eq!((p.open, p.end), (20, 23), "the body opens after the group for {t:?}");
     }
-    // (b) the real parent after the group is never seen.
+    // (b) the real parent after the group is now found (the design's example).
     let b_ = b"$S(f: cb = a => b) => $Real { }";
     for t in TARGETS {
         let p = agree(b_, 0, b_.len(), t);
         assert!(p.has_params);
-        assert!(
-            !p.has_parent,
-            "the in-params arrow consumed the hunt; `=> $Real` is LOST for {t:?} (pinned)"
-        );
+        assert!(p.has_parent, "the real `=> $Real` after the `)` is found for {t:?} (D2 fixed)");
+        assert_eq!(&b_[p.parent_start..p.parent_end], b"Real");
+        assert_eq!((p.open, p.end), (28, 31));
+    }
+    // Control: no-params heads are unchanged — the hunt still starts at name_end.
+    for t in TARGETS {
+        let p = agree(b"$A => $P { }", 0, 12, t);
+        assert!(!p.has_params && p.has_parent);
+        assert_eq!(&b"$A => $P { }"[p.parent_start..p.parent_end], b"P");
     }
 }
 
