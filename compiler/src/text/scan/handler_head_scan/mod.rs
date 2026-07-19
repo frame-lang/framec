@@ -33,6 +33,15 @@
 
 use super::literals::Target;
 
+/// Opaque-skip leaf (Phase 2 D1): the offset past a comment/literal at `i`, or `i` unchanged. A
+/// run-and-unwrap wrapper of the shared `machine::skip_opaque` (OpaqueScan policy) — no walk
+/// (D3), exactly as the sibling walks define their `skip`. The head-line `{`/type seeks route
+/// through it so a `{` or `:` inside a comment/string no longer opens the body (T-H8). Machine
+/// and oracle call the SAME leaf, so the differential stays locked.
+fn skip(src: &[u8], i: usize, limit: usize, target: Target) -> usize {
+    super::machine::skip_opaque(src, i, limit, target).unwrap_or(i)
+}
+
 /// Is `$>` (the enter-event name) at `i`? LEN-bounded two-byte probe — the hand
 /// `bytes[i] == b'$' && bytes.get(i + 1) == Some(&b'>')` with the first byte bounds-checked
 /// (in-contract identical; the hand panics off-contract, T-H9).
@@ -117,7 +126,7 @@ mod fsm {
     )]
     use super::{
         at_colon, at_enter, at_exit, at_newline, at_open_brace, at_open_paren, body_end,
-        is_name_byte, is_name_start_here, is_ws, paren_extent, ret_byte, Target,
+        is_name_byte, is_name_start_here, is_ws, paren_extent, ret_byte, skip, Target,
     };
     include!("handler_head_scan.gen.rs");
 }
@@ -266,17 +275,43 @@ pub fn handler_head_hand(
     while k < limit && (bytes[k] == b' ' || bytes[k] == b'\t') {
         k += 1;
     }
+    // The return-type read ($RetType) and the head-line brace seek ($SeekBrace) — Phase 2 D1:
+    // both opaque-aware via the shared `skip` leaf, lockstep with the machine (a comment/string
+    // in the type region or on the head line is jumped whole, so a brace or colon trapped inside
+    // one no longer truncates the type or opens the body — T-H8). The `k >= limit` break guard
+    // mirrors the machine's `cursor >= limit` guard clause (skip is only asked at cursor < limit).
+    // (This body stays free of brace char-literals so the census oracle-span matcher works.)
     if at_colon(bytes, k, limit) {
         k += 1;
         has_return = true;
         ret_start = k;
-        while ret_byte(bytes, k, limit) {
-            k += 1;
+        loop {
+            if k >= limit {
+                break;
+            }
+            let sk = skip(bytes, k, limit, target);
+            if sk > k {
+                k = sk;
+            } else if ret_byte(bytes, k, limit) {
+                k += 1;
+            } else {
+                break;
+            }
         }
         ret_end = k;
     }
-    while ret_byte(bytes, k, limit) {
-        k += 1;
+    loop {
+        if k >= limit {
+            break;
+        }
+        let sk = skip(bytes, k, limit, target);
+        if sk > k {
+            k = sk;
+        } else if ret_byte(bytes, k, limit) {
+            k += 1;
+        } else {
+            break;
+        }
     }
     if !at_open_brace(bytes, k, limit) {
         return None;

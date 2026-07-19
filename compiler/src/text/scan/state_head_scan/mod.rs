@@ -28,6 +28,15 @@
 
 use super::literals::Target;
 
+/// Opaque-skip leaf (Phase 2 D1): the offset past a comment/literal at `i`, or `i` unchanged. A
+/// run-and-unwrap wrapper of the shared `machine::skip_opaque` (OpaqueScan policy) — no walk
+/// (D3), exactly as `state_walk`/`machine_walk`/`body_walk`/`decl_walk` define their `skip`. The
+/// `{`/`=>`-seeks route through it so a `{` or `=>` inside a comment/string no longer steers the
+/// head (T-S3 / H1). Machine and oracle call the SAME leaf, so the differential stays locked.
+fn skip(src: &[u8], i: usize, limit: usize, target: Target) -> usize {
+    super::machine::skip_opaque(src, i, limit, target).unwrap_or(i)
+}
+
 /// Is a name byte (`[A-Za-z0-9_]`) at `i`, inside `limit`? (The hand name/parent-ident scans'
 /// exact byte class and bound.)
 fn is_name_byte(src: &[u8], i: usize, limit: usize) -> bool {
@@ -102,7 +111,7 @@ mod fsm {
     )]
     use super::{
         at_arrow, at_newline, at_open_brace, at_open_paren, body_end, is_dollar_name,
-        is_name_byte, is_ws, paren_extent, Target,
+        is_name_byte, is_ws, paren_extent, skip, Target,
     };
     include!("state_head_scan.gen.rs");
 }
@@ -190,13 +199,24 @@ pub fn state_head_hand(bytes: &[u8], at: usize, limit: usize, target: Target) ->
         }
     }
 
-    // `state()`'s parent hunt, verbatim (offsets instead of the String; the `.get` name-start
-    // probe LEN-bounded via the shared `is_dollar_name` — the T-S9 straddle, reproduced).
+    // `state()`'s parent hunt (offsets instead of the String; the `.get` name-start probe
+    // LEN-bounded via the shared `is_dollar_name` — the T-S9 straddle, reproduced). Phase 2 D1:
+    // opaque-aware via the shared `skip` leaf — a whole comment/string is jumped, so a brace or
+    // arrow trapped inside one no longer steers the hunt (T-S3 / H1). Lockstep with $ParentSeek.
+    // (This body stays free of brace char-literals so the census oracle-span matcher works.)
     let mut has_parent = false;
     let mut parent_start = 0usize;
     let mut parent_end = 0usize;
     let mut k = name_end;
-    while k < limit && !at_open_brace(bytes, k, limit) && !at_newline(bytes, k, limit) {
+    while k < limit {
+        let sk = skip(bytes, k, limit, target);
+        if sk > k {
+            k = sk;
+            continue;
+        }
+        if at_open_brace(bytes, k, limit) || at_newline(bytes, k, limit) {
+            break;
+        }
         if k + 2 <= limit && &bytes[k..k + 2] == b"=>" {
             let mut p = k + 2;
             while p < limit && (bytes[p] == b' ' || bytes[p] == b'\t') {
@@ -217,13 +237,20 @@ pub fn state_head_hand(bytes: &[u8], at: usize, limit: usize, target: Target) ->
         k += 1;
     }
 
-    // `state_extent`'s open seek (crossing newlines, not opaque-aware — T-S3) + body extent,
-    // verbatim; the `unwrap_or(limit)` clamp NAMED (`body_clamped` fires only when an open
-    // was found — the machine's `$Body` else-arm; with no open, `open == end == limit` and
-    // `open_found` stays false, T-S2).
+    // `state_extent`'s open seek (crossing newlines) + body extent; the `unwrap_or(limit)` clamp
+    // NAMED (`body_clamped` fires only when an open was found — the machine's `$Body` else-arm;
+    // with no open, `open == end == limit` and `open_found` stays false, T-S2). Phase 2 D1:
+    // opaque-aware via `skip` (T-S3), lockstep with the machine's $SeekOpen.
     let mut o = name_end;
-    while o < limit && !at_open_brace(bytes, o, limit) {
-        o += 1;
+    while o < limit {
+        let sk = skip(bytes, o, limit, target);
+        if sk > o {
+            o = sk;
+        } else if at_open_brace(bytes, o, limit) {
+            break;
+        } else {
+            o += 1;
+        }
     }
     let open = o;
     let open_found = open < limit;

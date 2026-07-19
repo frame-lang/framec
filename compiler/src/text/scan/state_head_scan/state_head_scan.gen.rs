@@ -160,25 +160,30 @@ impl<'a> StateHeadScan<'a> {
             self.compartment = __next;
             return Default::default();
         }
-        if at_open_brace(self.src, self.cursor, self.limit) {
-            self.open = self.cursor;
-            self.open_found = true;
-            let mut __next = StateHeadScanComp { state: "Body".to_string(), vars: StateHeadScanVars::Body {  }, args: StateHeadScanArgs::Body { } };
-            self.compartment = __next;
-            return Default::default();
+        let sk = skip(self.src, self.cursor, self.limit, self.target);
+        if sk > self.cursor {
+            self.cursor = sk;
+        } else {
+            if at_open_brace(self.src, self.cursor, self.limit) {
+                self.open = self.cursor;
+                self.open_found = true;
+                let mut __next = StateHeadScanComp { state: "Body".to_string(), vars: StateHeadScanVars::Body {  }, args: StateHeadScanArgs::Body { } };
+                self.compartment = __next;
+                return Default::default();
+            }
+            if at_newline(self.src, self.cursor, self.limit) {
+                let mut __next = StateHeadScanComp { state: "SeekOpen".to_string(), vars: StateHeadScanVars::SeekOpen {  }, args: StateHeadScanArgs::SeekOpen { } };
+                self.compartment = __next;
+                return Default::default();
+            }
+            if at_arrow(self.src, self.cursor, self.limit) {
+                self.cursor = self.cursor + 2;
+                let mut __next = StateHeadScanComp { state: "ParentName".to_string(), vars: StateHeadScanVars::ParentName {  }, args: StateHeadScanArgs::ParentName { } };
+                self.compartment = __next;
+                return Default::default();
+            }
+            self.cursor = self.cursor + 1;
         }
-        if at_newline(self.src, self.cursor, self.limit) {
-            let mut __next = StateHeadScanComp { state: "SeekOpen".to_string(), vars: StateHeadScanVars::SeekOpen {  }, args: StateHeadScanArgs::SeekOpen { } };
-            self.compartment = __next;
-            return Default::default();
-        }
-        if at_arrow(self.src, self.cursor, self.limit) {
-            self.cursor = self.cursor + 2;
-            let mut __next = StateHeadScanComp { state: "ParentName".to_string(), vars: StateHeadScanVars::ParentName {  }, args: StateHeadScanArgs::ParentName { } };
-            self.compartment = __next;
-            return Default::default();
-        }
-        self.cursor = self.cursor + 1;
     }
 
     fn ParentName_step(&mut self) {
@@ -218,14 +223,19 @@ impl<'a> StateHeadScan<'a> {
             self.compartment = __next;
             return Default::default();
         }
-        if at_open_brace(self.src, self.cursor, self.limit) {
-            self.open = self.cursor;
-            self.open_found = true;
-            let mut __next = StateHeadScanComp { state: "Body".to_string(), vars: StateHeadScanVars::Body {  }, args: StateHeadScanArgs::Body { } };
-            self.compartment = __next;
-            return Default::default();
+        let sk = skip(self.src, self.cursor, self.limit, self.target);
+        if sk > self.cursor {
+            self.cursor = sk;
+        } else {
+            if at_open_brace(self.src, self.cursor, self.limit) {
+                self.open = self.cursor;
+                self.open_found = true;
+                let mut __next = StateHeadScanComp { state: "Body".to_string(), vars: StateHeadScanVars::Body {  }, args: StateHeadScanArgs::Body { } };
+                self.compartment = __next;
+                return Default::default();
+            }
+            self.cursor = self.cursor + 1;
         }
-        self.cursor = self.cursor + 1;
     }
 
     fn Body_step(&mut self) {

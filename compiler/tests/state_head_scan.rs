@@ -25,9 +25,10 @@
 //!   T-S2 no `{` before limit          -> `t_s2_no_brace_tail_pinned` (`open == end == limit`,
 //!        `!open_found`; the driver's `(at, limit + 1)` header-span overrun is a DRIVER
 //!        artifact, recorded in that test's comment — out of this lane's scope).
-//!   T-S3 seek not opaque-aware        -> `t_s3_brace_in_comment_pinned` (P1 pin; Phase-2 D1
-//!        replaces it) + `pin_arrow_in_comment_phantom_parent` (gate amendment H1: the parent
-//!        hunt reads `=> $X` inside a comment).
+//!   T-S3 seek opaque-aware (D1 LANDED) -> `t_s3_opaque_seek_directed` (P2 directed; replaced
+//!        `t_s3_brace_in_comment_pinned` + `pin_arrow_in_comment_phantom_parent`/H1). The seeks
+//!        route through the shared `skip` (OpaqueScan) leaf; a `{`/`=>` in a comment/string no
+//!        longer steers the head. Opacity is target-sensitive (Python has no `/* */`).
 //!   T-S4 parent on a later line       -> `t_s4_parent_next_line_none_pinned` (grammar fact).
 //!   T-S5 parent hunt scans the params -> `t_s5_arrow_in_params_pinned` (P1 pin, both faces:
 //!        the phantom parent from a default AND the lost real parent after `)`; Phase-2 D2).
@@ -192,39 +193,54 @@ fn t_s2_no_brace_tail_pinned() {
     }
 }
 
-/// T-S3 (carry P1 -> fix P2 D1): the `{` seek is NOT opaque-aware — `$A /* { */ { go(){} }`
-/// opens at the COMMENT's `{` (byte 6), and the body extent from there never balances, so the
-/// T-S1 clamp fires as a knock-on. Today's truth, pinned as such; the Phase-2 opaque-aware
-/// seek replaces this pin with a directed test (open = the real `{`).
+/// T-S3 + H1 (fix P2 D1): the `{`/`=>` seeks are now OPAQUE-AWARE — they route through the
+/// shared `skip` (OpaqueScan) leaf, so a `{` or `=>`/`$` trapped in a comment/string no longer
+/// steers the head. Replaces `t_s3_brace_in_comment_pinned` and `pin_arrow_in_comment_phantom_parent`.
+/// The machine and the oracle move together (shared `skip`), so the differential stays LOCKED;
+/// this test pins the NEW behavior. Opacity is TARGET-SENSITIVE (the OpaqueScan policy): a
+/// double-quoted string is opaque in EVERY target, but `/* */` block comments exist only in
+/// C/Java/Rust — Python3 has none — so the comment cases are asserted per target, which
+/// documents the policy honestly.
 #[test]
-fn t_s3_brace_in_comment_pinned() {
-    let src = b"$A /* { */ { go(){} }";
+fn t_s3_opaque_seek_directed() {
+    // A `{` AND a `=> $X` trapped in a STRING literal — opaque in every target — no longer
+    // steer the head: the seek skips the whole string and opens at the REAL `{`.
+    let s = b"$A \"{ => $X\" { }";
     for t in TARGETS {
-        let p = agree(src, 0, src.len(), t);
-        assert_eq!(p.open, 6, "open lands at the comment's `{{` for {t:?} (pinned)");
-        assert!(p.open_found);
-        assert!(p.body_clamped, "the mis-open never balances -> knock-on clamp for {t:?}");
-        assert_eq!(p.end, src.len());
+        let p = agree(s, 0, s.len(), t);
+        assert!(!p.has_parent, "the in-string `=> $X` is NOT read for {t:?}");
+        assert_eq!(p.open, 13, "open = the real `{{` (the string's `{{` is skipped) for {t:?}");
+        assert!(p.open_found && !p.body_clamped, "the real body balances cleanly for {t:?}");
+        assert_eq!(p.end, 16);
     }
-}
-
-/// Gate amendment H1 (T-S3 widened, pinned): the per-byte parent hunt reads `=>` / `$` inside
-/// a COMMENT — `$A /* => $X */ { }` yields a PHANTOM parent `X`. Today's truth, pinned; the
-/// Phase-2 D1 opaque-aware seek removes it, and this pin dies with that delta's commit.
-#[test]
-fn pin_arrow_in_comment_phantom_parent() {
-    let src = b"$A /* => $X */ { }";
+    // A `{` trapped in a `/* */` block comment: skipped in C/Java/Rust (body opens at the real
+    // `{`); Python3 has no block comments, so the text's first `{` (byte 6) wins and the
+    // mis-open never balances (the old pinned behavior, now Python-only).
+    let c = b"$A /* { */ { }";
     for t in TARGETS {
-        let p = agree(src, 0, src.len(), t);
-        assert!(p.has_parent, "the in-comment arrow IS read for {t:?} (pinned, H1)");
-        assert_eq!(
-            &src[p.parent_start..p.parent_end],
-            b"X",
-            "the phantom parent is `X` for {t:?}"
-        );
-        assert_eq!(p.open, 15, "the body opens at the real `{{` here");
-        assert_eq!(p.end, 18);
-        assert!(!p.body_clamped);
+        let p = agree(c, 0, c.len(), t);
+        if t == Target::Python3 {
+            assert_eq!(p.open, 6, "no block comments in Python — the text's `{{` (6) wins");
+            assert!(p.body_clamped, "the mis-open never balances for Python3");
+        } else {
+            assert_eq!(p.open, 11, "the comment is skipped; the body opens at the real `{{`");
+            assert!(!p.body_clamped);
+            assert_eq!(p.end, 14);
+        }
+    }
+    // H1: a `=> $X` trapped in a block comment. C/Java/Rust skip it (NO phantom parent);
+    // Python3 (no block comment) still reads the phantom `X`. The body opener (15) is the same
+    // either way — only the parent outcome differs by target.
+    let a = b"$A /* => $X */ { }";
+    for t in TARGETS {
+        let p = agree(a, 0, a.len(), t);
+        assert_eq!((p.open, p.end), (15, 18), "the real body opener is target-invariant for {t:?}");
+        if t == Target::Python3 {
+            assert!(p.has_parent, "Python has no block comment — the arrow IS read");
+            assert_eq!(&a[p.parent_start..p.parent_end], b"X", "phantom parent `X` for Python3");
+        } else {
+            assert!(!p.has_parent, "the in-comment arrow is skipped for {t:?} — NO phantom parent");
+        }
     }
 }
 

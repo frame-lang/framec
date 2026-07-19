@@ -33,8 +33,10 @@
 //!        for the first time; trim/empty->None stays adapter-side value work).
 //!   T-H7 `{` inside the type     -> `t_h7_brace_in_return_type_pinned` (carried grammar
 //!        limit — native-type parsing framec does not do; LEAVE-LATENT plea recorded).
-//!   T-H8 head-line seeks not opaque-aware -> `t_h8_comment_brace_head_line_pinned` (P1 pin;
-//!        Phase-2 D1 replaces it).
+//!   T-H8 head-line seeks opaque-aware (D1 LANDED) -> `t_h8_directed` (P2 directed; replaced
+//!        `t_h8_comment_brace_head_line_pinned`). $RetType/$SeekBrace route through the shared
+//!        `skip` (OpaqueScan) leaf; a `{`/`:` in a comment/string no longer opens the body.
+//!        Opacity is target-sensitive (Python has no `/* */`).
 //!   T-H9 `bytes[i]` panic        -> no test (position precondition, documented in the mod
 //!        docs; the sweep respects `i < limit <= len`).
 
@@ -276,18 +278,37 @@ fn t_h7_brace_in_return_type_pinned() {
     }
 }
 
-/// T-H8 (carry P1 -> fix P2 D1): the head-line seeks are NOT opaque-aware — `go() /* { */
-/// { }` opens at the COMMENT's `{` (byte 8), and the body extent from there never balances,
-/// so the T-H5 clamp fires as a knock-on. Today's truth, pinned; the Phase-2 opaque-aware
-/// seek replaces this pin with a directed test.
+/// T-H8 (fix P2 D1): the head-line seeks ($RetType, $SeekBrace) are now OPAQUE-AWARE — they
+/// route through the shared `skip` (OpaqueScan) leaf, so a `{`/`:` trapped in a comment/string
+/// no longer opens the body. Replaces `t_h8_comment_brace_head_line_pinned`. Machine and oracle
+/// move together (shared `skip`), so the differential stays LOCKED; this pins the NEW behavior.
+/// Opacity is TARGET-SENSITIVE: a string is opaque in every target, `/* */` only in C/Java/Rust
+/// (Python3 has no block comments).
 #[test]
-fn t_h8_comment_brace_head_line_pinned() {
-    let src = b"go() /* { */ { }";
+fn t_h8_directed() {
+    // A `{` trapped in a STRING literal (opaque in every target) on the head line no longer
+    // opens the body: the seek skips the string and opens at the REAL `{`.
+    let s = b"go() \"{\" { }";
     for t in TARGETS {
-        let p = agree(src, 0, src.len(), t).expect("accepts (at the wrong brace)");
-        assert_eq!(p.open, 8, "open lands at the comment's `{{` for {t:?} (pinned)");
-        assert!(p.body_clamped, "the mis-open never balances -> knock-on clamp for {t:?}");
-        assert_eq!(p.end, src.len());
+        let p = agree(s, 0, s.len(), t).expect("accepts at the real brace");
+        assert_eq!(p.open, 9, "open = the real `{{` (the string's `{{` is skipped) for {t:?}");
+        assert!(!p.body_clamped, "the real body balances cleanly for {t:?}");
+        assert_eq!(p.end, 12);
+    }
+    // A `{` in a `/* */` block comment on the head line: skipped in C/Java/Rust (body opens at
+    // the real `{`); Python3 has no block comments, so the text's first `{` (byte 8) wins and
+    // the mis-open never balances (the old pinned behavior, now Python-only).
+    let c = b"go() /* { */ { }";
+    for t in TARGETS {
+        let p = agree(c, 0, c.len(), t).expect("accepts");
+        if t == Target::Python3 {
+            assert_eq!(p.open, 8, "no block comments in Python — the text's `{{` (8) wins");
+            assert!(p.body_clamped, "the mis-open never balances for Python3");
+        } else {
+            assert_eq!(p.open, 13, "the comment is skipped; the body opens at the real `{{`");
+            assert!(!p.body_clamped);
+            assert_eq!(p.end, 16);
+        }
     }
 }
 

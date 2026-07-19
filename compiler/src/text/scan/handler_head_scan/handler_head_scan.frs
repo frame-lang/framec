@@ -103,36 +103,53 @@
             }
         }
         // The type runs to `{` or newline on the SAME line. A `{` inside the type text
-        // truncates it and opens the body (T-H7, carried grammar limit). Not opaque-aware
-        // (T-H8, carried Phase 1).
+        // truncates it and opens the body (T-H7, carried grammar limit). Phase 2 D1:
+        // opaque-aware — a comment/string in the type region is skipped whole (its `{`/`:`
+        // no longer truncates the type or opens the body — T-H8 fixed). The explicit limit
+        // guard keeps `skip` in-bounds (skip is only asked at cursor < limit).
         $RetType {
             step() {
-                if ret_byte(self.src, self.cursor, self.limit) {
-                    self.cursor = self.cursor + 1;
-                } else {
+                if self.cursor >= self.limit {
                     self.ret_end = self.cursor;
                     -> $SeekBrace
+                }
+                let sk = skip(self.src, self.cursor, self.limit, self.target);
+                if sk > self.cursor {
+                    self.cursor = sk;
+                } else {
+                    if ret_byte(self.src, self.cursor, self.limit) {
+                        self.cursor = self.cursor + 1;
+                    } else {
+                        self.ret_end = self.cursor;
+                        -> $SeekBrace
+                    }
                 }
             }
         }
         // The `{` must be on the head line: newline or limit first → Reject(4) (T-H4;
-        // `go()\n{ }` is NOT a handler — grammar fact, pinned). Not opaque-aware (T-H8,
-        // carried Phase 1; Phase 2 routes through `skip`).
+        // `go()\n{ }` is NOT a handler — grammar fact, pinned). Phase 2 D1: opaque-aware —
+        // routes through `skip`, so a `{` inside a comment/string no longer opens the body
+        // (T-H8 fixed). A block comment spanning the head line is skipped whole.
         $SeekBrace {
             step() {
                 if self.cursor >= self.limit {
                     self.reject_reason = 4;
                     -> $Reject
                 }
-                if at_open_brace(self.src, self.cursor, self.limit) {
-                    self.open = self.cursor;
-                    -> $Body
+                let sk = skip(self.src, self.cursor, self.limit, self.target);
+                if sk > self.cursor {
+                    self.cursor = sk;
+                } else {
+                    if at_open_brace(self.src, self.cursor, self.limit) {
+                        self.open = self.cursor;
+                        -> $Body
+                    }
+                    if at_newline(self.src, self.cursor, self.limit) {
+                        self.reject_reason = 4;
+                        -> $Reject
+                    }
+                    self.cursor = self.cursor + 1;
                 }
-                if at_newline(self.src, self.cursor, self.limit) {
-                    self.reject_reason = 4;
-                    -> $Reject
-                }
-                self.cursor = self.cursor + 1;
             }
         }
         // Body extent via DelimBalance. Unbalanced → clamp to limit, byte-exact with the

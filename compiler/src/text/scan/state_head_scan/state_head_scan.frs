@@ -60,7 +60,8 @@
         }
         // `=> $Parent` on the header's FIRST line: bounded by `{` OR newline, in that
         // priority (hand state()'s parent hunt). A later-line arrow is silently no-parent
-        // (T-S4, carried).
+        // (T-S4, carried). Phase 2 D1: opaque-aware — a whole comment/string is skipped via
+        // `skip`, so a `{`/`=>` inside one no longer steers the head (T-S3 / H1 fixed).
         $ParentSeek {
             step() {
                 if self.cursor >= self.limit {
@@ -68,19 +69,24 @@
                     self.end = self.limit;
                     -> $Accept
                 }
-                if at_open_brace(self.src, self.cursor, self.limit) {
-                    self.open = self.cursor;
-                    self.open_found = true;
-                    -> $Body
+                let sk = skip(self.src, self.cursor, self.limit, self.target);
+                if sk > self.cursor {
+                    self.cursor = sk;
+                } else {
+                    if at_open_brace(self.src, self.cursor, self.limit) {
+                        self.open = self.cursor;
+                        self.open_found = true;
+                        -> $Body
+                    }
+                    if at_newline(self.src, self.cursor, self.limit) {
+                        -> $SeekOpen
+                    }
+                    if at_arrow(self.src, self.cursor, self.limit) {
+                        self.cursor = self.cursor + 2;
+                        -> $ParentName
+                    }
+                    self.cursor = self.cursor + 1;
                 }
-                if at_newline(self.src, self.cursor, self.limit) {
-                    -> $SeekOpen
-                }
-                if at_arrow(self.src, self.cursor, self.limit) {
-                    self.cursor = self.cursor + 2;
-                    -> $ParentName
-                }
-                self.cursor = self.cursor + 1;
             }
         }
         // After `=>`: skip space/tab; a `$` + name-start is the parent; ANYTHING else is a
@@ -112,9 +118,10 @@
                 }
             }
         }
-        // Seek the body `{`, CROSSING newlines, NOT opaque-aware — hand-exact (T-S3,
-        // carried Phase 1; Phase 2 routes through `skip`). No `{` before limit →
-        // open = end = limit, NAMED (open_found stays false — T-S2 carried-and-named).
+        // Seek the body `{`, CROSSING newlines, opaque-aware (Phase 2 D1: routes through
+        // `skip`, so a `{` inside a comment/string no longer opens the body — T-S3 fixed). No
+        // `{` before limit → open = end = limit, NAMED (open_found stays false — T-S2
+        // carried-and-named).
         $SeekOpen {
             step() {
                 if self.cursor >= self.limit {
@@ -122,12 +129,17 @@
                     self.end = self.limit;
                     -> $Accept
                 }
-                if at_open_brace(self.src, self.cursor, self.limit) {
-                    self.open = self.cursor;
-                    self.open_found = true;
-                    -> $Body
+                let sk = skip(self.src, self.cursor, self.limit, self.target);
+                if sk > self.cursor {
+                    self.cursor = sk;
+                } else {
+                    if at_open_brace(self.src, self.cursor, self.limit) {
+                        self.open = self.cursor;
+                        self.open_found = true;
+                        -> $Body
+                    }
+                    self.cursor = self.cursor + 1;
                 }
-                self.cursor = self.cursor + 1;
             }
         }
         // Body extent via DelimBalance. Unbalanced → clamp to limit, byte-exact with the

@@ -209,13 +209,24 @@ impl<'a> HandlerHeadScan<'a> {
     }
 
     fn RetType_step(&mut self) {
-        if ret_byte(self.src, self.cursor, self.limit) {
-            self.cursor = self.cursor + 1;
-        } else {
+        if self.cursor >= self.limit {
             self.ret_end = self.cursor;
             let mut __next = HandlerHeadScanComp { state: "SeekBrace".to_string(), vars: HandlerHeadScanVars::SeekBrace {  }, args: HandlerHeadScanArgs::SeekBrace { } };
             self.compartment = __next;
             return Default::default();
+        }
+        let sk = skip(self.src, self.cursor, self.limit, self.target);
+        if sk > self.cursor {
+            self.cursor = sk;
+        } else {
+            if ret_byte(self.src, self.cursor, self.limit) {
+                self.cursor = self.cursor + 1;
+            } else {
+                self.ret_end = self.cursor;
+                let mut __next = HandlerHeadScanComp { state: "SeekBrace".to_string(), vars: HandlerHeadScanVars::SeekBrace {  }, args: HandlerHeadScanArgs::SeekBrace { } };
+                self.compartment = __next;
+                return Default::default();
+            }
         }
     }
 
@@ -226,19 +237,24 @@ impl<'a> HandlerHeadScan<'a> {
             self.compartment = __next;
             return Default::default();
         }
-        if at_open_brace(self.src, self.cursor, self.limit) {
-            self.open = self.cursor;
-            let mut __next = HandlerHeadScanComp { state: "Body".to_string(), vars: HandlerHeadScanVars::Body {  }, args: HandlerHeadScanArgs::Body { } };
-            self.compartment = __next;
-            return Default::default();
+        let sk = skip(self.src, self.cursor, self.limit, self.target);
+        if sk > self.cursor {
+            self.cursor = sk;
+        } else {
+            if at_open_brace(self.src, self.cursor, self.limit) {
+                self.open = self.cursor;
+                let mut __next = HandlerHeadScanComp { state: "Body".to_string(), vars: HandlerHeadScanVars::Body {  }, args: HandlerHeadScanArgs::Body { } };
+                self.compartment = __next;
+                return Default::default();
+            }
+            if at_newline(self.src, self.cursor, self.limit) {
+                self.reject_reason = 4;
+                let mut __next = HandlerHeadScanComp { state: "Reject".to_string(), vars: HandlerHeadScanVars::Reject {  }, args: HandlerHeadScanArgs::Reject { } };
+                self.compartment = __next;
+                return Default::default();
+            }
+            self.cursor = self.cursor + 1;
         }
-        if at_newline(self.src, self.cursor, self.limit) {
-            self.reject_reason = 4;
-            let mut __next = HandlerHeadScanComp { state: "Reject".to_string(), vars: HandlerHeadScanVars::Reject {  }, args: HandlerHeadScanArgs::Reject { } };
-            self.compartment = __next;
-            return Default::default();
-        }
-        self.cursor = self.cursor + 1;
     }
 
     fn Body_step(&mut self) {
