@@ -224,6 +224,23 @@ territory). Four sets designed, reviewed, and landed; the build wave that
 opened on 2026-07-18 closes here, with its one milestone claim corrected
 rather than shipped.
 
+**2026-07-19 — the census hardened, and hid a bug while telling the
+truth.** Given the choice of how to make the C2 gate honest, the owner
+chose the principled route: harden the census to detect oracles by
+reachability, not by name. The fix reclassified `section_keyword_starts`
+correctly and re-baselined the numbers — production recognition 9 → 7 (0
+live-path calls), production loops 55 → 46. But the *first* cut of the
+fix had its own glossed state: blind to generated callers, it demoted
+`params_close` — a production leaf the DeclRead system reaches through its
+generated code — to oracle, which would have quietly hidden a real
+production loop. A ground-truth caller-grep of every reclassified
+loop-bearing function caught it before commit; the fix now counts
+generated-system call sites as production, and an `--audit` mode makes
+every demotion reviewable. The lesson folds back on itself: the tool that
+measures how much hand recognition remains is itself a latent machine, and
+hardening it demanded the exact verify-don't-trust discipline it exists to
+enforce (D6, again — this time on the gauge's repair, not the gauge).
+
 ## 2. Discovery register (the paper-worthy claims, each with evidence)
 
 **D1 — A worldview document alone is sufficient agent training.** Blind
@@ -413,13 +430,25 @@ inherited the number, escalating a naming gap into an apparent
 "unowned-scope" question. Investigation dissolved it: every remaining
 recognition call sits inside a `_hand` oracle except that one misnamed
 one; the true count of production recognition *calls* on the live path is
-zero. *Correction applied:* the residual is re-characterized (7 hand-Lexer
-method definitions bound for C-final deletion + 1 misnamed oracle), and
-the census-honesty fix is put to the owner. *Improvement owed (docketed,
-blocks C-final):* harden the proxy — detect test-only callers, not just
-the `_hand` suffix — before any final census is a campaign predicate.
-Same defect class as PM-1: an uncalibrated gauge steering decisions, this
-time all the way into a warden verdict.
+zero. *Correction applied (owner directive, same day — "harden census
+first"):* the proxy now classifies oracles by **reachability** — a
+consumer whose every caller is a test or another oracle, and which no live
+`@@system` invokes, is an oracle — not the `_hand` name alone. And
+hardening the instrument exposed a *second* latent bug in the instrument:
+the first cut, blind to generated callers, demoted `params_close` — a
+production leaf the DeclRead system invokes through its generated code —
+to oracle, which would have hidden a real production loop; the fix counts
+generated-system (`.gen.rs`/`.frs`) call sites as production callers. All
+five metric-bearing reclassifications were then verified against ground
+truth by direct caller grep, and an `--audit` mode makes every demotion
+reviewable. Re-baselined: production recognition 9 → 7 (0 live-path
+calls), production loops 55 → 46. *Still owed (a different blind spot, not
+this fix):* the `while <ident> <` loop shape misses `while predicate(...)`.
+Same defect class as PM-1 — an uncalibrated gauge steering decisions, this
+time into a warden verdict — with the added lesson that *fixing* a gauge
+is itself gauge-work: the hardening had its own glossed state (the
+generated caller) and needed the same verify-don't-trust discipline the
+gauge is meant to enforce.
 
 **PM-5 — Small-tool frictions with outsized cost** (2026-07-17/18).
 BSD sed lacking `\b` left a rename half-done; exact-match edits failed on
