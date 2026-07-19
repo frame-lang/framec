@@ -568,11 +568,26 @@ The plan is a contract; it changes only through a recorded, evaluated process �
   gained closed-holed-literal fragments + 800 seeds so the holes teeth counter clears — the bar was
   **raised, not lowered**. C-1 (a curated nested-block-comment fixture the fuzz never generated)
   discharged into the corpus before this commit.
-  **⚠ ACCOUNTING CORRECTION (warden Finding 4):** NativeParts does NOT retire the campaign's last
-  production recognition — it retires `parts.rs`'s. The residual 9 = 7 `lex.rs` token defs + 2
-  `sections.rs::section_keyword_starts` calls, the latter named by no item in scope. **C2
-  (recognition = 0) now carries an OPEN OWNER-GATE THREAD: the `sections.rs` owner** (and whether
-  the 7 `lex.rs` defs are in-scope for C2 or parked-@@fsm territory). Filed, not hand-ruled.
+  **⚠ ACCOUNTING CORRECTION (warden Finding 4), SHARPENED (c6f19ba) then RESOLVED via census
+  hardening:** NativeParts retires `parts.rs`'s production recognition, not the campaign's last.
+  The residual is NOT an unowned-scope gap: live-path production recognition CALLS are **0**; the
+  census read 9 because it counted the 7 hand-Lexer method DEFS (C-final deletion target) + 2
+  calls in `section_keyword_starts` (the SectionScan oracle, miscounted for lacking the `_hand`
+  name). See the hardened-census entry below and the "Residual production recognition" section.
+
+- *2026-07-19* — **CENSUS HARDENED (owner directive "harden census first").** `tools/scan_census.py`
+  now classifies oracles by REACHABILITY (a consumer whose every caller is a test or another
+  oracle, and which no live `@@system` invokes, is an oracle), not the `_hand` name alone —
+  the principled PM-4 fix for the blind spot that steered warden Finding 4. The seven recognizer
+  METHODS are never reclassified (deletion target). **A second latent instrument bug was caught +
+  fixed mid-hardening:** the first cut, blind to generated callers, wrongly demoted `params_close`
+  (a PRODUCTION leaf the DeclRead system calls via `.gen.rs`/`.frs`); generated-system call sites
+  now count as production callers. Re-baselined: production recognition **9→7** (0 live-path calls
+  + 7 defs); production loops **55→46** (9 oracle-reach-only loops demoted; `params_close`
+  correctly retained). `--audit` lists every demoted fn. All five metric-bearing reclassifications
+  verified against ground truth by direct caller grep. DEFERRED to owner (metric SHAPE): split C2
+  into "live-path calls = 0" (met) vs "Lexer deleted" (C-final). Owed separately: the `while
+  <ident> <` loop proxy still misses `while predicate(...)` shapes.
 
 ### Audit Log (append-only — warden verdicts)
 - *2026-07-19* — GATE-A (wired), NativeParts Phase 1: **PASS-WITH-CONDITIONS — commit proceeded.**
@@ -892,17 +907,32 @@ recognition CALLS on the live compile path is **0**. The 9 decomposes:
 - `sections.rs::section_keyword_starts` (2 calls) — the **SectionScan differential oracle**
   (`sections.rs:59` "remains only as the differential-test oracle"; production is
   `section_scan::keyword_starts`; sole caller is `tests/section_scan.rs`). Owned by Item 3;
-  deleted at C-final with the other oracles. The census miscounts it as production ONLY because
-  it lacks the `_hand` name the proxy keys on (PM-4 census blind spot). **Census-honesty fix
-  pending owner nod:** rename → `section_keyword_starts_hand` now (census then reads production
-  recognition CALLS = 0, the truth), or defer to C-final.
+  deleted at C-final with the other oracles.
 - `lex.rs` — **7 recognizer method DEFINITIONS** (`comment_at`/`literal_at`/`block_comment`/
   `quoted`/`hole_at`/`triple_quoted`/`rust_raw`). These are the hand Lexer itself; they zero when
   it is DELETED at C-final (after all callers, now all oracles, are gone). Not per-set scope.
+
+**Census HARDENED (owner directive, 2026-07-19).** `tools/scan_census.py` now detects oracles by
+**reachability**, not the `_hand` name alone: a consumer whose every caller is a test or another
+oracle — and which no live `@@system` (`*.gen.rs`/`*.frs`) invokes — is an oracle. This
+reclassifies `section_keyword_starts` (and the already-oracle-reach `instantiation_at`/
+`embed_call_at`/`match_paren`, `*_pub` test wrappers, etc.) correctly. The seven recognizer
+METHODS are never reclassified (deletion target). A second latent bug surfaced while hardening
+and was fixed: the first cut, blind to generated callers, wrongly demoted `params_close` (a
+PRODUCTION bare-counter leaf the DeclRead system calls via `.gen.rs`/`.frs`) — so generated-system
+call sites now count as production callers. Re-baselined hardened census: production
+HAND_LEXER_RECOGNITION **= 7** (all DEFS; **0 live-path CALLS**), oracle 14; production
+HAND_SCAN_LOOPS **= 46** (was 55 name-only; 9 oracle-reach-only loops correctly demoted;
+`params_close` correctly retained), oracle 41. `--audit` lists every reachability-demoted fn for
+review. Still owed (separate PM-4 blind spot, NOT this fix): the `while <ident> <` loop proxy
+misses `while predicate(...)` shapes — harden before C-final.
+
 **Consequence:** C2 (production HAND_LEXER_RECOGNITION = 0) counts definitions, so it is a
 **C-final milestone by construction** — it cannot close until the hand Lexer is deleted. The live
-compile path is already free of hand-Lexer recognition. (The gate metric conflates DEFS + CALLS;
-consider splitting it so "live-path calls = 0" is readable separately from "Lexer deleted".)
+compile path is already free of hand-Lexer recognition (0 production call sites). **DEFERRED owner
+decision (metric SHAPE):** whether to split C2 so "live-path calls = 0" (met now) reads separately
+from "hand Lexer deleted" (C-final); and whether a recognizer method reached only by oracles
+should stop counting as production. The hardening deliberately did NOT decide this.
 
 ## What "excellent" means for this campaign
 
