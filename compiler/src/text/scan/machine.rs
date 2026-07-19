@@ -60,53 +60,40 @@ pub fn machine_section(lx: &Lexer, bytes: &[u8], span: Span, kw: Span) -> Machin
 
 /// `$Name(params) { …handlers… }`
 fn state(lx: &Lexer, bytes: &[u8], at: usize, limit: usize) -> StateNode {
-    // Name, opening `{`, and its matching `}` — all from the shared `state_extent` (the SAME
-    // source the `MachineWalk` system's `state_end` leaf uses), so the boundary the walk finds and
-    // the extent this node carries cannot drift, and the name-skip is done exactly once.
-    let (name_end, open, end) = state_extent(bytes, at, limit, lx.target());
+    // The WHOLE head — name, params group, parent, opening `{`, and its matching `}` — from ONE
+    // run of the dogfooded `StateHeadScan` system (`state_head_scan.frs`), the SAME source the
+    // `MachineWalk` system's `state_end` leaf reads (via [`state_extent`]), so the boundary the
+    // walk finds and every head field this node carries cannot drift — by construction, not by
+    // convention. (Retires the hand params/parent scan-lets; their verbatim composition survives
+    // as `state_head_scan::state_head_hand`, the differential oracle.)
+    let h = super::state_head_scan::scan(bytes, at, limit, lx.target());
+    let (name_end, open, end) = (h.name_end, h.open, h.end);
     let close = end.saturating_sub(1);
     let name = String::from_utf8_lossy(&bytes[at + 1..name_end]).into_owned();
 
-    // `$B(n: int, m: str)` — the declared parameter NAMES.
+    // `$B(n: int, m: str)` — the declared parameter NAMES (an unbalanced group was dropped by
+    // the head run: `has_params` stays false, NAMED `params_unbalanced` — T-S6).
     let mut params = Vec::new();
     let mut param_types = std::collections::HashMap::new();
-    if name_end < limit && bytes[name_end] == b'(' {
-        if let Some(pe) = balanced(lx, bytes, name_end, limit, b'(', b')') {
-            let inner = String::from_utf8_lossy(&bytes[name_end + 1..pe.saturating_sub(1)]).into_owned();
-            for (n, t) in super::super::emit::driver::params_split(&inner) {
-                if let Some(t) = t {
-                    param_types.insert(n.clone(), t);
-                }
-                params.push(n);
+    if h.has_params {
+        let inner =
+            String::from_utf8_lossy(&bytes[h.params_open + 1..h.params_close.saturating_sub(1)])
+                .into_owned();
+        for (n, t) in super::super::emit::driver::params_split(&inner) {
+            if let Some(t) = t {
+                param_types.insert(n.clone(), t);
             }
+            params.push(n);
         }
     }
 
-    // `=> $Parent` — the state's parent. This is the whole of HSM.
-    let mut parent = None;
-    {
-        let mut k = name_end;
-        while k < limit && bytes[k] != b'{' && bytes[k] != b'\n' {
-            if starts(bytes, k, b"=>", limit) {
-                let mut p = k + 2;
-                while p < limit && (bytes[p] == b' ' || bytes[p] == b'\t') {
-                    p += 1;
-                }
-                if p < limit && bytes[p] == b'$' && is_name_start(bytes, p + 1) {
-                    let ps = p + 1;
-                    let mut pe = ps;
-                    while pe < limit
-                        && (bytes[pe].is_ascii_alphanumeric() || bytes[pe] == b'_')
-                    {
-                        pe += 1;
-                    }
-                    parent = Some(String::from_utf8_lossy(&bytes[ps..pe]).into_owned());
-                }
-                break;
-            }
-            k += 1;
-        }
-    }
+    // `=> $Parent` — the state's parent. This is the whole of HSM. (First-line-only, and the
+    // T-S9 straddle can yield an EMPTY name — both carried Phase-1 facts, pinned in the tests.)
+    let parent = if h.has_parent {
+        Some(String::from_utf8_lossy(&bytes[h.parent_start..h.parent_end]).into_owned())
+    } else {
+        None
+    };
 
     // The state members — **now a native driver over the dogfooded `StateWalk` system**
     // (`state_walk::member_starts`): the system finds the member-start offsets (a `$.x` state var
@@ -165,9 +152,10 @@ fn state(lx: &Lexer, bytes: &[u8], at: usize, limit: usize) -> StateNode {
 /// The parsed HEADER of a handler starting at `i` (if one is there): the event name, the param
 /// group `(...)`, an optional `: T` return type, the opening `{`, and the body end. **Single
 /// source** — `handler_at` builds the node from it AND the `StateWalk` system's `handler_end`
-/// leaf reads its `.end`, so the member boundary the walk finds and the extent the node carries
-/// cannot drift. Takes `target` (not a `Lexer`) so the leaf can call it. `None` if no handler
-/// opens here (no event name, no `(`, or no `{`).
+/// leaf reads its `.end`, and both are projections of ONE `HandlerHeadScan` run, so the member
+/// boundary the walk finds and the extent the node carries cannot drift — by construction.
+/// Takes `target` (not a `Lexer`) so the leaf can call it. `None` on any of the FOUR refusals
+/// (no event name; no `(` on the head line; unbalanced params — T-H3; no `{` on the head line).
 struct HandlerHead {
     name: String,
     params_open: usize,
@@ -178,63 +166,45 @@ struct HandlerHead {
 }
 
 fn handler_head(bytes: &[u8], i: usize, limit: usize, target: Target) -> Option<HandlerHead> {
-    // The event name: an identifier, or `$>` (enter) / `<$` (exit).
-    let (name, mut j) = if bytes[i] == b'$' && bytes.get(i + 1) == Some(&b'>') {
-        ("$>".to_string(), i + 2)
-    } else if bytes[i] == b'<' && bytes.get(i + 1) == Some(&b'$') {
-        ("<$".to_string(), i + 2)
-    } else if is_name_start(bytes, i) {
-        let mut k = i;
-        while k < limit && (bytes[k].is_ascii_alphanumeric() || bytes[k] == b'_') {
-            k += 1;
-        }
-        (String::from_utf8_lossy(&bytes[i..k]).into_owned(), k)
-    } else {
-        return None;
+    // **Now a thin adapter over the dogfooded `HandlerHeadScan` system**
+    // (`handler_head_scan.frs`): ONE machine run yields the whole head geometry (the four
+    // not-a-handler refusals -> `None`, their cause named in the system's `reject_reason`
+    // register; an unbalanced body clamps to `limit`, named `body_clamped` — T-H5); this
+    // adapter does only VALUE work — the event-name String (`$>` / `<$` / ident slice) and
+    // the return-type trim with empty->None (T-H6). (Retires the hand parse; its verbatim
+    // offset-recording copy survives as `handler_head_scan::handler_head_hand`, the
+    // differential oracle.) The T-H9 position precondition the hand `bytes[i]` enforced by
+    // panic is kept loud here:
+    debug_assert!(
+        i < limit && i <= bytes.len(),
+        "handler_head called off-contract (T-H9: i < limit <= len)"
+    );
+    let m = super::handler_head_scan::scan(bytes, i, limit, target)?;
+    let name = match m.name_kind {
+        1 => "$>".to_string(),
+        2 => "<$".to_string(),
+        _ => String::from_utf8_lossy(&bytes[m.name_start..m.name_end]).into_owned(),
     };
-
-    // A `(` must follow (after optional space), then eventually a `{`.
-    while j < limit && (bytes[j] == b' ' || bytes[j] == b'\t') {
-        j += 1;
-    }
-    if j >= limit || bytes[j] != b'(' {
-        return None;
-    }
-    let params_open = j;
-    let params_close = super::delim_balance::balanced(bytes, j, limit, b'(', b')', target)?;
-    let mut k = params_close;
-    // Optional return type `: T`, then the opening brace. The `: T` SYNTAX is Frame's;
-    // the type text is the USER's and is carried verbatim.
-    let mut return_text = None;
-    while k < limit && (bytes[k] == b' ' || bytes[k] == b'\t') {
-        k += 1;
-    }
-    if k < limit && bytes[k] == b':' {
-        k += 1;
-        let ts = k;
-        while k < limit && bytes[k] != b'{' && bytes[k] != b'\n' {
-            k += 1;
+    // The `: T` SYNTAX is Frame's; the type text is the USER's and is carried verbatim
+    // (trimmed; empty-after-trim means the annotation was dropped — T-H6, observable via the
+    // system's `has_return` register).
+    let return_text = if m.has_return {
+        let t = String::from_utf8_lossy(&bytes[m.ret_start..m.ret_end]).trim().to_string();
+        if t.is_empty() {
+            None
+        } else {
+            Some(t)
         }
-        let t = String::from_utf8_lossy(&bytes[ts..k]).trim().to_string();
-        if !t.is_empty() {
-            return_text = Some(t);
-        }
-    }
-    while k < limit && bytes[k] != b'{' && bytes[k] != b'\n' {
-        k += 1;
-    }
-    if k >= limit || bytes[k] != b'{' {
-        return None;
-    }
-    let open = k;
-    let end = super::delim_balance::balanced(bytes, open, limit, b'{', b'}', target).unwrap_or(limit);
+    } else {
+        None
+    };
     Some(HandlerHead {
         name,
-        params_open,
-        params_close,
+        params_open: m.params_open,
+        params_close: m.params_close,
         return_text,
-        open,
-        end,
+        open: m.open,
+        end: m.end,
     })
 }
 
@@ -755,24 +725,23 @@ fn balanced(lx: &Lexer, bytes: &[u8], open: usize, limit: usize, o: u8, c: u8) -
 
 /// The `(name_end, open, end)` header extent of the state that starts at `at` (the `$`): the
 /// offset past the `$Name`, the opening `{` offset, and the offset one past its matching `}`.
-/// **Single source** — used by `state()` (which builds the node — the name, params, parent, and
-/// extent all key off these) AND by the `MachineWalk` system's `state_end` leaf (which skips a
-/// state body to find the next state start), so the boundary the walk finds and the extent the
-/// node carries cannot drift, and `state()` no longer re-runs the name-skip. Replicates the hand
-/// walk exactly: skip the `$Name`, naive-scan to the first `{` (the header is not opaque-aware —
-/// as the old `state` was), then DelimBalance for the `}`.
+/// **Single source, strengthened** — the extent projection of the dogfooded `StateHeadScan`
+/// system (`state_head_scan::scan`), the SAME run `state()` builds the whole node from: used by
+/// the `MachineWalk` system's `state_end` leaf (which skips a state body to find the next state
+/// start), so the boundary the walk finds and the node the driver builds cannot drift — by
+/// construction. Head semantics unchanged (Phase 1 byte parity): the `{` seek crosses newlines
+/// and is not opaque-aware (T-S3, carried), no `{` before `limit` yields `open == end == limit`
+/// (T-S2), an unbalanced body clamps `end` to `limit` (T-S1 — named `body_clamped` in the
+/// system's registers). (Retires the hand name-skip/seek loops; their verbatim composition
+/// survives as `state_head_scan::state_head_hand`, the differential oracle.)
 pub fn state_extent(bytes: &[u8], at: usize, limit: usize, target: Target) -> (usize, usize, usize) {
-    let mut j = at + 1;
-    while j < limit && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') {
-        j += 1;
-    }
-    let name_end = j;
-    while j < limit && bytes[j] != b'{' {
-        j += 1;
-    }
-    let open = j;
-    let end = super::delim_balance::balanced(bytes, open, limit, b'{', b'}', target).unwrap_or(limit);
-    (name_end, open, end)
+    // The T-S8 position precondition (the walk's `is_state_start` gating), kept loud:
+    debug_assert!(
+        at < limit && at <= bytes.len(),
+        "state_extent called off-contract (T-S8: at < limit <= len)"
+    );
+    let h = super::state_head_scan::scan(bytes, at, limit, target);
+    (h.name_end, h.open, h.end)
 }
 
 pub(crate) fn to_end_of_line(bytes: &[u8], mut i: usize, limit: usize) -> usize {

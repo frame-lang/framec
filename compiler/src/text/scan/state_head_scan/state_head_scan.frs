@@ -1,0 +1,163 @@
+@@[target("rust")]
+@@[scan(u8)]
+
+// The STATE-HEAD reader, dogfooded as an `@@[scan(u8)]` system — one half of the head-
+// grammar family (its sibling: HandlerHeadScan). From the `$` of `$Name(params) => $Parent {`
+// it reads the WHOLE head into named registers: name_end, the params group extent, the
+// parent-name extent, the body `{`, and the body end. TOTAL — it always Accepts (the walk's
+// `is_state_start` did the gating); every refusal of the old code is a named register, never
+// a silent local. `machine::state_extent` (the MachineWalk boundary leaf) and `state()` (the
+// node driver) are both projections of ONE run, so boundary and node cannot drift.
+//
+// framec owns the WALK (every seek is a per-byte state); the leaves are O(1) byte facts or
+// runs of published systems: paren_extent/body_end = DelimBalance, (Phase 2) skip = OpaqueScan.
+//
+// Regen: framec-ng -l rust --emit state_head_scan.frs | grep -v '^#!\[allow' > state_head_scan.gen.rs
+
+@@system StateHeadScan(target: Target, limit: usize) {
+    interface:
+        step()
+    machine:
+        // cursor at the `$` (walk-guaranteed — T-S8 precondition). Consume it.
+        $Dollar {
+            step() {
+                self.cursor = self.cursor + 1;
+                -> $Name
+            }
+        }
+        // `Name` bytes [A-Za-z0-9_]*, limit-bounded (hand state_extent's name skip).
+        $Name {
+            step() {
+                if is_name_byte(self.src, self.cursor, self.limit) {
+                    self.cursor = self.cursor + 1;
+                } else {
+                    self.name_end = self.cursor;
+                    -> $Params
+                }
+            }
+        }
+        // `$B(n: int)` — the group must be ADJACENT to the name (no ws before `(`): grammar
+        // fact, hand state(). Extent via DelimBalance; unbalanced → params dropped, NAMED
+        // (params_unbalanced — T-S6 carried-and-named).
+        $Params {
+            step() {
+                if at_open_paren(self.src, self.cursor, self.limit) {
+                    let pe = paren_extent(self.src, self.cursor, self.limit, self.target);
+                    if pe > 0 {
+                        self.has_params = true;
+                        self.params_open = self.cursor;
+                        self.params_close = pe;
+                    } else {
+                        self.params_unbalanced = true;
+                    }
+                }
+                // Phase 1 (hand-exact): the parent hunt starts at name_end and scans
+                // THROUGH the params group (T-S5, carried; Phase 2: start at params_close
+                // when has_params).
+                self.cursor = self.name_end;
+                -> $ParentSeek
+            }
+        }
+        // `=> $Parent` on the header's FIRST line: bounded by `{` OR newline, in that
+        // priority (hand state()'s parent hunt). A later-line arrow is silently no-parent
+        // (T-S4, carried).
+        $ParentSeek {
+            step() {
+                if self.cursor >= self.limit {
+                    self.open = self.limit;
+                    self.end = self.limit;
+                    -> $Accept
+                }
+                if at_open_brace(self.src, self.cursor, self.limit) {
+                    self.open = self.cursor;
+                    self.open_found = true;
+                    -> $Body
+                }
+                if at_newline(self.src, self.cursor, self.limit) {
+                    -> $SeekOpen
+                }
+                if at_arrow(self.src, self.cursor, self.limit) {
+                    self.cursor = self.cursor + 2;
+                    -> $ParentName
+                }
+                self.cursor = self.cursor + 1;
+            }
+        }
+        // After `=>`: skip space/tab; a `$` + name-start is the parent; ANYTHING else is a
+        // silent no-parent AND the hunt stops (hand's unconditional break — T-S7,
+        // carried). The name-start probe is LEN-bounded like the hand `.get` (T-S9,
+        // carried Phase 1).
+        $ParentName {
+            step() {
+                if is_ws(self.src, self.cursor, self.limit) {
+                    self.cursor = self.cursor + 1;
+                } else {
+                    if is_dollar_name(self.src, self.cursor, self.limit) {
+                        self.parent_start = self.cursor + 1;
+                        self.cursor = self.cursor + 1;
+                        -> $ParentIdent
+                    }
+                    -> $SeekOpen
+                }
+            }
+        }
+        $ParentIdent {
+            step() {
+                if is_name_byte(self.src, self.cursor, self.limit) {
+                    self.cursor = self.cursor + 1;
+                } else {
+                    self.parent_end = self.cursor;
+                    self.has_parent = true;
+                    -> $SeekOpen
+                }
+            }
+        }
+        // Seek the body `{`, CROSSING newlines, NOT opaque-aware — hand-exact (T-S3,
+        // carried Phase 1; Phase 2 routes through `skip`). No `{` before limit →
+        // open = end = limit, NAMED (open_found stays false — T-S2 carried-and-named).
+        $SeekOpen {
+            step() {
+                if self.cursor >= self.limit {
+                    self.open = self.limit;
+                    self.end = self.limit;
+                    -> $Accept
+                }
+                if at_open_brace(self.src, self.cursor, self.limit) {
+                    self.open = self.cursor;
+                    self.open_found = true;
+                    -> $Body
+                }
+                self.cursor = self.cursor + 1;
+            }
+        }
+        // Body extent via DelimBalance. Unbalanced → clamp to limit, byte-exact with the
+        // hand `unwrap_or(limit)` — but NAMED: body_clamped (T-S1 carried-and-named).
+        $Body {
+            step() {
+                let e = body_end(self.src, self.open, self.limit, self.target);
+                if e > 0 {
+                    self.end = e;
+                } else {
+                    self.end = self.limit;
+                    self.body_clamped = true;
+                }
+                -> $Accept
+            }
+        }
+        $Accept { }
+    domain:
+        target: Target = target
+        limit: usize = limit
+        name_end: usize = 0
+        has_params: bool = false
+        params_open: usize = 0
+        params_close: usize = 0
+        params_unbalanced: bool = false
+        has_parent: bool = false
+        parent_start: usize = 0
+        parent_end: usize = 0
+        open: usize = 0
+        open_found: bool = false
+        end: usize = 0
+        body_clamped: bool = false
+}

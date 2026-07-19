@@ -1,0 +1,169 @@
+@@[target("rust")]
+@@[scan(u8)]
+
+// The HANDLER-HEAD reader, dogfooded as an `@@[scan(u8)]` system — the other half of the
+// head-grammar family (sibling: StateHeadScan). From a member-start candidate it reads
+// `name(params) [: T] {` with the `$>` / `<$` event forms into named registers, or Rejects.
+// The four not-a-handler refusals of the hand code (no name / no `(` / unbalanced params /
+// no `{` on the head line) share ONE $Reject — they have identical futures (the walk
+// advances one byte), so distinct states would be costume AND would violate the scan(u8)
+// pump contract (only `Accept`/`Reject` halt it); the CAUSE is articulated in reject_reason.
+// `machine::handler_end` (the StateWalk boundary leaf) and `handler_at` (the node driver)
+// are both projections of ONE run, so boundary and node cannot drift.
+//
+// Regen: framec-ng -l rust --emit handler_head_scan.frs | grep -v '^#!\[allow' > handler_head_scan.gen.rs
+
+@@system HandlerHeadScan(target: Target, limit: usize) {
+    interface:
+        step()
+    machine:
+        // The event name: `$>` (enter) / `<$` (exit) / identifier — else Reject(1) (T-H1).
+        // The two-byte probes are LEN-bounded like the hand `.get` (output-equivalent;
+        // a straddle lands in Reject(2) exactly as the hand returns None — T-H2 note).
+        $Name {
+            step() {
+                if at_enter(self.src, self.cursor) {
+                    self.name_kind = 1;
+                    self.name_start = self.cursor;
+                    self.name_end = self.cursor + 2;
+                    self.cursor = self.cursor + 2;
+                    -> $WsBeforeParen
+                }
+                if at_exit(self.src, self.cursor) {
+                    self.name_kind = 2;
+                    self.name_start = self.cursor;
+                    self.name_end = self.cursor + 2;
+                    self.cursor = self.cursor + 2;
+                    -> $WsBeforeParen
+                }
+                if is_name_start_here(self.src, self.cursor) {
+                    self.name_start = self.cursor;
+                    self.cursor = self.cursor + 1;
+                    -> $NameIdent
+                }
+                self.reject_reason = 1;
+                -> $Reject
+            }
+        }
+        $NameIdent {
+            step() {
+                if is_name_byte(self.src, self.cursor, self.limit) {
+                    self.cursor = self.cursor + 1;
+                } else {
+                    self.name_end = self.cursor;
+                    -> $WsBeforeParen
+                }
+            }
+        }
+        // Space/tab only (the head is single-line); then a `(` MUST follow — else Reject(2)
+        // (T-H2; a `(` on the NEXT line rejects here: grammar fact, pinned).
+        $WsBeforeParen {
+            step() {
+                if is_ws(self.src, self.cursor, self.limit) {
+                    self.cursor = self.cursor + 1;
+                } else {
+                    if at_open_paren(self.src, self.cursor, self.limit) {
+                        -> $Params
+                    }
+                    self.reject_reason = 2;
+                    -> $Reject
+                }
+            }
+        }
+        // Params extent via DelimBalance. Unbalanced → Reject(3) — T-H3, the FOURTH exit
+        // the inventory's three-way merge missed (hand `?`), now named.
+        $Params {
+            step() {
+                let pe = paren_extent(self.src, self.cursor, self.limit, self.target);
+                if pe > 0 {
+                    self.params_open = self.cursor;
+                    self.params_close = pe;
+                    self.cursor = pe;
+                    -> $AfterParams
+                }
+                self.reject_reason = 3;
+                -> $Reject
+            }
+        }
+        // Optional `: T`. The `:` is Frame's; the type TEXT is the user's, carried verbatim
+        // (raw extent registers; the adapter trims — empty-after-trim maps to None, T-H6).
+        $AfterParams {
+            step() {
+                if is_ws(self.src, self.cursor, self.limit) {
+                    self.cursor = self.cursor + 1;
+                } else {
+                    if at_colon(self.src, self.cursor, self.limit) {
+                        self.has_return = true;
+                        self.cursor = self.cursor + 1;
+                        self.ret_start = self.cursor;
+                        -> $RetType
+                    }
+                    -> $SeekBrace
+                }
+            }
+        }
+        // The type runs to `{` or newline on the SAME line. A `{` inside the type text
+        // truncates it and opens the body (T-H7, carried grammar limit). Not opaque-aware
+        // (T-H8, carried Phase 1).
+        $RetType {
+            step() {
+                if ret_byte(self.src, self.cursor, self.limit) {
+                    self.cursor = self.cursor + 1;
+                } else {
+                    self.ret_end = self.cursor;
+                    -> $SeekBrace
+                }
+            }
+        }
+        // The `{` must be on the head line: newline or limit first → Reject(4) (T-H4;
+        // `go()\n{ }` is NOT a handler — grammar fact, pinned). Not opaque-aware (T-H8,
+        // carried Phase 1; Phase 2 routes through `skip`).
+        $SeekBrace {
+            step() {
+                if self.cursor >= self.limit {
+                    self.reject_reason = 4;
+                    -> $Reject
+                }
+                if at_open_brace(self.src, self.cursor, self.limit) {
+                    self.open = self.cursor;
+                    -> $Body
+                }
+                if at_newline(self.src, self.cursor, self.limit) {
+                    self.reject_reason = 4;
+                    -> $Reject
+                }
+                self.cursor = self.cursor + 1;
+            }
+        }
+        // Body extent via DelimBalance. Unbalanced → clamp to limit, byte-exact with the
+        // hand `unwrap_or(limit)` — but NAMED: body_clamped (T-H5 carried-and-named).
+        $Body {
+            step() {
+                let e = body_end(self.src, self.open, self.limit, self.target);
+                if e > 0 {
+                    self.end = e;
+                } else {
+                    self.end = self.limit;
+                    self.body_clamped = true;
+                }
+                -> $Accept
+            }
+        }
+        $Accept { }
+        $Reject { }
+    domain:
+        target: Target = target
+        limit: usize = limit
+        name_kind: i32 = 0
+        name_start: usize = 0
+        name_end: usize = 0
+        params_open: usize = 0
+        params_close: usize = 0
+        has_return: bool = false
+        ret_start: usize = 0
+        ret_end: usize = 0
+        open: usize = 0
+        end: usize = 0
+        body_clamped: bool = false
+        reject_reason: i32 = 0
+}

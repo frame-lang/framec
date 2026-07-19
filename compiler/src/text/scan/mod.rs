@@ -34,6 +34,10 @@ pub mod body_walk;
 pub mod decl_walk;
 /// The decl-line reader (register transducer), dogfooded as a Frame `@@[scan(u8)]` system.
 pub mod decl_read;
+/// The state-head reader (total register transducer), dogfooded as a Frame `@@[scan(u8)]` system.
+pub mod state_head_scan;
+/// The handler-head reader (register transducer with refusal), dogfooded as a Frame `@@[scan(u8)]` system.
+pub mod handler_head_scan;
 /// Composition proof: a scan system that composes StringScan (docs/JOURNAL.md).
 pub mod string_counter;
 /// The item-level segmenter walk, dogfooded as a Frame @@[scan(u8)] system.

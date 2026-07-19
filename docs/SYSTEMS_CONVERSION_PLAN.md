@@ -496,7 +496,42 @@ The plan is a contract; it changes only through a recorded, evaluated process �
   sweep owns them); hand-Lexer recognition untouched at 11 (Item 4's surface). **GATE-B held
   open until Phase B (T9 → DelimBalance) per the recorded exception.**
 
+- *2026-07-19* — **Item 3e StateHeadScan + HandlerHeadScan LANDED (built in isolated lane
+  worktree; M-wire complete; hand head parse deleted).** `state()` builds its node from ONE
+  `state_head_scan::scan` run; `state_extent` is the extent projection of the same run (walk
+  leaf and node driver single-source); `handler_head` is the thin adapter over
+  `handler_head_scan` with `handler_end`/`handler_at` as projections. DELETED: 10 hand `while`
+  loops (parent hunt ×3, handler head parse ×5, state_extent name-skip/seek ×2); verbatim
+  copies survive as `state_head_hand`/`handler_head_hand`, test callers only (grep-proven).
+  T-S8/T-H9 debug_asserts live in the adapters. Suite 36 binaries 309/0 on the wired path incl.
+  both anti-drift gates and both every-position differentials; regen fixpoint 23/0 across a
+  rebuild — framec-ng re-scans its own state/handler heads through the new systems
+  byte-identically. **Census:** SYSTEMS 21→23; production HAND_SCAN_LOOPS 73→63 (−10, per-fn
+  exact, zero transient additions); recognition flat 11/10. **Design-record sync (GATE-A
+  carry):** T-S5's design example (`=> b` phantom) is impossible in the hand code
+  (machine.rs `$`+name-start guard); the battery pins BOTH real faces — `=> $b` phantom AND the
+  lost real `=> $Real` after `)` — recorded here as the dated correction, with the §2.1
+  `state_head/`→`state_head_scan/` naming. **Phase-2 obligation restated:** deltas D1 (opaque
+  seeks), D2 (params-skipping hunt), D3 (limit-bounded probe) each land with their own Change
+  Log entry. Census-proxy hardening (call-condition loop blindness, scan_census.py:44) owed
+  before C-final.
+
 ### Audit Log (append-only — warden verdicts)
+- *2026-07-19* — GATE-A, Item 3e "StateHeadScan+HandlerHeadScan": **PASS — proceeded to M-wire.**
+  D1–D4,D8 verified by run/grep: build 0-warn; regen 23/0-stale stable across rebuild; batteries
+  17+15 green in suite 36-binary/309/0 (every-position parts-struct rectangles ×4 targets; one
+  test per ledger row; H1 phantom-parent pin; H2/T-H5 close-byte-not-`}` asserted; teeth on every
+  register incl. reject reasons 1–4; fuzz 3000×4; anti-drift system==node==state_extent through
+  segment()); Phase-2 deltas correctly absent. Six builder deviations judged faithful — T-S5
+  resolved in favor of the code; census brace-literal mechanic verified; ret_byte proxy-blindness
+  verified oracle-only.
+- *2026-07-19* — GATE-B, Item 3e: **PASS pending commit → LANDED.** D5/D6/D7/D2 + carry-items
+  verified: projections single-source per side, 10 hand whiles deleted / 0 added, oracles
+  test-only, suite 309/0 wired, regen 23/0 across rebuild (self-scan), census honest 73→63,
+  debug_asserts live. Conditions discharged in the atomic commit: this landing entry (incl.
+  T-S5 both-faces sync) + 6 stale pre-wire doc lines corrected. Census-proxy hardening carried,
+  dated, owed before C-final.
+
 - *2026-07-19* — GATE-A, Item 3d "DeclWalk/DeclRead": **PASS — wiring proceeded; GATE-B held
   until Phase B (params_close exception).** D1–D4,D8 verified by run/grep: regen fixpoint
   21/0-stale across rebuild; decl_walk 15/15 + decl_read 13/13 + suite 277/0 (every-position
@@ -772,7 +807,7 @@ survive as oracles + un-converted consumers — tracked here, not forgotten.
 |---|---|---|---|
 | 1 OpaqueScan | **warden PASS (GATE-A + GATE-B) — committed** | OpaqueScan, RawString, BraceBalance | skip path is the system; try_island routed; residual = holes (Item 4), close_brace (Item 2), machine skip (Item 3), + 3 oracles — all named; batteries+fuzz+milestone green |
 | 2 Segmenter | **close_brace capability: warden PASS (GATE-A+B, pending commit).** Body-end recognition off the hand Lexer onto OpaqueScan (`opaque_at`, 3-way signal). Remaining Item-2 scope: `hand_item_starts` oracle (→ C-final sweep) + `BodyBalance` `{}`-counter sub-system (named, before close) | segmenter, +OpaqueScan `kind`/`unterminated` registers | close_brace: yes. Item-2 whole: no (oracle + brace-counter named) |
-| 3 Grammar | **Dispatch-walks COMPLETE** (3c-3 d352021). **3d DeclWalk/DeclRead LANDED 2026-07-19** (M-wire done; hand decl_of + matching_brace DELETED; GATE-A PASS; GATE-B held until Phase B). **3e Head readers: design ACCEPTED** (build pending). 3a (fbde61e), 3b (03671f1), BodyBalance (2f9d95c), 3c-1 MachineWalk (fa38988), 3c-2 StateWalk (c7637b3), **3c-3 body→BodyWalk** (warden PASS after D3 fix). All three inner dispatch walks (machine_section/state-member/body) are @@[scan(u8)] systems; BodyWalk fuses a brace COUNTER + a (start,depth) ACCUMULATOR. I1 proven each; loops 86→77, SYSTEMS 15→19. | stmt_scan; DelimBalance; MachineWalk; StateWalk; **BodyWalk** (19th) | 3a/3b/BodyBalance/3c-1/3c-2/3c-3: yes |
+| 3 Grammar | **Dispatch-walks COMPLETE** (3c-3 d352021). **3d DeclWalk/DeclRead LANDED 2026-07-19** (M-wire done; hand decl_of + matching_brace DELETED; GATE-A PASS; GATE-B held until Phase B). **3e Head readers LANDED 2026-07-19** (lane worktree; hand head parse deleted; GATE-A+B PASS; Phase-2 deltas pending with per-delta entries). 3a (fbde61e), 3b (03671f1), BodyBalance (2f9d95c), 3c-1 MachineWalk (fa38988), 3c-2 StateWalk (c7637b3), **3c-3 body→BodyWalk** (warden PASS after D3 fix). All three inner dispatch walks (machine_section/state-member/body) are @@[scan(u8)] systems; BodyWalk fuses a brace COUNTER + a (start,depth) ACCUMULATOR. I1 proven each; loops 86→77, SYSTEMS 15→19. | stmt_scan; DelimBalance; MachineWalk; StateWalk; **BodyWalk** (19th) | 3a/3b/BodyBalance/3c-1/3c-2/3c-3: yes |
 | 4 Islands | **ArgScan + NativeParts designs BOTH ACCEPTED 2026-07-18** (Option C fork-and-adjudicate; native_parts_scan completed into the production seat; DP-1/H-1 ruled; build pending) | ref/inst/embed_scan (partial); arg_scan + adjudication seam; native_parts_scan completion + OpaqueScan hole/delim registers | no |
 | 5 Validators | not started | hsm_cycle, reachability | no |
 | 6 EmitDriver | not started | — | n/a (transducer, last) |
