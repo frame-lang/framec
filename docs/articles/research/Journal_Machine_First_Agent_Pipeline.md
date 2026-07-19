@@ -287,6 +287,53 @@ vocabulary — was added to every ungrounded brief (its core verified
 byte-identical across all nineteen copies), and the rule was made standing:
 any new agent, including an ad-hoc builder brief, carries it.
 
+**2026-07-19 — the grounding paid off at the next gate (Item 3e Phase-2).**
+The three head-reader Phase-2 deltas — opaque-aware seeks routed through a
+`skip` leaf, a params-skipping parent hunt, a limit-bounded probe — were
+built (from the accepted record, by a builder whose brief now carried the
+worldview) and gated by the *first* warden run since its brief was
+grounded. The difference was legible in the verdict. Where the earlier
+warden had judged a leaf by "is it a counter" and argued around D3's
+literal text, the grounded warden ruled the `skip` leaf a run-and-unwrap of
+the OpaqueScan sub-system — "the recognition register lives in the system,
+not the leaf" — and `is_dollar_name` an O(1) fact, both Category-A *by the
+paper's test*, stated as dispositions rather than checklist ticks. It also
+made a call the ungrounded proxy could not have made cleanly: the builder
+had rewritten two oracle seeks as guarded `loop {}` to keep the census
+honest, and the warden ruled that **honest, not a proxy-dodge** — the form
+preserves the exact invisibility class of the `while predicate(...)` loops
+it replaced (a known census blind spot), and being oracle-code it cannot
+touch the production ratchet regardless of shape. The set landed net-neutral
+(every census metric byte-identical to base), suite 401/0, three
+file-appropriate commits. The census's brace-matcher bit once more along the
+way (a `{` in an oracle comment mis-attributed spans, caught in the gate) —
+PM-4's third face, now filed as a specific pre-C-final hardening item.
+
+**2026-07-19 — the worldview document went through its own review.** The
+foundational paper — the one all the agents are now grounded in — drew a
+serious editorial review (filed as issue #242) arguing two things: that its
+`machine | value` ontology is *incomplete*, missing a third category
+(*predicate* — a law over a machine's behaviors, where the paper's own
+verifiability and alignment payoffs actually live), and that it *overclaims*
+its logical status (a near-definitional identity dressed as a "theorem
+provable three ways"). The critiques were verified accurate against the
+article line by line, then the four that do **not** depend on the (deferred)
+predicate decision were applied — softening the theorem framing, conceding
+that `async/await` argues *for* latency-plus-tooling (the leave-latent
+disposition at language-design scale) rather than against the thesis,
+engaging the ADT "make illegal states unrepresentable" rival head-on, and
+demoting a vacuous finite-memory move to the quarantine the paper reserves
+for its own degenerate pole. The corrections were adversarially verified by
+five independent reviewers, which caught a regression the author missed (one
+section still called the identity a "theorem," now contradicting the fixed
+abstract) and confirmed the load-bearing guardrail: no reviewer found the
+`predicate` category smuggled in — the trichotomy remains a deferred owner
+decision. The reflexive point for the future paper: the worldview document
+is subject to the same find → verify → fix discipline as the code it
+governs, and its own strongest payoffs (verifiability, alignment) may be the
+first evidence that a third category is waiting to be named — the latent
+*law* beside the latent machine.
+
 ## 2. Discovery register (the paper-worthy claims, each with evidence)
 
 **D1 — A worldview document alone is sufficient agent training.** Blind
