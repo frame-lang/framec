@@ -70,6 +70,41 @@ fn agree_all_windows(src: &str, t: Target) {
     }
 }
 
+/// Partition-aware differential (the Phase-2 fix-with-teeth machinery): the machine agrees
+/// with the hand oracle (a CARRIED row) OR it diverges (a FIXED row — the hand oracle stays
+/// buggy: `hole_at` is string-blind, `native_parts_hand` still swallows unterminated interiors
+/// and fabricates comment delims). On a fixed row the machine must still partition `[from,to)`
+/// exactly and be recursively total (well-formedness — no regression into garbage); the EXACT
+/// fixed-row trees are pinned by the directed B-tests and the oracle's own bug by the
+/// `oracle_stayed_buggy` pins. Returns true on a fixed row (for the non-vacuity teeth).
+fn agree_or_fixed_window(b: &[u8], from: usize, to: usize, t: Target) -> bool {
+    let m = machine(b, from, to, t);
+    if format!("{m:?}") == format!("{:?}", hand(b, from, to, t)) {
+        return false;
+    }
+    check_partition(
+        &m,
+        from,
+        to,
+        &format!("fixed row {:?} [{from},{to}) {t:?}", String::from_utf8_lossy(b)),
+    );
+    true
+}
+
+/// Partition-aware sweep: every `from` (to = len) and every `to` (from = 0). Returns the count
+/// of FIXED rows encountered (carried rows return 0).
+fn agree_or_fixed_sweep(src: &str, t: Target) -> usize {
+    let b = src.as_bytes();
+    let mut fixed = 0usize;
+    for from in 0..=b.len() {
+        fixed += agree_or_fixed_window(b, from, b.len(), t) as usize;
+    }
+    for to in 0..=b.len() {
+        fixed += agree_or_fixed_window(b, 0, to, t) as usize;
+    }
+    fixed
+}
+
 /// I1, recursive: the parts partition `[from, to)` exactly, each node passes
 /// `check_total`, and each Hole's parts partition the hole's span (explicit recursion).
 fn check_partition(parts: &[NativePart], from: usize, to: usize, ctx: &str) {
@@ -280,12 +315,15 @@ fn b5_python_hash_comment_carries_the_slash_fabrication() {
     agree_sweep(src, Target::Python3);
 }
 
-/// B-6 (T-N7 / R6, carried — flips at Δ1): string-blind hole delimitation. In
-/// `f"{ d['}'] }"` the hole closes at the FIRST `}` — inside the `'}'` string — in BOTH
-/// the hand `hole_at` and `BraceBalance`, so the differential is green-while-wrong. Item 4
-/// makes holes CODE nodes, so the wrong extent now shapes the parts tree; pinned exactly.
+/// B-6 (T-N7 / R6 — FLIPPED at Δ1): string-AWARE hole delimitation. In `f"{ d['}'] }"` the
+/// hole now closes at the REAL `}` (position 11), not the one hidden inside the `'}'` string —
+/// because `hole_skip` routes through the opaque-aware `DelimBalance`, which skips the in-string
+/// `}`. Item 4 makes holes CODE nodes, so the CORRECT extent now shapes the parts tree: the
+/// `'}'` inside the hole is recognized as a nested literal (content, not a delimiter). This is a
+/// FIXED row — the hand `hole_at` stays string-blind (pinned by `oracle_stayed_buggy`), so the
+/// machine and the oracle diverge here (fix-with-teeth).
 #[test]
-fn b6_string_blind_hole_extent_pinned() {
+fn b6_string_aware_hole_extent_pinned() {
     let src = "f\"{ d['}'] }\"";
     //         0123456789...  — f=0 "=1 {=2 ␠=3 d=4 [=5 '=6 }=7 '=8 ]=9 ␠=10 }=11 "=12
     let parts = machine(src.as_bytes(), 0, src.len(), Target::Python3);
@@ -301,14 +339,52 @@ fn b6_string_blind_hole_extent_pinned() {
         .expect("one hole");
     assert_eq!(
         (hole.span.start, hole.span.end),
+        (3, 11),
+        "the CORRECT extent — closes at the REAL `}}` (11), skipping the one hidden in `'}}'` (Δ1)"
+    );
+    // The `'}'` inside the hole is now recognized as a nested literal (content, NOT a hole
+    // delimiter): the interior is no longer all-water.
+    assert!(
+        hole.parts
+            .iter()
+            .any(|p| matches!(p, NativePart::Literal(l) if l.delim == b'\'')),
+        "the `'}}'` inside the hole is a nested char literal now (string-aware)"
+    );
+    // FIXED row: the machine diverges from the still-string-blind hand oracle.
+    assert_ne!(
+        format!("{parts:?}"),
+        format!("{:?}", hand(src.as_bytes(), 0, src.len(), Target::Python3)),
+        "Δ1 fix VACUOUS: the hand oracle already agrees (it should stay string-blind)"
+    );
+    check_partition(&parts, 0, src.len(), src);
+}
+
+/// `oracle_stayed_buggy` (Δ1 anti-vacuity): the fix teeth (`!= hand`) go VACUOUS if anyone
+/// "repairs" the hand `Lexer::hole_at`. Pin that the hand oracle STILL delimits the hole
+/// string-blind — `native_parts_hand` closes the `f"{ d['}'] }"` hole at the first `}` (7),
+/// inside the `'}'` string — so any repair of the oracle is loud.
+#[test]
+fn oracle_stayed_buggy_hole_blindness() {
+    let src = "f\"{ d['}'] }\"";
+    let h = hand(src.as_bytes(), 0, src.len(), Target::Python3);
+    let lit = first_literal(&h).expect("the f-string is a literal");
+    let hole = lit
+        .parts
+        .iter()
+        .find_map(|lp| match lp {
+            LiteralPart::Hole(x) => Some(x),
+            _ => None,
+        })
+        .expect("one hole");
+    assert_eq!(
+        (hole.span.start, hole.span.end),
         (3, 7),
-        "the WRONG extent — closes at the first `}}` inside `'}}'` (R6; Δ1 fixes)"
+        "the hand oracle was fixed (no longer string-blind) — the Δ1 fix teeth are now vacuous"
     );
     assert!(
         hole.parts.iter().all(|p| matches!(p, NativePart::Text(_))),
-        "the truncated hole interior (` d['`) is water today"
+        "the oracle's truncated hole interior must stay all-water (string-blind)"
     );
-    agree_sweep(src, Target::Python3);
 }
 
 /// B-7 (T-N8, carried — flips at Δ2): the `{{` escape guard checks only the NEXT byte and
@@ -556,14 +632,22 @@ fn structural_differential_curated_corpus() {
         "plain text, no islands",
         "",
     ];
+    let mut fixed_rows = 0usize;
     for t in TARGETS {
         for src in corpus {
-            agree_sweep(src, t);
+            fixed_rows += agree_or_fixed_sweep(src, t);
             // I1 on the machine output, full window.
             let parts = machine(src.as_bytes(), 0, src.len(), t);
             check_partition(&parts, 0, src.len(), src);
         }
     }
+    // Non-vacuity: the corpus must actually exercise the Δ1 fixed class (`f"{ d['}'] }"`,
+    // whose hole hides a `}` inside a string), or the partition-aware differential proves
+    // nothing beyond the carried rows.
+    assert!(
+        fixed_rows > 0,
+        "the curated corpus never reached a FIXED (string-aware-hole) row — Δ1 differential vacuous"
+    );
 }
 
 /// B-13b: the short adversarial corpus under the FULL `(from, to)` cross-product —
@@ -616,6 +700,10 @@ const FRAGS: &[&[u8]] = &[
     // Closed holed literals, whole — so the `holes` register actually fires under fuzz
     // (holes exist only on the Python quoted forms among the 4 gated targets).
     b"f\"a{$.n}b\"", b"'{$.k}'", b"\"w{x}\"",
+    // Hole-hides-delim literals, whole — the Δ1 FIXED class: the hole's real `}` sits after a
+    // `}` hidden inside a nested string, so the string-blind oracle mis-delimits and the
+    // string-aware machine does not (guarantees the partition-aware differential has teeth).
+    b"f\"{'}'}\"", b"\"{d['}']}\"", b"f\"{ '{' }\"",
 ];
 
 fn gen_fuzz(rng: &mut Rng, max_frags: usize) -> String {
@@ -637,18 +725,21 @@ fn structural_differential_fuzz_with_teeth() {
     let mut unterminated = 0usize;
     let mut islands_in_interiors = 0usize;
     let mut clamped_comments = 0usize;
+    let mut fixed_rows = 0usize;
 
     for seed in 0u64..800 {
         let mut rng = Rng::new(seed ^ 0xD00F_1E14);
         let src = gen_fuzz(&mut rng, 10);
         let b = src.as_bytes();
         for &t in &TARGETS {
-            // Full-window differential at every from; a shifted-to window per seed.
+            // Full-window PARTITION-AWARE differential at every from; a shifted-to window per
+            // seed. A divergence is a Δ1 FIXED row (string-aware hole vs the string-blind
+            // oracle) — the machine must still be well-formed there (checked inside).
             for from in 0..=b.len() {
-                agree_window(b, from, b.len(), t);
+                fixed_rows += agree_or_fixed_window(b, from, b.len(), t) as usize;
             }
             let to = rng.below(b.len() + 1);
-            agree_window(b, 0, to, t);
+            fixed_rows += agree_or_fixed_window(b, 0, to, t) as usize;
 
             // I1 on the full window.
             let parts = machine(b, 0, b.len(), t);
@@ -693,7 +784,7 @@ fn structural_differential_fuzz_with_teeth() {
                     if e > i + 2 {
                         let to = e - 1;
                         if i < to {
-                            agree_window(b, i, to, t);
+                            fixed_rows += agree_or_fixed_window(b, i, to, t) as usize;
                             let w = machine(b, i, to, t);
                             if w.iter().any(
                                 |p| matches!(p, NativePart::Literal(l) if l.delim == b'/' && l.span.end == to),
@@ -714,6 +805,9 @@ fn structural_differential_fuzz_with_teeth() {
         (unterminated, "unterminated positions", 50),
         (islands_in_interiors, "islands inside swallowed interiors", 10),
         (clamped_comments, "clamped comments", 10),
+        // Δ1 fix-with-teeth: the fuzz must actually reach the string-aware-hole FIXED class
+        // (machine != string-blind hand), or the partition-aware differential is vacuous.
+        (fixed_rows, "fixed (string-aware-hole) rows", 5),
     ] {
         assert!(
             n >= min,

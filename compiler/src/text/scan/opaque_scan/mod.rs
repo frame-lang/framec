@@ -10,13 +10,15 @@
 //! framec owns the WALK (in the `.frs`). These native leaves answer only per-target FACTS
 //! (Category A: which opener is here, is this the close) and — per the systems-only mandate —
 //! delegate the two recognizers that would otherwise walk to their own systems: a Rust raw
-//! string to [`super::raw_string`] and a Python interpolation hole to [`super::brace_balance`].
+//! string to [`super::raw_string`] and a Python interpolation hole to the opaque-aware
+//! [`super::delim_balance`] (Δ1: string-AWARE hole delimitation, replacing the string-blind
+//! `brace_balance`).
 //!
 //! Registers for Item 4: `holes` accumulates each Python `{…}` content-span at the hole_skip
 //! sites (single-source with the skip — the walk that skips a hole is the walk that records
 //! it); `delim` is now also set on the raw-string edge. Read via [`opaque_probe`] (one run,
-//! all registers). String-blind hole delimitation (R6) and the `{{` second-brace phantom are
-//! carried, pinned behaviors — Δ1/Δ2.
+//! all registers). String-blind hole delimitation (R6/T-N7) is now FIXED (Δ1, via DelimBalance);
+//! the `{{` second-brace phantom (T-N8) is still a carried, pinned behavior — Δ2.
 //!
 //! `.gen.rs` regen: edit `opaque_scan.frs`, then
 //! `framec-ng -l rust --emit opaque_scan.frs | grep -v '^#!\[allow' > opaque_scan.gen.rs`.
@@ -160,9 +162,16 @@ fn raw_unterminated(src: &[u8], i: usize, target: Target) -> bool {
     )
 }
 
-/// Category-B, delegated to a system: a Python interpolation hole `{…}` at `i`, brace-balanced
-/// by the `BraceBalance` @@system. Returns the position past the matching `}`, or `i` if there
-/// is no hole here — matching `Lexer::hole_at` + `i = hole.end + 1`. `{{` is an escaped brace.
+/// Category-B, delegated to a system: a Python interpolation hole `{…}` at `i`, balanced by the
+/// opaque-aware `DelimBalance` @@system. Returns the position past the matching `}`, or `i` if
+/// there is no hole here. `{{` is an escaped brace.
+///
+/// **Δ1 (T-N7/R6):** the balancer is now string-AWARE. `DelimBalance` skips any `{`/`}` that
+/// lives inside a nested string/char/comment (via OpaqueScan), so `f"{ d['}'] }"` closes at the
+/// REAL `}`, not the one hidden in `'}'`. The prior `brace_balance::scan` was a raw Dyck-1
+/// counter that counted the in-string `}` and mis-delimited the hole — the recorded string-blind
+/// bug the ledger carried through Phase 1. The hand `Lexer::hole_at` stays string-blind (the
+/// differential oracle stays buggy until C-final); the opaque differential partitions.
 fn hole_skip(src: &[u8], i: usize, target: Target) -> usize {
     let hole_here = matches!(target, Target::Python3) && src.get(i) == Some(&b'{');
     if !hole_here {
@@ -171,7 +180,7 @@ fn hole_skip(src: &[u8], i: usize, target: Target) -> usize {
     if src.get(i + 1) == Some(&b'{') {
         return i;
     }
-    super::brace_balance::scan(src, i).unwrap_or(i)
+    super::delim_balance::balanced(src, i, src.len(), b'{', b'}', target).unwrap_or(i)
 }
 
 /// Leaf for the Item-4 `holes` register: one Vec push, at the same walk step that skips the

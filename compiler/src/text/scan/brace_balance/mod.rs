@@ -2,9 +2,12 @@
 //! ([`brace_balance.frs`]).
 //!
 //! A counter automaton: from a `{` at position `i` it finds the matching `}` and returns the
-//! offset one past it. Used by [`super::string_scan`] to skip a Python interpolation hole
-//! (`{…}`) whole. Not string-aware — it counts raw braces, matching the hand
-//! `Lexer::hole_at`, which the whole StringScan conversion replaces.
+//! offset one past it. Not string-aware — it counts RAW braces. It was the Python-hole skipper
+//! for Item 1, but as of **Δ1 (T-N7/R6)** `opaque_scan::hole_skip` routes through the
+//! opaque-aware [`super::delim_balance`] instead, so this pure Dyck-1 counter is no longer on
+//! any production path — it stays a correct, string-blind brace matcher by design (the earlier
+//! prophecy that Item 4 would make *this* system string-aware was answered by composing a
+//! stronger one, not by changing this one).
 //!
 //! `.gen.rs` regen: edit `brace_balance.frs`, then
 //! `framec-ng -l rust --emit brace_balance.frs | grep -v '^#!\[allow' > brace_balance.gen.rs`.
@@ -39,9 +42,10 @@ pub fn scan(bytes: &[u8], i: usize) -> Option<usize> {
 // recognizes (balanced, nested, deeply nested), the edges (empty, EOF, past-EOF,
 // nonzero offset), and the adversarial long tail (unbalanced both ways, leading `}`,
 // trailing content, and — load-bearing — the DELIBERATELY not-string-aware behaviour
-// (R6): a `}` inside a `"…"` still closes, because this counter matches the hand
-// `Lexer::hole_at`, which is likewise string-blind. Locking that here means Item 4's
-// string-aware hole work is a visible CHANGE, not a silent drift.
+// (R6): a `}` inside a `"…"` still closes, because this counter counts RAW braces. Δ1 gave
+// the string-aware hole work to `DelimBalance` (composed over OpaqueScan), leaving this
+// counter as the pure Dyck-1 primitive it always was — the string-blind lock below is its
+// permanent, correct contract.
 // PROMOTABLE-LATER: language-agnostic input→extent spec of the machine; harvestable as
 // an `@@[scan]` fixture once shipping supports `@@[scan(u8)]`-on-`@@system` (#209).
 #[cfg(test)]
@@ -67,9 +71,11 @@ mod tests {
 
     #[test]
     fn not_string_aware_by_design() {
-        // R6: a `}` inside what looks like a string still closes the count — the machine
-        // counts RAW braces, matching the string-blind hand `hole_at`. (This is correct
-        // for Item 1's skip-only use; Item 4 must change it, and this test will flip.)
+        // R6: a `}` inside what looks like a string still closes the count — this machine
+        // counts RAW braces. Δ1 resolved the Item-4 prophecy by routing `hole_skip` through the
+        // string-AWARE `DelimBalance` (which composes OpaqueScan) rather than changing THIS
+        // counter, so the string-blind behavior below is correct and permanent for what this
+        // pure Dyck-1 matcher is: raw brace balancing, no opacity model.
         assert_eq!(scan(b"{\"}\"}", 0), Some(3)); // closes at the FIRST `}`, inside the "…"
         assert_eq!(scan(b"{a\\}b}", 0), Some(4)); // a `\` does NOT escape the `}` here
     }

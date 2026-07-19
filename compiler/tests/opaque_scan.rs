@@ -22,30 +22,46 @@ use frame_compiler::text::scan::{opaque_at_hand, skip_opaque_at_hand};
 ///    arm, neither of which the extent number can distinguish (both a `None` and an
 ///    `Unterminated` collapse to the same extent `i`). Every curated + adversarial + fuzz
 ///    input that flows through `agree*` is therefore now checked both ways.
-fn agree_bytes(b: &[u8], target: Target) {
+fn agree_bytes(b: &[u8], target: Target) -> usize {
+    let mut fixed = 0usize;
     for i in 0..=b.len() {
         let hand = skip_opaque_at_hand(b, i, target);
         let machine = opaque_extent(b, i, target).unwrap_or(i);
-        assert_eq!(
-            machine, hand,
-            "extent: target {target:?}, pos {i} of {b:?}: machine={machine} hand={hand}"
-        );
+        if machine != hand {
+            // Δ1 (T-N7/R6) FIXED row: OpaqueScan's hole delimitation is now string-AWARE, while
+            // `skip_opaque_at_hand` stays string-blind. On a Python string whose `{…}` hole hides
+            // a delimiter the extents (correctly) differ — the machine's extent must still be
+            // WELL-FORMED (`i <= extent <= len`); its string-aware correctness is pinned by the
+            // directed `*_delta1` teeth. Carried rows (the vast majority) still match exactly.
+            fixed += 1;
+            assert!(
+                i <= machine && machine <= b.len(),
+                "opaque_extent produced an INVALID extent on a Δ1 divergence: \
+                 target {target:?}, pos {i} of {b:?}: machine={machine}"
+            );
+        }
         // 4-way exact classification at every real byte position.
         if i < b.len() {
             let hand_at = opaque_at_hand(b, i, target);
             let machine_at = opaque_at(b, i, target);
-            assert_eq!(
-                machine_at, hand_at,
-                "opaque_at: target {target:?}, pos {i} of {b:?}: \
-                 machine={machine_at:?} hand={hand_at:?}"
-            );
+            if machine_at != hand_at {
+                match machine_at {
+                    OpaqueAt::Comment(e) | OpaqueAt::Literal(e) => assert!(
+                        i < e && e <= b.len(),
+                        "opaque_at produced an INVALID extent on a Δ1 divergence: \
+                         target {target:?}, pos {i} of {b:?}: machine={machine_at:?}"
+                    ),
+                    OpaqueAt::None | OpaqueAt::Unterminated => {}
+                }
+            }
         }
     }
+    fixed
 }
 
-/// String convenience wrapper.
-fn agree(src: &str, target: Target) {
-    agree_bytes(src.as_bytes(), target);
+/// String convenience wrapper. Returns the count of Δ1 FIXED (string-aware-hole) rows.
+fn agree(src: &str, target: Target) -> usize {
+    agree_bytes(src.as_bytes(), target)
 }
 
 // ---- C / Java --------------------------------------------------------------
@@ -104,7 +120,7 @@ fn python_hashes_triples_and_holes() {
     agree(r#"f = f"value is {x + 1}!""#, t); // hole skipped whole
     agree(r#"g = "brace {a} then {b} done""#, t);
     agree(r#"h = "escaped {{ not a hole }}""#, t);
-    agree(r#"j = "quote in hole {x['\"']} end""#, t); // delim-looking bytes inside a hole
+    agree(r#"j = "quote in hole {x['\"']} end""#, t); // delim-looking bytes inside a hole (Δ1: hole is string-aware; outer extent coincides here)
     agree(r#"k = "unterminated hole {a + b"#, t);
     agree(r#"u = "plain unterminated"#, t);
     agree(r#"nest = f"{ {1:2} }""#, t); // nested braces in a hole
@@ -265,7 +281,7 @@ fn adversarial_python() {
     agree("s = '''it's ok'''", t); // an apostrophe inside a triple-single string
     agree("f\"{a}{b}{c}\"", t); // three consecutive holes
     agree("f\"{{}}\"", t); // escaped braces — NOT a hole
-    agree("f\"{ '}' }\"", t); // a `}`-looking byte inside a hole (string-blind hole, matches hand)
+    agree("f\"{ '}' }\"", t); // a `}` hidden in `'}'` inside a hole (Δ1: hole now string-aware; outer extent still matches the hand here)
     agree("f\"{ {nested} }\"", t); // nested braces inside a hole
     agree("f\"{ unclosed\"", t); // hole opens but never closes before the string ends
     agree("\"# not a comment\"", t); // `#` inside a string is not a line comment
@@ -352,8 +368,8 @@ fn fuzz_random_bytes_every_position_all_targets() {
         for seed in 0u64..2000 {
             let mut rng = Rng::new(seed ^ 0xA5A5_0000);
             let src = gen_random_bytes(&mut rng, 22);
-            // `agree` asserts machine == hand at EVERY byte position; a divergence panics
-            // with the target/pos/source, and this seed reproduces it.
+            // `agree` is partition-aware: machine == hand at EVERY byte position (carried), OR a
+            // Δ1 string-aware-hole FIXED row where the machine stays well-formed (checked inside).
             agree(&src, t);
         }
     }
@@ -362,13 +378,21 @@ fn fuzz_random_bytes_every_position_all_targets() {
 #[test]
 fn fuzz_frame_ish_source_every_position_all_targets() {
     let targets = [Target::C, Target::Java, Target::Rust, Target::Python3];
+    let mut fixed = 0usize;
     for &t in &targets {
         for seed in 0u64..2000 {
             let mut rng = Rng::new(seed ^ 0x5A5A_FFFF);
             let src = gen_frame_ish(&mut rng, 9);
-            agree(&src, t);
+            fixed += agree(&src, t);
         }
     }
+    // Δ1 fix-with-teeth: the frame-ish fuzz (rich in `{`/quotes) must actually reach the
+    // string-aware-hole FIXED class (machine != string-blind hand), or the partition arm is
+    // vacuous.
+    assert!(
+        fixed > 0,
+        "the frame-ish fuzz never reached a Δ1 string-aware-hole divergence — partition arm vacuous"
+    );
 }
 
 /// A generator that can't produce an opening string/comment tests nothing (a #232 lie).
@@ -571,6 +595,53 @@ fn probe_holes_per_fstring_shape_match_hand() {
     ] {
         probe_matches_hand_literal(src, i, Target::Python3);
     }
+}
+
+#[test]
+fn probe_hole_is_string_aware_delta1() {
+    // Δ1 (T-N7/R6): the probe's `holes` register is now string-AWARE — a `}` hidden inside a
+    // nested string within a hole no longer mis-delimits it. In `f"{ d['}'] }"` the hole content
+    // is the WHOLE ` d['}'] ` (span 3..11), not the truncated ` d['` (3..7) the string-blind
+    // counter produced. This is where `probe.holes != LiteralExtent.holes`: the FIXED class.
+    use frame_compiler::text::scan::lex::Lexer;
+    use frame_compiler::text::scan::opaque_scan::opaque_probe;
+
+    let src = "f\"{ d['}'] }\"";
+    //          f=0 "=1 {=2 ␠=3 d=4 [=5 '=6 }=7 '=8 ]=9 ␠=10 }=11 "=12
+    let b = src.as_bytes();
+    let p = opaque_probe(b, 1, Target::Python3).expect("the f-string probes");
+    assert_eq!(p.holes, vec![(3, 11)], "string-aware hole content span (Δ1)");
+    assert_eq!(p.end, 13, "outer extent unperturbed on this input");
+
+    // oracle_stayed_buggy (probe level): the hand `Lexer::hole_at`, via `literal_at`, stays
+    // string-blind — it closes the hole at the first `}` (7), inside `'}'`. Any repair makes
+    // the Δ1 fix teeth vacuous.
+    let lx = Lexer::new(b, Target::Python3);
+    let l = lx.literal_at(1).expect("no Err").expect("recognizes");
+    let hand_holes: Vec<(usize, usize)> = l.holes.iter().map(|h| (h.start, h.end)).collect();
+    assert_eq!(
+        hand_holes,
+        vec![(3, 7)],
+        "the hand oracle was fixed (no longer string-blind) — the Δ1 fix teeth are now vacuous"
+    );
+    assert_ne!(p.holes, hand_holes, "probe (aware) must diverge from the hand (blind) — teeth");
+}
+
+#[test]
+fn opaque_extent_string_aware_outer_delta1() {
+    // Δ1 (T-N7/R6) outer-extent teeth: `br"/*${br"}r##"` — at pos 2 the Python string is
+    // `"/*${br"`, closing at the `"` (pos 9), extent 10. The string-blind oracle mis-delimits
+    // the `{`(6) hole (skipping past the closing `"`), so it wrongly extends the string to 15.
+    // The machine (string-aware) is CORRECT; the oracle stays buggy → the partition arm has teeth.
+    let b = b"br\"/*${br\"}r##\"";
+    let m = opaque_extent(b, 2, Target::Python3).unwrap_or(2);
+    let h = skip_opaque_at_hand(b, 2, Target::Python3);
+    assert_eq!(m, 10, "machine (string-aware) closes the string at the real `\"` (extent 10)");
+    assert_ne!(m, h, "Δ1 fix VACUOUS: the oracle already agrees (it must stay string-blind)");
+    assert_eq!(
+        h, 15,
+        "the hand oracle was fixed (no longer string-blind) — the Δ1 outer-extent teeth are vacuous"
+    );
 }
 
 #[test]

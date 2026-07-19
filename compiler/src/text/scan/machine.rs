@@ -1249,6 +1249,25 @@ mod skip_opaque_tests {
         m
     }
 
+    /// Partition-aware variant (Δ1 fix-with-teeth): `skip_opaque` composes OpaqueScan, whose
+    /// hole delimitation is now string-AWARE, while `skip_opaque_hand` stays string-blind. So
+    /// they agree (CARRIED) OR the machine diverges (a FIXED row — a `}` hidden in a string
+    /// inside a Python hole). On divergence the machine must still return a WELL-FORMED skip
+    /// extent (`None`, or a position in `(i, limit]`); the correctness of the string-aware
+    /// extent itself is proven in `tests/opaque_scan.rs`. Returns `(machine_result, is_fixed)`.
+    fn agree_or_fixed_one(b: &[u8], i: usize, limit: usize, t: Target) -> (Option<usize>, bool) {
+        let m = skip_opaque(b, i, limit, t);
+        if m == skip_opaque_hand(b, i, limit, t) {
+            return (m, false);
+        }
+        assert!(
+            m.map_or(true, |x| i < x && x <= limit),
+            "skip_opaque produced an INVALID extent on a Δ1 divergence: \
+             target {t:?}, i {i}, limit {limit} of {b:?}: machine={m:?}"
+        );
+        (m, true)
+    }
+
     /// Teeth accounting: prove BOTH outcomes (Some/None) occur AND that a real clamp
     /// (comment overruns limit → result == limit) AND a real reject (literal overruns
     /// limit → None) actually happen, classified against the INTERNAL `opaque_at`.
@@ -1481,6 +1500,7 @@ line ok";"#, t, &mut teeth);
     #[test]
     fn fuzz_random_limit_every_position_all_targets() {
         let mut teeth = Teeth::default();
+        let mut fixed = 0usize;
         for &t in &TARGETS {
             for seed in 0u64..1500 {
                 let mut rng = Rng::new(seed ^ 0xC3C3_0F0F);
@@ -1490,7 +1510,10 @@ line ok";"#, t, &mut teeth);
                     // A random limit per position, spanning [0, len] so it can land
                     // before, inside, or past whatever opens at `i`.
                     let limit = rng.below(b.len() + 1);
-                    let m = agree_one(b, i, limit, t);
+                    // Partition-aware (Δ1): a divergence is a string-aware-hole FIXED row, not
+                    // a regression — the machine must still be well-formed there.
+                    let (m, fx) = agree_or_fixed_one(b, i, limit, t);
+                    fixed += fx as usize;
                     teeth.observe(b, i, limit, t, m);
                 }
             }
@@ -1504,6 +1527,12 @@ line ok";"#, t, &mut teeth);
         assert!(
             teeth.rejects > 0,
             "fuzz never rejected a literal at a mid-string limit — arm lacks teeth"
+        );
+        // Δ1 fix-with-teeth: the fuzz must actually reach the string-aware-hole FIXED class
+        // (machine != string-blind hand), or the partition-aware differential is vacuous.
+        assert!(
+            fixed > 0,
+            "fuzz never reached a Δ1 string-aware-hole divergence — the partition arm is vacuous"
         );
     }
 

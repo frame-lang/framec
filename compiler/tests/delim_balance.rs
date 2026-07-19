@@ -51,19 +51,48 @@ fn naive_blind(bytes: &[u8], open: usize, limit: usize, o: u8, c: u8) -> Option<
     None
 }
 
+/// Partition-aware differential (Δ1 fix-with-teeth): `balanced`/`balanced_strict` compose
+/// OpaqueScan, whose Python-hole delimitation is now string-AWARE, while the `*_hand` oracles
+/// stay string-blind. When a Python string's `{…}` hole hides a delimiter, the machine
+/// (correctly) skips it and the oracle does not — so machine == hand (CARRIED) OR the machine
+/// diverges (a FIXED row), where it must still return a WELL-FORMED extent (`None`, or a
+/// position in `(open, limit]`). String-aware correctness itself is proven in
+/// `tests/opaque_scan.rs` and by the directed `delta1_*` teeth below. Returns true on a fixed row.
+fn agree_or_fixed(
+    m: Option<usize>,
+    h: Option<usize>,
+    open: usize,
+    limit: usize,
+    ctx: &str,
+) -> bool {
+    if m == h {
+        return false;
+    }
+    assert!(
+        m.map_or(true, |x| open < x && x <= limit),
+        "delim_balance produced an INVALID extent on a Δ1 divergence: {ctx}: machine={m:?}"
+    );
+    true
+}
+
 /// Differential at EVERY start position × EVERY limit × BOTH pairs for one (input, target).
-/// A mismatch is a real machine/oracle divergence and panics with the reproducing coordinates.
+/// Partition-aware: a mismatch is a Δ1 string-aware-hole FIXED row (machine well-formed), not a
+/// regression — the exact fixed trees are pinned by the directed `delta1_*` teeth.
 fn sweep(src: &[u8], target: Target) {
     for &(o, c) in &PAIRS {
         for start in 0..src.len() {
             for limit in 0..=src.len() {
                 let m = balanced(src, start, limit, o, c, target);
                 let h = balanced_hand(src, start, limit, o, c, target);
-                assert_eq!(
-                    m, h,
-                    "DIVERGENCE pair {}/{} start {start} limit {limit} target {target:?} of {src:?}: \
-                     machine={m:?} hand={h:?}",
-                    o as char, c as char
+                agree_or_fixed(
+                    m,
+                    h,
+                    start,
+                    limit,
+                    &format!(
+                        "pair {}/{} start {start} limit {limit} target {target:?} of {src:?}",
+                        o as char, c as char
+                    ),
                 );
             }
         }
@@ -236,11 +265,15 @@ fn every_opener_position_is_exercised() {
                 openers += 1;
                 for &t in &TARGETS {
                     for limit in 0..=b.len() {
-                        assert_eq!(
+                        agree_or_fixed(
                             balanced(b, start, limit, o, c, t),
                             balanced_hand(b, start, limit, o, c, t),
-                            "opener sweep {}/{} start {start} limit {limit} {t:?} of {src:?}",
-                            o as char, c as char
+                            start,
+                            limit,
+                            &format!(
+                                "opener sweep {}/{} start {start} limit {limit} {t:?} of {src:?}",
+                                o as char, c as char
+                            ),
                         );
                     }
                 }
@@ -320,6 +353,37 @@ fn opaque_skip_matters_explicit() {
 }
 
 // ============================================================================
+// Δ1 (T-N7/R6) TEETH — the string-aware-hole FIXED class, directed. `balanced` composes
+// OpaqueScan, whose Python-hole delimitation is now string-aware; the `balanced_hand` oracle
+// stays string-blind. Pin a case where the machine is CORRECT and the oracle is WRONG, and
+// `oracle_stayed_buggy` so the partition-aware sweeps above can never go vacuous via a "repair".
+// ============================================================================
+
+#[test]
+fn delta1_string_aware_hole_diverges_and_is_correct() {
+    // `if (x == "{" && y == '}') { do(); }` — within [0,23) the `{`(10) and `}`(22) are STRING
+    // content (`"{"` and `'}'`), so there is NO real balanced `{…}` group. The string-aware
+    // machine correctly returns None; the string-blind oracle mis-delimits the `"{"` hole,
+    // exposes the `{`(10) as a real brace, and balances it against the `}`(22) → Some(23).
+    let src = "if (x == \"{\" && y == '}') { do(); }";
+    let b = src.as_bytes();
+    let (o, c) = (b'{', b'}');
+    let t = Target::Python3;
+
+    let m = balanced(b, 0, 23, o, c, t);
+    let h = balanced_hand(b, 0, 23, o, c, t);
+    assert_eq!(m, None, "machine (string-aware) correctly finds no real brace group in [0,23)");
+    assert_ne!(m, h, "Δ1 fix VACUOUS: the oracle already agrees (it must stay string-blind)");
+
+    // oracle_stayed_buggy: the hand oracle mis-delimits the `"{"` hole and returns Some(23).
+    assert_eq!(
+        h,
+        Some(23),
+        "the hand oracle was fixed (no longer string-blind) — the Δ1 delim_balance teeth are vacuous"
+    );
+}
+
+// ============================================================================
 // Fuzz arm — deterministic xorshift, random start / limit / pair / target, over random
 // bytes AND frame-ish source. Asserts `balanced == balanced_hand` on every case.
 // ============================================================================
@@ -391,11 +455,15 @@ fn fuzz_one(rng: &mut Rng, b: &[u8]) -> Option<usize> {
     let target = TARGETS[rng.below(TARGETS.len())];
     let m = balanced(b, start, limit, o, c, target);
     let h = balanced_hand(b, start, limit, o, c, target);
-    assert_eq!(
-        m, h,
-        "FUZZ DIVERGENCE pair {}/{} start {start} limit {limit} target {target:?} of {b:?}: \
-         machine={m:?} hand={h:?}",
-        o as char, c as char
+    agree_or_fixed(
+        m,
+        h,
+        start,
+        limit,
+        &format!(
+            "FUZZ pair {}/{} start {start} limit {limit} target {target:?} of {b:?}",
+            o as char, c as char
+        ),
     );
     m
 }
@@ -450,7 +518,7 @@ fn fuzz_has_teeth() {
                     let limit = b.len();
                     let m = balanced(&b, start, limit, o, c, t);
                     let h = balanced_hand(&b, start, limit, o, c, t);
-                    assert_eq!(m, h, "teeth-scan divergence {t:?} {start} of {b:?}");
+                    agree_or_fixed(m, h, start, limit, &format!("teeth-scan {t:?} {start} of {b:?}"));
                     match m {
                         Some(_) => some += 1,
                         None => none += 1,
@@ -496,11 +564,15 @@ fn sweep_strict(src: &[u8], target: Target) {
             for limit in 0..=src.len() {
                 let m = balanced_strict(src, start, limit, o, c, target);
                 let h = balanced_strict_hand(src, start, limit, o, c, target);
-                assert_eq!(
-                    m, h,
-                    "STRICT DIVERGENCE pair {}/{} start {start} limit {limit} target {target:?} of \
-                     {src:?}: machine={m:?} hand={h:?}",
-                    o as char, c as char
+                agree_or_fixed(
+                    m,
+                    h,
+                    start,
+                    limit,
+                    &format!(
+                        "STRICT pair {}/{} start {start} limit {limit} target {target:?} of {src:?}",
+                        o as char, c as char
+                    ),
                 );
             }
         }
@@ -649,11 +721,15 @@ fn fuzz_one_strict(rng: &mut Rng, b: &[u8]) -> (Option<usize>, Option<usize>) {
     let target = TARGETS[rng.below(TARGETS.len())];
     let m = balanced_strict(b, start, limit, o, c, target);
     let h = balanced_strict_hand(b, start, limit, o, c, target);
-    assert_eq!(
-        m, h,
-        "STRICT FUZZ DIVERGENCE pair {}/{} start {start} limit {limit} target {target:?} of {b:?}: \
-         machine={m:?} hand={h:?}",
-        o as char, c as char
+    agree_or_fixed(
+        m,
+        h,
+        start,
+        limit,
+        &format!(
+            "STRICT FUZZ pair {}/{} start {start} limit {limit} target {target:?} of {b:?}",
+            o as char, c as char
+        ),
     );
     let tol = balanced(b, start, limit, o, c, target);
     (tol, m)

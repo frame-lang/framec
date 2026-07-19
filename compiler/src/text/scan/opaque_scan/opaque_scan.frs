@@ -18,8 +18,9 @@
 // Registers for Item 4: `holes` accumulates each Python `{…}` content-span at the hole_skip
 // sites (single-source with the skip — the walk that skips a hole is the walk that records
 // it); `delim` is now also set on the raw-string edge (≡ `Lexer::rust_raw`'s `b'"'`). Read via
-// `opaque_probe` (one run, all registers). String-blind hole delimitation (R6/T-N7) and the
-// `{{` second-brace phantom (T-N8) are carried, pinned behaviors — Δ1/Δ2.
+// `opaque_probe` (one run, all registers). String-blind hole delimitation (R6/T-N7) is FIXED
+// (Δ1: `hole_skip` routes through the opaque-aware DelimBalance); the `{{` second-brace phantom
+// (T-N8) is still a carried, pinned behavior — Δ2.
 //
 // Forms (Lexer form tables, 4 targets):
 //   C/Java: `//`, `/*…*/`(no nest), `"…"`, `'…'` (escapes)

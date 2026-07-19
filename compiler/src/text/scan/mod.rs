@@ -572,6 +572,29 @@ mod close_brace_tests {
         }
     }
 
+    /// Partition-aware variant (Δ1 fix-with-teeth): `close_brace` composes DelimBalance →
+    /// OpaqueScan, whose hole delimitation is now string-AWARE, while `close_brace_hand` stays
+    /// string-blind. So they agree (CARRIED) OR the machine diverges (a FIXED row — a closer
+    /// hidden in a string inside a Python hole). On divergence the machine's matched close (if
+    /// any) must still be a WELL-FORMED position past the opener; string-aware correctness is
+    /// proven in `tests/opaque_scan.rs`. Returns true on a fixed row (for the teeth).
+    fn agree_cb_or_fixed(bytes: &[u8], open: usize, target: Target) -> bool {
+        let m = super::close_brace(bytes, open, "X", target);
+        let h = super::close_brace_hand(bytes, open, "X", target);
+        let diverged =
+            m.is_err() != h.is_err() || matches!((&m, &h), (Ok(a), Ok(b)) if a != b);
+        if diverged {
+            if let Ok(x) = &m {
+                assert!(
+                    open < *x && *x <= bytes.len(),
+                    "close_brace produced an INVALID extent on a Δ1 divergence: \
+                     target {target:?}, open {open} of {bytes:?}: machine={m:?}"
+                );
+            }
+        }
+        diverged
+    }
+
     /// Sweep EVERY position as the `open` — strictly stronger than only the real `{`
     /// offsets, and both functions receive the SAME open so the differential is exact.
     fn agree_all(src: &str, target: Target) {
@@ -716,17 +739,24 @@ mod close_brace_tests {
 
     #[test]
     fn fuzz_close_brace_all_targets() {
+        let mut fixed = 0usize;
         for &t in &TARGETS {
             for seed in 0u64..1500 {
                 let mut rng = Rng::new(seed ^ 0xC10B_E5A5);
                 let b = gen_body(&mut rng, 10);
                 for open in 0..b.len() {
-                    agree_cb(&b, open, t); // machine == hand at every open; a divergence
-                                           // panics with the target/open/body — reproducible
-                                           // from this seed.
+                    // Partition-aware (Δ1): machine == hand (carried) OR a string-aware-hole
+                    // FIXED row (well-formedness checked inside) — never a silent regression.
+                    fixed += agree_cb_or_fixed(&b, open, t) as usize;
                 }
             }
         }
+        // Δ1 fix-with-teeth: the fuzz must actually reach the string-aware-hole FIXED class
+        // (machine != string-blind hand), or the partition-aware differential is vacuous.
+        assert!(
+            fixed > 0,
+            "fuzz never reached a Δ1 string-aware-hole divergence — the partition arm is vacuous"
+        );
     }
 
     /// A fuzz arm that only ever produced `Err` (or only `Ok`) would test nothing. Prove the
