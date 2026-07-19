@@ -174,6 +174,34 @@ assign path changed), production recognition 11 → 9 and loops 58 → 55
 with the remainders named and owned by later sets. Handed to the warden
 for GATE-A; nothing committed, no production hand path deleted.
 
+**2026-07-19 — GATE-A: PASS-WITH-CONDITIONS, and the milestone claim
+corrected.** The warden re-ran every predicate from a clean cache
+(baseline re-derived from a `git archive` of the pre-change commit, not
+trusted; the fuzz generator re-implemented in Python to count form
+incidence independently) and returned PASS-WITH-CONDITIONS. The machine
+is proven: regeneration fixpoint green on both the debug binary and a
+freshly rebuilt release binary (the bootstrap leg — the wired compiler
+re-scans all 24 systems byte-identically); the oracle diffs to the
+pre-change hand code as renames-plus-comments only; the carried swallows
+are pinned *identical*, not fixed; the constructor-parameter seam is
+confirmed in the generated artifact. Two conditions, both non-FAIL: C-1,
+a single curated nested-block-comment fixture the fuzz pool never
+generated (discharged immediately — added to the corpus, differential
+still green); C-2, the three deviations recorded at the landing entries.
+
+The load-bearing finding was Finding 4, and it corrects a claim carried
+in this journal and in the owner reports: **NativeParts does not retire
+the campaign's last production recognition — it retires `parts.rs`'s.**
+The census moves 11 → 9, not 11 → 0. The residual nine are seven `lex.rs`
+token definitions and two `sections.rs::section_keyword_starts` calls,
+and the plan's acceptance entry ("retires the LAST production hand-Lexer
+recognition") overstated by that `sections.rs` pair — which no plan item
+names in scope. The set's own scope is complete and correct (`parts.rs`
+→ 0); the campaign goal C2 (recognition = 0) now has a named open thread:
+the `sections.rs` owner, an owner-gate scope question. Recorded as PM-7;
+the catch itself is D2 evidence — the warden refuted the plan's own
+accounting, not just the builder's code.
+
 ## 2. Discovery register (the paper-worthy claims, each with evidence)
 
 **D1 — A worldview document alone is sufficient agent training.** Blind
@@ -194,9 +222,14 @@ generated artifacts), examples-agent → repo instrumentation (the doc
 validator that couldn't see subdirectories), builder → design record (a
 hand-code defect the finder, designer, and reviewer had all read past —
 Bug B(iii)), warden → builder (independent reproduction of that claim on
-the live oracle before the gate verdict). The chain now spans the full
-pipeline, entry to landing. The layers work because the obligations
-differ, not because later stages are smarter.
+the live oracle before the gate verdict), warden → the plan itself (an
+independent census at GATE-A refuted the *plan's* accounting — a
+milestone entry that claimed the last production recognition when a
+`sections.rs` residual remained; PM-7). The chain now spans the full
+pipeline, entry to landing, and its last link caught the *record*, not
+the code — the obligation to re-run the census, rather than restate it,
+is what found it. The layers work because the obligations differ, not
+because later stages are smarter.
 
 **D3 — Differential parity cannot certify state-faithfulness; the
 terminal ledger can.** Proof case: a wrong default was faithfully
@@ -368,6 +401,24 @@ re-verification before it is trusted. *Improvement proposed:* isolation
 policy names its two axes — code extent (the graph's job) and machine
 resources (the scheduler's job) — and any result produced under overlap
 needs a solo-green run before it counts.
+
+**PM-7 — A milestone claim outran its evidence** (2026-07-19). The
+NativeParts set was described — in the plan's acceptance entry, in this
+journal, and in owner reports — as retiring "the last production
+hand-Lexer recognition" (11 → 0). It retires `parts.rs`'s recognition
+only; the census moves 11 → 9, with seven `lex.rs` token definitions and
+two `sections.rs::section_keyword_starts` calls remaining, the latter
+named by no plan item. *How it survived:* the acceptance entry was
+written from the design's fact base, which scoped `parts.rs`; the
+`sections.rs` residual was never enumerated, so every downstream
+restatement inherited the gap. *Caught by:* the warden's independent
+census at GATE-A (Finding 4). *Correction applied:* the milestone is
+restated as "retires `parts.rs`'s production recognition"; C2
+(recognition = 0) now carries an explicit open thread — the `sections.rs`
+owner — routed to the owner gate. *Improvement proposed:* completion
+claims cite the instrument and the *residual*, never a bare target; a
+claim of "last" or "0" is a census assertion and must be run, not
+inferred from the set's own scope.
 
 ## 5. Open threads (for the paper's future-work section)
 
