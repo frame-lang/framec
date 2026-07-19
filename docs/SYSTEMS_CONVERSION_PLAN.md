@@ -19,6 +19,11 @@ backend's **spellings** (how it writes a class/method/persist blob). The convers
 the hand-rolled-loop surface — the ~5,300 lines under `text/scan/` and, last, the emit
 *walk* — not the spellings.
 
+**Terminology (2026-07-18):** a *capability* below = a **conversion set** in RFC-0058's
+vocabulary — the atomically-landed closure of changes (one oracle, one gate pair, one commit;
+it does not map 1:1 with a system). GATE-A = RFC-0058's *parity gate*; GATE-B = its *landed
+gate*. The per-capability DoD applies per conversion set.
+
 ## The four guardrails (non-negotiable)
 
 1. Each capability → a `.frs` `@@system`, compiled by framec-ng to a committed `.gen.rs`,
