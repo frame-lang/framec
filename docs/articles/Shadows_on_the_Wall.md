@@ -17,11 +17,15 @@ nav_order: 4
 
 This paper defends a strong claim: **every program is a state machine, and every
 programmer is a state-machine author** — most of them unknowingly, in languages
-that provide no way to say so. We show that the claim is not a metaphor or a
-methodological preference but a theorem, provable three independent ways: from
-the formal semantics of programming languages, by mechanical construction, and
-from the accumulated engineering record. We then draw the claim's one honest
-boundary — the class of artifacts that genuinely are not state machines, which
+that provide no way to say so. We establish the claim on three independent
+grounds — the formal semantics of programming languages, a mechanical
+construction that exhibits the machine in any program, and the accumulated
+engineering record — while being precise about their differing force: the
+semantic ground *identifies* execution with a transition system by the very way
+meaning is defined (a settled identity, not a surprising theorem), the
+construction is a genuine result, and the record is the weight of practice. That
+the machine *exists* is therefore not the paper's real news; its consequence is.
+We then draw the claim's one honest boundary — the class of artifacts that genuinely are not state machines, which
 turn out to be precisely the artifacts that are not computations — and sharpen
 that boundary from a vague intuition ("data things") into a precise criterion
 (the value/process distinction, cut at the spec/engine seam). We catalog the
@@ -71,7 +75,7 @@ it pay to write it down?"* That inversion, from *whether* to *whether to name*,
 changes what code review looks for, what languages should provide, and how both
 humans and AI systems should be trained to read code.
 
-We proceed as follows. Section 2 proves the claim three ways. Section 3 makes
+We proceed as follows. Section 2 makes the case on three independent grounds. Section 3 makes
 it precise — what exactly is a state, what is a transition, and why the claim
 is scale-invariant. Section 4 draws the boundary: what genuinely is not a
 state machine, and why that class is exactly the class of non-computations.
@@ -81,14 +85,21 @@ finding the machines in an arbitrary codebase. Section 8 draws implications.
 
 ---
 
-## 2. Three Proofs
+## 2. Three Independent Grounds
 
-The claim — *all computation is state machinery* — can be established from
-semantics, by construction, and from practice. The first two each suffice on
-their own; the third corroborates them from the engineering record. Together
-they leave no room for the claim to be a matter of taste.
+The claim — *all computation is state machinery* — rests on three independent
+grounds: the semantics of how programs are given meaning, a construction that
+exhibits the machine in any program, and the practice of tooling that reifies
+it. Their force differs, and this section is careful to say so. The semantic
+ground is an *identification* — meaning is defined as a transition relation, so
+this settles the machine's existence rather than discovering it. The
+construction is a genuine result about any sequential program. The record is
+corroboration from the field. Together they settle that the machine is always
+present — which is the least interesting thing about it. The interesting thing,
+taken up in §6, is that its presence being settled leaves exactly one open
+decision: whether to name it.
 
-### 2.1 The semantic proof: meaning is a transition system
+### 2.1 The semantic ground: meaning is defined as a transition system
 
 When the field formalized what a program *means*, the formalism it converged on
 was a transition system. Gordon Plotkin's structural operational semantics [2]
@@ -105,11 +116,15 @@ of what it is to *run* a program. The denotational account — which assigns a
 program a timeless mathematical value — is not a rival but the other pole of a
 dichotomy this paper will draw in §4, and it is answerable to the transition
 system through adequacy results. To execute is to traverse the transition
-relation; a run of the program *is* a path through a state space. This is likewise the picture the hardware presents: a processor is a
-finite-state control (the pipeline and its program counter) acting on a store,
-and since physical memory is finite, every real program execution is — in the
-strict, unromantic sense — a walk through a finite (astronomically large, but
-finite) state machine.
+relation; a run of the program *is* a path through a state space. This is
+likewise the picture the hardware presents: a processor is a finite-state
+control — the pipeline and its program counter — acting on a store. (One can go
+further and note that, physical memory being finite, every real execution is
+*literally* a walk through a finite, astronomically large state machine. But
+that is the degenerate, true-but-uninformative reading §3 is at pains to
+quarantine — a machine with 2^(billions) states is not usefully "finite-state,"
+and nothing in this paper leans on it. The load-bearing claim is the semantic
+one above, that meaning *is* a transition relation, not the counting one.)
 
 The lineage runs straight back to the founding document. Turing's machine [1]
 is a finite table of *m-configurations* — his term for states — governing a
@@ -125,7 +140,7 @@ preserved that shape.
 > everything computable is computable by it. Every machine in this paper is,
 > at bottom, a descendant of this table.
 
-### 2.2 The constructive proof: the machine is mechanically recoverable
+### 2.2 The constructive ground: the machine is mechanically recoverable
 
 A skeptic might grant that execution is *describable* as a state machine while
 denying that any particular program *contains* one in a recoverable sense.
@@ -164,7 +179,7 @@ out — which is defunctionalization again, performed under deadline pressure.
 
 ### 2.3 The engineering record: compilers already reify the machine
 
-The third proof is empirical: wherever software *needs* the machine to be a
+The third ground is empirical: wherever software *needs* the machine to be a
 first-class value, tooling **reifies** it — that is, makes the abstract
 concrete: turns structure that until then existed only in behavior into an
 explicit object the program can hold and inspect. The recovery is mechanical,
@@ -214,9 +229,10 @@ along.
   describes is a state machine, and that computer science pays a price for
   teaching syntax before teaching this [7].
 
-Three proofs, one conclusion. The state machine is not a design pattern to be
-selected when appropriate. It is what computation *is*. What varies between
-programs is only whether the machine is written down.
+Three grounds, one conclusion. The state machine is not a design pattern to be
+selected when appropriate; it is what computation *is*. That much is settled —
+and, settled, it is nearly uninteresting. What varies between programs, and what
+the rest of this paper is about, is only whether the machine is written down.
 
 ---
 
@@ -396,7 +412,7 @@ recover the machine from almost any code:
 |---|---|
 | Boolean flag (`connected`, `dirty`, `initialized`) | One bit of the mode register — a state distinction demoted to data |
 | Enum/`status`/`phase`/`mode` field | The mode register itself, with transitions scattered as assignments across the codebase |
-| `Option`/`Result`/nullable return | A fork to distinct terminal states, erased into the value channel |
+| `Option`/nullable return, or a `Result` with a *merged* error | A fork to distinct terminal states, thinned into the value channel (but a `Result` with a *rich* error type is the opposite — see the rival discussed below) |
 | Early `return` / `break` / `continue` | An unnamed transition, often to an unnamed terminal state |
 | Exception / `try–catch` | A non-local transition into an error state whose existence the happy path never acknowledges |
 | Loop counter / depth counter | The register of a counter automaton tracking the walk |
@@ -421,6 +437,31 @@ machine by faithfully transcribing its control flow, the gloss survives the
 conversion — the machine is *code-faithful* without being *state-faithful*. The
 test of a faithful machine is that its init and terminal structure is as
 articulated as its processing structure.
+
+**The strongest rival: the rich sum type.** Listing `Result` as a disguise is
+only half the truth, and the other half is this paper's most serious rival. A
+`Result<T, E>` whose error type `E` is a *rich, well-named sum* — the
+functional-programming discipline of *making illegal states unrepresentable* —
+does not erase the terminal states; it **names** them, in the value channel,
+exactly as an explicit machine would name them in the state channel. That
+discipline is a genuine rival reification of this paper's insight, and it is
+important to concede where it wins. Where the artifact is a **pure, total
+mapping** — a function whose only interesting structure is its set of outcomes,
+with no ordering and no intermediate modes — the tagged sum is the *right*
+reification, and the machine is correctly left latent. That is not a defeat for
+the thesis; it is §4's value plea, arrived at from the other direction: the sum
+type wins exactly where §4's boundary says the machine should not be named.
+What the sum cannot express is *dynamics*. It names the codomain — which
+outcomes exist — but not the path to them: it cannot say "every route to
+`$Executing` passes through `$Approved`," cannot order the modes a value passes
+through before it is valid, cannot make reachability a checkable property of a
+transition graph. A `Result` names the exits; a machine names the exits *and*
+the trajectory. So the two are not competitors but a division along §4's own
+seam — name the value with a rich sum when the artifact is a mapping; name the
+machine when it is a process. The failure the table indicts is never *using*
+`Result`; it is using a *flattened* one (or a bare `Option`) for something that
+is a process — thinning a lifecycle's several distinct terminals into one
+anonymous error.
 
 ---
 
@@ -493,14 +534,14 @@ a state.
 Here is the discipline in one sentence. Under the traditional posture, a
 designer asks *"is this a state machine problem?"* and the default answer is
 no; machinery must argue its way in. Under the posture this paper defends, the
-machine's presence is settled by theorem, so the question becomes *"this is a
-state machine — justify leaving it latent,"* and the admissible pleas are
-exactly three. The first is the plea §4 established: *this artifact is a
+machine's presence is settled — by the grounds of §2 — so the question becomes
+*"this is a state machine — justify leaving it latent,"* and the admissible
+pleas are exactly three. The first is the plea §4 established: *this artifact is a
 value, a space, or a spec, and its engine lives elsewhere.* The second, for a
 fragment of genuine process: *it is pure, total, and none of its intermediate
 states are observable.* The third, licensed by §6.2: *the machine at this
 level is degenerate — its states carry nothing beyond the program counter, so
-naming it would be costume.* The theorem settles existence, not significance;
+naming it would be costume.* That settled presence bears on existence, not significance;
 significance is settled by the load-bearing test, and the burden of
 justification therefore attaches where the signatures of §5 — the flags, the
 mode fields, the merged terminals, the retry logic — evidence a non-degenerate
@@ -660,15 +701,34 @@ deserve one home instead of a dozen scattered conditionals. Nothing about this
 requires a new language — only a new reading of the old one.
 
 **For language design.** The engineering record (§2.3) shows compilers
-routinely *reifying* machines from unannotated code the moment the runtime
-needs them. That capability is an argument, not a convenience: if the machine
-can be recovered mechanically downstream, it could have been written directly
-upstream — with its states named by the person who conceived them rather than
-synthesized namelessly by a lowering pass. A language in which the machine is
-the source artifact makes the latent explicit by construction; this is the
-design position that Frame occupies. (Companion pieces on this site survey the
-history of such attempts and the pathologies of state's absence; this paper's
-argument stands independently of them, on the primary literature.)
+routinely *reifying* machines from unannotated code the moment the runtime needs
+them. It is tempting to read this as a simple argument — if the machine can be
+recovered downstream, it could have been written upstream — but that reading
+proves too much, and the record itself refutes it. `async/await`, generators,
+and regular expressions are cases where the machine is deliberately *not* written
+by hand: a programmer writes linear or declarative source, a lowering pass builds
+the automaton, and this is agreed to be the better design — a hand-drawn
+coroutine state machine would be worse than the `await`-annotated function that
+denotes it. So the record argues, honestly, for *latency plus tooling*: leave
+the machine implicit and let the compiler reify it. That is not a rebuttal of
+this paper; it is §6's *leave-latent* disposition exercised at the level of
+language design, and for those cases it is exactly right.
+
+The genuine language-design argument is narrower, and follows from §6 rather
+than overriding it. Most languages do not offer the *choice* the disposition
+presumes; they force the machine latent, because they provide no way to name it
+at all. A `status` field's transition rules cannot be gathered into one declared
+machine even when scattering them is the mistake; a safety or alignment property
+over a lifecycle cannot be *stated* even when it is the whole point. What a
+machine-aware language adds is not a mandate to author every machine by hand —
+the `await` case shows that would be wrong — but the *option* to name the machine
+when naming pays, so that §6's decision can be made deliberately instead of
+settled by default. Frame occupies that position: the machine is a first-class
+source artifact one may reach for, *alongside* — not in place of — the
+latent-and-lowered forms the record already vindicates. (Companion pieces on
+this site survey the history of such attempts and the pathologies of state's
+absence; this paper's argument stands independently of them, on the primary
+literature.)
 
 **For artificial intelligence.** Language models learn to program from corpora
 in which virtually every machine is latent — and so, we conjecture and our
@@ -699,8 +759,8 @@ spaces, and specifications — data at rest — and even these are animated by
 engines that are machines, and governed across time by machines the moment
 they acquire a lifecycle.
 
-From the theorem follows the discipline of §6, compressed to a sentence:
-existence is never the question; naming is — and the burden of proof falls on
+From this settled identity follows the discipline of §6, compressed to a
+sentence: existence is never the question; naming is — and the burden of proof falls on
 leaving the machine latent, not on writing it down. A machine left unwritten
 should be a decision with a justification, not a default with a history.
 
@@ -804,8 +864,10 @@ The machine is real; no single file contains it. Its transition rules live as
 assignments in three modules, and nothing prevents `fulfillment.py` from
 shipping a draft.
 
-**A.3 The `Option`/`Result` return** — terminal states erased into the value
-channel.
+**A.3 The flattened return** (`Option`, or a `Result` with a *merged* error) —
+distinct terminal states thinned into the value channel. (A `Result` with a
+*rich* error type does the opposite — it names them; see §5's discussion of the
+rival sum type.)
 
 ```rust
 fn parse(s: &str) -> Option<Ast>
