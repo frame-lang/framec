@@ -645,22 +645,31 @@ fn opaque_extent_string_aware_outer_delta1() {
 }
 
 #[test]
-fn probe_pins_the_double_brace_phantom_hole() {
-    // T-N8, pinned at the probe level (flips at Δ2): the `{{` guard checks only the NEXT
-    // byte and the scan advances 1, so the SECOND brace opens a phantom hole. Identical in
-    // the hand `hole_at` — proven by the register-for-register match — and asserted here
-    // as the CURRENT (wrong) content so the pin has teeth.
+fn probe_no_double_brace_phantom_hole_delta2() {
+    // T-N8 — FLIPPED at Δ2: `{{` is consumed WHOLE (both braces) before `hole_skip`, so the
+    // second brace no longer opens a phantom hole. The machine records NO hole; the hand
+    // `Lexer::hole_at` still phantom-opens (oracle_stayed_buggy at the probe level).
+    use frame_compiler::text::scan::lex::Lexer;
     use frame_compiler::text::scan::opaque_scan::opaque_probe;
 
-    let src = r#"f"{{x}}""#; // f=0 "=1 {=2 {=3 x=4 }=5 }=6 "=7
-    probe_matches_hand_literal(src, 1, Target::Python3);
-    let p = opaque_probe(src.as_bytes(), 1, Target::Python3).unwrap();
-    assert_eq!(p.holes, vec![(4, 5)], "phantom hole must contain exactly `x` today");
-
-    let src2 = r#"f"{{}}""#; // the empty phantom
-    probe_matches_hand_literal(src2, 1, Target::Python3);
-    let p2 = opaque_probe(src2.as_bytes(), 1, Target::Python3).unwrap();
-    assert_eq!(p2.holes, vec![(4, 4)], "empty phantom hole pinned");
+    for (src, phantom) in [
+        (r#"f"{{x}}""#, (4usize, 5usize)), // f=0 "=1 {=2 {=3 x=4 }=5 }=6 "=7
+        (r#"f"{{}}""#, (4, 4)),            // the empty phantom
+    ] {
+        let b = src.as_bytes();
+        let p = opaque_probe(b, 1, Target::Python3).unwrap();
+        assert!(p.holes.is_empty(), "no phantom hole for {src:?} (Δ2)");
+        // oracle_stayed_buggy: the hand still phantom-opens the second brace.
+        let lx = Lexer::new(b, Target::Python3);
+        let l = lx.literal_at(1).expect("no Err").expect("recognizes");
+        let hand_holes: Vec<(usize, usize)> = l.holes.iter().map(|h| (h.start, h.end)).collect();
+        assert_eq!(
+            hand_holes,
+            vec![phantom],
+            "the hand oracle was fixed (no longer phantom-opens `{{{{`) — the Δ2 teeth are vacuous"
+        );
+        assert_ne!(p.holes, hand_holes, "probe must diverge from the phantoming hand — teeth");
+    }
 }
 
 #[test]

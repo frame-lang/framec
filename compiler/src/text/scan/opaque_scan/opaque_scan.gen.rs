@@ -252,6 +252,15 @@ impl<'a> OpaqueScan<'a> {
             self.compartment = __next;
             return Default::default();
         }
+        // Δ2 (T-N8): a `{{` escape is consumed WHOLE (both braces), so the second `{`
+        // cannot open a phantom hole. No hole is recorded — escaped braces are content.
+        let db = double_brace_skip(self.src, self.cursor, self.target);
+        if db > self.cursor {
+            self.cursor = db;
+            let mut __next = OpaqueScanComp { state: "StrBody".to_string(), vars: OpaqueScanVars::StrBody {  }, args: OpaqueScanArgs::StrBody { } };
+            self.compartment = __next;
+            return Default::default();
+        }
         let hs = hole_skip(self.src, self.cursor, self.target);
         if hs > self.cursor {
             record_hole(&mut self.holes, self.cursor + 1, hs - 1);
@@ -278,6 +287,14 @@ impl<'a> OpaqueScan<'a> {
         }
         if self.src.fsm_get(self.cursor) == 92 {
             self.cursor = self.cursor + 2;
+            let mut __next = OpaqueScanComp { state: "TripleBody".to_string(), vars: OpaqueScanVars::TripleBody {  }, args: OpaqueScanArgs::TripleBody { } };
+            self.compartment = __next;
+            return Default::default();
+        }
+        // Δ2 (T-N8): consume a `{{` escape whole, so the second `{` cannot phantom-open.
+        let db = double_brace_skip(self.src, self.cursor, self.target);
+        if db > self.cursor {
+            self.cursor = db;
             let mut __next = OpaqueScanComp { state: "TripleBody".to_string(), vars: OpaqueScanVars::TripleBody {  }, args: OpaqueScanArgs::TripleBody { } };
             self.compartment = __next;
             return Default::default();

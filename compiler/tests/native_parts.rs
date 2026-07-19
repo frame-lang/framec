@@ -60,14 +60,18 @@ fn agree_sweep(src: &str, t: Target) {
     }
 }
 
-/// Full `(from, to)` cross-product — for the short adversarial corpus.
-fn agree_all_windows(src: &str, t: Target) {
+/// Full `(from, to)` cross-product — for the short adversarial corpus. Partition-aware
+/// (Δ1/Δ2): a divergence is a string-aware-hole / no-phantom-brace FIXED row, not a regression.
+/// Returns the count of FIXED rows.
+fn agree_all_windows(src: &str, t: Target) -> usize {
     let b = src.as_bytes();
+    let mut fixed = 0usize;
     for from in 0..=b.len() {
         for to in from..=b.len() {
-            agree_window(b, from, to, t);
+            fixed += agree_or_fixed_window(b, from, to, t) as usize;
         }
     }
+    fixed
 }
 
 /// Partition-aware differential (the Phase-2 fix-with-teeth machinery): the machine agrees
@@ -387,12 +391,12 @@ fn oracle_stayed_buggy_hole_blindness() {
     );
 }
 
-/// B-7 (T-N8, carried — flips at Δ2): the `{{` escape guard checks only the NEXT byte and
-/// the scanner advances 1, so the SECOND brace of `{{` opens a PHANTOM hole — content the
-/// user escaped, now treated as code.
+/// B-7 (T-N8 — FLIPPED at Δ2): the `{{` escape is now consumed WHOLE (both braces), so the
+/// second `{` no longer opens a phantom hole. Escaped braces are content, not interpolation.
+/// This is a FIXED row — the hand `Lexer::hole_at` still phantom-opens (oracle_stayed_buggy).
 #[test]
-fn b7_double_brace_phantom_hole_pinned() {
-    // f"{{x}}" — the phantom hole contains exactly `x`.
+fn b7_double_brace_no_phantom_hole() {
+    // f"{{x}}" — NO phantom hole now; the escaped `x` is content.
     let src = "f\"{{x}}\"";
     let parts = machine(src.as_bytes(), 0, src.len(), Target::Python3);
     let lit = first_literal(&parts).expect("literal");
@@ -404,18 +408,50 @@ fn b7_double_brace_phantom_hole_pinned() {
             _ => None,
         })
         .collect();
-    assert_eq!(holes, vec![(4, 5)], "the phantom hole, pinned (Δ2 removes it)");
-    agree_sweep(src, Target::Python3);
+    assert_eq!(holes, Vec::<(usize, usize)>::new(), "no phantom hole (Δ2)");
+    assert_ne!(
+        format!("{parts:?}"),
+        format!("{:?}", hand(src.as_bytes(), 0, src.len(), Target::Python3)),
+        "Δ2 fix VACUOUS: the hand oracle already agrees (it must still phantom-open)"
+    );
+    check_partition(&parts, 0, src.len(), src);
 
-    // f"{{$.n}}" — the escaped `$.n` is — WRONGLY — a live Ref today.
+    // f"{{$.n}}" — the escaped `$.n` is now content, NOT a live Ref.
     let src2 = "f\"{{$.n}}\"";
     let parts2 = machine(src2.as_bytes(), 0, src2.len(), Target::Python3);
-    assert_eq!(
-        ref_texts(&parts2, src2),
-        vec!["$.n"],
-        "escaped content is treated as code today (Δ2 flips this)"
+    assert!(
+        ref_texts(&parts2, src2).is_empty(),
+        "escaped `$.n` is content, not code (Δ2)"
     );
-    agree_sweep(src2, Target::Python3);
+    assert_ne!(
+        format!("{parts2:?}"),
+        format!("{:?}", hand(src2.as_bytes(), 0, src2.len(), Target::Python3)),
+        "Δ2 fix VACUOUS on the ref case"
+    );
+    check_partition(&parts2, 0, src2.len(), src2);
+}
+
+/// `oracle_stayed_buggy` (Δ2 anti-vacuity): the hand `Lexer::hole_at` still opens a PHANTOM
+/// hole on the second brace of `{{` — `native_parts_hand` records a hole `(4,5)` for `f"{{x}}"`.
+/// Any repair makes the Δ2 fix teeth vacuous.
+#[test]
+fn oracle_stayed_buggy_double_brace_phantom() {
+    let src = "f\"{{x}}\"";
+    let h = hand(src.as_bytes(), 0, src.len(), Target::Python3);
+    let lit = first_literal(&h).expect("literal");
+    let holes: Vec<(usize, usize)> = lit
+        .parts
+        .iter()
+        .filter_map(|lp| match lp {
+            LiteralPart::Hole(x) => Some((x.span.start, x.span.end)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        holes,
+        vec![(4, 5)],
+        "the hand oracle was fixed (no longer phantom-opens `{{`) — the Δ2 fix teeth are vacuous"
+    );
 }
 
 /// B-8 (T-N9, carried): dispatch priority — opaque → inst → embed → ref (inst/embed before
@@ -662,11 +698,18 @@ fn structural_differential_all_windows() {
         "r#\"raw $.n\"# $.m",
         "# c\n$.k",
     ];
+    let mut fixed_rows = 0usize;
     for t in TARGETS {
         for src in corpus {
-            agree_all_windows(src, t);
+            fixed_rows += agree_all_windows(src, t);
         }
     }
+    // Non-vacuity: `f"{{x}}" 'q'` must reach the Δ2 no-phantom-brace FIXED class (machine has no
+    // hole; the string-blind hand still phantom-opens the second `{`).
+    assert!(
+        fixed_rows > 0,
+        "the all-windows corpus never reached a FIXED (no-phantom-brace) row — Δ2 differential vacuous"
+    );
 }
 
 // ------------------------------------------------------------------ fuzz with teeth

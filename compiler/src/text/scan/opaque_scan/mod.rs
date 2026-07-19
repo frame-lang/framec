@@ -177,10 +177,25 @@ fn hole_skip(src: &[u8], i: usize, target: Target) -> usize {
     if !hole_here {
         return i;
     }
-    if src.get(i + 1) == Some(&b'{') {
-        return i;
-    }
+    // A `{{` escape is consumed upstream by `double_brace_skip` (Δ2), so a `{` reaching here is
+    // a real hole opener.
     super::delim_balance::balanced(src, i, src.len(), b'{', b'}', target).unwrap_or(i)
+}
+
+/// Δ2 (T-N8): a `{{` escaped-brace pair at `i` — return the offset past BOTH braces (`i + 2`),
+/// or `i` if this is not a Python `{{`. Consuming both braces in one step (before `hole_skip`)
+/// prevents the SECOND `{` from opening a phantom hole: `f"{{x}}"` no longer treats the escaped
+/// `x` as an interpolation. `}}` needs no symmetric handling — a `}` never opens a hole, so a
+/// `}}` run is already scanned as ordinary content.
+fn double_brace_skip(src: &[u8], i: usize, target: Target) -> usize {
+    if matches!(target, Target::Python3)
+        && src.get(i) == Some(&b'{')
+        && src.get(i + 1) == Some(&b'{')
+    {
+        i + 2
+    } else {
+        i
+    }
 }
 
 /// Leaf for the Item-4 `holes` register: one Vec push, at the same walk step that skips the
@@ -202,9 +217,9 @@ mod fsm {
         unused_imports
     )]
     use super::{
-        block_close_len, block_nests, block_open_len, hole_skip, line_comment_len, raw_scan,
-        raw_unterminated, record_hole, string_delim, string_multiline, triple_close,
-        triple_delim, Target,
+        block_close_len, block_nests, block_open_len, double_brace_skip, hole_skip,
+        line_comment_len, raw_scan, raw_unterminated, record_hole, string_delim, string_multiline,
+        triple_close, triple_delim, Target,
     };
     include!("opaque_scan.gen.rs");
 }
