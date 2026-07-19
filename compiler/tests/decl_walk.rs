@@ -376,25 +376,23 @@ fn t6_long_pathological_input_terminates() {
     }
 }
 
-/// T13 (PHASE-A PARITY PIN — the string-blind body fork, machine.rs `(i..eol).find(b'{')`):
-/// a `{` inside a string default on an actions line mis-forks the decl into a body opening
-/// MID-LITERAL; DelimBalance then starts inside a string it cannot know it is in, never
-/// balances, and the T2 clamp fires. Phase 1 REPRODUCES this bug byte-for-byte (verified: the
-/// full-rectangle sweep + this pin). The Phase-B fix (`body_open_at`: opaque-aware + params-
-/// group-aware) will replace this pin with directed-fix tests per target.
+/// T13 (PHASE-B DIRECTED FIX — the opaque- and params-aware body fork, `machine::body_open_at`):
+/// a `{` inside a string default no longer mis-forks. Phase A mis-forked a body MID-LITERAL, and
+/// the T2 clamp fired; Phase B skips the opaque string (and the balanced params group), finds the
+/// REAL body `{`, and balances it — one properly-terminated body decl, no clamp.
 #[test]
 fn t13_brace_in_string_default_misforks_pinned() {
-    let bug = "greet(pre: String = \"{\") { x }\n";
+    let fixed = "greet(pre: String = \"{\") { x }\n";
     for t in TARGETS {
-        let (starts, unterm) = decl_starts(bug.as_bytes(), 0, bug.len(), true, t);
+        let (starts, unterm) = decl_starts(fixed.as_bytes(), 0, fixed.len(), true, t);
         assert_eq!(
             starts,
             vec![0],
-            "Phase-A pin for {t:?}: the mis-fork swallows the whole section into one decl"
+            "Phase-B fix for {t:?}: one body decl (the in-string `{{` is skipped)"
         );
         assert!(
-            unterm,
-            "Phase-A pin for {t:?}: the mis-forked body never balances -> the T2 clamp fires"
+            !unterm,
+            "Phase-B fix for {t:?}: the REAL body `{{ x }}` balances -> no T2 clamp"
         );
     }
     // Control: the SAME line without a `{` in the string forks correctly — two decls, no clamp.

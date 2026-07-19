@@ -773,12 +773,11 @@ fn is_name_start(bytes: &[u8], i: usize) -> bool {
 /// re-derives the same extent to pick the builder, so the found boundary and the built node
 /// cannot drift (the `state_extent`/`handler_head` discipline).
 ///
-/// Phase-A semantics are the pre-conversion `decl_section` fork, verbatim: `eol =
-/// to_end_of_line(i)`; `open` = the first `{` in `[i, eol)` by BARE byte find (a `{` inside a
-/// string default mis-forks — ledger T13, carried in Phase A, FIX in Phase B via an opaque-aware
-/// `body_open_at`); an unbalanced body clamps `end` to `limit` exactly as the hand
-/// `matching_brace`'s `unwrap_or(limit)` did — but the clamp is now REPORTED
-/// (`unterminated: true`, ledger T2) instead of erased.
+/// Semantics: `eol = to_end_of_line(i)`; `open` = the first body-opening `{` in `[i, eol)` via
+/// the opaque- and params-aware [`body_open_at`] (ledger T13 FIXED in Phase B — a `{` inside a
+/// string default or inside the balanced `(...)` params group no longer mis-forks); an unbalanced
+/// body clamps `end` to `limit` exactly as the hand `matching_brace`'s `unwrap_or(limit)` did —
+/// but the clamp is now REPORTED (`unterminated: true`, ledger T2) instead of erased.
 pub(crate) enum DeclExtent {
     Line { eol: usize },
     Body {
@@ -787,6 +786,31 @@ pub(crate) enum DeclExtent {
         end: usize,
         unterminated: bool,
     },
+}
+
+/// The first REAL body-opening `{` in `[i, eol)`, or `None` (a line decl) — opaque- and
+/// params-aware (ledger T13 FIX, Phase B, 2026-07-19). A `{` inside a string/comment (`= "{"`) or
+/// inside the balanced `(...)` params group is skipped, so only a genuine body `{` forks a Body
+/// decl. Composes the proven `skip_opaque` (OpaqueScan) and `delim_balance` machines — no new
+/// counter. Unbalanced params in range fall through byte-by-byte (the `(` is not a real params
+/// opener here); that fallback is directed-tested.
+fn body_open_at(bytes: &[u8], i: usize, eol: usize, target: Target) -> Option<usize> {
+    let mut k = i;
+    while k < eol {
+        if let Some(after) = skip_opaque(bytes, k, eol, target) {
+            k = after;
+            continue;
+        }
+        match bytes[k] {
+            b'(' => match super::delim_balance::balanced(bytes, k, eol, b'(', b')', target) {
+                Some(close) => k = close,
+                None => k += 1,
+            },
+            b'{' => return Some(k),
+            _ => k += 1,
+        }
+    }
+    None
 }
 
 pub(crate) fn decl_extent(
@@ -798,7 +822,7 @@ pub(crate) fn decl_extent(
 ) -> DeclExtent {
     let eol = to_end_of_line(bytes, i, limit);
     if with_bodies {
-        if let Some(open) = (i..eol).find(|&k| bytes[k] == b'{') {
+        if let Some(open) = body_open_at(bytes, i, eol, target) {
             return match super::delim_balance::balanced(bytes, open, limit, b'{', b'}', target) {
                 Some(end) => DeclExtent::Body {
                     open,

@@ -213,4 +213,69 @@ mod decl_extent_tests {
             DeclExtent::Line { .. } => panic!("must fork Body"),
         }
     }
+
+    /// T13 FIX (opaque-aware): a `{` inside a string default is NOT a body opener — with a `{`
+    /// only inside the string, the decl is a LINE, not a mis-forked Body.
+    #[test]
+    fn t13_brace_in_string_default_is_line() {
+        let src = b"x: str = \"{\"";
+        for t in [Target::Rust, Target::Python3, Target::C] {
+            match decl_extent(src, 0, src.len(), true, t) {
+                DeclExtent::Line { eol } => assert_eq!(eol, src.len(), "line to eol for {t:?}"),
+                DeclExtent::Body { .. } => panic!("the in-string `{{` must not fork Body ({t:?})"),
+            }
+        }
+    }
+
+    /// T13 FIX (params-aware): a `{` inside the balanced `(...)` params group is skipped; the
+    /// REAL body `{` after the params is the fork point.
+    #[test]
+    fn t13_brace_in_params_default_skipped() {
+        let src = b"go(s: str = \"{\") { x }";
+        for t in [Target::Rust, Target::Python3, Target::C] {
+            match decl_extent(src, 0, src.len(), true, t) {
+                DeclExtent::Body { open, end, unterminated } => {
+                    assert_eq!(open, 17, "open at the REAL body `{{`, past params ({t:?})");
+                    assert_eq!(src[open], b'{');
+                    assert_eq!(end, src.len(), "one past the matching `}}` ({t:?})");
+                    assert!(!unterminated);
+                }
+                DeclExtent::Line { .. } => panic!("the post-params body `{{` must fork ({t:?})"),
+            }
+        }
+    }
+
+    /// T13 FIX (owner-conditioned): `body_open_at`'s UNBALANCED-params fallback — a `(` with no
+    /// matching `)` in range takes the byte-by-byte fallback; a `{` still only inside the string
+    /// stays opaque, so the decl is a LINE (the malformed `(` does not manufacture a body).
+    #[test]
+    fn t13_unbalanced_params_fallback_is_line() {
+        let src = b"go(s: str = \"{\"";
+        for t in [Target::Rust, Target::Python3, Target::C] {
+            match decl_extent(src, 0, src.len(), true, t) {
+                DeclExtent::Line { eol } => assert_eq!(eol, src.len(), "line to eol for {t:?}"),
+                DeclExtent::Body { .. } => {
+                    panic!("unbalanced params + in-string `{{` must not fork Body ({t:?})")
+                }
+            }
+        }
+    }
+
+    /// T13 FIX (fallback, other face): after the unbalanced-`(` fallback, a REAL body `{` past the
+    /// malformed params is still found — the fallback recovers, it does not blind the fork.
+    #[test]
+    fn t13_unbalanced_params_fallback_finds_real_body() {
+        let src = b"go(s = x { y }";
+        for t in [Target::Rust, Target::Python3, Target::C] {
+            match decl_extent(src, 0, src.len(), true, t) {
+                DeclExtent::Body { open, end, unterminated } => {
+                    assert_eq!(open, 9, "the real body `{{` past the unbalanced `(` ({t:?})");
+                    assert_eq!(src[open], b'{');
+                    assert_eq!(end, src.len(), "`{{ y }}` balances ({t:?})");
+                    assert!(!unterminated);
+                }
+                DeclExtent::Line { .. } => panic!("the real body `{{` must be found ({t:?})"),
+            }
+        }
+    }
 }
