@@ -257,7 +257,20 @@ configurations grouped together move to the same groups. **Choosing the
 quotient — a partition that is both meaningful and faithful — is the design
 act.** It is the same
 intellectual move as choosing an abstraction — indeed it *is* choosing an
-abstraction, stated operationally. The skill of state-machine authorship is not
+abstraction, stated operationally.
+
+> **Quotient, in one breath.** The word is the mathematician's: divide a
+> set by a "counts as the same" rule, and the result's elements are the
+> lumps themselves. A 12-hour clock is the integers divided by "differs by
+> a multiple of twelve" — infinitely many numbers, twelve classes, and
+> arithmetic still works on the classes because addition respects the
+> lumping. A named machine state is exactly such a lump of configurations,
+> and it is honest on exactly the clock's condition: transitions must
+> respect the partition. The two failure modes of §6 are the two ways a
+> partition goes wrong — glossing lumps too much (one name hiding two
+> futures), costuming too little (two names sharing one). And a register
+> is the coordinate that refuses to be lumped: the part of the
+> configuration the partition cannot absorb, carried along as data. The skill of state-machine authorship is not
 inventing states; the states exist at every granularity. The skill is selecting
 the level at which the mode structure is meaningful: few modes governing much
 behavior, with boundaries that fall where the *observable* differences fall.
@@ -373,7 +386,8 @@ their states.** An `if` is a two-way branch between anonymous states; a loop is
 an anonymous cycle; a function call pushes a frame of an unnamed pushdown
 machine. The historical triumph of structured programming was the taming of
 explicit control transfer — and its side effect was to render state structure
-invisible at exactly the moment it became universal.
+invisible at exactly the moment it became universal. (Appendix B draws each
+control statement as the automaton fragment it denotes.)
 
 The disguises are few and recur everywhere. A reader trained to see them can
 recover the machine from almost any code:
@@ -450,8 +464,14 @@ State-machine authorship fails in two symmetric ways, and both are errors of
 boolean that is really a mode, the merged error terminals, the initialization
 phase living in a constructor's implicit sequencing. Glossed code passes tests
 on the happy path and fails at the edge cases, because the edge cases are
-precisely the states that were never named. Glossing selects a quotient too coarse for the
-observable behavior.
+precisely the states that were never named. Glossing selects a quotient too
+coarse for the observable behavior — and "observable" is the load-bearing
+word: a partition is lawful only relative to a chosen set of observations,
+and requirements, not syntax, choose them. A gloss is typically a partition
+that is valid for the observations its author checked and unlawful for the
+ones the system actually owes — which is the formal reason glossed code
+passes its own tests: the missing observations are exactly where the names
+lie.
 
 **Costuming** is over-naming: reifying states that carry no information — the
 degenerate (*n*+1)-chain of §3 dressed in state syntax, `Step1 → Step2 →
@@ -732,11 +752,12 @@ with Only Two Formation Rules," *Communications of the ACM*, 9(5), 1966.
 
 ---
 
-## Appendix A — The Disguises, Drawn
+## Appendix A — Translation Guide: Idioms to Machines
 
-Each entry below takes one row of §5's field guide and draws it: a minimal
-code shape, and beneath it the machine that shape encodes. The notation is
-uniform:
+A translation guide, idiom by idiom: each entry takes one row of §5's
+field guide and translates it — a minimal code shape, and beneath it the
+machine that shape encodes. (Appendix B is the companion volume for the
+control statements themselves.) The notation is uniform:
 
 ```text
 *           start
@@ -829,11 +850,17 @@ result = transform(data)
 ```text
 *--> (Fetching) --ok--> (Transforming) --> ((Done))
           |
-          +~~~~ raise ~~~~> ((FetchFailed))
+          ~~~~ raise ~~~~>  exits this machine entirely — unwinding
+                            caller frames (the B.9 stack) until some
+                            enclosing handler state catches it
 ```
 
-The code draws only the top row. The wavy edge exists at runtime — it is
-taken, it has a destination — but the source text acknowledges it nowhere.
+The code draws only the top row. The wavy edge exists at runtime and is
+taken — but its destination is not even in this machine: an uncaught
+exception unwinds the outsourced call stack frame by frame toward the
+nearest enclosing handler, a transition whose landing state may live in a
+function that has never heard of `fetch()`. It becomes a named terminal
+only where someone catches (Appendix B.10 draws the catching form).
 
 **A.6 The counter** — a register riding the walk.
 
@@ -897,6 +924,7 @@ hold a suspension without it (§2.3).
 **A.9 Retry logic** — a protocol machine's recovery states, inlined.
 
 ```python
+retries = 0
 while retries < 3:
     try:
         send(); break
@@ -905,16 +933,18 @@ while retries < 3:
 ```
 
 ```text
-                send ok
-*--> (Sending) -----------> ((Done))
-       |    ^
- transient  | after backoff / retries+1
-       v    |
-     (Waiting) --retries == 3--> ((GaveUp))
+   retries = 0                  send ok
+*--------------> (Sending) -----------> ((Done))
+                    |    ^
+            transient    | after backoff / retries+1
+                    v    |
+                 (Waiting) --retries == 3--> ((GaveUp))
 ```
 
-Two modes, a bounded counter, and two terminals — compressed into a `while`,
-a `try`, and two mutable locals.
+Two modes, a bounded counter, two terminals — and an initializing
+transition that sets the register, without which `retries == 3` is a
+comparison against nothing — compressed into a `while`, a `try`, and two
+mutable locals.
 
 **A.10 Constructor ordering** — an initialization phase encoded as call
 order.
@@ -950,3 +980,352 @@ ALTER TABLE orders ADD COLUMN version INT, updated_at TIMESTAMP;
 Each row's `version` names the state in which the schema's machine last left
 it. The migrations are that machine's transitions — run by an engine (§4.2)
 that someone owns.
+
+---
+
+## Appendix B — Translation Guide: Control Statements to Machines
+
+Appendix A translated the *disguises* — where machines hide in data and
+idiom. This volume translates the *primitives*: each structured control
+statement as the automaton fragment it denotes. This is the constructive content of the
+Böhm–Jacopini result (§5): sequence, selection, and iteration are complete
+for computable control flow precisely because each is a machine fragment,
+and fragments compose. Notation is Appendix A's. One property to watch
+throughout: every fragment below has one entry and one exit — *that* is
+what "structured" means, and it is why the states can stay anonymous. The
+constructs that puncture single-entry/single-exit (`return`, `break`,
+`continue`, exceptions) are exactly where unnamed states leak, which is
+why Appendix A kept meeting them.
+
+**B.1 Sequence** — the degenerate pole (§3).
+
+```python
+a(); b(); c()
+```
+
+```text
+*--> (p0) --a()--> (p1) --b()--> (p2) --c()--> ((p3))
+```
+
+Three statements, four states. Every state is a program point the language
+maintains for free; naming them adds nothing — until one of them must be
+observed, persisted, or resumed, at which point this chain is the machine
+you were always running.
+
+**B.2 Selection — `if` / `else`**
+
+```python
+if cond: a()
+else:    b()
+rest()
+```
+
+```text
+                 cond --a()--┐
+*--> (Branch) --┤            ├--> (Join) --rest()--> ((End))
+                !cond --b()--┘
+```
+
+A two-way fork between anonymous states, rejoining at an equally anonymous
+join point. An `if` without `else` is the same fragment with one arm
+empty. The quotient judgment of §6 asks: does `(Branch)` carry a mode
+worth naming, or is it pure program counter?
+
+**And here is Appendix A.1's flag, explained: a boolean flag is an `if`
+stretched across time.** `flag = cond` takes the branch decision *now*;
+`if flag:` forks on it *later* — the fork point and the decision point
+have been pulled apart. The moment they separate, the decision must be
+carried between them, and a carried branch decision is precisely one bit
+of machine state. That is the whole mechanism by which control flow
+becomes latent state: every flag is a deferred `if`, and every deferred
+`if` is a state the machine must remember. (B.7 shows the same move in
+the other direction — flags invented to *simulate* edges the structured
+fragments cannot draw.)
+
+**B.3 Iteration — `while`**
+
+```python
+while cond:
+    body()
+rest()
+```
+
+```text
+              cond
+       ┌--------------> (Body)
+       |                   |
+*--> (Guard) <---body()----┘
+       |
+       !cond
+       v
+     (Exit) --rest()--> ((End))
+```
+
+An anonymous cycle: guard state, loop-back edge, exit edge. Every `while`
+is a two-state machine whose steady state re-enters itself — which is why
+loop bodies are where mode flags accumulate (Appendix A.1): the cycle is
+the natural home of latent modes.
+
+**B.4 The body-first cycle** — Python has no `do`/`while`; it spells the
+same machine with the loop-and-a-half idiom:
+
+```python
+while True:
+    body()
+    if not cond: break
+```
+
+The identical cycle as B.3, entered at the body — the guard is B.7's
+`break` edge relocated to the bottom, so the body always runs once.
+Same fragment, different spelling; C's `do`/`while` names it directly.
+
+**B.5 Iteration with initialization — `for`**
+
+```python
+for i in range(n):    # init; guard; step
+    body(i)
+```
+
+```text
+   i = 0            i < n
+*---------> (Guard) ------> (Body) --body(i)--> (Step) --i += 1--┐
+               ^                                                 |
+               └------------------------------------------------┘
+               |  i == n
+               v
+             ((End))
+```
+
+The `for` statement is the one control primitive that *names its own
+initialization* — an init transition setting the register, exactly what
+A.9 had to add by hand. Its desugaring into B.3 plus an init edge and a
+step edge is the fragment-composition claim in miniature.
+
+**B.6 Dispatch — `switch` / `match`**
+
+```python
+match kind:
+    case A: a()
+    case B: b()
+    case _: d()
+```
+
+```text
+                 A --a()--┐
+*--> (Dispatch) -┤ B --b()--├--> (Join) --> ((End))
+                 _ --d()--┘
+```
+
+An n-way fork on a value — the mode register consulted in one place
+(contrast Appendix A.2, where the same dispatch is smeared across a
+codebase as scattered `if`s). Exhaustive `match` is a *total* dispatch:
+every value has an edge, which is this paper's terminal-discipline
+argument (§6) applied at a single branch point. An `elif` chain is this
+same dispatch spelled as nested B.2 fragments — one machine, two
+notations. C-style fallthrough is an extra edge between arms — drawn, it
+is obviously a transition; unlabeled in code, it is a famous bug class.
+
+**B.7 `break` and `continue`** — unnamed non-local transitions.
+
+```text
+while cond:              (Guard)<--continue-- (Body point)
+    ...                     |
+    if x: break             └--break edge--> (Exit)   # skips the guard
+    if y: continue
+```
+
+`continue` is an edge to the guard state; `break` is an edge to the exit
+state that *bypasses* the guard — two different targets, both invisible as
+states in the code. Multi-level `break` (labeled loops) is the same edge
+with a farther target; its absence in most languages is why flag variables
+(A.1) get invented to simulate it.
+
+**B.8 Early `return`** — an edge to a terminal (Appendix A.4). Every
+`return` in a function body is a distinct transition to a terminal state;
+functions with many returns are machines with many terminals, and the
+question of §6 is whether those terminals deserve names (`Option`/
+`Result` variants) or are honestly one outcome reached from several
+points.
+
+**B.9 The call — and the stack**
+
+```python
+f()          # inside g()
+```
+
+```text
+(g: p3) --call f / push return-point--> (f: entry)
+   ^                                        |
+   └------- return / pop ------- ((f: exit))┘
+```
+
+A call is two transitions and a stack operation: push the return point,
+enter the callee's machine; the callee's terminal pops and re-enters the
+caller mid-chain. The stack is the pushdown machine's stack, outsourced
+to the runtime (§2.2) — invisible until the day the walk must suspend,
+at which point it must be dug back out.
+
+**B.10 `try` / `except` / `else` / `finally`** — Python's full form.
+
+```python
+try:      risky()
+except E: handle()
+else:     proceed()
+finally:  cleanup()
+```
+
+```text
+*--> (Trying) --ok--> (Else: proceed) ------------┐
+        |                                         v
+        ~~ raise E ~~--> (Handling) --------> (Cleanup) --> ((End))
+        |                                         |
+        ~~ raise other ~~------------------------>┤
+                                                  ~~> re-raises on exit
+                                                      (A.5's edge, out
+                                                       of the machine)
+```
+
+The `except` arm is Appendix A.5's wavy edge given a landing state.
+`else` is an edge taken only when no exception fired — syntax that exists
+to keep `proceed()` *outside* the protected region, a distinction that is
+purely about which edges can leave which states. And `finally` is the
+crucial primitive: **a state every path must traverse** — the ok path,
+the handled path, and even the unmatched exception, which visits
+`(Cleanup)` and then continues its unwinding out of the machine.
+"Must traverse" needs dedicated syntax because it is a statement about
+the *machine's paths*, which the code's tree structure cannot otherwise
+express.
+
+**B.11 Recursion** — B.9 composed with itself: the callee's machine is
+the caller's machine, so the stack holds the tower. A recursive descent
+parser is this fragment iterated — a pushdown machine whose control
+states are the functions and whose stack is the call stack (§2.2).
+
+**B.12 `goto`** — the transition, undisguised. (Not Python — this is the
+historical primitive the fragments above replaced.)
+
+```text
+label: ...           (Label) <------┐
+       ...                          | goto
+       goto label            (some point)
+```
+
+The one construct that is openly machine notation: an arbitrary edge
+between program points. Structured programming's triumph was not
+eliminating these edges but *disciplining* them into the single-entry/
+single-exit fragments above — taming the transitions by hiding the
+states. That trade, §5 argued, is exactly where the latent machine was
+born.
+
+**B.13 The loop's two exits — `for`/`while` … `else`**
+
+```python
+for item in items:
+    if match(item): break
+else:
+    not_found()
+rest()
+```
+
+```text
+              exhausted
+*--> (Guard) ----------> (Else: not_found) --┐
+      |   ^                                  v
+   item   └--next-- (Body)                (Join) --rest()--> ((End))
+      v                |                     ^
+    (Body) --break-----┴---------------------┘        # skips the Else arm
+```
+
+Python's loop-`else` is the machine truth surfacing as syntax: a loop has
+**two different exit transitions** — exhausted, and broken-out-of — and
+this construct attaches code to exactly one of them. It is famously
+called confusing, and the reason is exactly this paper's thesis: its
+meaning is a fact about *edges* the code otherwise never draws.
+
+**B.14 `with` — the guaranteed-release protocol**
+
+```python
+with open(p) as f:
+    use(f)
+```
+
+```text
+*--> (Enter: __enter__) --> (Body: use) --ok--------------┐
+                                |                         v
+                                ~~ raise ~~-------> (Exit: __exit__) --> ((End))
+                                                          ~~> re-raise, or
+                                                              suppressed if
+                                                              __exit__ says so
+```
+
+B.10's `finally` promoted to a protocol: enter and exit are *named method
+transitions*, exit is traversed on every path, and `__exit__` may even
+consume the exceptional edge (by returning true). The construct exists
+because acquire → use → release is a machine contract — "every path
+traverses release" — that expression nesting cannot state.
+
+**B.15 `yield` — the suspension edge**
+
+```python
+def gen():
+    yield a
+    yield b
+```
+
+```text
+*--> (S0) --next()--> (Suspended@a) --next()--> (Suspended@b)
+                                                     |
+                                          next() --> ((StopIteration))
+```
+
+`yield` is a transition that *leaves the machine while remembering where
+it stood* — and Python reifies that memory for you: the generator object
+IS the latent machine handed back as a value, resume method included
+(§2.3's engineering record, available at the language surface). The one
+control statement where the interpreter does the paper's §7 exercise
+itself.
+
+**B.16 `raise` and `assert` — the explicit edges**
+
+```python
+if bad: raise ValueError(msg)
+assert invariant, msg
+```
+
+`raise` is A.5's wavy edge written deliberately — a transition to a
+dynamically located target (the nearest matching handler up the stack):
+`goto`'s exceptional cousin, with the destination resolved by the runtime
+rather than a label. `assert` is a conditional `raise` — a guard edge
+that documents a state invariant: "this state is unreachable unless the
+invariant holds," the machine's own consistency check written inline.
+
+---
+
+Composed, these sixteen fragments cover Python's base control repertoire
+— sequence, selection (`if`/`elif`/`match`), iteration with both its
+exits, `break`/`continue`/`return`, call and recursion, the full
+exception form, `with`, `yield`, `raise`/`assert` — plus the two
+non-Python entries (B.4's `do`/`while` spelling, B.12's `goto`) kept for
+the languages that have them. Substitute any fragment for any arc and the
+tower of quotients (§3) appears. Reading code with this appendix in hand,
+the exercise of §7 becomes mechanical: every keyword is a fragment; every
+fragment has states; the only question left is which of them deserve
+names.
+
+How mechanical? As formulaic as row reduction in linear algebra — with the
+correspondence exact at both ends. The decomposition itself is
+syntax-directed, deterministic, and terminating (a compiler front-end runs
+it without a single choice point — there is no pivot to select), and it
+has canonical forms at both poles: the *finest* machine is unique given
+the code (the control-flow graph; Reynolds's transformation is an
+algorithm), and the *coarsest* behavior-preserving quotient of a finite
+control is unique and efficiently computable — the machine's reduced row
+echelon form exists as a theorem. What remains outside the formula is
+exactly one thing: choosing the quotient worth *naming*, which lies
+between the two poles and depends on requirements the code does not
+contain (which intermediate states must be observable is a fact about the
+system's obligations, not its syntax). Nor is that a gap awaiting a
+better algorithm: with unbounded registers, behavioral equivalence is
+undecidable, so the load-bearing choice cannot be automated in general —
+extraction is theorem-grade mechanical, and naming is irreducibly design,
+which is this paper's division of labor stated one last time.

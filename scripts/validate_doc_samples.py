@@ -144,7 +144,7 @@ def run_sample(framec: str, sample: Sample, workdir: Path) -> tuple[bool, str]:
 
 def main() -> int:
     framec = find_framec()
-    md_files = sorted(DOCS_DIR.glob("*.md"))
+    md_files = sorted(DOCS_DIR.rglob("*.md"))
     # Also cover the top-level README so the quickstart snippet stays honest.
     readme = REPO_ROOT / "README.md"
     if readme.exists():
