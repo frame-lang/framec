@@ -85,29 +85,15 @@ fn sys_start(src: &[u8], i: usize) -> usize {
 /// is always `>= open + 2`).
 ///
 /// **Phase A (parity): the hand bare `(`/`)` counter, verbatim from `machine.rs::decl_of` —
-/// string-BLIND (a `)` in a string default mis-closes, a `(` mis-deepens: ledger T9). This is a
-/// RECORDED guardrail-4 exception with a bounded lifetime (owner gate 2026-07-18): GATE-B does
-/// not close until Phase B replaces this body with
-/// `delim_balance::balanced(src, open, src.len(), b'(', b')', target).unwrap_or(0)` — one edit,
-/// machine and oracle in lockstep. The counter never survives a landed capability.** `target`
-/// is threaded from day one so Phase B touches only this leaf.
-fn params_close(src: &[u8], open: usize, _target: Target) -> usize {
-    let mut d = 0i32;
-    let mut i = open;
-    while i < src.len() {
-        match src[i] {
-            b'(' => d += 1,
-            b')' => {
-                d -= 1;
-                if d == 0 {
-                    return i + 1;
-                }
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    0
+/// opaque-AWARE (ledger T9 FIXED, Phase B, 2026-07-19): the paren count runs through the shared
+/// `delim_balance::balanced` machine (which skips strings/comments via OpaqueScan and knows the
+/// target), so a `)` in a string default no longer mis-closes and a `(` inside a literal no longer
+/// mis-deepens. Returns one-past-`)` or `0` (sentinel; a real close is always ≥ `open + 2`) — the
+/// same contract the Phase-A bare counter had, so the shared-leaf swap moves machine and oracle in
+/// lockstep and the differential still locks; the NEW behavior is pinned by directed tests. This
+/// retires the guardrail-4 bare-counter exception (owner gate 2026-07-18): no hand counter remains.
+fn params_close(src: &[u8], open: usize, target: Target) -> usize {
+    super::delim_balance::balanced(src, open, src.len(), b'(', b')', target).unwrap_or(0)
 }
 
 mod fsm {

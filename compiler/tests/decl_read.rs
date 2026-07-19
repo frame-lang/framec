@@ -22,9 +22,9 @@
 //!       `$.`-alone empty window, Allman-split `{` decl).
 //!   T8  Unbalanced-params clamp   -> `t8_params_clamp_pinned` (register + exact clamp text;
 //!       type/init never parsed).
-//!   T9  String-blind paren count  -> `t9_string_blind_params_pinned` (PHASE-A PARITY PIN:
-//!       `)` in a string default mis-closes; `(` mis-deepens into the clamp. The Phase-B
-//!       DelimBalance leaf swap replaces this pin with directed-fix tests).
+//!   T9  Opaque-aware paren count  -> `t9_string_blind_params_pinned` (PHASE-B DIRECTED FIX:
+//!       the `params_close` leaf routes through `delim_balance::balanced`, so a `)`/`(` in a
+//!       string default no longer mis-closes/mis-deepens — the real close is found).
 //!   T10 Async-modifier fork       -> `t10_async_modifier_fork` (modifier vs name, all shapes).
 //!   T11 Empty-type-after-`:`      -> `t11_type_annotation_and_empty_type`.
 //!   T12 Byte-blind `=` in type    -> `t12_eq_inside_type_truncates_pinned` (carried,
@@ -282,35 +282,43 @@ fn t8_params_clamp_pinned() {
 /// `delim_balance::balanced` and replaces this pin with directed-fix tests per target.
 #[test]
 fn t9_string_blind_params_pinned() {
-    // `)` in a string default: the counter closes AT the string's `)` — params lose the tail.
+    // Phase-B fix: a `)` inside a string default is opaque, so the paren count reaches the REAL
+    // close — params carry the whole `s: str = ")"`, no clamp. (Phase A mis-closed at the string.)
     let close = b"f(s: str = \")\")";
     for t in TARGETS {
         let shape = read(close, 0, close.len(), t);
-        assert!(!shape.params_clamped, "the mis-close LOOKS balanced for {t:?}");
+        assert!(
+            !shape.params_clamped,
+            "Phase-B fix for {t:?}: the real close is found, no clamp"
+        );
         let m = member_decl_of(close, &shape, close.len(), 0);
         assert_eq!(m.name, "f");
         assert_eq!(
             m.params_text.as_deref(),
-            Some("s: str = \""),
-            "Phase-A pin for {t:?}: the params text stops at the in-string `)`"
+            Some("s: str = \")\""),
+            "Phase-B fix for {t:?}: params carry the full string default"
         );
         assert_eq!(m.type_text, None);
         assert_eq!(m.init_text, None);
     }
-    // `(` in a string default: the counter deepens and never rebalances — the T8 clamp fires.
+    // Phase-B fix: a `(` inside a string default no longer mis-deepens — the real close is found,
+    // no clamp. (Phase A deepened on the in-string `(` and ran into the T8 clamp.)
     let deepen = b"f(s: str = \"(\")";
     for t in TARGETS {
         let shape = read(deepen, 0, deepen.len(), t);
         assert!(
-            shape.params_clamped,
-            "Phase-A pin for {t:?}: the in-string `(` mis-deepens into the clamp"
+            !shape.params_clamped,
+            "Phase-B fix for {t:?}: the in-string `(` is opaque, no mis-deepen, no clamp"
         );
         let m = member_decl_of(deepen, &shape, deepen.len(), 0);
+        assert_eq!(m.name, "f");
         assert_eq!(
             m.params_text.as_deref(),
-            Some("s: str = \"(\")"),
-            "the clamp text runs to the window end for {t:?}"
+            Some("s: str = \"(\""),
+            "Phase-B fix for {t:?}: params carry the full string default"
         );
+        assert_eq!(m.type_text, None);
+        assert_eq!(m.init_text, None);
     }
 }
 
