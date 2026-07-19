@@ -128,6 +128,21 @@ then run the [start state](#start-state)'s `$Start(...)` body and its
 construction is the [factory](#factory). Contrast [no-initialization](#no-initialization).
 See [RFC-0015](rfcs/rfc-0015.md).
 
+### conversion set
+
+The atom of the [RFC-0058](rfcs/rfc-0058.md) pipeline: the smallest **set**
+of changes that must land together when a hand-written scope is replaced by
+explicit systems — the target system(s), any sub-systems the behavior
+forces into existence, the seam changes of the atomic flip, and the
+factored reference implementation ([oracle](#oracle), testing sense).
+Scoped by closure, bounded at published interfaces, and **landed
+atomically**: one design record with its
+[terminal ledger](#terminal-ledger), one differential, one parity/landed
+gate pair, one commit, the replaced hand path deleted. A conversion set
+does not map one-to-one with a system. Historical synonyms: *capability*
+(the conversion plan's DoD), *unit* (earlier RFC-0058 text), *bite*
+(informal). Defined in [RFC-0058 § 4](rfcs/rfc-0058.md).
+
 ### costuming
 
 Naming states that are not load-bearing — reifying a
@@ -431,6 +446,18 @@ computer-science *oracle machine* — a sub-machine treated as a black box.
 Concretely, an oracle is another Frame system (or scanner) the backbone calls,
 as framec's parser does with the dogfooded attribute / expression scanners. See
 [RFC-0039](rfcs/rfc-0039.md#terminology).
+
+**In testing contexts** (the conversion campaign), *oracle* is the
+standard testing sense: the authority a differential test compares
+against — here, the factored `_hand` **reference implementation** of the
+code being replaced, correct by definition because it is what shipped. It
+rides in its [conversion set](#conversion-set) and is deleted at parity
+lock. Caveat: a test oracle carries its own bugs — parity reproduces its
+glosses by construction — which is why the
+[terminal ledger](#terminal-ledger) exists alongside it. *Reference
+implementation* is the canonical name for this sense; "oracle" is the
+working shorthand.
+
 
 ### parameterized system
 

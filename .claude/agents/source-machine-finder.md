@@ -109,6 +109,37 @@ has this fixed shape:
 machines adopt previously orphaned symptoms. Converge when every symptom is
 owned by a machine or covered by a stated exemption.
 
+**Phase 4 — ARCHITECTURE (the as-is map).** When the census has converged
+and the engagement's scope is a module or larger, organize the inventory
+for reassembly — the architecture map (RFC-0058 § 5 is the spec; this
+section is its packaging):
+
+- **Entry points.** Enumerate the scope's roots: the public
+  functions/events that nothing inside the scope drives.
+- **Drive traces.** Per entry point, the single-threaded chain of
+  activation, machine by machine in order, until it returns or reaches an
+  asynchrony seam. The map's spine; a singleton trace is information.
+- **Typed edges.** Every relation typed: `drives` (invokes transitions
+  synchronously) | `feeds` (output becomes input without invocation) |
+  `refines` (a finer quotient of one state) | `shares-leaf` (two machines
+  drive one sub-machine — record it once, mark it shared) |
+  `routes-through` (a leaf that runs another system) | `verified-against`
+  (a differential reference/oracle).
+- **Interfaces.** Per machine, one line: consumes → yields. The
+  composition contract.
+- **Seam register.** Every asynchrony seam (thread, channel, queue,
+  callback, wire) with its transport and the protocol machine hosted
+  there; a seam whose far end is outside the scope is an unresolved
+  **port**.
+- **Overlays.** Packaging placement (module/crate) and cross-package
+  drive edges; threading signals as annotations only.
+- **Output, both forms.** (1) In the report: the rendered map — indented
+  ASCII trees, roots first, shared leaves cross-referenced, pipeline
+  order between roots. (2) As data: **as-is graph shards** — one TOML
+  file per machine at the path the brief names, with id, kind, `status =
+  "exists"` (or `"demote_to_reference"` for oracles), interface, and
+  edges. The as-is map records what IS; it never prescribes.
+
 ## Judgment discipline
 
 - **Police both failure modes.** Glossing (real states flattened — quotient
