@@ -54,6 +54,8 @@ pub mod native_parts_scan;
 pub mod section_scan;
 /// The statement-level classifier, dogfooded as a Frame @@[scan(u8)] system.
 pub mod stmt_scan;
+/// The instantiation arg-list parser (dual-counter angle fork), dogfooded as a Frame @@[scan(u8)] system.
+pub mod arg_scan;
 /// HSM parent-chain cycle detector, dogfooded as a plain @@system graph walker.
 pub mod hsm_cycle;
 pub mod reachability;

@@ -516,7 +516,41 @@ The plan is a contract; it changes only through a recorded, evaluated process �
   Log entry. Census-proxy hardening (call-condition loop blindness, scan_census.py:44) owed
   before C-final.
 
+- *2026-07-19* — **ArgScan LANDED (built in isolated lane worktree; rebased cleanly onto the 3e
+  landing — zero conflicts, the graph's lane-disjointness prediction held; one production seat).**
+  `inst_scan::scan_node(bytes, i, target)` carries the Option C machine: the two-counter
+  ArgScan system (adepth at bracket-depth-0 only, digraph guards, refusal-supersedes-fork),
+  the wrapper's merge_g fold, the tree's `Instantiation.angles` field, and the adjudication
+  seam (`validate.rs::adjudicate` + E407 [code provisional] + the driver consult; unresolved
+  name renders primary-G). DELETED: `parse_inst_args`, `split_top_commas`, `split_top_eq`
+  (verbatim `_hand` oracle copies remain, test/oracle callers only, C-final owns them).
+  **The 12 recorded deltas of design §11.8 land with this entry** (incl. D-fork-adjudicate,
+  D-tree-angles, D-e407, D-adjudication-seam, D-seam-target) — fix-at-landing per this set's
+  recorded D4-shape exception, carried by the partitioned carry/fix differential (carry proven
+  == hand on 40 curated + 8000-seed fuzz ×4 targets; all 18 fix teeth != hand). **Bug B(iii)
+  (the enter-sigil find, builder-found + warden-reproduced on the live oracle):** the hand
+  splitter counted the `>` of `$>(`, mangling non-final enter groups (spec examples 4/6 = 2
+  args today); fixed at landing, `oracle_stayed_buggy` pins all THREE bug families both-faces.
+  Suite 342/0 (-p) / 1928/0 (workspace) wired; regen fixpoint 24/0 across rebuild (post-rebase
+  composed state with 3e). **Census (composed, from the 3e baseline 63):** production
+  HAND_SCAN_LOOPS 63→58 (parts.rs 14→10, inst_scan 2→1); oracle 25→29 (+4 transient);
+  recognition untouched 11/10; SYSTEMS 24.
+
 ### Audit Log (append-only — warden verdicts)
+- *2026-07-19* — GATE-A (pre-wire), ArgScan: **PASS-WITH-CONDITIONS — wiring proceeded.**
+  D1–D4,D8 run-verified (batteries 57+8 name-for-name vs §11.7; carry == hand proven; fix teeth
+  != hand; oracle copies verbatim-diffed; scan_node_sys zero production callers). Beyond-design
+  find warden-reproduced on the live oracle (the `$>(` sigil miscount). 7 builder deviations
+  faithful; fork-rule order: code right, design prose corrected (roster-required order).
+- *2026-07-19* — GATE-B, ArgScan: **PASS pending commit → LANDED.** One seat verified
+  (scan_node+target; injection bridge gone; pin_mixed_list_e407 asserts on the
+  production-parsed node); hand splitters deleted, `_hand` verbatim oracle-only;
+  oracle_stayed_buggy pins Bug A + B + B(iii) both faces on the live oracle; suite 342/0 (-p)
+  and 1928/0 (workspace); regen 22/0 ×2 pre-rebase and 24/0 post-rebase; census exact
+  (73→68 in-lane; 63→58 composed); self-scan note verified honest. Conditions discharged in
+  this commit: this landing entry + ledger row 4; shard exercises B(iii) sync + stale "One"
+  labels + header wording fixed.
+
 - *2026-07-19* — GATE-A, Item 3e "StateHeadScan+HandlerHeadScan": **PASS — proceeded to M-wire.**
   D1–D4,D8 verified by run/grep: build 0-warn; regen 23/0-stale stable across rebuild; batteries
   17+15 green in suite 36-binary/309/0 (every-position parts-struct rectangles ×4 targets; one
@@ -808,6 +842,6 @@ survive as oracles + un-converted consumers — tracked here, not forgotten.
 | 1 OpaqueScan | **warden PASS (GATE-A + GATE-B) — committed** | OpaqueScan, RawString, BraceBalance | skip path is the system; try_island routed; residual = holes (Item 4), close_brace (Item 2), machine skip (Item 3), + 3 oracles — all named; batteries+fuzz+milestone green |
 | 2 Segmenter | **close_brace capability: warden PASS (GATE-A+B, pending commit).** Body-end recognition off the hand Lexer onto OpaqueScan (`opaque_at`, 3-way signal). Remaining Item-2 scope: `hand_item_starts` oracle (→ C-final sweep) + `BodyBalance` `{}`-counter sub-system (named, before close) | segmenter, +OpaqueScan `kind`/`unterminated` registers | close_brace: yes. Item-2 whole: no (oracle + brace-counter named) |
 | 3 Grammar | **Dispatch-walks COMPLETE** (3c-3 d352021). **3d DeclWalk/DeclRead LANDED 2026-07-19** (M-wire done; hand decl_of + matching_brace DELETED; GATE-A PASS; GATE-B held until Phase B). **3e Head readers LANDED 2026-07-19** (lane worktree; hand head parse deleted; GATE-A+B PASS; Phase-2 deltas pending with per-delta entries). 3a (fbde61e), 3b (03671f1), BodyBalance (2f9d95c), 3c-1 MachineWalk (fa38988), 3c-2 StateWalk (c7637b3), **3c-3 body→BodyWalk** (warden PASS after D3 fix). All three inner dispatch walks (machine_section/state-member/body) are @@[scan(u8)] systems; BodyWalk fuses a brace COUNTER + a (start,depth) ACCUMULATOR. I1 proven each; loops 86→77, SYSTEMS 15→19. | stmt_scan; DelimBalance; MachineWalk; StateWalk; **BodyWalk** (19th) | 3a/3b/BodyBalance/3c-1/3c-2/3c-3: yes |
-| 4 Islands | **ArgScan + NativeParts designs BOTH ACCEPTED 2026-07-18** (Option C fork-and-adjudicate; native_parts_scan completed into the production seat; DP-1/H-1 ruled; build pending) | ref/inst/embed_scan (partial); arg_scan + adjudication seam; native_parts_scan completion + OpaqueScan hole/delim registers | no |
+| 4 Islands | **ArgScan LANDED 2026-07-19** (one seat; hand splitters deleted; 12 deltas incl. Bug B(iii); E407 provisional). **NativeParts design ACCEPTED, build NEXT** (retires the last hand-Lexer recognition; DP-1/H-1 ruled) | arg_scan (22nd..24th systems with 3d/3e); adjudication seam live; native_parts_scan completion pending | ArgScan hand path: yes (oracles C-final). NativeParts: no |
 | 5 Validators | not started | hsm_cycle, reachability | no |
 | 6 EmitDriver | not started | — | n/a (transducer, last) |

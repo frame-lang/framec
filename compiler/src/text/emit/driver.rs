@@ -670,15 +670,33 @@ fn emit_body(
 fn lower_instantiation(syms: &SymbolTable, be: &dyn Backend, inst: &Instantiation) -> Atom {
     let Some(sys) = syms.systems.iter().find(|s| s.name == inst.name) else {
         // Unknown system: emit a best-effort call so the TARGET compiler reports it
-        // (the closed-world validation layer, §1167, is deferred).
+        // (the closed-world validation layer, §1167, is deferred). `inst.args` is the
+        // PRIMARY candidate — G when the angle hypotheses forked (owner ruling, design
+        // record §11.3): when arity is unavailable, G is the default rendering, because G
+        // keeps generics whole — the reading that produces plausible-looking emitted code
+        // for the target compiler to judge.
         let args: Vec<String> = inst.args.iter().map(|a| a.value.clone()).collect();
         return be.system_ctor_call(&inst.name, &args);
     };
+    // The angle fork (if any) is settled by the ONE shared adjudicator — the same call
+    // validate makes, so the two consumers can never disagree. `NoneAdmissible` /
+    // `BothAdmissible` are unreachable here on the error path (validate's E407 blocks
+    // emission); post-error best-effort renders the primary (G) candidate.
+    let (args, named) = match crate::validate::adjudicate(&sys.params, inst) {
+        crate::validate::Adjudication::Alt => match &inst.angles {
+            crate::tree::body::ArgAngles::Forked {
+                alt_args,
+                alt_named,
+            } => (alt_args.as_slice(), *alt_named),
+            _ => (inst.args.as_slice(), inst.named),
+        },
+        _ => (inst.args.as_slice(), inst.named),
+    };
     let p = &sys.params;
     let mut ordered = Vec::new();
-    ordered.extend(resolve_group(&p.state, ParamGroup::State, inst));
-    ordered.extend(resolve_group(&p.enter, ParamGroup::Enter, inst));
-    ordered.extend(resolve_group(&p.domain, ParamGroup::Domain, inst));
+    ordered.extend(resolve_group(&p.state, ParamGroup::State, args, named));
+    ordered.extend(resolve_group(&p.enter, ParamGroup::Enter, args, named));
+    ordered.extend(resolve_group(&p.domain, ParamGroup::Domain, args, named));
     // A no-default param omitted at the call site leaves an empty slot — an arity error the
     // target compiler will report. Trailing empties (an all-defaulted tail) just shorten
     // the call.
@@ -688,18 +706,21 @@ fn lower_instantiation(syms: &SymbolTable, be: &dyn Backend, inst: &Instantiatio
     be.system_ctor_call(&inst.name, &ordered)
 }
 
-/// Resolve the values for one declared param group against the call's args of that group.
+/// Resolve the values for one declared param group against the adjudicated candidate's
+/// args of that group (the candidate view: `inst.args`/`inst.named`, or the fork's
+/// alternate when adjudication picked O).
 fn resolve_group(
     decls: &[crate::tree::Param],
     group: ParamGroup,
-    inst: &Instantiation,
+    args: &[InstArg],
+    named: bool,
 ) -> Vec<String> {
-    let provided: Vec<&InstArg> = inst.args.iter().filter(|a| a.group == group).collect();
+    let provided: Vec<&InstArg> = args.iter().filter(|a| a.group == group).collect();
     decls
         .iter()
         .enumerate()
         .map(|(idx, decl)| {
-            let arg = if inst.named {
+            let arg = if named {
                 provided
                     .iter()
                     .find(|a| a.name.as_deref() == Some(decl.name.as_str()))

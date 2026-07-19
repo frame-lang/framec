@@ -76,26 +76,46 @@ pub fn scan(bytes: &[u8], i: usize) -> Option<(String, usize)> {
     Some((name, m.cursor))
 }
 
-/// The full `Instantiation` node — the system recognizes the shape, and the arg list is
-/// parsed by the hand `parse_inst_args` LEAF (transformation). This is what production
-/// `native_parts` calls, so the InstScan system is on the real parse path.
-pub fn scan_node(bytes: &[u8], i: usize) -> Option<crate::tree::body::Instantiation> {
+/// The full `Instantiation` node — the system recognizes the SHAPE, and the arg list is
+/// parsed by the **ArgScan system** (`arg_scan::parse`); the hand `parse_inst_args` is
+/// retired to `parse_inst_args_hand`, differential-oracle only. This is what production
+/// `native_parts` calls (passing `lx.target()` — D-seam-target), so InstScan + ArgScan
+/// are on the real parse path.
+///
+/// Pure plumbing — no decision depends on accumulated history: run InstScan (unchanged)
+/// for the shape, ws-skip to the `(`, parse the interior with ArgScan, and copy
+/// `primary` + `angles` into the node. When the angle hypotheses diverge, BOTH candidates
+/// ride the node (`angles: ArgAngles`) and the declared-arity adjudicator downstream
+/// picks; this driver never chooses, and MUST never choose — the scan layer has no
+/// symbol table (declared arities exist only after resolve). `.refusal`/`.dropped_empty`
+/// are dropped here (hand-shaped verbatim degradation; void condition = the §1167
+/// validation layer).
+pub fn scan_node(
+    bytes: &[u8],
+    i: usize,
+    target: super::literals::Target,
+) -> Option<crate::tree::body::Instantiation> {
     let mut m = fsm::InstScan::over(bytes);
     if !m.scan_at(i) {
         return None;
     }
     let name = String::from_utf8_lossy(&bytes[m.name_start..m.name_end]).into_owned();
     let end = m.cursor; // one past the closing paren
-    // The `(` sits after the name (skipping spaces); the args are its interior.
-    let mut p = m.name_end;
-    while p < end && (bytes[p] == b' ' || bytes[p] == b'\t') {
-        p += 1;
-    }
-    let (args, named) = super::parts::parse_inst_args(bytes, p + 1, end.saturating_sub(1));
+    let p = skip_ws_at(bytes, m.name_end);
+    let out = super::arg_scan::parse(bytes, p + 1, end.saturating_sub(1), target);
+    let angles = match out.angles {
+        super::arg_scan::AngleReading::Inert => crate::tree::body::ArgAngles::Inert,
+        super::arg_scan::AngleReading::Operators => crate::tree::body::ArgAngles::Operators,
+        super::arg_scan::AngleReading::Forked(alt) => crate::tree::body::ArgAngles::Forked {
+            alt_args: alt.args,
+            alt_named: alt.named,
+        },
+    };
     Some(crate::tree::body::Instantiation {
         span: crate::Span::new(i, end),
         name,
-        args,
-        named,
+        args: out.primary.args,
+        named: out.primary.named,
+        angles,
     })
 }

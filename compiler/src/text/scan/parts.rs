@@ -53,10 +53,11 @@ pub fn native_parts(lx: &Lexer, bytes: &[u8], from: usize, to: usize) -> Vec<Nat
         }
 
         // `@@SystemName(args)` — a STRUCTURED instantiation (spec §1103). **Production runs
-        // the dogfooded InstScan system** (shape) + the arg-parsing leaf; the hand
+        // the dogfooded InstScan system** (shape) **+ the dogfooded ArgScan system**
+        // (args — dual-counter angle fork, D-seam-target passes `lx.target()`); the hand
         // `instantiation_at` remains only as the differential oracle. Checked before the
         // plain ref recognizer because it consumes the arg list too.
-        if let Some(inst) = super::inst_scan::scan_node(&bytes[..to], i) {
+        if let Some(inst) = super::inst_scan::scan_node(&bytes[..to], i, lx.target()) {
             flush(&mut parts, text_start, i);
             i = inst.span.end;
             parts.push(NativePart::Instantiate(inst));
@@ -306,12 +307,15 @@ fn instantiation_at(bytes: &[u8], i: usize, to: usize) -> Option<Instantiation> 
     // Balanced scan to the matching `)`, string-aware.
     let open = p;
     let close = match_paren(bytes, open, to)?;
-    let (args, named) = parse_inst_args(bytes, open + 1, close);
+    let (args, named) = parse_inst_args_hand(bytes, open + 1, close);
     Some(Instantiation {
         span: Span::new(i, close + 1),
         name,
         args,
         named,
+        // The M4 oracle never evaluates the angle hypotheses (the hand had no fork);
+        // mechanical `Inert` — D-tree-angles' fourth touch-point.
+        angles: crate::tree::body::ArgAngles::Inert,
     })
 }
 
@@ -345,15 +349,24 @@ fn match_paren(bytes: &[u8], open: usize, to: usize) -> Option<usize> {
     None
 }
 
-/// Parse the arg list `[from, to)` (the interior of the `(...)`) into groups. Returns the
-/// args and whether the call uses the named form. Group comes from the sigil: `$(...)`
-/// state, `$>(...)` enter, bare domain. Within a group the value is `v` (positional) or
-/// `name=v` (named).
-/// Public as the arg-parsing LEAF for the dogfooded InstScan system.
-pub fn parse_inst_args(bytes: &[u8], from: usize, to: usize) -> (Vec<InstArg>, bool) {
+// The hand arg parser `parse_inst_args` and its two splitters (`split_top_commas`,
+// `split_top_eq`) are RETIRED from production: the arg list is parsed by the dogfooded
+// **ArgScan** system (`super::arg_scan`), reached through `inst_scan::scan_node`. The
+// verbatim copies below (`parse_inst_args_hand` + `_hand` splitters) are the differential
+// oracle ONLY — deleted at C-final.
+
+/// The retired hand arg parser — kept ONLY as the ArgScan differential oracle until
+/// parity-lock (its two known bugs are pinned by `tests/arg_scan.rs::oracle_stayed_buggy`
+/// and must NOT be fixed here; the fixes live in the system). A verbatim, self-contained
+/// copy of `parse_inst_args` + its two splitters (delim_balance `balanced_hand`
+/// precedent): fully independent of the system under test. The M4 oracle
+/// `instantiation_at` calls THIS name, so the oracle chain stays internally consistent.
+/// Deleted at C-final with the other `*_hand` oracles.
+#[doc(hidden)]
+pub fn parse_inst_args_hand(bytes: &[u8], from: usize, to: usize) -> (Vec<InstArg>, bool) {
     let mut args = Vec::new();
     let mut named = false;
-    for raw in split_top_commas(bytes, from, to) {
+    for raw in split_top_commas_hand(bytes, from, to) {
         let s = raw.trim();
         if s.is_empty() {
             continue;
@@ -367,7 +380,7 @@ pub fn parse_inst_args(bytes: &[u8], from: usize, to: usize) -> (Vec<InstArg>, b
             (ParamGroup::Domain, s)
         };
         // Named (`name = value`) vs positional. Only a top-level `=` that is not `==`.
-        let (name, value) = match split_top_eq(inner) {
+        let (name, value) = match split_top_eq_hand(inner) {
             Some((n, v)) => {
                 named = true;
                 (Some(n.trim().to_string()), v.trim().to_string())
@@ -379,8 +392,8 @@ pub fn parse_inst_args(bytes: &[u8], from: usize, to: usize) -> (Vec<InstArg>, b
     (args, named)
 }
 
-/// Split `[from, to)` on top-level commas (respecting nesting and strings).
-fn split_top_commas(bytes: &[u8], from: usize, to: usize) -> Vec<String> {
+/// `split_top_commas`, verbatim — `parse_inst_args_hand`'s private internal (oracle-only).
+fn split_top_commas_hand(bytes: &[u8], from: usize, to: usize) -> Vec<String> {
     let mut out = Vec::new();
     let mut depth = 0i32;
     let mut start = from;
@@ -413,8 +426,8 @@ fn split_top_commas(bytes: &[u8], from: usize, to: usize) -> Vec<String> {
     out
 }
 
-/// Split on a top-level single `=` (not `==`, `>=`, `<=`, `!=`), if present.
-fn split_top_eq(s: &str) -> Option<(&str, &str)> {
+/// `split_top_eq`, verbatim — `parse_inst_args_hand`'s private internal (oracle-only).
+fn split_top_eq_hand(s: &str) -> Option<(&str, &str)> {
     let b = s.as_bytes();
     let mut depth = 0i32;
     let mut j = 0;
@@ -445,3 +458,4 @@ fn split_top_eq(s: &str) -> Option<(&str, &str)> {
     }
     None
 }
+

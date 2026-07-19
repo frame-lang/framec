@@ -16,8 +16,8 @@
 //! That cannot recur here, because the validator has no bytes to count.
 
 use crate::resolve::{Diagnostic, Severity, SymbolTable};
-use crate::tree::body::{NativePart, RefKind, Stmt};
-use crate::tree::{FileAst, Item, MachineMember, Section, StateMember};
+use crate::tree::body::{ArgAngles, InstArg, Instantiation, NativePart, ParamGroup, RefKind, Stmt};
+use crate::tree::{FileAst, Item, MachineMember, Param, Section, StateMember, SystemParams};
 
 /// Check the tree against the symbol table.
 pub fn validate(ast: &FileAst, syms: &SymbolTable) -> Vec<Diagnostic> {
@@ -102,7 +102,7 @@ pub fn validate(ast: &FileAst, syms: &SymbolTable) -> Vec<Diagnostic> {
                             // A native statement carries its Frame refs as NODES. So we
                             // check them by walking the tree — never by scanning text.
                             Stmt::Native(n) => {
-                                check_refs(&n.parts, &sv, &domain, &iface, &sym.name, &mut out);
+                                check_refs(&n.parts, &sv, &domain, &iface, &sym.name, syms, &mut out);
                             }
                             _ => {}
                         }
@@ -181,6 +181,7 @@ fn check_refs(
     domain: &[&str],
     iface: &[&str],
     system: &str,
+    syms: &SymbolTable,
     out: &mut Vec<Diagnostic>,
 ) {
     for p in parts {
@@ -193,20 +194,197 @@ fn check_refs(
             NativePart::Literal(l) => {
                 for lp in &l.parts {
                     if let crate::tree::body::LiteralPart::Hole(h) = lp {
-                        check_refs(&h.parts, state_vars, domain, iface, system, out);
+                        check_refs(&h.parts, state_vars, domain, iface, system, syms, out);
                     }
                     // NOTE: no arm for Content. A Frame reference cannot be there,
                     // because the type has no variant that would put one there.
                 }
             }
             NativePart::Text(_) => {}
-            // `@@Name(...)` — the system-name/arity checks (§1167) are the deferred
-            // closed-world validation layer; the SHAPE is here today.
-            NativePart::Instantiate(_) => {}
+            // `@@Name(...)` — the general system-name/arity checks (§1167) remain the
+            // deferred closed-world validation layer. What lives here TODAY is the
+            // angle-questioned scope only (E407, design record §11.3): when the scanner
+            // carried an `Operators`/`Forked` angle reading and the system name resolves,
+            // the declared arity adjudicates; neither-admissible / both-admissible is
+            // diagnosed, never guessed. `Severity::Error` blocks emission, so emit never
+            // sees an unadjudicated fork on the error path.
+            NativePart::Instantiate(inst) => {
+                if let Some(sys) = syms.systems.iter().find(|s| s.name == inst.name) {
+                    match adjudicate(&sys.params, inst) {
+                        Adjudication::Primary | Adjudication::Alt => {}
+                        verdict => out.push(e407(&sys.params, inst, verdict)),
+                    }
+                }
+            }
             // `@@:self.field.method(...)` — the E609 field-is-a-member check is deferred;
             // the SHAPE is here today.
             NativePart::EmbedCall(_) => {}
         }
     }
     let _ = (state_vars, domain, iface, system, RefKind::StateVar);
+}
+
+/// The outcome of holding an instantiation's angle reading(s) against the declared params.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Adjudication {
+    /// The primary candidate (`inst.args` — G when forked) proceeds.
+    Primary,
+    /// The alternate (O) candidate proceeds (`ArgAngles::Forked` payload).
+    Alt,
+    /// Neither reading matches the declared params — E407.
+    NoneAdmissible,
+    /// Both readings match (reachable only through defaults) — E407, diagnose never guess.
+    BothAdmissible,
+}
+
+/// Adjudicate an instantiation's angle fork against the declared `SystemParams` — the ONE
+/// shared function (design record §11.3), consumed by the `validate` walk (diagnostics)
+/// and by `text::emit::driver::lower_instantiation` (candidate choice). Reads only the
+/// tree and the declared params — no bytes. Lives HERE because this pass's charter is
+/// exactly "arity questions answered on the tree, never by counting text" (the E405
+/// story, module header).
+///
+/// `Inert` → `Primary` unchecked (nothing to adjudicate — general arity validation stays
+/// §1167-deferred). `Operators` → the sole O reading either matches or nothing does.
+/// `Forked` → exactly-one admissible picks; the tie (`BothAdmissible`, reachable only via
+/// defaults) and the miss (`NoneAdmissible`) are diagnosed by the caller.
+pub fn adjudicate(params: &SystemParams, inst: &Instantiation) -> Adjudication {
+    match &inst.angles {
+        ArgAngles::Inert => Adjudication::Primary,
+        ArgAngles::Operators => {
+            if admissible(params, &inst.args) {
+                Adjudication::Primary
+            } else {
+                Adjudication::NoneAdmissible
+            }
+        }
+        ArgAngles::Forked { alt_args, .. } => {
+            match (admissible(params, &inst.args), admissible(params, alt_args)) {
+                (true, false) => Adjudication::Primary,
+                (false, true) => Adjudication::Alt,
+                (false, false) => Adjudication::NoneAdmissible,
+                (true, true) => Adjudication::BothAdmissible,
+            }
+        }
+    }
+}
+
+/// Is a candidate arg list admissible against the declared params? Mirrors
+/// `resolve_group`'s fill rules (text/emit/driver.rs) made DISCRIMINATING — adjudication
+/// needs discrimination; filling stays permissive. Per group (State/Enter/Domain):
+/// *named form* — every arg named, no duplicate names, every name declared, and every
+/// declared param not provided by name has a default (the gate amendment: the
+/// `unwrap_or_default()` empty slot is the inadmissible outcome); *positional form* —
+/// provided count ≤ declared count and every declared param past the provided count has a
+/// default; *mixed* named/positional — inadmissible (spec §1108).
+fn admissible(params: &SystemParams, args: &[InstArg]) -> bool {
+    group_admissible(&params.state, args, ParamGroup::State)
+        && group_admissible(&params.enter, args, ParamGroup::Enter)
+        && group_admissible(&params.domain, args, ParamGroup::Domain)
+}
+
+fn group_admissible(decls: &[Param], args: &[InstArg], group: ParamGroup) -> bool {
+    let provided: Vec<&InstArg> = args.iter().filter(|a| a.group == group).collect();
+    let named_ct = provided.iter().filter(|a| a.name.is_some()).count();
+    if named_ct > 0 && named_ct < provided.len() {
+        return false; // mixed named/positional (spec §1108)
+    }
+    if named_ct > 0 {
+        // Named form: no duplicates, every name declared, unprovided declared params
+        // must have defaults.
+        for (idx, a) in provided.iter().enumerate() {
+            let n = a.name.as_deref().unwrap_or_default();
+            if provided[..idx].iter().any(|b| b.name.as_deref() == Some(n)) {
+                return false;
+            }
+            if !decls.iter().any(|d| d.name == n) {
+                return false;
+            }
+        }
+        decls.iter().all(|d| {
+            provided
+                .iter()
+                .any(|a| a.name.as_deref() == Some(d.name.as_str()))
+                || d.default.is_some()
+        })
+    } else {
+        // Positional form: count fits, all-defaulted tail.
+        provided.len() <= decls.len() && decls[provided.len()..].iter().all(|d| d.default.is_some())
+    }
+}
+
+/// Render one candidate's values for the E407 message, G-first ordering decided by the
+/// caller.
+fn render_args(args: &[InstArg]) -> String {
+    if args.is_empty() {
+        return "(none)".to_string();
+    }
+    args.iter()
+        .map(|a| match &a.name {
+            Some(n) => format!("`{}={}`", n, a.value),
+            None => format!("`{}`", a.value),
+        })
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
+/// E407 (code provisional pending the diagnostic registry): an angle-questioned argument
+/// list the declared arity cannot settle. Both interpretations are always rendered, G
+/// first (owner item 6); the parenthesization escape is STRUCTURAL — bytes inside `()`
+/// sit at depth ≥ 1 where the angle counter never counts, so parenthesizing removes the
+/// byte from BOTH hypotheses' question entirely.
+fn e407(params: &SystemParams, inst: &Instantiation, verdict: Adjudication) -> Diagnostic {
+    let declared = format!(
+        "`{}` declares state {} + enter {} + domain {}",
+        inst.name,
+        params.state.len(),
+        params.enter.len(),
+        params.domain.len()
+    );
+    let help = "help: parenthesize to fix the reading: wrap a comparison — `(a < b)` — or \
+                the whole generic expression — `(new HashMap<K, V>())` — in parentheses";
+    let message = match (&inst.angles, verdict) {
+        (ArgAngles::Forked { alt_args, .. }, Adjudication::BothAdmissible) => format!(
+            "ambiguous argument list for `@@{}(...)`: `<`/`>` reads two ways\n  \
+             as generic brackets ({} args): {}\n  \
+             as comparison/shift operators ({} args): {}\n  \
+             {} — both readings match (defaults make both counts legal); parenthesize to choose\n  {}",
+            inst.name,
+            inst.args.len(),
+            render_args(&inst.args),
+            alt_args.len(),
+            render_args(alt_args),
+            declared,
+            help
+        ),
+        (ArgAngles::Forked { alt_args, .. }, _) => format!(
+            "ambiguous argument list for `@@{}(...)`: `<`/`>` reads two ways\n  \
+             as generic brackets ({} args): {}\n  \
+             as comparison/shift operators ({} args): {}\n  \
+             {} — neither reading matches\n  {}",
+            inst.name,
+            inst.args.len(),
+            render_args(&inst.args),
+            alt_args.len(),
+            render_args(alt_args),
+            declared,
+            help
+        ),
+        _ => format!(
+            "argument list for `@@{}(...)`: angle brackets do not balance as a bracket \
+             pair, so they were read as operators ({} args): {}\n  {} — the reading does \
+             not match\n  {}",
+            inst.name,
+            inst.args.len(),
+            render_args(&inst.args),
+            declared,
+            help
+        ),
+    };
+    Diagnostic {
+        code: "E407",
+        severity: Severity::Error,
+        span: inst.span,
+        message,
+    }
 }

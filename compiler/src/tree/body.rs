@@ -265,16 +265,40 @@ pub struct EmbedCall {
 pub struct Instantiation {
     pub span: Span,
     pub name: String,
-    /// The call-site args, in source order. Empty for `@@Name()`.
+    /// The call-site args, in source order. Empty for `@@Name()`. When the angle
+    /// hypotheses fork ([`ArgAngles::Forked`]) this is the PRIMARY (G, angles-as-brackets)
+    /// candidate; the O candidate rides in `angles`.
     pub args: Vec<InstArg>,
     /// `@@Name(x=1, y=2)` (named) vs `@@Name(1, 2)` (positional). Spec §1108: a single
     /// call may not mix the two.
     pub named: bool,
+    /// How `<`/`>` read in the arg list (design record §11, Option C): `Inert` when the
+    /// two angle hypotheses coincide (or the list refused), `Operators` when only the
+    /// operators reading is viable, `Forked` when both readings are viable and diverge —
+    /// then `args` holds the G candidate and the payload holds the O candidate, and the
+    /// declared-arity adjudicator (`validate::adjudicate`) picks downstream. The scanner
+    /// never guesses.
+    pub angles: ArgAngles,
+}
+
+/// The angle-hypothesis outcome carried on an [`Instantiation`] (D-tree-angles). The O
+/// (angles-as-operators) candidate rides the tree so adjudication can happen where the
+/// symbol table lives — validate/emit — never at scan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ArgAngles {
+    /// No angle question: hypotheses coincide (or the list refused — a malformed list
+    /// adjudicates nothing).
+    Inert,
+    /// Only the operators reading is viable; `args` is that sole reading.
+    Operators,
+    /// Both readings viable and divergent: `args` = G (brackets, fewer args), payload = O
+    /// (operators, strictly more args).
+    Forked { alt_args: Vec<InstArg>, alt_named: bool },
 }
 
 /// One call-site argument: its group (from the sigil), an optional name (named form), and
 /// the verbatim value expression.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstArg {
     pub group: ParamGroup,
     /// `Some("x")` in the named form (`$(x=7)` / `name="R2D2"`); `None` positionally.
