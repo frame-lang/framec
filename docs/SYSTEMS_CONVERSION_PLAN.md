@@ -455,7 +455,26 @@ The plan is a contract; it changes only through a recorded, evaluated process �
   restatement + minors folded. ArgScan joins 3d/3e as a build-ready unit; the NativeParts
   design (Item 4 core) is at the owner gate.
 
+- *2026-07-18* — **Item 4 NativeParts design ACCEPTED at owner gate** (warden PASS-WITH-CONDITIONS;
+  conditions folded as dated amendments: the false `scan_at` seam claim corrected — `from` becomes a
+  ctor config param since generated machines reset all literal-initialized fields; ledger tally 14;
+  R10 weighed, not triggered). **Owner rulings recorded: DP-1** — an unterminated literal's rescued
+  interior is ONE plain Text run (no diagnostics channel in native_parts); **H-1** — the validator
+  owns `@@:` membership (scanner = shape + word boundary + Unknown-as-data; validate.rs diagnoses
+  non-membership in the context arcanum). With 3d, 3e, and ArgScan, the accepted set now covers the
+  section walker through the islands; NativeParts completion retires the LAST production
+  hand-Lexer recognition (the C2 path).
+
 ### Audit Log (append-only — warden verdicts)
+- *2026-07-18* — DESIGN GATE, Item 4 NativeParts (nativeparts_design.md + 8 shards):
+  **PASS-WITH-CONDITIONS → ACCEPTED at owner gate; DP-1 and H-1 ruled.** All load-bearing claims
+  source-verified (3× wrong-for-seat on native_parts_scan/; parts.rs:29/:45 = last production
+  hand-Lexer recognition; full-buffer-vs-slice clamp/water divergence reproduced; T-N8 {{-phantom
+  + T-R2 prefix-overmatch reproduced; 14-row ledger complete; extent-independence attacked and
+  held; @@fsm grep 0). Conditions folded at acceptance: ctor-param seam fix (generated scan_at
+  resets ALL literal-initialized fields — gen-verified ×4); tally 14 = 8+3+2+1 with the driver
+  shard's T-N6 aligned; R10 weighing recorded. Nits scheduled for Commit-A shard sync.
+
 - *2026-07-18* — DESIGN RE-GATE, ArgScan §11 (Option C fork-and-adjudicate): **PASS-WITH-CONDITIONS
   → ACCEPTED at owner gate.** Lemmas 1/2/3(ii) survived adversarial attack; digraph correction
   (the hand counts the `<` of `<=`, parts.rs:400) verified; adjudication seams
@@ -713,6 +732,6 @@ survive as oracles + un-converted consumers — tracked here, not forgotten.
 | 1 OpaqueScan | **warden PASS (GATE-A + GATE-B) — committed** | OpaqueScan, RawString, BraceBalance | skip path is the system; try_island routed; residual = holes (Item 4), close_brace (Item 2), machine skip (Item 3), + 3 oracles — all named; batteries+fuzz+milestone green |
 | 2 Segmenter | **close_brace capability: warden PASS (GATE-A+B, pending commit).** Body-end recognition off the hand Lexer onto OpaqueScan (`opaque_at`, 3-way signal). Remaining Item-2 scope: `hand_item_starts` oracle (→ C-final sweep) + `BodyBalance` `{}`-counter sub-system (named, before close) | segmenter, +OpaqueScan `kind`/`unterminated` registers | close_brace: yes. Item-2 whole: no (oracle + brace-counter named) |
 | 3 Grammar | **Dispatch-walks COMPLETE** (3c-3 committed d352021). **3d DeclWalk/DeclRead + 3e Head readers: designs ACCEPTED 2026-07-18** (owner gate; build pending; 3d GATE-B held open until its Phase B lands). 3a (fbde61e), 3b (03671f1), BodyBalance (2f9d95c), 3c-1 MachineWalk (fa38988), 3c-2 StateWalk (c7637b3), **3c-3 body→BodyWalk** (warden PASS after D3 fix). All three inner dispatch walks (machine_section/state-member/body) are @@[scan(u8)] systems; BodyWalk fuses a brace COUNTER + a (start,depth) ACCUMULATOR. I1 proven each; loops 86→77, SYSTEMS 15→19. | stmt_scan; DelimBalance; MachineWalk; StateWalk; **BodyWalk** (19th) | 3a/3b/BodyBalance/3c-1/3c-2/3c-3: yes |
-| 4 Islands | **ArgScan design ACCEPTED 2026-07-18** (Option C fork-and-adjudicate; build pending). **NativeParts design at owner gate** (warden PASS-W-C). | ref/inst/embed_scan (partial); arg_scan+adjudication seam designed; native_parts_scan completion designed | no |
+| 4 Islands | **ArgScan + NativeParts designs BOTH ACCEPTED 2026-07-18** (Option C fork-and-adjudicate; native_parts_scan completed into the production seat; DP-1/H-1 ruled; build pending) | ref/inst/embed_scan (partial); arg_scan + adjudication seam; native_parts_scan completion + OpaqueScan hole/delim registers | no |
 | 5 Validators | not started | hsm_cycle, reachability | no |
 | 6 EmitDriver | not started | — | n/a (transducer, last) |
