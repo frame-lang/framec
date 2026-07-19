@@ -22,7 +22,10 @@ the hand-rolled-loop surface — the ~5,300 lines under `text/scan/` and, last, 
 ## The four guardrails (non-negotiable)
 
 1. Each capability → a `.frs` `@@system`, compiled by framec-ng to a committed `.gen.rs`,
-   wrapped by a thin `mod.rs` with native **leaves**.
+   wrapped by a thin `mod.rs` with native **leaves**. The campaign dialect is
+   `@@[scan(u8)]` **systems only**: `@@fsm` is parked for this phase of the rebuild
+   (owner ruling 2026-07-16, reaffirmed 2026-07-18) — a design proposing one is a
+   guardrail violation, not a style choice.
 2. The hand path is **deleted** the moment its system passes the parity gate and its last
    consumer is routed off it. Never leave both in production. "Done" = hand path gone.
 3. If a system needs a capability framec-ng can't emit, **STOP and surface it as a blocker** —
@@ -415,7 +418,51 @@ The plan is a contract; it changes only through a recorded, evaluated process �
   Differential (stmt_starts==stmt_starts_hand incl. depth pairs + final depth, teeth on depth
   variance/nonzero-final/brace-in-string-ignored + I1, test-author running) + warden GATE next.
 
+- *2026-07-18* — **DESIGN GATE BATCH — owner rulings (first three units through the RFC-0058
+  pipeline: finder inventory → fsm-designer → warden review → owner gate).**
+  (1) **DeclWalk/DeclRead ACCEPTED as Item 3d.** Item 3's ledger "COMPLETE" is rescoped to
+  "dispatch-walks complete" — decl_section/decl_of (the fourth section walk + line reader) were
+  in Item 3's declared scope and are now a named item. Conditions folded: ledger row **T15**
+  (the `saturating_sub(1)` clamp at machine.rs:833 + inverted-span debug panic at :844 — CARRY
+  with a written reachability argument + battery coverage); the Phase-A `params_close`
+  bare-counter leaf is a **guardrail-4 exception with a bounded lifetime: GATE-B does not close
+  until Phase B (T9 → DelimBalance routing) lands**; T9/T13 land as recorded behavior-change
+  deltas with directed tests (`body_open_at`'s unbalanced-params fallback pinned).
+  (2) **StateHeadScan/HandlerHeadScan ACCEPTED as Item 3e** (the head grammar). Conditions
+  folded: T-S3 widened to name the arrow-in-opaque phantom parent (with a Phase-1 pin); the
+  state-side `close_node` clamp artifact recorded on T-S1/state_head_driver; each Phase-2 delta
+  lands with its own Change Log entry.
+  (3) **ArgScan RETURNED with recorded direction — Option C, "fork and adjudicate":** the
+  AngleProbe look-ahead guess is replaced by a dual-counter scan (angles-as-brackets vs
+  angles-as-operators), an explicit fork when the two comma sets diverge, adjudicated downstream
+  by the target system's DECLARED ARITY (Frame-side knowledge only; the two splits always differ
+  in count so a tie is impossible; neither-matches → a diagnostic showing both readings). The
+  hypothesis is binary per argument list; mixed lists fail loudly; the escape hatch is
+  parenthesization. The same mechanism is filed as the future path for transition args
+  (converging the machine.rs:1003 no-split ruling later). Revision in flight.
+  (4) **Campaign default declared: PARITY-FIRST.** Reproduce hand behavior first (bugs included,
+  pinned), fix as separate recorded deltas. Fix-at-landing is a per-capability exception recorded
+  in this log — ArgScan is the first, carried by its partitioned carry/fix differential and
+  `oracle_stayed_buggy` anti-vacuity machinery. Bugs are logged as data in the design's graph
+  node (ledger rows + deltas), never only in prose.
+
 ### Audit Log (append-only — warden verdicts)
+- *2026-07-18* — DESIGN GATE, DeclWalk/DeclRead (Item 3d): **PASS-WITH-CONDITIONS → ACCEPTED at
+  owner gate.** All cited file:line facts warden-verified exact (incl. the two-caller pair
+  architecture and the T13 fork at :829); sibling conformance real. Conditions (now folded): T15
+  ledger addition; Phase-A counter-leaf = guardrail-4 exception, GATE-B held open until Phase B
+  lands; Item-3 rescope recorded; T9/T13 as recorded deltas with `body_open_at` fallback pinned.
+- *2026-07-18* — DESIGN GATE, Head readers (StateHeadScan+HandlerHeadScan, Item 3e):
+  **PASS-WITH-CONDITIONS → ACCEPTED at owner gate.** 18-row ledger complete; the fourth handler
+  refusal (:200), T-S9 limit-straddle (:95/:793), T-S5, and the T-S2 driver overrun all
+  warden-confirmed real; pump-contract-forced one-$Reject honest; Phase 0/1/2 staging matches
+  campaign precedent. Conditions folded: T-S3 arrow-in-opaque widening + pin; state-side
+  close_node clamp artifact recorded; per-delta Change Log entries at landing.
+- *2026-07-18* — DESIGN GATE, ArgScan (M6 + AngleProbe): **PASS-WITH-CONDITIONS → RETURNED at
+  owner gate with direction** (Option C replaces AngleProbe — see Change Log). Warden-reverified:
+  Bug A :363/:365, Bug B :400–402, sibling alphabets, seams; 32-row ledger complete. Batch
+  verdict: no design conflict between lanes; schema unification (routes-through, carry-and-name,
+  deltas-as-hooks) recorded in RFC-0058 §7.2 before graph consolidation.
 - *2026-07-18* — GATE-A+B, Item 3c-3 "body statement loop → BodyWalk": **FAIL (D3) → FIXED,
   re-gate pending.** D1,D2,D4,D5,D7,D8,I1,census + all 3 refactors' behavior-preservation PASSED
   (regen byte-identical ×2; 11/11 differential incl. depth pairs+final depth, teeth [0,1,2,0]/
@@ -646,7 +693,7 @@ survive as oracles + un-converted consumers — tracked here, not forgotten.
 |---|---|---|---|
 | 1 OpaqueScan | **warden PASS (GATE-A + GATE-B) — committed** | OpaqueScan, RawString, BraceBalance | skip path is the system; try_island routed; residual = holes (Item 4), close_brace (Item 2), machine skip (Item 3), + 3 oracles — all named; batteries+fuzz+milestone green |
 | 2 Segmenter | **close_brace capability: warden PASS (GATE-A+B, pending commit).** Body-end recognition off the hand Lexer onto OpaqueScan (`opaque_at`, 3-way signal). Remaining Item-2 scope: `hand_item_starts` oracle (→ C-final sweep) + `BodyBalance` `{}`-counter sub-system (named, before close) | segmenter, +OpaqueScan `kind`/`unterminated` registers | close_brace: yes. Item-2 whole: no (oracle + brace-counter named) |
-| 3 Grammar | **COMPLETE (pending 3c-3 commit).** 3a (fbde61e), 3b (03671f1), BodyBalance (2f9d95c), 3c-1 MachineWalk (fa38988), 3c-2 StateWalk (c7637b3), **3c-3 body→BodyWalk** (warden PASS after D3 fix). All three inner dispatch walks (machine_section/state-member/body) are @@[scan(u8)] systems; BodyWalk fuses a brace COUNTER + a (start,depth) ACCUMULATOR. I1 proven each; loops 86→77, SYSTEMS 15→19. | stmt_scan; DelimBalance; MachineWalk; StateWalk; **BodyWalk** (19th) | 3a/3b/BodyBalance/3c-1/3c-2/3c-3: yes |
+| 3 Grammar | **Dispatch-walks COMPLETE** (3c-3 committed d352021). **3d DeclWalk/DeclRead + 3e Head readers: designs ACCEPTED 2026-07-18** (owner gate; build pending; 3d GATE-B held open until its Phase B lands). 3a (fbde61e), 3b (03671f1), BodyBalance (2f9d95c), 3c-1 MachineWalk (fa38988), 3c-2 StateWalk (c7637b3), **3c-3 body→BodyWalk** (warden PASS after D3 fix). All three inner dispatch walks (machine_section/state-member/body) are @@[scan(u8)] systems; BodyWalk fuses a brace COUNTER + a (start,depth) ACCUMULATOR. I1 proven each; loops 86→77, SYSTEMS 15→19. | stmt_scan; DelimBalance; MachineWalk; StateWalk; **BodyWalk** (19th) | 3a/3b/BodyBalance/3c-1/3c-2/3c-3: yes |
 | 4 Islands | not started | ref/inst/embed_scan (partial) | no |
 | 5 Validators | not started | hsm_cycle, reachability | no |
 | 6 EmitDriver | not started | — | n/a (transducer, last) |
