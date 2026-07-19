@@ -75,7 +75,7 @@ numbers are not re-used.
 | [0056](rfc-0056.md) | Foundations — framec as a real compiler | Draft | principles for the rebuild; see [0056.1](rfc-0056-1.md), [0057](rfc-0057.md) |
 | [0056.1](rfc-0056-1.md) | The Descent — the most restrictive machine that solves each problem | Draft | companion to [0056](rfc-0056.md) |
 | [0057](rfc-0057.md) | The Compiler — architecture of the rebuilt framec | Draft | implements [0056](rfc-0056.md), [0056.1](rfc-0056-1.md) |
-| 0058 | — | (unassigned) | numbering retired; pre-public exploratory draft, not promoted |
+| [0058](rfc-0058.md) | The Agent Architecture — domain-focused agent family, finder→designer pipeline | Draft (living) | number retired 2026-07-17 with an unpublished draft in the same subject area; revived 2026-07-18; supersedes in part [0059](rfc-0059.md) § 9 |
 | [0059](rfc-0059.md) | Discovery: the latent machine — findings, evidence, and process adoption | Draft (Discovery) | canonical companion: [*Shadows on the Wall*](../articles/Shadows_on_the_Wall.md); first of the discovery genre |
 
 ## Other documents in this directory
@@ -108,6 +108,10 @@ numbers are not re-used.
   normative rules await acceptance (expected terminal status:
   Accepted (Process)). See the glossary's
   [discovery RFC](../glossary.md#discovery-rfc) entry.
+- **Draft (living)** — a deliberately evolving architecture or
+  process document: sections carry shipped/exploratory markers,
+  and every change lands as a dated entry in an append-only
+  evolution log rather than a silent rewrite.
 - **Status report** — captures current state of a subsystem
   without committing to changes.
 

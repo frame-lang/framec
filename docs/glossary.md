@@ -30,6 +30,19 @@ read domain variables and the system / self / return accessors but cannot fire
 [transitions](#transition) or push / pop the [state stack](#state-stack). See
 [language reference § Actions Section](frame_language.md#actions-section).
 
+### architecture map
+
+The organized form of a [machine inventory](#machine-inventory): the
+scanned scope's machines arranged so a designer can reassemble its
+architecture from the analysis alone. Its spine is the set of
+[drive traces](#drive-trace) (one per entry event type); its edges are
+typed (drives / feeds / refines / shares-leaf); its **seam register**
+records every [asynchrony seam](#asynchrony-seam) with the protocol
+machine hosted there, holding any seam whose far end lies outside the
+scope as an unresolved **port** for later joining; packaging and threading
+ride as annotations. Exploratory — defined in
+[RFC-0058 § 5](rfcs/rfc-0058.md).
+
 ### async system
 
 A [system](#system) that declares one or more `async` members (interface
@@ -41,6 +54,15 @@ the host language's asynchronous form (`async`/`await`, `CompletableFuture`,
 [machine](#machine-async-system) that holds the dispatch core. Declaring an async
 member without `@@[async]` is the hard error **E720**. See
 [language reference § Async](frame_language.md#async).
+
+### asynchrony seam
+
+A point where a synchronous chain of activity ends and another begins
+elsewhere — a thread spawn, a channel or queue post, a callback
+registration, or an over-the-wire call. Every seam hosts a protocol machine
+(retry, timeout, correlation, session, backpressure), and seams bound
+[drive traces](#drive-trace) in an architecture map. Defined in
+[RFC-0058 § 5](rfcs/rfc-0058.md).
 
 ### backbone
 
@@ -159,6 +181,15 @@ instance — unlike [state variables](#state-variable), they are not reset by
 A [system parameter](#system-parameter) with no sigil, supplying the initial
 value of a [domain](#domain) variable of the same name. See
 [language reference § Domain params](frame_language.md#domain-params).
+
+### drive trace
+
+For one entry event type a process accepts, the single-threaded chain of
+activity traced end to end: every machine hit, in activation order, until
+the chain returns or reaches an [asynchrony seam](#asynchrony-seam). The
+overlay of a process's drive traces — one per entry event — is its drive
+hierarchy, the spine of an architecture map. Defined in
+[RFC-0058 § 5](rfcs/rfc-0058.md).
 
 ### enter-args
 
@@ -554,6 +585,17 @@ groups by sigil: `$(...)` → [state-param](#state-param), `$>(...)` →
 [enter-param](#enter-param), bare → [domain-param](#domain-param). The
 [factory](#factory) routes each group to the appropriate channel. See
 [language reference § System Parameters](frame_language.md#system-parameters).
+
+### terminal ledger
+
+A required section of a conversion design record: the enumeration of every
+terminal and refusal state of the code being replaced — glossed ones
+included (merged errors, silent clamps, swallowed failures) — with each one
+explicitly ruled *carried* (with justification) or *fixed* (with the new
+named state). Nothing may be dropped silently. It exists because a
+differential test cannot guarantee state-faithfulness: the replaced hand
+code is the differential's own oracle, so its glosses ride across
+unexamined. Defined in [RFC-0058 § 4.2](rfcs/rfc-0058.md).
 
 ### transition
 
