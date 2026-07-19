@@ -241,6 +241,29 @@ measures how much hand recognition remains is itself a latent machine, and
 hardening it demanded the exact verify-don't-trust discipline it exists to
 enforce (D6, again — this time on the gauge's repair, not the gauge).
 
+**2026-07-19 — the oldest open obligation closed (Item 3d GATE-B).** Asked
+for the most methodical next step, the answer was not to open new work but
+to close the one gate that had been deliberately *held*: DeclWalk's GATE-B,
+withheld at the design gate until its Phase-B delta retired an accepted
+bare-counter exception (`params_close`). Fittingly, `params_close` was the
+very leaf the census hardening had just fought to keep correctly classified
+— and this delta retired it for real, routing its paren count through the
+DelimBalance system (T9) and replacing a string-blind brace-find with an
+opaque- and params-aware `body_open_at` (T13). Both were shared-leaf swaps,
+so the differential locked and the *fix* was pinned by directed tests
+(the two old Phase-A bug-pins flipped to assert correct behavior; six new
+directed tests, including both faces of an owner-conditioned fallback). The
+methodical detail worth keeping: the census came out **flat** — production
+loops 46 → 46 — because T9 removed a real counter and T13 added a
+composition-dispatch loop the `while <ident> <` proxy cannot tell apart.
+The warden *ruled* on that rather than escalating: the owner had already
+adjudicated `body_open_at` by name at the design gate, and the code matched
+the ruling with zero drift, so re-escalating would re-litigate a settled
+decision (D9 sharpened — escalation discipline includes knowing when *not*
+to escalate). The honest flat number, and the reason for it, rode into the
+landing commit. Item 3d is now complete; the delta landed as two
+file-disjoint commits exactly as the gate prescribed.
+
 ## 2. Discovery register (the paper-worthy claims, each with evidence)
 
 **D1 — A worldview document alone is sufficient agent training.** Blind
