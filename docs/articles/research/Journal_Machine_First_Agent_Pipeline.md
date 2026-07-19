@@ -400,13 +400,26 @@ is a genre with its own obligations; multi-decision asks are always a
 questionnaire. *Improvement proposed:* report templates in the process
 doc, so the genre survives context resets.
 
-**PM-4 — The census instrument has known blind spots, thrice-confirmed**
-(2026-07-18). The loop-proxy misses `while predicate(...)` shapes and
-byte-literal brace matching; every wave has re-confirmed it. *Correction
-applied:* none yet — movements are reported with the caveat. *Improvement
-owed (docketed, blocks C-final):* harden the proxy before any final
-census is treated as a campaign predicate. Same defect class as PM-1: an
-uncalibrated gauge steering decisions.
+**PM-4 — The census instrument has known blind spots, and one steered a
+gate finding** (2026-07-18/19). The loop-proxy misses `while
+predicate(...)` shapes and byte-literal brace matching; every wave
+re-confirmed it. Then, at the NativeParts gate, it bit for real: the
+proxy classifies a differential oracle as *production* recognition unless
+the function carries the `_hand` name it keys on — and `section_keyword_starts`
+(the SectionScan oracle, self-documented as such, called only from a
+test) does not. So the census reported two production recognition calls
+that do not exist on any live compile path, and the warden's Finding 4
+inherited the number, escalating a naming gap into an apparent
+"unowned-scope" question. Investigation dissolved it: every remaining
+recognition call sits inside a `_hand` oracle except that one misnamed
+one; the true count of production recognition *calls* on the live path is
+zero. *Correction applied:* the residual is re-characterized (7 hand-Lexer
+method definitions bound for C-final deletion + 1 misnamed oracle), and
+the census-honesty fix is put to the owner. *Improvement owed (docketed,
+blocks C-final):* harden the proxy — detect test-only callers, not just
+the `_hand` suffix — before any final census is a campaign predicate.
+Same defect class as PM-1: an uncalibrated gauge steering decisions, this
+time all the way into a warden verdict.
 
 **PM-5 — Small-tool frictions with outsized cost** (2026-07-17/18).
 BSD sed lacking `\b` left a rename half-done; exact-match edits failed on
@@ -442,12 +455,21 @@ written from the design's fact base, which scoped `parts.rs`; the
 `sections.rs` residual was never enumerated, so every downstream
 restatement inherited the gap. *Caught by:* the warden's independent
 census at GATE-A (Finding 4). *Correction applied:* the milestone is
-restated as "retires `parts.rs`'s production recognition"; C2
-(recognition = 0) now carries an explicit open thread — the `sections.rs`
-owner — routed to the owner gate. *Improvement proposed:* completion
-claims cite the instrument and the *residual*, never a bare target; a
-claim of "last" or "0" is a census assertion and must be run, not
-inferred from the set's own scope.
+restated as "retires `parts.rs`'s production recognition." *Sharpened on
+investigation (same day):* the "residual" is not an unowned scope gap.
+The two `sections.rs` calls are the SectionScan differential oracle
+(owned by Item 3, deleted at C-final) that the census miscounts because
+it lacks the `_hand` name (PM-4); the seven `lex.rs` entries are the hand
+Lexer's own recognizer *method definitions*, which zero only when the
+Lexer is deleted at C-final. So C2 (production recognition = 0) is a
+C-final milestone *by construction* — it counts definitions, so it cannot
+close until the Lexer is gone — and production recognition on the live
+compile path is already fully converted. The original claim was wrong
+about "0", right that this set does not reach C2; the real reason is the
+metric's shape, not a missing owner. *Improvement proposed:* completion
+claims cite the instrument and the *residual*, never a bare target; and
+the residual must be *classified* (transient oracle vs live path vs
+by-design C-final), because a raw census number conflates all three.
 
 ## 5. Open threads (for the paper's future-work section)
 
