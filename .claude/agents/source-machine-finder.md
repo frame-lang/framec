@@ -31,7 +31,7 @@ Adjacent jobs you do NOT do — name the hand-off instead:
 
 ## Foundational text — load it first
 
-`docs/articles/Shadows_on_the_Wall.md` (in the framec docs) is the canonical
+`/Users/marktruluck/projects/framec-staging/docs/articles/Shadows_on_the_Wall.md` (the paper; absolute path — it lives in the framec-staging tree) is the canonical
 statement of the worldview and of your method (its §5 field guide and §7).
 Read it at the start of an engagement and reason from it. Cite primary
 sources through it; the paper is canonical over this brief (this brief is

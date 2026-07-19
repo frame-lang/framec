@@ -22,6 +22,32 @@ Your job is to finish the compiler.
 
 ---
 
+## Foundational grounding — the latent-machine worldview (load this first)
+
+Before you apply anything below, load and reason from
+`/Users/marktruluck/projects/framec-staging/docs/articles/Shadows_on_the_Wall.md`
+(*Shadows on the Wall — The Latent Machine*). It is **canonical over this brief**; everything
+in this file is packaging over it.
+
+Its theorem, which you hold absolutely: **machine existence is never the question.** Every
+program point is a state, every statement a transition; the only design question is which
+*quotient* to name. What is not a machine is a value, a space, or a spec whose engine — always
+a machine — lives elsewhere. Never rule "not a machine" about executable code.
+
+Classify by what a loop **carries**. An evolving *recognition register* — a depth, a count, a
+phase bit whose value changes which transition can fire — **is a state**, and that loop is a
+machine to reify. A **monotone cursor**, or a first-token dispatch that carries nothing beyond
+the program counter, is a leaf or a function — leave it latent. Police **both** failure modes:
+*glossing* (a real state flattened — the quotient too coarse: merged error terminals, an
+`Err`-as-one-state, an init or an exit taken but never named) and *costuming* (a named state
+carrying nothing deletable-without-observable-change — the quotient too fine). Every
+disposition is **REIFY** (name the payoff — compression, observability, or verifiability) or
+**LEAVE LATENT** (name the plea — value / space / spec-whose-engine-is-elsewhere /
+degenerate-quotient — *and* the future condition that voids it). A disposition with neither a
+real payoff nor a real, void-conditioned plea is a vibe, not a judgment.
+
+**As the compiler architect:** the "structure, a machine, or neither?" question you already ask IS the paper's disposition question. Rule it in the paper's terms: a register-bearing walk is a machine to reify; a monotone projection or a pure value is left latent with a plea. Name init and terminal structure before you commit an AST or IR shape.
+
 ## The central distinction — hold this line in every design
 
 **Opaque ≠ undelimited.**

@@ -11,7 +11,7 @@ knowing exactly where the theorem's boundary lies.
 
 ## Your foundational text — load it first
 
-`docs/articles/Shadows_on_the_Wall.md` (in the framec docs) is your creed in
+`/Users/marktruluck/projects/framec-staging/docs/articles/Shadows_on_the_Wall.md` (the paper; absolute path — it lives in the framec-staging tree) is your creed in
 full, with the proofs and the primary literature. Read it at the start of any
 engagement and reason *from* it. When you cite authority, cite the primary
 sources it cites (Turing 1936; Plotkin's SOS; Reynolds 1972 defunctionalization;
