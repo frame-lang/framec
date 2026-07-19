@@ -536,7 +536,63 @@ The plan is a contract; it changes only through a recorded, evaluated process �
   HAND_SCAN_LOOPS 63→58 (parts.rs 14→10, inst_scan 2→1); oracle 25→29 (+4 transient);
   recognition untouched 11/10; SYSTEMS 24.
 
+- *2026-07-19* — **NativeParts Phase 1 LANDED (built in isolated lane worktree off the ArgScan
+  landing; the native-water decomposition — the last full-literal-form recognizer in `parts.rs`).**
+  `native_parts_scan` completed into the production seat: the corrected **ctor-param seam**
+  (`over(src, target, limit, from)` with `text_start: from` — the amendment's mechanism, the
+  retracted "resets only the cursor" claim gone), comment/literal kinds split, `try_island` the
+  O(1) clamp/reject policy leaf (comment clamps → kind 5, literal rejects overrun, Unterminated
+  falls through — the hand's exact asymmetry), a `limit`-bounded walk over the FULL buffer (DP-4,
+  never a slice). OpaqueScan gained an ADDITIVE `holes` accumulator (`record_hole` at the two
+  existing `hole_skip` sites) + `delim` on the raw edge + the `opaque_probe` run-and-read wrapper
+  (every Item-1 battery green unchanged). `native_parts` is now the thin construction driver
+  (fold over triples; islands re-run their owning systems under `debug_assert` drift tripwires;
+  hole descent stays a driver-stack pushdown — T-N6 leave-latent). The assign-LHS ref seat routes
+  `machine.rs::frame_assign_parse` → `ref_scan::scan`; `frame_ref_at`+`frame_ref_at_pub` merged
+  to one `#[doc(hidden)] frame_ref_at_hand`. **The 14-row ledger carried in full** — 8
+  carry-and-name + 3 carry + 2 leave-latent + 1 exempt; the swallows (T-N1/N2), the comment
+  `delim: b'/'` fabrication (T-N5), the `{{` phantom hole (T-N8) pinned **identical, not fixed**
+  (DP-1 Text-run + H-1 validator-ownership FIXES stay Phase-2 deltas Δ1–Δ5). **NO hand path
+  deleted** — `native_parts_hand`/`literal_node_hand`/`frame_ref_at_hand` are verbatim oracles,
+  test-only callers, C-final owns their deletion. **Census (composed, from the ArgScan baseline
+  58):** production HAND_SCAN_LOOPS 58→55 (parts.rs walk + frame_ref_at's 2 loops → oracle);
+  recognition **11→9** (`parts.rs`'s 2 `comment_at`/`literal_at` retired); oracle 29→32 / 10→12
+  transient; SYSTEMS 24 (revised, P4 "complete not add"). Suite 398/0; regen fixpoint 24/0 across
+  a rebuild incl. the release leg (the wired compiler re-scans its own systems byte-identically).
+  **Three deviations recorded (C-2 discharge):** (1) a second beyond-R3-gate fixture consumer —
+  `tests/reindent.rs` drove `native_parts` on JS/C++ (test-only reach; production refuses those
+  targets pre-`segment()`) — re-pinned by the record's OWN §7.2 policy (core equivalents kept;
+  JS/C++ moved to a hand-oracle variant), a faithful application to a consumer the record enumerated
+  only for `tests/holes.rs`; (2) the `frame_ref_at`/`frame_ref_at_pub` merge — within §6's intent
+  (wrapper was pure delegation; body verbatim-diffed; oracle-only), no STOP required; (3) fuzz pool
+  gained closed-holed-literal fragments + 800 seeds so the holes teeth counter clears — the bar was
+  **raised, not lowered**. C-1 (a curated nested-block-comment fixture the fuzz never generated)
+  discharged into the corpus before this commit.
+  **⚠ ACCOUNTING CORRECTION (warden Finding 4):** NativeParts does NOT retire the campaign's last
+  production recognition — it retires `parts.rs`'s. The residual 9 = 7 `lex.rs` token defs + 2
+  `sections.rs::section_keyword_starts` calls, the latter named by no item in scope. **C2
+  (recognition = 0) now carries an OPEN OWNER-GATE THREAD: the `sections.rs` owner** (and whether
+  the 7 `lex.rs` defs are in-scope for C2 or parked-@@fsm territory). Filed, not hand-ruled.
+
 ### Audit Log (append-only — warden verdicts)
+- *2026-07-19* — GATE-A (wired), NativeParts Phase 1: **PASS-WITH-CONDITIONS — commit proceeded.**
+  D1–D4,D8 run-verified from a clean cache (baseline re-derived from a `git archive` of b9f5162,
+  not trusted; fuzz generator re-implemented in Python to count form incidence): build 0-new-warn
+  (7 pre-existing at b9f5162, per-warning diffed); regen 24/0 on the debug binary AND a freshly
+  rebuilt release binary (bootstrap leg); suite 398/0; battery 16+5+6 row-for-row vs §9 (B-12
+  exempt per T-U1); teeth asserted 50/10/50/10/10 and met; oracles verbatim-diffed (renames+comments
+  only); ctor-param seam gen-confirmed; carried swallows pinned NOT fixed; DP-1/H-1 correctly
+  absent; census 11→9 / 58→55 / 10→12 / 29→32 / 24 vs re-derived baseline; negative predicates hold
+  (nothing was committed at verdict time; all six hand fns present; no diagnostics channel;
+  validate.rs/tree untouched). Conditions: **C-1** nested-block-comment curated fixture (discharged
+  before commit); **C-2** the three faithful deviations recorded (this landing entry). **Finding 4
+  flag:** `sections.rs::section_keyword_starts` (2 prod calls) needs a named owner before C2 closes.
+- *2026-07-19* — GATE-B, NativeParts Phase 1: **PASS → LANDED.** Post-commit re-verify: suite
+  398/0; regen 24/0 across rebuild (self-scan, wired); census exact (11→9 / 58→55); no production
+  hand path deleted (Phase-1 parity landing — deletion is C-final); the three deviations recorded
+  and the accounting correction filed in the Change Log; Progress ledger row 4 updated with the
+  `sections.rs` open thread. Conditions from GATE-A discharged in this atomic commit.
+
 - *2026-07-19* — GATE-A (pre-wire), ArgScan: **PASS-WITH-CONDITIONS — wiring proceeded.**
   D1–D4,D8 run-verified (batteries 57+8 name-for-name vs §11.7; carry == hand proven; fix teeth
   != hand; oracle copies verbatim-diffed; scan_node_sys zero production callers). Beyond-design
@@ -827,6 +883,14 @@ what each item **retires**.
 (holes+delim), and Items 2/4 make the segmenter/section oracles self-contained. Until then they
 survive as oracles + un-converted consumers — tracked here, not forgotten.
 
+**Residual production recognition after NativeParts Phase 1 (census 9, warden Finding 4):**
+- `sections.rs::section_keyword_starts` — **2 production `comment_at`/`literal_at` calls, named
+  by no item in scope.** R12 says "owned by Items 3/4" but neither item's text names `sections.rs`.
+  **OPEN OWNER QUESTION** before C2 (recognition = 0) can close.
+- `lex.rs` — **7 token definitions** (`lex_defs`). Whether these are C2-scope or belong to the
+  parked `@@fsm` lexical front end (guardrail 1) is itself an owner question.
+These two are the entire distance between the current 9 and C2's 0.
+
 ## What "excellent" means for this campaign
 
 - Never claim a conversion done until the hand path is **deleted** and the suite is green.
@@ -842,6 +906,6 @@ survive as oracles + un-converted consumers — tracked here, not forgotten.
 | 1 OpaqueScan | **warden PASS (GATE-A + GATE-B) — committed** | OpaqueScan, RawString, BraceBalance | skip path is the system; try_island routed; residual = holes (Item 4), close_brace (Item 2), machine skip (Item 3), + 3 oracles — all named; batteries+fuzz+milestone green |
 | 2 Segmenter | **close_brace capability: warden PASS (GATE-A+B, pending commit).** Body-end recognition off the hand Lexer onto OpaqueScan (`opaque_at`, 3-way signal). Remaining Item-2 scope: `hand_item_starts` oracle (→ C-final sweep) + `BodyBalance` `{}`-counter sub-system (named, before close) | segmenter, +OpaqueScan `kind`/`unterminated` registers | close_brace: yes. Item-2 whole: no (oracle + brace-counter named) |
 | 3 Grammar | **Dispatch-walks COMPLETE** (3c-3 d352021). **3d DeclWalk/DeclRead LANDED 2026-07-19** (M-wire done; hand decl_of + matching_brace DELETED; GATE-A PASS; GATE-B held until Phase B). **3e Head readers LANDED 2026-07-19** (lane worktree; hand head parse deleted; GATE-A+B PASS; Phase-2 deltas pending with per-delta entries). 3a (fbde61e), 3b (03671f1), BodyBalance (2f9d95c), 3c-1 MachineWalk (fa38988), 3c-2 StateWalk (c7637b3), **3c-3 body→BodyWalk** (warden PASS after D3 fix). All three inner dispatch walks (machine_section/state-member/body) are @@[scan(u8)] systems; BodyWalk fuses a brace COUNTER + a (start,depth) ACCUMULATOR. I1 proven each; loops 86→77, SYSTEMS 15→19. | stmt_scan; DelimBalance; MachineWalk; StateWalk; **BodyWalk** (19th) | 3a/3b/BodyBalance/3c-1/3c-2/3c-3: yes |
-| 4 Islands | **ArgScan LANDED 2026-07-19** (one seat; hand splitters deleted; 12 deltas incl. Bug B(iii); E407 provisional). **NativeParts design ACCEPTED, build NEXT** (retires the last hand-Lexer recognition; DP-1/H-1 ruled) | arg_scan (22nd..24th systems with 3d/3e); adjudication seam live; native_parts_scan completion pending | ArgScan hand path: yes (oracles C-final). NativeParts: no |
+| 4 Islands | **ArgScan LANDED 2026-07-19** (one seat; hand splitters deleted; 12 deltas incl. Bug B(iii); E407 provisional). **NativeParts Phase 1 LANDED 2026-07-19** (lane worktree; ctor-param seam; 14-row ledger carried; GATE-A+B PASS; DP-1/H-1 FIXES = Phase-2 Δ1–Δ5). Retires **`parts.rs`'s** production recognition (11→9), NOT the campaign's last — warden Finding 4: `sections.rs::section_keyword_starts` (2 calls) + 7 `lex.rs` defs remain; **C2 (recognition=0) blocked on an OWNER ruling: who owns `sections.rs`? are the `lex.rs` defs in C2 scope or parked-@@fsm?** | arg_scan + native_parts_scan / opaque_scan holes+delim / ref_scan seat (24 systems) | ArgScan hand path: yes (oracles C-final). NativeParts Phase 1: no (parity landing; oracles + Δ1–Δ5 + C-final own deletion) |
 | 5 Validators | not started | hsm_cycle, reachability | no |
 | 6 EmitDriver | not started | — | n/a (transducer, last) |

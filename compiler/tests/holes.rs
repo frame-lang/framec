@@ -15,7 +15,6 @@
 //! There is no variant that puts one inside `LiteralPart::Content`. The wrong answer
 //! is unrepresentable.
 
-use frame_compiler::text::scan::lex::Lexer;
 use frame_compiler::text::scan::literals::Target;
 use frame_compiler::text::scan::parts::native_parts;
 use frame_compiler::tree::body::{LiteralPart, NativePart, RefKind};
@@ -23,8 +22,7 @@ use frame_compiler::tree::{check_total, Node};
 
 fn parts_of(code: &str, t: Target) -> Vec<NativePart> {
     let b = code.as_bytes();
-    let lx = Lexer::new(b, t);
-    native_parts(&lx, b, 0, b.len())
+    native_parts(b, 0, b.len(), t)
 }
 
 /// Collect every `FrameRef` anywhere in the parts, at any depth.
@@ -120,7 +118,11 @@ fn multiple_refs_in_one_native_statement() {
 
 #[test]
 fn holes_nest() {
-    let found = ref_texts("const s = `outer ${ `inner ${$.deep}` }`;", Target::TypeScript);
+    // Re-pinned on a 4-target equivalent (Item 4 / R3: non-core targets are refused before
+    // `segment()`, so the TS-template original is unreachable in production; it lives on in
+    // the `native_parts_hand` battery until C-final — tests/native_parts.rs). Depth 2 for
+    // real: outer f-string hole → inner single-quoted literal → inner hole → ref.
+    let found = ref_texts("s = f\"a { f'b {$.deep} c' } d\"", Target::Python3);
     assert_eq!(found, vec!["$.deep"], "a ref in a NESTED hole is still a ref");
 }
 
@@ -143,11 +145,13 @@ fn a_sigil_in_a_comment_is_not_a_reference() {
 /// byte of the user's code is dropped or double-counted.
 #[test]
 fn parts_partition_the_native_span() {
+    // The TS/JS cases are re-pinned on 4-target equivalents (Item 4 / R3 — the originals
+    // move to the `native_parts_hand` battery in tests/native_parts.rs until C-final).
     for (code, target) in [
         (r#"print(f"count is {$.count}")"#, Target::Python3),
         ("let t = $.a + f(@@:self.b) * 3; // $.c\n", Target::Rust),
-        ("const s = `x ${ `y ${$.z}` }`;", Target::TypeScript),
-        (r#"s = "a } brace"; t = $.n;"#, Target::JavaScript),
+        ("s = f\"x { f'y {$.z}' } w\"", Target::Python3),
+        (r#"s = "a } brace"; t = $.n;"#, Target::Java),
     ] {
         let parts = parts_of(code, target);
         let mut cursor = 0usize;

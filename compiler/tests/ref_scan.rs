@@ -1,15 +1,16 @@
-//! **The Frame-reference recognizer, as a system, agrees with the hand `frame_ref_at`.**
+//! **The Frame-reference recognizer, as a system, agrees with the hand `frame_ref_at_hand`.**
 //!
 //! `ref_scan::scan` is generated from `ref_scan.frs`, a `@@[scan(u8)]` Frame system. This
-//! proves — by running — that it yields the SAME (kind, name, end) as the hand
-//! `frame_ref_at` at EVERY position of a corpus, across all the context kinds and the
-//! reject cases.
+//! proves — by running — that it yields the SAME (kind, name, end) as the hand recognizer
+//! at EVERY position of a corpus, across all the context kinds and the reject cases. As of
+//! Item 4 Commit C the system holds the LAST production seat (the statement scanner's
+//! assign-LHS); the hand fn is oracle-only, deleted at C-final.
 
-use frame_compiler::text::scan::parts::frame_ref_at_pub;
+use frame_compiler::text::scan::parts::frame_ref_at_hand;
 use frame_compiler::text::scan::ref_scan;
 
 fn hand(bytes: &[u8], i: usize) -> Option<(String, String, usize)> {
-    frame_ref_at_pub(bytes, i, bytes.len())
+    frame_ref_at_hand(bytes, i, bytes.len())
         .map(|r| (format!("{:?}", r.kind), r.name, r.span.end))
 }
 

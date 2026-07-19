@@ -515,3 +515,132 @@ fn opaque_at_variants_all_occur() {
         );
     }
 }
+
+// --------------------------------------------------------------------------------------
+// B-14 (Item 4, Commit A): the `opaque_probe` register battery.
+//
+// The probe is the driver's ONE source for a literal's `delim` + hole content-spans (the
+// same machine run that found the extent). Verified against the hand `Lexer::literal_at`'s
+// `LiteralExtent` — delim, holes, and end, register for register — plus the probe-level
+// pins of the carried behaviors: the `{{` second-brace phantom hole (T-N8, flips at Δ2)
+// and comments carrying `delim == 0` at the probe (the `b'/'` fabrication is the DRIVER's,
+// T-N5).
+
+/// Probe vs hand `LiteralExtent`, register for register, at position `i`.
+fn probe_matches_hand_literal(src: &str, i: usize, t: Target) {
+    use frame_compiler::text::scan::lex::Lexer;
+    use frame_compiler::text::scan::opaque_scan::opaque_probe;
+    let b = src.as_bytes();
+    let lx = Lexer::new(b, t);
+    let l = lx
+        .literal_at(i)
+        .expect("hand literal_at must not Err here")
+        .expect("hand literal_at must recognize here");
+    let p = opaque_probe(b, i, t).expect("probe must recognize where the hand does");
+    assert_eq!(p.kind, 2, "literal kind on {src:?} at {i}");
+    assert_eq!(p.end, l.span.end, "extent end on {src:?} at {i}");
+    assert_eq!(p.delim, l.delim, "delim register on {src:?} at {i}");
+    let hand_holes: Vec<(usize, usize)> = l.holes.iter().map(|h| (h.start, h.end)).collect();
+    assert_eq!(p.holes, hand_holes, "holes register on {src:?} at {i}");
+}
+
+#[test]
+fn probe_delim_per_form_matches_hand() {
+    // Plain quoted, both quotes, per target (`'x'` is the char/single-quote form).
+    for t in [Target::C, Target::Java, Target::Rust, Target::Python3] {
+        probe_matches_hand_literal(r#"x = "abc";"#, 4, t);
+        probe_matches_hand_literal("y = 'z';", 4, t);
+    }
+    // Rust raw string → delim b'"' (the Item-4 raw-edge register; Lexer::rust_raw parity).
+    probe_matches_hand_literal(r##"let s = r#"raw"#;"##, 8, Target::Rust);
+    probe_matches_hand_literal(r#"let s = r"raw";"#, 8, Target::Rust);
+    // Python triples, both quote bytes.
+    probe_matches_hand_literal(r#"s = """abc""""#, 4, Target::Python3);
+    probe_matches_hand_literal("s = '''abc'''", 4, Target::Python3);
+}
+
+#[test]
+fn probe_holes_per_fstring_shape_match_hand() {
+    // One hole; two holes; adjacent holes; a hole in a triple; nested braces inside a hole.
+    for (src, i) in [
+        (r#"f"a {x} b""#, 1),
+        (r#"f"{x}{y}""#, 1),
+        (r#"f"a {x!r} b {y:>8} c""#, 1),
+        (r#"f"""t {v} u""""#, 1),
+        (r#"f"d { {'k': 1}['k'] } e""#, 1),
+    ] {
+        probe_matches_hand_literal(src, i, Target::Python3);
+    }
+}
+
+#[test]
+fn probe_pins_the_double_brace_phantom_hole() {
+    // T-N8, pinned at the probe level (flips at Δ2): the `{{` guard checks only the NEXT
+    // byte and the scan advances 1, so the SECOND brace opens a phantom hole. Identical in
+    // the hand `hole_at` — proven by the register-for-register match — and asserted here
+    // as the CURRENT (wrong) content so the pin has teeth.
+    use frame_compiler::text::scan::opaque_scan::opaque_probe;
+
+    let src = r#"f"{{x}}""#; // f=0 "=1 {=2 {=3 x=4 }=5 }=6 "=7
+    probe_matches_hand_literal(src, 1, Target::Python3);
+    let p = opaque_probe(src.as_bytes(), 1, Target::Python3).unwrap();
+    assert_eq!(p.holes, vec![(4, 5)], "phantom hole must contain exactly `x` today");
+
+    let src2 = r#"f"{{}}""#; // the empty phantom
+    probe_matches_hand_literal(src2, 1, Target::Python3);
+    let p2 = opaque_probe(src2.as_bytes(), 1, Target::Python3).unwrap();
+    assert_eq!(p2.holes, vec![(4, 4)], "empty phantom hole pinned");
+}
+
+#[test]
+fn probe_comment_kind_and_end_match_opaque_at() {
+    use frame_compiler::text::scan::opaque_scan::opaque_probe;
+    for (src, t) in [
+        ("// line\nx", Target::Rust),
+        ("/* block */x", Target::C),
+        ("# py\nx", Target::Python3),
+    ] {
+        let b = src.as_bytes();
+        let p = opaque_probe(b, 0, t).expect("comment probes");
+        assert_eq!(p.kind, 1, "comment kind on {src:?}");
+        match opaque_at(b, 0, t) {
+            OpaqueAt::Comment(end) => assert_eq!(p.end, end, "probe.end ≡ opaque_at end"),
+            other => panic!("expected Comment for {src:?}, got {other:?}"),
+        }
+        // The probe reports NO delim for a comment — the `b'/'` every comment NODE carries
+        // is the driver's fabrication (T-N5, flips at Δ4), not a machine register.
+        assert_eq!(p.delim, 0, "comment delim register on {src:?}");
+        assert!(p.holes.is_empty(), "comments have no holes");
+    }
+}
+
+#[test]
+fn probe_end_equals_opaque_at_end_everywhere() {
+    use frame_compiler::text::scan::opaque_scan::opaque_probe;
+    // The single-source/double-run tripwire, swept: wherever `opaque_at` reports a closed
+    // body, the probe reports the SAME end (same machine, same run shape).
+    let corpus: &[&str] = &[
+        r#"a = "s" + 'c'; // tail"#,
+        r#"f"a {x} b" '''t''' # c"#,
+        r##"r#"raw"# "q" /* b */ 'x'"##,
+        "\"\"\"t {v} u\"\"\" 'w'",
+    ];
+    for t in [Target::C, Target::Java, Target::Rust, Target::Python3] {
+        for src in corpus {
+            let b = src.as_bytes();
+            for i in 0..b.len() {
+                let at = opaque_at(b, i, t);
+                let p = opaque_probe(b, i, t);
+                match at {
+                    OpaqueAt::Comment(end) | OpaqueAt::Literal(end) => {
+                        let p = p.expect("probe must accept where opaque_at accepts");
+                        assert_eq!(p.end, end, "end drift at {i} of {src:?} ({t:?})");
+                    }
+                    OpaqueAt::None | OpaqueAt::Unterminated => {
+                        assert!(p.is_none(), "probe must reject where opaque_at rejects");
+                    }
+                }
+            }
+        }
+    }
+}

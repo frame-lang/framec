@@ -13,8 +13,14 @@ use std::any::Any;
 // framec owns the WALK (dispatch + the per-body scan loops + the nesting depth counter); the
 // native leaves answer only per-target FACTS ("does form X open at i", "is this the close") —
 // no walk lives in a leaf. Every consumer of the hand lexer used only the extent (`.span.end`);
-// holes are dead except that a Python `{…}` is SKIPPED while scanning (it can hide a delim), so
-// `hole_skip` reproduces that one effect on the extent.
+// a Python `{…}` is SKIPPED while scanning (it can hide a delim), so `hole_skip` reproduces
+// that one effect on the extent.
+//
+// Registers for Item 4: `holes` accumulates each Python `{…}` content-span at the hole_skip
+// sites (single-source with the skip — the walk that skips a hole is the walk that records
+// it); `delim` is now also set on the raw-string edge (≡ `Lexer::rust_raw`'s `b'"'`). Read via
+// `opaque_probe` (one run, all registers). String-blind hole delimitation (R6/T-N7) and the
+// `{{` second-brace phantom (T-N8) are carried, pinned behaviors — Δ1/Δ2.
 //
 // Forms (Lexer form tables, 4 targets):
 //   C/Java: `//`, `/*…*/`(no nest), `"…"`, `'…'` (escapes)
@@ -65,12 +71,13 @@ pub struct OpaqueScan<'a> {
     pub depth: i32,
     pub unterminated: bool,
     pub kind: i32,
+    pub holes: Vec<(usize, usize)>,
 }
 
 impl<'a> OpaqueScan<'a> {
     pub fn over(src: &'a [u8], target: Target) -> Self {
         let compartment = OpaqueScanComp { state: "Start".to_string(), vars: OpaqueScanVars::Start {  }, args: OpaqueScanArgs::Start {  } };
-        OpaqueScan { src, cursor: 0, compartment, stack: Vec::new(), target: target, delim: 0, multiline: false, nests: false, depth: 0, unterminated: false, kind: 0 }
+        OpaqueScan { src, cursor: 0, compartment, stack: Vec::new(), target: target, delim: 0, multiline: false, nests: false, depth: 0, unterminated: false, kind: 0, holes: Vec::new() }
     }
 
     pub fn scan_at(&mut self, start: usize) -> bool {
@@ -81,6 +88,7 @@ impl<'a> OpaqueScan<'a> {
         self.depth = 0;
         self.unterminated = false;
         self.kind = 0;
+        self.holes = Vec::new();
         self.compartment = OpaqueScanComp { state: "Start".to_string(), vars: OpaqueScanVars::Start {  }, args: OpaqueScanArgs::Start {  } };
         let mut __steps: usize = 0;
         while self.compartment.state != "Accept" && self.compartment.state != "Reject" {
@@ -131,6 +139,7 @@ impl<'a> OpaqueScan<'a> {
         let rr = raw_scan(self.src, self.cursor, self.target);
         if rr > self.cursor {
             self.kind = 2;
+            self.delim = 34;
             self.cursor = rr;
             let mut __next = OpaqueScanComp { state: "Accept".to_string(), vars: OpaqueScanVars::Accept {  }, args: OpaqueScanArgs::Accept { } };
             self.compartment = __next;
@@ -244,6 +253,7 @@ impl<'a> OpaqueScan<'a> {
         }
         let hs = hole_skip(self.src, self.cursor, self.target);
         if hs > self.cursor {
+            record_hole(&mut self.holes, self.cursor + 1, hs - 1);
             self.cursor = hs;
             let mut __next = OpaqueScanComp { state: "StrBody".to_string(), vars: OpaqueScanVars::StrBody {  }, args: OpaqueScanArgs::StrBody { } };
             self.compartment = __next;
@@ -273,6 +283,7 @@ impl<'a> OpaqueScan<'a> {
         }
         let hs = hole_skip(self.src, self.cursor, self.target);
         if hs > self.cursor {
+            record_hole(&mut self.holes, self.cursor + 1, hs - 1);
             self.cursor = hs;
             let mut __next = OpaqueScanComp { state: "TripleBody".to_string(), vars: OpaqueScanVars::TripleBody {  }, args: OpaqueScanArgs::TripleBody { } };
             self.compartment = __next;

@@ -1,10 +1,11 @@
 //! Frame-reference recognizer, **dogfooded as an `@@[scan(u8)]` system** — the `@@system`
-//! analogue of the hand [`super::parts`]`::frame_ref_at`.
+//! analogue of the hand recognizer (now `frame_ref_at_hand`, oracle-only since Item 4
+//! Commit C routed its last production seat, the statement scanner's assign-LHS, here).
 //!
 //! [`ref_scan.frs`] recognizes `$.name` (a state var) or `@@:word` (a context ref) at the
 //! cursor, classifying the kind. framec owns the shape recognition; the leaves here are
 //! trivial byte predicates and the kind lookup. A differential test proves the (kind, name,
-//! end) it yields matches `frame_ref_at` at every position.
+//! end) it yields matches `frame_ref_at_hand` at every position.
 //!
 //! `.gen.rs` regen: `framec-ng -l rust --emit ref_scan.frs | grep -v '^#!\[allow' >
 //! ref_scan.gen.rs`.
@@ -24,8 +25,9 @@ fn is_ident_or_dot_at(src: &[u8], i: usize) -> bool {
     i < src.len() && (src[i].is_ascii_alphanumeric() || src[i] == b'_' || src[i] == b'.')
 }
 
-/// Classify a `@@:word` context ref by its leading word — the same ladder as
-/// `frame_ref_at`: `self`/`data`/`params`/`return`/`event`/`system`, else ContextSelf.
+/// Classify a `@@:word` context ref by its leading word — the same ladder as the hand
+/// `frame_ref_at_hand`: `self`/`data`/`params`/`return`/`event`/`system`, else ContextSelf
+/// (T-R1, carried) — by `starts_with`, not segment-match (T-R2, carried; fix Δ5).
 fn classify_context(src: &[u8], ws: usize, we: usize) -> i32 {
     let word = &src[ws..we];
     if word.starts_with(b"self") {
@@ -74,7 +76,7 @@ mod fsm {
 
 /// A Frame reference recognized at `bytes[i..]`, if any: `(kind, name, end)` where `end` is
 /// the offset one past the ref. `None` if there is no reference there — the same answer
-/// [`super::parts`]`::frame_ref_at` gives.
+/// the hand `frame_ref_at_hand` oracle gives.
 pub fn scan(bytes: &[u8], i: usize) -> Option<(RefKind, String, usize)> {
     let mut m = fsm::RefScan::over(bytes);
     if !m.scan_at(i) {

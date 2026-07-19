@@ -29,7 +29,6 @@
 
 use frame_compiler::text::scan::arg_scan::{self, AngleReading, ArgsOut, Refusal};
 use frame_compiler::text::scan::inst_scan;
-use frame_compiler::text::scan::lex::Lexer;
 use frame_compiler::text::scan::literals::Target;
 use frame_compiler::text::scan::parts::{native_parts, parse_inst_args_hand};
 use frame_compiler::tree::body::{ArgAngles, InstArg, NativePart, ParamGroup};
@@ -1247,8 +1246,7 @@ fn milestone_native_parts_route() {
     let water = "a = @@Counter(10); b";
     for &t in &TARGETS {
         let bytes = water.as_bytes();
-        let lx = Lexer::new(bytes, t);
-        let parts: Vec<(i32, usize, usize)> = native_parts(&lx, bytes, 0, bytes.len())
+        let parts: Vec<(i32, usize, usize)> = native_parts(bytes, 0, bytes.len(), t)
             .iter()
             .map(|p| match p {
                 NativePart::Text(x) => (0, x.span.start, x.span.end),

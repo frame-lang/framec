@@ -122,7 +122,7 @@ pub fn segment(src: &Source, target: Target) -> Result<FileAst, SegmentError> {
         if water_start < start {
             items.push(Item::Native(NativeItem {
                 span: Span::new(water_start, start),
-                parts: parts::native_parts(&lx, bytes, water_start, start),
+                parts: parts::native_parts(bytes, water_start, start, target),
             }));
         }
         let item = read_pragma(&lx, bytes, start)?;
@@ -132,7 +132,7 @@ pub fn segment(src: &Source, target: Target) -> Result<FileAst, SegmentError> {
     if water_start < n {
         items.push(Item::Native(NativeItem {
             span: Span::new(water_start, n),
-            parts: parts::native_parts(&lx, bytes, water_start, n),
+            parts: parts::native_parts(bytes, water_start, n, target),
         }));
     }
 

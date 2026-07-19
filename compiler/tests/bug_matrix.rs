@@ -106,14 +106,12 @@ fn b215() -> Status {
 /// #216 / #224 — the `@@` was deleted inside an f-string; and the compiler gave TWO
 /// answers to "is a sigil in a string a reference?"
 fn b216_224() -> Status {
-    use frame_compiler::text::scan::lex::Lexer;
     use frame_compiler::text::scan::parts::native_parts;
     use frame_compiler::tree::body::{LiteralPart, NativePart};
 
     fn refs(code: &str, t: Target) -> Vec<String> {
         let b = code.as_bytes();
-        let lx = Lexer::new(b, t);
-        let parts = native_parts(&lx, b, 0, b.len());
+        let parts = native_parts(b, 0, b.len(), t);
         fn walk(ps: &[NativePart], src: &str, out: &mut Vec<String>) {
             for p in ps {
                 match p {

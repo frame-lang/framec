@@ -354,7 +354,7 @@ fn push_native(
     }
     out.push(Stmt::Native(NativeStmt {
         span: Span::new(a, z),
-        parts: native_parts(lx, bytes, a, z),
+        parts: native_parts(bytes, a, z, lx.target()),
         // The statement's column. RENDER's re-indent basis: the emitted method sits at
         // the TARGET's nesting depth, while these bytes were written at FRAME's — so
         // something must re-indent, and it needs to know by how much.
@@ -960,8 +960,9 @@ fn args_of(bytes: &[u8], from: usize, to: usize) -> Option<String> {
 /// source** — `frame_assign` builds the node from it AND the `BodyWalk` system's `stmt_end` leaf
 /// reads its `.eol` (the extent), so the statement boundary the walk finds and the extent the
 /// node carries cannot drift. `native_parts`-FREE (the extent never reads it — `native_parts`
-/// only fills the node's `rhs`), and target-free (`frame_ref_at_pub` is RefScan-backed). `None`
-/// if no single-`=` assignment opens here.
+/// only fills the node's `rhs`), and target-free (the LHS runs the dogfooded `RefScan` system —
+/// Item 4 Commit C; the hand recognizer survives only as `frame_ref_at_hand`, the differential
+/// oracle). `None` if no single-`=` assignment opens here.
 struct AssignHead {
     lhs: FrameRef,
     lhs_end: usize,
@@ -972,7 +973,17 @@ struct AssignHead {
 }
 
 fn frame_assign_parse(bytes: &[u8], i: usize, limit: usize) -> Option<AssignHead> {
-    let lhs = super::parts::frame_ref_at_pub(bytes, i, limit)?;
+    // The hand fn's `to` bound is realized by the slice: all its guards and runs were `< to`,
+    // and tests/ref_scan.rs proves hand ≡ system at every position on full slices — the same
+    // composition production `native_parts` already uses. The T-R1/T-R2 glosses (unknown
+    // `@@:word` defaults to ContextSelf; prefix-overmatch) ride the system unchanged —
+    // carried, named, pinned (B-9/B-10); fix is Δ5.
+    let (kind, name, end) = super::ref_scan::scan(&bytes[..limit], i)?;
+    let lhs = FrameRef {
+        span: Span::new(i, end),
+        kind,
+        name,
+    };
     let lhs_end = lhs.span.end;
 
     // A single `=` must follow (not `==`, not `+=` — see below).
@@ -1025,7 +1036,7 @@ fn frame_assign(lx: &Lexer, bytes: &[u8], i: usize, limit: usize, col: u32) -> O
         op: TriviaNode {
             span: Span::new(h.lhs_end, h.rhs_start),
         },
-        rhs: native_parts(lx, bytes, h.rhs_start, h.rhs_end),
+        rhs: native_parts(bytes, h.rhs_start, h.rhs_end, lx.target()),
         rhs_span: Span::new(h.rhs_start, h.rhs_end),
         tail: if h.rhs_end < h.eol {
             Some(TriviaNode {
@@ -1133,7 +1144,7 @@ fn frame_call(lx: &Lexer, bytes: &[u8], i: usize, limit: usize, depth: u32, col:
                 span: Span::new(close - 1, h.end),
             },
             depth,
-            expr: native_parts(lx, bytes, open + 1, close - 1),
+            expr: native_parts(bytes, open + 1, close - 1, lx.target()),
             expr_span: Span::new(open + 1, close - 1),
         })),
         CallHeadKind::SelfCall {

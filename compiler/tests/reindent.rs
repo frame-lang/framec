@@ -103,7 +103,10 @@ fn ordinary_code_still_gets_reindented() {
     );
 }
 
-/// Raw strings, template literals, C++ raw strings — every literal form, same rule.
+/// Every multiline literal form, same rule. **Re-pinned on 4-target equivalents** (Item 4 /
+/// R3: non-core targets are refused before `segment()`, so the JS-template and C++-raw
+/// originals are unreachable in production; they live on against the hand oracle below
+/// until C-final).
 #[test]
 fn every_multiline_literal_form_is_protected() {
     for (code, target, must_survive) in [
@@ -113,16 +116,16 @@ fn every_multiline_literal_form_is_protected() {
             Target::Rust,
             "\n        KEEP\n",
         ),
-        // JS template literal
+        // Rust plain `"` string — multiline by the language's own grammar
         (
-            "const s = `\n        KEEP\n        `;",
-            Target::JavaScript,
+            "let s = \"\n        KEEP\n        \";",
+            Target::Rust,
             "\n        KEEP\n",
         ),
-        // C++ raw string
+        // Python `'''` triple (the `"""` form is #215's own test above)
         (
-            "auto s = R\"x(\n        KEEP\n        )x\";",
-            Target::Cpp,
+            "s = '''\n        KEEP\n        '''",
+            Target::Python3,
             "\n        KEEP\n",
         ),
     ] {
@@ -131,6 +134,47 @@ fn every_multiline_literal_form_is_protected() {
             out.contains(must_survive),
             "{target:?}: the literal's interior must survive a dedent verbatim.\n\
              got:\n{out}"
+        );
+    }
+}
+
+/// The JS-template and C++-raw originals, **against the hand oracle** (`native_parts_hand`
+/// still knows all 16 targets' forms; production refuses those targets before `segment()` —
+/// R3). `render_native` folds a statement's parts, so the hand-built tree exercises the
+/// same protection. Deleted with the oracle at C-final.
+#[test]
+fn js_and_cpp_multiline_forms_protected_via_the_hand_oracle() {
+    use frame_compiler::text::scan::parts::native_parts_hand;
+    use frame_compiler::tree::body::NativeStmt;
+
+    for (code, target, must_survive) in [
+        (
+            "const s = `\n        KEEP\n        `;",
+            Target::JavaScript,
+            "\n        KEEP\n",
+        ),
+        (
+            "auto s = R\"x(\n        KEEP\n        )x\";",
+            Target::Cpp,
+            "\n        KEEP\n",
+        ),
+    ] {
+        let src = Source::new("t", code.as_bytes().to_vec()).unwrap();
+        let bytes = code.as_bytes();
+        let lx = Lexer::new(bytes, target);
+        let stmt = NativeStmt {
+            span: Span::new(0, bytes.len()),
+            parts: native_parts_hand(&lx, bytes, 0, bytes.len()),
+            logical_indent: 0,
+            block_depth: Some(0),
+        };
+        let mut sink = Sink::new();
+        sink.native(render_native(&src, &stmt, -6, &identity_lowering()));
+        let out = sink.finish();
+        assert!(
+            out.contains(must_survive),
+            "{target:?} (hand oracle): the literal's interior must survive a dedent \
+             verbatim.\ngot:\n{out}"
         );
     }
 }
