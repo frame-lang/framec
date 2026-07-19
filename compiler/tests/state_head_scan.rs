@@ -14,9 +14,11 @@
 //! T-S8 — the CONTENT at `at` is unconstrained and swept off-contract too), for all four
 //! cleanroom targets, over realistic AND adversarial heads AND a deterministic fuzz corpus.
 //! The parts carry OFFSETS, not Strings, so the T-S9 empty-parent (`Some("")`) case stays
-//! distinguishable from no-parent. PHASE 1 IS BYTE-PARITY: the hand path's bugs are
-//! REPRODUCED and PINNED; fixes are recorded Phase-2 deltas (D1 opaque-aware seeks, D2
-//! params-skipping parent hunt, D3 limit-bounded probe).
+//! distinguishable from no-parent. The differential proves the FUSION (machine == oracle) —
+//! both share the leaves, so it stays LOCKED across the Phase-2 deltas. All THREE Phase-2
+//! deltas have LANDED (the machine AND the oracle moved together): D1 opaque-aware seeks
+//! (T-S3 / H1), D2 params-skipping parent hunt (T-S5), D3 limit-bounded parent probe (T-S9).
+//! The NEW behavior of each is pinned by its directed test, not by the differential.
 //!
 //! LEDGER ROSTER (design §5/§7 — one test per Phase-1 row):
 //!   T-S1 unbalanced body clamps       -> `t_s1_unbalanced_body_clamps_pinned` (register +
@@ -37,7 +39,9 @@
 //!   T-S7 malformed parent stops hunt  -> `t_s7_malformed_parent_stops_hunt_pinned`.
 //!   T-S8 off-contract `at`            -> no test (position precondition, documented in the
 //!        mod docs; content-off-contract positions ARE swept by the rectangles).
-//!   T-S9 limit-straddle parent probe  -> `t_s9_limit_straddle_pinned` (P1 pin; Phase-2 D3).
+//!   T-S9 limit-bounded parent probe (D3 LANDED) -> `t_s9_directed` (P2 directed; replaced
+//!        `t_s9_limit_straddle_pinned`). `is_dollar_name` is now limit-bounded: the straddle
+//!        yields no parent and the reader never reads past `limit`.
 
 use frame_compiler::text::scan::literals::Target;
 use frame_compiler::text::scan::machine::state_extent;
@@ -326,27 +330,28 @@ fn t_s7_malformed_parent_stops_hunt_pinned() {
     }
 }
 
-/// T-S9 (carry P1 -> fix P2 D3): the parent name-start probe is LEN-bounded (the hand `.get`)
-/// while every other scan is LIMIT-bounded — a span cut right after `=> $` with a name byte
-/// beyond `limit` reads ONE byte past `limit` and yields an EMPTY parent extent
-/// (`has_parent` with `parent_start == parent_end` — the `Some("")` the offset-carrying parts
-/// keep distinguishable). Phase-2 D3 bounds the probe by `limit` (-> no-parent).
+/// T-S9 (fix P2 D3): the parent name-start probe (`is_dollar_name`) is now LIMIT-bounded, like
+/// every other scan. Replaces `t_s9_limit_straddle_pinned`. A span cut right after `=> $` with
+/// the name byte beyond `limit` no longer reads one byte past `limit` for an empty `Some("")`
+/// parent — it yields NO parent. The leaf is shared by the machine's `$ParentName` and the
+/// oracle's parent hunt, so the single edit moves both together and the differential stays
+/// LOCKED; this pins the NEW behavior.
 #[test]
-fn t_s9_limit_straddle_pinned() {
-    let src = b"$A => $Px { }"; // limit 7 cuts between the `$` and the `P`
+fn t_s9_directed() {
+    let src = b"$A => $Px { }"; // limit 7 cuts between the `$` (byte 6) and the `P` (byte 7)
     for t in TARGETS {
         let p = agree(src, 0, 7, t);
-        assert!(p.has_parent, "the len-bounded probe reads past limit for {t:?} (pinned)");
-        assert_eq!(
-            (p.parent_start, p.parent_end),
-            (7, 7),
-            "the parent extent is EMPTY (the `Some(\"\")` case) for {t:?}"
-        );
+        assert!(!p.has_parent, "the limit-bounded probe does NOT read past limit for {t:?}");
         assert!(!p.open_found, "no `{{` inside the cut");
-        assert_eq!((p.open, p.end), (7, 7));
-        // Control: cut ON the `$` (limit 6) and the probe cannot fire at all.
+        assert_eq!((p.open, p.end), (7, 7), "the reader stops at limit for {t:?}");
+        // Control: cut ON the `$` (limit 6) — the probe cannot fire at all, also no parent.
         let q = agree(src, 0, 6, t);
         assert!(!q.has_parent, "no straddle at limit 6 for {t:?}");
+        // Non-vacuity: the FULL span reads the real parent `Px` (the probe still works normally).
+        let f = agree(src, 0, src.len(), t);
+        assert!(f.has_parent, "the full span reads the real parent for {t:?}");
+        assert_eq!(&src[f.parent_start..f.parent_end], b"Px");
+        assert_eq!((f.open, f.end), (10, 13));
     }
 }
 

@@ -18,9 +18,9 @@
 //!
 //! framec owns the WALK (every seek is a per-byte state); the leaves are O(1) byte facts or
 //! runs of published systems: `paren_extent`/`body_end` → [`super::delim_balance`].
-//! Bound discipline: leaves are limit-bounded except `is_dollar_name`'s name-start probe,
-//! which mirrors the hand code's len-bound exactly (the T-S9 straddle, carried until its
-//! recorded Phase-2 delta). Position precondition (T-S8): callers pass `at < limit <= len`;
+//! Bound discipline: every leaf is limit-bounded, including `is_dollar_name`'s name-start probe
+//! (Phase 2 delta D3 — the T-S9 straddle is fixed: the reader never reads past `limit`).
+//! Position precondition (T-S8): callers pass `at < limit <= len`;
 //! the content at `at` is NOT part of the contract (the reader is total over any byte there).
 //!
 //! `.gen.rs` regen: `framec-ng -l rust --emit state_head_scan.frs | grep -v '^#!\[allow' >
@@ -71,18 +71,16 @@ fn is_ws(src: &[u8], i: usize, limit: usize) -> bool {
     i < limit && (src[i] == b' ' || src[i] == b'\t')
 }
 
-/// Is `$` + a name-start byte at `i`? The `$` check is LIMIT-bounded; the name-start probe at
-/// `i + 1` is **LEN-bounded** — mirroring the hand `bytes[p] == b'$' && is_name_start(bytes,
-/// p + 1)` (`.get`) EXACTLY. This is the T-S9 limit-straddle, carried in Phase 1: a span cut
-/// right after `=> $` with a name byte beyond `limit` reads one byte past `limit` and yields
-/// an empty parent extent. Phase 2 (recorded delta D3) makes this limit-bounded.
+/// Is `$` + a name-start byte at `i`, wholly inside `limit`? Both the `$` and the name-start
+/// byte at `i + 1` are LIMIT-bounded (Phase 2 delta D3, T-S9 fixed): a span cut right after
+/// `=> $` — with the name byte beyond `limit` — now yields NO parent instead of reading one
+/// byte past `limit` for an empty parent extent. In Phase 1 the `i + 1` probe was LEN-bounded
+/// (the hand `.get`); the reader no longer reads past `limit`. Shared by the machine's
+/// `$ParentName` and the oracle's parent hunt, so the single edit moves both together.
 fn is_dollar_name(src: &[u8], i: usize, limit: usize) -> bool {
-    i < limit
+    i + 1 < limit
         && src[i] == b'$'
-        && src
-            .get(i + 1)
-            .map(|b| b.is_ascii_alphabetic() || *b == b'_')
-            .unwrap_or(false)
+        && (src[i + 1].is_ascii_alphabetic() || src[i + 1] == b'_')
 }
 
 /// One past the `)` matching the `(` at `open`, or `0` (the absent sentinel — a real extent
