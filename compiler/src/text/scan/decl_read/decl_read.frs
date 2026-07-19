@@ -1,0 +1,126 @@
+@@[target("rust")]
+@@[scan(u8)]
+
+// The DECL-line reader, dogfooded as an `@@[scan(u8)]` system — a per-decl register TRANSDUCER
+// over the window `[from, to)` (the walk's answer: eol for a line decl, the body `{` for a
+// body-decl signature), StmtScan-style: the entry slices the input to `to` and scans at `from`;
+// offsets stay absolute. It replaces the hand `machine.rs::decl_of` chain.
+//
+// Its states are GRAMMAR POSITIONS that gate which fields remain admissible (after `:` no params
+// can follow; after `=` nothing but init text can). That gating is load-bearing: the one recorded
+// bug in this reader (`async` read as a name -> `def async(self):` SyntaxError) was a MODE error,
+// and `$Async` finally names the mode. It has NO `$Reject` — deliberately: the reader is TOTAL
+// (every window yields a decl shape, because the tree partition must own every byte);
+// malformedness is REGISTERS, not refusal — `empty_name` (ledger T7), `params_clamped` (T8).
+//
+// The machine records GEOMETRY (offsets + flags); the native `member_decl_of` builder makes the
+// VALUES (slice, trim, empty->None). framec owns the SEQUENCING; the leaves are per-target facts
+// or shared heads: `indent_end`/`ident_end`/`at_byte`/`async_modifier_at`/`eq_or_end`/`sys_start`
+// are O(window) byte scans reproducing the hand code exactly, and `params_close` is THE fix seam:
+// Phase A = the hand bare `(`/`)` counter verbatim (a RECORDED guardrail-4 exception with a
+// bounded lifetime — GATE-B does not close until Phase B routes it through
+// `delim_balance::balanced`, retiring the string-blindness of ledger T9). `target` is
+// construction config from day one so Phase B touches only the leaf.
+//
+// Regen: framec-ng -l rust --emit decl_read.frs | grep -v '^#!\[allow' > decl_read.gen.rs
+
+@@system DeclRead(target: Target) {
+    interface:
+        step()
+    machine:
+        $Indent {
+            step() {
+                self.cursor = indent_end(self.src, self.cursor);
+                -> $Async
+            }
+        }
+        $Async {
+            // `async fetch(...)` — `async` is a MODIFIER iff followed by ' '/'\t' (the recorded
+            // bug-fix state, machine.rs decl_of, finally named — ledger T10). `async(` /
+            // `asyncFoo` / bare `async` at window end remain a NAME.
+            step() {
+                if async_modifier_at(self.src, self.cursor) {
+                    self.is_async = true;
+                    self.cursor = indent_end(self.src, self.cursor + 5);
+                }
+                -> $Name
+            }
+        }
+        $Name {
+            step() {
+                self.name_s = self.cursor;
+                self.cursor = ident_end(self.src, self.cursor);
+                self.name_e = self.cursor;
+                if self.name_s == self.name_e {
+                    self.empty_name = true;
+                }
+                -> $Params
+            }
+        }
+        $Params {
+            step() {
+                if at_byte(self.src, self.cursor, 40) {
+                    self.has_params = true;
+                    self.params_open = self.cursor;
+                    let c = params_close(self.src, self.cursor, self.target);
+                    if c > self.cursor {
+                        self.params_close = c;
+                        self.cursor = c;
+                    } else {
+                        self.params_clamped = true;
+                        self.params_close = self.src.fsm_len();
+                        self.cursor = self.src.fsm_len();
+                    }
+                }
+                -> $Type
+            }
+        }
+        $Type {
+            step() {
+                self.cursor = indent_end(self.src, self.cursor);
+                if at_byte(self.src, self.cursor, 58) {
+                    self.cursor = self.cursor + 1;
+                    self.type_s = self.cursor;
+                    self.cursor = eq_or_end(self.src, self.cursor);
+                    self.type_e = self.cursor;
+                    self.has_type = true;
+                }
+                -> $Init
+            }
+        }
+        $Init {
+            step() {
+                if at_byte(self.src, self.cursor, 61) {
+                    self.has_init = true;
+                    self.init_s = self.cursor + 1;
+                    let s = sys_start(self.src, self.cursor + 1);
+                    let e = ident_end(self.src, s);
+                    if e > s {
+                        self.has_sys = true;
+                        self.sys_s = s;
+                        self.sys_e = e;
+                    }
+                }
+                -> $Accept
+            }
+        }
+        $Accept { }
+    domain:
+        target: Target = target
+        is_async: bool = false
+        empty_name: bool = false
+        name_s: usize = 0
+        name_e: usize = 0
+        has_params: bool = false
+        params_open: usize = 0
+        params_close: usize = 0
+        params_clamped: bool = false
+        has_type: bool = false
+        type_s: usize = 0
+        type_e: usize = 0
+        has_init: bool = false
+        init_s: usize = 0
+        has_sys: bool = false
+        sys_s: usize = 0
+        sys_e: usize = 0
+}

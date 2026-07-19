@@ -192,7 +192,7 @@ pub enum Decl {
     WithBody(BodyDecl),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct MemberDecl {
     pub span: Span,
     /// The declared name: `go`, `n`, `count`.

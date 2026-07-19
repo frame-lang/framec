@@ -16,7 +16,7 @@ use crate::tree::body::{
     TransitionStmt,
 };
 use crate::tree::{
-    BodyDecl, Decl, DeclSection, FrameSpan, HandlerNode, MachineMember, MachineSection, MemberDecl,
+    BodyDecl, Decl, DeclSection, FrameSpan, HandlerNode, MachineMember, MachineSection,
     StateMember, StateNode, TriviaNode,
 };
 use crate::Span;
@@ -124,9 +124,13 @@ fn state(lx: &Lexer, bytes: &[u8], at: usize, limit: usize) -> StateNode {
             }));
         }
         if bytes[start] == b'$' && bytes.get(start + 1) == Some(&b'.') {
-            // `$.name: T = init` — a state variable (Frame's own declaration).
+            // `$.name: T = init` — a state variable (Frame's own declaration), read through
+            // the dogfooded `DeclRead` system (the SAME reader `decl_section` uses).
             let e = to_end_of_line(bytes, start, close);
-            members.push(StateMember::StateVar(decl_of(bytes, start + 2, e, start)));
+            let shape = super::decl_read::read(bytes, start + 2, e, lx.target());
+            members.push(StateMember::StateVar(super::decl_read::member_decl_of(
+                bytes, &shape, e, start,
+            )));
             cursor = e;
         } else if let Some(h) = handler_at(lx, bytes, start, close) {
             // A handler: `name(...) {` / `$>() {` / `<$() {`.
@@ -740,15 +744,11 @@ pub fn skip_opaque_hand(bytes: &[u8], i: usize, limit: usize, target: Target) ->
     None
 }
 
-fn matching_brace(lx: &Lexer, bytes: &[u8], open: usize, limit: usize) -> usize {
-    balanced(lx, bytes, open, limit, b'{', b'}').unwrap_or(limit)
-}
-
 /// The matching-closer finder — **now the dogfooded `DelimBalance` system**
 /// (`delim_balance.frs`): an opaque-aware Dyck-1 counter over the `(o, c)` pair, bounded by
 /// `limit`. The hand counter loop (and its per-language-brace-counter ancestors, #219) is gone;
-/// `delim_balance::balanced_hand` survives as the differential oracle. `matching_brace` and the
-/// state/handler param scans all route here.
+/// `delim_balance::balanced_hand` survives as the differential oracle. The state/handler param
+/// scans route here; the decl-body extent asks `decl_extent` (same DelimBalance underneath).
 fn balanced(lx: &Lexer, bytes: &[u8], open: usize, limit: usize, o: u8, c: u8) -> Option<usize> {
     super::delim_balance::balanced(bytes, open, limit, o, c, lx.target())
 }
@@ -797,63 +797,110 @@ fn is_name_start(bytes: &[u8], i: usize) -> bool {
         .unwrap_or(false)
 }
 
-/// `interface:` / `domain:` — declarations, one per line.
+/// The extent of the declaration that starts at `i` — a LINE decl (to end-of-line) or, when
+/// `with_bodies` and a `{` sits on the decl's first line, a BODY decl (to one past its matching
+/// `}`, DelimBalance). **Single source** (Item 3d, `_scratch/declwalk_design.md`) — the `DeclWalk`
+/// system's `decl_end`/`decl_unterminated` leaves read it AND the `decl_section` driver
+/// re-derives the same extent to pick the builder, so the found boundary and the built node
+/// cannot drift (the `state_extent`/`handler_head` discipline).
+///
+/// Phase-A semantics are the pre-conversion `decl_section` fork, verbatim: `eol =
+/// to_end_of_line(i)`; `open` = the first `{` in `[i, eol)` by BARE byte find (a `{` inside a
+/// string default mis-forks — ledger T13, carried in Phase A, FIX in Phase B via an opaque-aware
+/// `body_open_at`); an unbalanced body clamps `end` to `limit` exactly as the hand
+/// `matching_brace`'s `unwrap_or(limit)` did — but the clamp is now REPORTED
+/// (`unterminated: true`, ledger T2) instead of erased.
+pub(crate) enum DeclExtent {
+    Line { eol: usize },
+    Body {
+        /// The `{` offset — the Signature/body split the driver builds the node around.
+        open: usize,
+        end: usize,
+        unterminated: bool,
+    },
+}
+
+pub(crate) fn decl_extent(
+    bytes: &[u8],
+    i: usize,
+    limit: usize,
+    with_bodies: bool,
+    target: Target,
+) -> DeclExtent {
+    let eol = to_end_of_line(bytes, i, limit);
+    if with_bodies {
+        if let Some(open) = (i..eol).find(|&k| bytes[k] == b'{') {
+            return match super::delim_balance::balanced(bytes, open, limit, b'{', b'}', target) {
+                Some(end) => DeclExtent::Body {
+                    open,
+                    end,
+                    unterminated: false,
+                },
+                None => DeclExtent::Body {
+                    open,
+                    end: limit,
+                    unterminated: true,
+                },
+            };
+        }
+    }
+    DeclExtent::Line { eol }
+}
+
+/// `interface:` / `domain:` — declarations, one per line. **Now a native driver over the
+/// dogfooded `DeclWalk` + `DeclRead` systems** (Item 3d): the `DeclWalk` system finds the
+/// declaration-start offsets (`decl_walk::decl_starts` — skipping opaque, whitespace, and
+/// `@@[attr]` attribute lines, the `public Object ;` guard, and jumping each decl's whole
+/// extent); this driver re-derives each decl's extent from the SAME single source the walk's
+/// `decl_end` leaf used (`decl_extent`), so the boundary the walk finds and the node this
+/// driver builds cannot drift, and reads each decl through the `DeclRead` system
+/// (`decl_read::read` + `member_decl_of` — the SAME reader `state()`'s state-var branch uses).
+/// Attribute lines, opaque runs, and whitespace land in Trivia gaps — the partition invariant
+/// is this driver's only job. (Retires the hand decl dispatch loop and `decl_of`; their
+/// oracles survive as `decl_starts_hand` / `decl_of_hand`.)
 pub fn decl_section(lx: &Lexer, bytes: &[u8], span: Span, kw: Span, with_bodies: bool) -> DeclSection {
+    let (starts, _unterminated) =
+        super::decl_walk::decl_starts(bytes, kw.end, span.end, with_bodies, lx.target());
     let mut members = Vec::new();
-    let mut i = kw.end;
     let mut cursor = kw.end;
 
-    while i < span.end {
-        if let Some(next) = skip_opaque(bytes, i, span.end, lx.target()) {
-            i = next;
-            continue;
-        }
-        if bytes[i].is_ascii_whitespace() {
-            i += 1;
-            continue;
-        }
-        // `@@[attr]` — an attribute line, not a declaration. Without this it was parsed
-        // as a field with an EMPTY name, and Java got `public Object ;`.
-        if starts(bytes, i, b"@@[", span.end) {
-            i = to_end_of_line(bytes, i, span.end);
-            continue;
-        }
-        // A declaration starts here.
-        if cursor < i {
+    for &start in &starts {
+        if cursor < start {
             members.push(Decl::Trivia(TriviaNode {
-                span: Span::new(cursor, i),
+                span: Span::new(cursor, start),
             }));
         }
-        // `actions:` / `operations:` members have a NATIVE body in braces.
-        let eol = to_end_of_line(bytes, i, span.end);
-        let brace = (i..eol).find(|&k| bytes[k] == b'{');
-        if with_bodies && brace.is_some() {
-            let open = brace.unwrap();
-            let end = matching_brace(lx, bytes, open, span.end);
-            let close = end.saturating_sub(1);
-            let sig = decl_of(bytes, i, open, i);
-            members.push(Decl::WithBody(BodyDecl {
-                span: Span::new(i, end),
-                name: sig.name,
-                params_text: sig.params_text.unwrap_or_default(),
-                return_text: sig.type_text,
-                signature_node: FrameSpan {
-                    span: Span::new(i, open + 1),
-                    kind: "Signature",
-                },
-                body: body(lx, bytes, Span::new(open + 1, close)),
-                close_node: FrameSpan {
-                    span: Span::new(close, end),
-                    kind: "Close",
-                },
-            }));
-            i = end;
-            cursor = i;
-            continue;
+        match decl_extent(bytes, start, span.end, with_bodies, lx.target()) {
+            DeclExtent::Line { eol } => {
+                let shape = super::decl_read::read(bytes, start, eol, lx.target());
+                members.push(Decl::Member(super::decl_read::member_decl_of(
+                    bytes, &shape, eol, start,
+                )));
+                cursor = eol;
+            }
+            // `actions:` / `operations:` members have a NATIVE body in braces.
+            DeclExtent::Body { open, end, .. } => {
+                let close = end.saturating_sub(1);
+                let shape = super::decl_read::read(bytes, start, open, lx.target());
+                let sig = super::decl_read::member_decl_of(bytes, &shape, open, start);
+                members.push(Decl::WithBody(BodyDecl {
+                    span: Span::new(start, end),
+                    name: sig.name,
+                    params_text: sig.params_text.unwrap_or_default(),
+                    return_text: sig.type_text,
+                    signature_node: FrameSpan {
+                        span: Span::new(start, open + 1),
+                        kind: "Signature",
+                    },
+                    body: body(lx, bytes, Span::new(open + 1, close)),
+                    close_node: FrameSpan {
+                        span: Span::new(close, end),
+                        kind: "Close",
+                    },
+                }));
+                cursor = end;
+            }
         }
-        members.push(Decl::Member(decl_of(bytes, i, eol, i)));
-        i = eol;
-        cursor = i;
     }
     if cursor < span.end {
         members.push(Decl::Trivia(TriviaNode {
@@ -882,123 +929,10 @@ fn column_of(bytes: &[u8], at: usize, _body_start: usize) -> u32 {
 }
 
 
-/// Pull the NAME and the (verbatim) type text out of a declaration line.
-///
-/// `go()` / `go(a: int): bool` / `n: int = 0` / `$.count: int = 0`
-///
-/// framec reads the *name* — Frame's vocabulary, framec's to know. It carries the
-/// *type* as opaque text and never looks inside it. `Rc<RefCell<Child>>` is a string
-/// here and it will still be a string when it reaches the target.
-fn decl_of(bytes: &[u8], from: usize, to: usize, span_start: usize) -> MemberDecl {
-    let mut i = from;
-    while i < to && (bytes[i] == b' ' || bytes[i] == b'\t') {
-        i += 1;
-    }
-
-    // `async fetch(key: String): String` — `async` is a MODIFIER, not the name.
-    //
-    // Without this the method was named `async`, and Python emitted `def async(self):` —
-    // `async` is a Python keyword, so the file was a SyntaxError. The name is Frame's
-    // vocabulary and framec must read it correctly; a modifier is not a name.
-    let mut is_async = false;
-    if starts(bytes, i, b"async", to) {
-        let after = i + 5;
-        if after < to && (bytes[after] == b' ' || bytes[after] == b'\t') {
-            is_async = true;
-            i = after;
-            while i < to && (bytes[i] == b' ' || bytes[i] == b'\t') {
-                i += 1;
-            }
-        }
-    }
-
-    let ns = i;
-    while i < to && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
-        i += 1;
-    }
-    let name = String::from_utf8_lossy(&bytes[ns..i]).into_owned();
-
-    // Params, if this is a signature.
-    let mut params_text = None;
-    if i < to && bytes[i] == b'(' {
-        let open = i;
-        let mut d = 0i32;
-        while i < to {
-            match bytes[i] {
-                b'(' => d += 1,
-                b')' => {
-                    d -= 1;
-                    if d == 0 {
-                        break;
-                    }
-                }
-                _ => {}
-            }
-            i += 1;
-        }
-        params_text = Some(String::from_utf8_lossy(&bytes[open + 1..i.min(to)]).into_owned());
-        i = (i + 1).min(to);
-    }
-
-    // A `: type` annotation, up to `=` or end of line. VERBATIM.
-    let mut type_text = None;
-    while i < to && (bytes[i] == b' ' || bytes[i] == b'\t') {
-        i += 1;
-    }
-    if i < to && bytes[i] == b':' {
-        i += 1;
-        let ts = i;
-        while i < to && bytes[i] != b'=' {
-            i += 1;
-        }
-        let t = String::from_utf8_lossy(&bytes[ts..i]).trim().to_string();
-        if !t.is_empty() {
-            type_text = Some(t);
-        }
-    }
-
-    // The initializer, VERBATIM (everything after `=`, trimmed).
-    let mut init_text = None;
-    // If it is `@@Sys(...)` — FRAME's own syntax — then framec knows this field holds a
-    // system, and it knows it WITHOUT looking at the user's type.
-    let mut init_system = None;
-    if i < to && bytes[i] == b'=' {
-        let raw = String::from_utf8_lossy(&bytes[i + 1..to]).trim().to_string();
-        if !raw.is_empty() {
-            init_text = Some(raw);
-        }
-        let mut k = i + 1;
-        while k < to && (bytes[k] == b' ' || bytes[k] == b'\t') {
-            k += 1;
-        }
-        if k + 2 < to && bytes[k] == b'@' && bytes[k + 1] == b'@' {
-            let mut n = k + 2;
-            // `@@!Sys()` — the no-init form.
-            if n < to && bytes[n] == b'!' {
-                n += 1;
-            }
-            let ns2 = n;
-            while n < to && (bytes[n].is_ascii_alphanumeric() || bytes[n] == b'_') {
-                n += 1;
-            }
-            if n > ns2 {
-                init_system =
-                    Some(String::from_utf8_lossy(&bytes[ns2..n]).into_owned());
-            }
-        }
-    }
-
-    MemberDecl {
-        span: Span::new(span_start, to),
-        name,
-        type_text,
-        params_text,
-        init_system,
-        is_async,
-        init_text,
-    }
-}
-
+// The hand `decl_of` reader lived here — retired at Item 3d M-wire. Declaration reading is now
+// the dogfooded `DeclRead` system (`decl_read::read` + `member_decl_of`); its verbatim copy
+// survives ONLY as the differential oracle `decl_read::decl_of_hand` until the campaign's
+// oracle sweep deletes it.
 
 /// The args of `-> $S(args)`, **verbatim, as one blob**.
 ///

@@ -479,7 +479,34 @@ The plan is a contract; it changes only through a recorded, evaluated process �
   `--bless` rewrites); fixpoint verified stable across regen→rebuild→regen; full suite green
   (32/32 test binaries, 0 failures). C4 is TRUE again and now continuously checkable.
 
+- *2026-07-19* — **Item 3d DeclWalk/DeclRead LANDED (M-wire complete; hand path deleted).**
+  `decl_section` is now the thin native driver over `decl_walk::decl_starts` + the shared
+  `decl_extent` head + `decl_read::member_decl_of`; `state()`'s state-var branch routed to
+  decl_read; sections.rs unchanged (signature stable, verified). DELETED: the hand `decl_of`
+  (~115 lines incl. its bare params counter) and `matching_brace` (subsumed by `decl_extent` on
+  the same DelimBalance); verbatim copies live on as `decl_of_hand`/`decl_starts_hand`,
+  oracle-only (test callers only, grep-proven). Suite 277/0 on the NEW path incl. the I1
+  partition test; regen fixpoint 21/0 across a rebuild of the wired binary — **framec-ng's own
+  decl scanning now runs through DeclWalk/DeclRead and re-scans all 21 `.frs` sources
+  byte-identically (the self-scan hazard did not bite)**. **Census, both movements stated:**
+  SYSTEMS 19→21; production HAND_SCAN_LOOPS 77→73 = machine.rs retired ~9 (the decl dispatch
+  walk + decl_of's tokenization) MINUS decl_read's +5 transient leaf surface (4 linear
+  tokenization leaves, 3c-1 census-proxy species, + the `params_close` bare counter — the
+  recorded guardrail-4 exception that dies at Phase B); oracle loops 9→17 (transient, C-final
+  sweep owns them); hand-Lexer recognition untouched at 11 (Item 4's surface). **GATE-B held
+  open until Phase B (T9 → DelimBalance) per the recorded exception.**
+
 ### Audit Log (append-only — warden verdicts)
+- *2026-07-19* — GATE-A, Item 3d "DeclWalk/DeclRead": **PASS — wiring proceeded; GATE-B held
+  until Phase B (params_close exception).** D1–D4,D8 verified by run/grep: regen fixpoint
+  21/0-stale across rebuild; decl_walk 15/15 + decl_read 13/13 + suite 277/0 (every-position
+  rectangles × 4 targets × both with_bodies, full-struct read differential, one test per ledger
+  row T1–T15, teeth threshold-asserted, xorshift fuzz 3000×4, T15 driver-exclusion STATED);
+  oracles verified verbatim vs the hand code; zero production callers of new symbols pre-wire;
+  params_close annotated in-code as the recorded exception; 3 builder deviations judged
+  faithful. Findings: census +5 transient production loops (recorded honestly at landing);
+  stray .claude/agents files excluded from the atomic commit.
+
 - *2026-07-18* — DESIGN GATE, Item 4 NativeParts (nativeparts_design.md + 8 shards):
   **PASS-WITH-CONDITIONS → ACCEPTED at owner gate; DP-1 and H-1 ruled.** All load-bearing claims
   source-verified (3× wrong-for-seat on native_parts_scan/; parts.rs:29/:45 = last production
@@ -745,7 +772,7 @@ survive as oracles + un-converted consumers — tracked here, not forgotten.
 |---|---|---|---|
 | 1 OpaqueScan | **warden PASS (GATE-A + GATE-B) — committed** | OpaqueScan, RawString, BraceBalance | skip path is the system; try_island routed; residual = holes (Item 4), close_brace (Item 2), machine skip (Item 3), + 3 oracles — all named; batteries+fuzz+milestone green |
 | 2 Segmenter | **close_brace capability: warden PASS (GATE-A+B, pending commit).** Body-end recognition off the hand Lexer onto OpaqueScan (`opaque_at`, 3-way signal). Remaining Item-2 scope: `hand_item_starts` oracle (→ C-final sweep) + `BodyBalance` `{}`-counter sub-system (named, before close) | segmenter, +OpaqueScan `kind`/`unterminated` registers | close_brace: yes. Item-2 whole: no (oracle + brace-counter named) |
-| 3 Grammar | **Dispatch-walks COMPLETE** (3c-3 committed d352021). **3d DeclWalk/DeclRead + 3e Head readers: designs ACCEPTED 2026-07-18** (owner gate; build pending; 3d GATE-B held open until its Phase B lands). 3a (fbde61e), 3b (03671f1), BodyBalance (2f9d95c), 3c-1 MachineWalk (fa38988), 3c-2 StateWalk (c7637b3), **3c-3 body→BodyWalk** (warden PASS after D3 fix). All three inner dispatch walks (machine_section/state-member/body) are @@[scan(u8)] systems; BodyWalk fuses a brace COUNTER + a (start,depth) ACCUMULATOR. I1 proven each; loops 86→77, SYSTEMS 15→19. | stmt_scan; DelimBalance; MachineWalk; StateWalk; **BodyWalk** (19th) | 3a/3b/BodyBalance/3c-1/3c-2/3c-3: yes |
+| 3 Grammar | **Dispatch-walks COMPLETE** (3c-3 d352021). **3d DeclWalk/DeclRead LANDED 2026-07-19** (M-wire done; hand decl_of + matching_brace DELETED; GATE-A PASS; GATE-B held until Phase B). **3e Head readers: design ACCEPTED** (build pending). 3a (fbde61e), 3b (03671f1), BodyBalance (2f9d95c), 3c-1 MachineWalk (fa38988), 3c-2 StateWalk (c7637b3), **3c-3 body→BodyWalk** (warden PASS after D3 fix). All three inner dispatch walks (machine_section/state-member/body) are @@[scan(u8)] systems; BodyWalk fuses a brace COUNTER + a (start,depth) ACCUMULATOR. I1 proven each; loops 86→77, SYSTEMS 15→19. | stmt_scan; DelimBalance; MachineWalk; StateWalk; **BodyWalk** (19th) | 3a/3b/BodyBalance/3c-1/3c-2/3c-3: yes |
 | 4 Islands | **ArgScan + NativeParts designs BOTH ACCEPTED 2026-07-18** (Option C fork-and-adjudicate; native_parts_scan completed into the production seat; DP-1/H-1 ruled; build pending) | ref/inst/embed_scan (partial); arg_scan + adjudication seam; native_parts_scan completion + OpaqueScan hole/delim registers | no |
 | 5 Validators | not started | hsm_cycle, reachability | no |
 | 6 EmitDriver | not started | — | n/a (transducer, last) |
