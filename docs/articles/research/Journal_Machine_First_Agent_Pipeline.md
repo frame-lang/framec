@@ -152,6 +152,28 @@ documents — and the incident is itself D2 evidence: the writer read past
 every one of those errors; the verifiers' differing obligation (refute,
 don't summarize) caught them.
 
+**2026-07-19 — the closer delivered.** The NativeParts builder returned
+after ~59 minutes — twice its siblings' runtime, inside the corrected
+patience protocol's window (≥2× the largest same-shape sibling; PM-1's
+gauge was never consulted) — with a complete delivery and zero blockers:
+17 files touched plus a new 747-line battery. Process notes worth
+keeping: it **compile-probed the amendment's corrected seam before
+editing** (generated a machine and read the artifact to confirm
+constructor-parameter fields survive `scan_at`); it factored the hand
+oracle *first* and proved the build inert before rewriting the driver;
+and its differential's **teeth counters bit on the first run** — the
+holed-literals counter came up 6 against a floor of 10, and the builder
+fixed the *fuzz pool* (biased generation toward the underfed class), not
+the bar. It also found a gap in the design's own fact base — a second
+fixture consumer of the seat (`tests/reindent.rs`) the record's §0 never
+enumerated — and handled it by the record's *already-recorded* policy
+rather than inventing one, reporting it as a deviation. Three deviations
+total, each argued from the record. Builder-reported gates: suite 398/0,
+24 systems 0-stale (bootstrap-safe, re-verified after the compiler's own
+assign path changed), production recognition 11 → 9 and loops 58 → 55
+with the remainders named and owned by later sets. Handed to the warden
+for GATE-A; nothing committed, no production hand path deleted.
+
 ## 2. Discovery register (the paper-worthy claims, each with evidence)
 
 **D1 — A worldview document alone is sufficient agent training.** Blind
