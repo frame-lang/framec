@@ -1,17 +1,6 @@
 use std::collections::HashMap;
 use std::any::Any;
 
-struct Compartment {
-    state: String,
-    state_vars: HashMap<String, Box<dyn Any>>,
-    state_args: HashMap<String, Box<dyn Any>>,
-}
-impl Compartment {
-    fn new(state: &str) -> Compartment {
-        Compartment { state: state.to_string(), state_vars: HashMap::new(), state_args: HashMap::new() }
-    }
-}
-
 
 // Balanced-`()` extent recognizer, dogfooded as an `@@[scan(u8)]` system. A COUNTER
 // automaton (the journal's point: framec's bracket scanners count openers against closers;
@@ -25,25 +14,43 @@ impl Compartment {
 pub trait ParenBalanceInput { fn fsm_get(&self, i: usize) -> u8; fn fsm_len(&self) -> usize; }
 impl ParenBalanceInput for &[u8] { fn fsm_get(&self, i: usize) -> u8 { self[i] } fn fsm_len(&self) -> usize { self.len() } }
 
+#[derive(Clone)]
+enum ParenBalanceVars {
+    Scan {  },
+    Accept {  },
+    Reject {  },
+}
+#[derive(Clone)]
+enum ParenBalanceArgs {
+    Scan {  },
+    Accept {  },
+    Reject {  },
+}
+#[derive(Clone)]
+struct ParenBalanceComp {
+    state: String,
+    vars: ParenBalanceVars,
+    args: ParenBalanceArgs,
+}
+
 pub struct ParenBalance<'a> {
     src: &'a [u8],
     pub cursor: usize,
-    compartment: Compartment,
-    stack: Vec<Compartment>,
+    compartment: ParenBalanceComp,
+    stack: Vec<ParenBalanceComp>,
     pub depth: i32,
 }
 
 impl<'a> ParenBalance<'a> {
     pub fn over(src: &'a [u8]) -> Self {
-        let mut compartment = Compartment::new("Scan");
+        let compartment = ParenBalanceComp { state: "Scan".to_string(), vars: ParenBalanceVars::Scan {  }, args: ParenBalanceArgs::Scan {  } };
         ParenBalance { src, cursor: 0, compartment, stack: Vec::new(), depth: 0 }
     }
 
     pub fn scan_at(&mut self, start: usize) -> bool {
         self.cursor = start;
         self.depth = 0;
-        let mut compartment = Compartment::new("Scan");
-        self.compartment = compartment;
+        self.compartment = ParenBalanceComp { state: "Scan".to_string(), vars: ParenBalanceVars::Scan {  }, args: ParenBalanceArgs::Scan {  } };
         let mut __steps: usize = 0;
         while self.compartment.state != "Accept" && self.compartment.state != "Reject" {
             self.step();
@@ -62,28 +69,28 @@ impl<'a> ParenBalance<'a> {
 
     fn Scan_step(&mut self) {
         if self.cursor >= self.src.fsm_len() {
-            let mut __next = Compartment::new("Reject");
+            let mut __next = ParenBalanceComp { state: "Reject".to_string(), vars: ParenBalanceVars::Reject {  }, args: ParenBalanceArgs::Reject { } };
             self.compartment = __next;
             return Default::default();
         }
-                let sk = skip_string(self.src, self.cursor);
-                if sk > self.cursor {
-                    self.cursor = sk;
-                } else {
-                    let b = self.src.fsm_get(self.cursor);
-                    self.cursor = self.cursor + 1;
-                    if b == 40 {
-                        self.depth = self.depth + 1;
-                    }
-                    if b == 41 {
-                        self.depth = self.depth - 1;
-                        if self.depth == 0 {
-                    let mut __next = Compartment::new("Accept");
+        let sk = skip_string(self.src, self.cursor);
+        if sk > self.cursor {
+            self.cursor = sk;
+        } else {
+            let b = self.src.fsm_get(self.cursor);
+            self.cursor = self.cursor + 1;
+            if b == 40 {
+                self.depth = self.depth + 1;
+            }
+            if b == 41 {
+                self.depth = self.depth - 1;
+                if self.depth == 0 {
+                    let mut __next = ParenBalanceComp { state: "Accept".to_string(), vars: ParenBalanceVars::Accept {  }, args: ParenBalanceArgs::Accept { } };
                     self.compartment = __next;
                     return Default::default();
                 }
-                    }
-                }
+            }
+        }
     }
 
 }

@@ -1,17 +1,6 @@
 use std::collections::HashMap;
 use std::any::Any;
 
-struct Compartment {
-    state: String,
-    state_vars: HashMap<String, Box<dyn Any>>,
-    state_args: HashMap<String, Box<dyn Any>>,
-}
-impl Compartment {
-    fn new(state: &str) -> Compartment {
-        Compartment { state: state.to_string(), state_vars: HashMap::new(), state_args: HashMap::new() }
-    }
-}
-
 
 // The quoted-string EXTENT recognizer, dogfooded as an `@@[scan(u8)]` system — the
 // `@@system` analogue of the shipping `string_scan_fsm`. It recognizes the same grammar
@@ -26,23 +15,43 @@ impl Compartment {
 pub trait StringScanInput { fn fsm_get(&self, i: usize) -> u8; fn fsm_len(&self) -> usize; }
 impl StringScanInput for &[u8] { fn fsm_get(&self, i: usize) -> u8 { self[i] } fn fsm_len(&self) -> usize { self.len() } }
 
+#[derive(Clone)]
+enum StringScanVars {
+    Start {  },
+    Body {  },
+    Accept {  },
+    Reject {  },
+}
+#[derive(Clone)]
+enum StringScanArgs {
+    Start {  },
+    Body {  },
+    Accept {  },
+    Reject {  },
+}
+#[derive(Clone)]
+struct StringScanComp {
+    state: String,
+    vars: StringScanVars,
+    args: StringScanArgs,
+}
+
 pub struct StringScan<'a> {
     src: &'a [u8],
     pub cursor: usize,
-    compartment: Compartment,
-    stack: Vec<Compartment>,
+    compartment: StringScanComp,
+    stack: Vec<StringScanComp>,
 }
 
 impl<'a> StringScan<'a> {
     pub fn over(src: &'a [u8]) -> Self {
-        let mut compartment = Compartment::new("Start");
+        let compartment = StringScanComp { state: "Start".to_string(), vars: StringScanVars::Start {  }, args: StringScanArgs::Start {  } };
         StringScan { src, cursor: 0, compartment, stack: Vec::new() }
     }
 
     pub fn scan_at(&mut self, start: usize) -> bool {
         self.cursor = start;
-        let mut compartment = Compartment::new("Start");
-        self.compartment = compartment;
+        self.compartment = StringScanComp { state: "Start".to_string(), vars: StringScanVars::Start {  }, args: StringScanArgs::Start {  } };
         let mut __steps: usize = 0;
         while self.compartment.state != "Accept" && self.compartment.state != "Reject" {
             self.step();
@@ -62,47 +71,47 @@ impl<'a> StringScan<'a> {
 
     fn Start_step(&mut self) {
         if self.cursor >= self.src.fsm_len() {
-            let mut __next = Compartment::new("Reject");
+            let mut __next = StringScanComp { state: "Reject".to_string(), vars: StringScanVars::Reject {  }, args: StringScanArgs::Reject { } };
             self.compartment = __next;
             return Default::default();
         }
-                if self.src.fsm_get(self.cursor) != 34 {
-            let mut __next = Compartment::new("Reject");
+        if self.src.fsm_get(self.cursor) != 34 {
+            let mut __next = StringScanComp { state: "Reject".to_string(), vars: StringScanVars::Reject {  }, args: StringScanArgs::Reject { } };
             self.compartment = __next;
             return Default::default();
         }
-                self.cursor = self.cursor + 1;
-        let mut __next = Compartment::new("Body");
+        self.cursor = self.cursor + 1;
+        let mut __next = StringScanComp { state: "Body".to_string(), vars: StringScanVars::Body {  }, args: StringScanArgs::Body { } };
         self.compartment = __next;
         return Default::default();
     }
 
     fn Body_step(&mut self) {
         if self.cursor >= self.src.fsm_len() {
-            let mut __next = Compartment::new("Reject");
+            let mut __next = StringScanComp { state: "Reject".to_string(), vars: StringScanVars::Reject {  }, args: StringScanArgs::Reject { } };
             self.compartment = __next;
             return Default::default();
         }
-                let b = self.src.fsm_get(self.cursor);
-                if b == 92 {
-                    self.cursor = self.cursor + 2;
-            let mut __next = Compartment::new("Body");
+        let b = self.src.fsm_get(self.cursor);
+        if b == 92 {
+            self.cursor = self.cursor + 2;
+            let mut __next = StringScanComp { state: "Body".to_string(), vars: StringScanVars::Body {  }, args: StringScanArgs::Body { } };
             self.compartment = __next;
             return Default::default();
         }
-                if b == 10 {
-            let mut __next = Compartment::new("Reject");
+        if b == 10 {
+            let mut __next = StringScanComp { state: "Reject".to_string(), vars: StringScanVars::Reject {  }, args: StringScanArgs::Reject { } };
             self.compartment = __next;
             return Default::default();
         }
-                if b == 34 {
-                    self.cursor = self.cursor + 1;
-            let mut __next = Compartment::new("Accept");
+        if b == 34 {
+            self.cursor = self.cursor + 1;
+            let mut __next = StringScanComp { state: "Accept".to_string(), vars: StringScanVars::Accept {  }, args: StringScanArgs::Accept { } };
             self.compartment = __next;
             return Default::default();
         }
-                self.cursor = self.cursor + 1;
-        let mut __next = Compartment::new("Body");
+        self.cursor = self.cursor + 1;
+        let mut __next = StringScanComp { state: "Body".to_string(), vars: StringScanVars::Body {  }, args: StringScanArgs::Body { } };
         self.compartment = __next;
         return Default::default();
     }

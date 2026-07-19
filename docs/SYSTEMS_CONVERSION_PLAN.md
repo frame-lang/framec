@@ -465,6 +465,15 @@ The plan is a contract; it changes only through a recorded, evaluated process �
   section walker through the islands; NativeParts completion retires the LAST production
   hand-Lexer recognition (the C2 path).
 
+- *2026-07-18* — **HYGIENE BITE LANDED: regen fixpoint restored + made standing.** The 11
+  pre-campaign `.gen.rs` (embed/hsm_cycle/inst/native_parts_scan/paren_balance/reachability/
+  ref/section/segmenter/string_counter/string_scan) were stale against the current framec-ng
+  codegen (typed compartments) — C4 was false and R8's "standing check" had never been built
+  (found independently by two assessment agents, warden-confirmed). Re-blessed via NEW
+  `tools/regen_check.sh` (check mode = the standing R8 predicate, exit 1 on any stale file;
+  `--bless` rewrites); fixpoint verified stable across regen→rebuild→regen; full suite green
+  (32/32 test binaries, 0 failures). C4 is TRUE again and now continuously checkable.
+
 ### Audit Log (append-only — warden verdicts)
 - *2026-07-18* — DESIGN GATE, Item 4 NativeParts (nativeparts_design.md + 8 shards):
   **PASS-WITH-CONDITIONS → ACCEPTED at owner gate; DP-1 and H-1 ruled.** All load-bearing claims

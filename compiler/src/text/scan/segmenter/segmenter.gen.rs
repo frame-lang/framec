@@ -1,17 +1,6 @@
 use std::collections::HashMap;
 use std::any::Any;
 
-struct Compartment {
-    state: String,
-    state_vars: HashMap<String, Box<dyn Any>>,
-    state_args: HashMap<String, Box<dyn Any>>,
-}
-impl Compartment {
-    fn new(state: &str) -> Compartment {
-        Compartment { state: state.to_string(), state_vars: HashMap::new(), state_args: HashMap::new() }
-    }
-}
-
 
 // The item-level SEGMENTER walk, dogfooded as an `@@[scan(u8)]` system — the first
 // LOAD-BEARING compiler scanner authored as a Frame machine (docs/JOURNAL.md fubar). It
@@ -30,26 +19,44 @@ impl Compartment {
 pub trait SegmenterInput { fn fsm_get(&self, i: usize) -> u8; fn fsm_len(&self) -> usize; }
 impl SegmenterInput for &[u8] { fn fsm_get(&self, i: usize) -> u8 { self[i] } fn fsm_len(&self) -> usize { self.len() } }
 
+#[derive(Clone)]
+enum SegmenterVars {
+    Sol {  },
+    Mid {  },
+    Accept {  },
+}
+#[derive(Clone)]
+enum SegmenterArgs {
+    Sol {  },
+    Mid {  },
+    Accept {  },
+}
+#[derive(Clone)]
+struct SegmenterComp {
+    state: String,
+    vars: SegmenterVars,
+    args: SegmenterArgs,
+}
+
 pub struct Segmenter<'a> {
     src: &'a [u8],
     pub cursor: usize,
-    compartment: Compartment,
-    stack: Vec<Compartment>,
+    compartment: SegmenterComp,
+    stack: Vec<SegmenterComp>,
     pub target: Target,
     pub starts: Vec<usize>,
 }
 
 impl<'a> Segmenter<'a> {
     pub fn over(src: &'a [u8], target: Target) -> Self {
-        let mut compartment = Compartment::new("Sol");
+        let compartment = SegmenterComp { state: "Sol".to_string(), vars: SegmenterVars::Sol {  }, args: SegmenterArgs::Sol {  } };
         Segmenter { src, cursor: 0, compartment, stack: Vec::new(), target: target, starts: Vec::new() }
     }
 
     pub fn scan_at(&mut self, start: usize) -> bool {
         self.cursor = start;
         self.starts = Vec::new();
-        let mut compartment = Compartment::new("Sol");
-        self.compartment = compartment;
+        self.compartment = SegmenterComp { state: "Sol".to_string(), vars: SegmenterVars::Sol {  }, args: SegmenterArgs::Sol {  } };
         let mut __steps: usize = 0;
         while self.compartment.state != "Accept" && self.compartment.state != "Reject" {
             self.step();
@@ -69,20 +76,20 @@ impl<'a> Segmenter<'a> {
 
     fn Sol_step(&mut self) {
         if self.cursor >= self.src.fsm_len() {
-            let mut __next = Compartment::new("Accept");
+            let mut __next = SegmenterComp { state: "Accept".to_string(), vars: SegmenterVars::Accept {  }, args: SegmenterArgs::Accept { } };
             self.compartment = __next;
             return Default::default();
         }
-                let b = self.src.fsm_get(self.cursor);
-                if b == 32 || b == 9 {
-                    self.cursor = self.cursor + 1;
-                } else if at_pragma(self.src, self.cursor) {
-                    record(&mut self.starts, self.cursor);
-                    self.cursor = item_end_at(self.src, self.cursor, self.target);
-                } else if b == 10 {
-                    self.cursor = self.cursor + 1;
-                } else {
-            let mut __next = Compartment::new("Mid");
+        let b = self.src.fsm_get(self.cursor);
+        if b == 32 || b == 9 {
+            self.cursor = self.cursor + 1;
+        } else if at_pragma(self.src, self.cursor) {
+            record(&mut self.starts, self.cursor);
+            self.cursor = item_end_at(self.src, self.cursor, self.target);
+        } else if b == 10 {
+            self.cursor = self.cursor + 1;
+        } else {
+            let mut __next = SegmenterComp { state: "Mid".to_string(), vars: SegmenterVars::Mid {  }, args: SegmenterArgs::Mid { } };
             self.compartment = __next;
             return Default::default();
         }
@@ -90,22 +97,22 @@ impl<'a> Segmenter<'a> {
 
     fn Mid_step(&mut self) {
         if self.cursor >= self.src.fsm_len() {
-            let mut __next = Compartment::new("Accept");
+            let mut __next = SegmenterComp { state: "Accept".to_string(), vars: SegmenterVars::Accept {  }, args: SegmenterArgs::Accept { } };
             self.compartment = __next;
             return Default::default();
         }
-                let sk = skip_opaque_at(self.src, self.cursor, self.target);
-                if sk > self.cursor {
-                    self.cursor = sk;
-                } else {
-                    let b = self.src.fsm_get(self.cursor);
-                    self.cursor = self.cursor + 1;
-                    if b == 10 {
-                let mut __next = Compartment::new("Sol");
+        let sk = skip_opaque_at(self.src, self.cursor, self.target);
+        if sk > self.cursor {
+            self.cursor = sk;
+        } else {
+            let b = self.src.fsm_get(self.cursor);
+            self.cursor = self.cursor + 1;
+            if b == 10 {
+                let mut __next = SegmenterComp { state: "Sol".to_string(), vars: SegmenterVars::Sol {  }, args: SegmenterArgs::Sol { } };
                 self.compartment = __next;
                 return Default::default();
             }
-                }
+        }
     }
 
 }

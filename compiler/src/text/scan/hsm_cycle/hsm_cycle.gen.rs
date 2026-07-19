@@ -1,17 +1,6 @@
 use std::collections::HashMap;
 use std::any::Any;
 
-struct Compartment {
-    state: String,
-    state_vars: HashMap<String, Box<dyn Any>>,
-    state_args: HashMap<String, Box<dyn Any>>,
-}
-impl Compartment {
-    fn new(state: &str) -> Compartment {
-        Compartment { state: state.to_string(), state_vars: HashMap::new(), state_args: HashMap::new() }
-    }
-}
-
 
 // HSM parent-chain CYCLE detector, dogfooded as a plain `@@system` GRAPH WALKER (not a byte
 // scanner) — the first back-half machine, cracking the non-byte drive pattern. A cycle in the
@@ -23,9 +12,28 @@ impl Compartment {
 //
 // cyclic ends true iff any parent chain cycles.
 
+#[derive(Clone)]
+enum HsmCycleVars {
+    Next {  },
+    Follow {  },
+    Done {  },
+}
+#[derive(Clone)]
+enum HsmCycleArgs {
+    Next {  },
+    Follow {  },
+    Done {  },
+}
+#[derive(Clone)]
+struct HsmCycleComp {
+    state: String,
+    vars: HsmCycleVars,
+    args: HsmCycleArgs,
+}
+
 pub struct HsmCycle {
-    compartment: Compartment,
-    stack: Vec<Compartment>,
+    compartment: HsmCycleComp,
+    stack: Vec<HsmCycleComp>,
     pub parents: Vec<i32>,
     pub count: usize,
     pub k: usize,
@@ -36,7 +44,7 @@ pub struct HsmCycle {
 
 impl HsmCycle {
     pub fn new(parents: Vec<i32>, count: usize) -> HsmCycle {
-        let mut compartment = Compartment::new("Next");
+        let compartment = HsmCycleComp { state: "Next".to_string(), vars: HsmCycleVars::Next {  }, args: HsmCycleArgs::Next {  } };
         HsmCycle { compartment, stack: Vec::new(), parents: parents, count: count, k: 0, cur: 0, steps: 0, cyclic: false }
     }
 
@@ -50,34 +58,34 @@ impl HsmCycle {
 
     fn Next_step(&mut self) {
         if self.k >= self.count {
-            let mut __next = Compartment::new("Done");
+            let mut __next = HsmCycleComp { state: "Done".to_string(), vars: HsmCycleVars::Done {  }, args: HsmCycleArgs::Done { } };
             self.compartment = __next;
             return Default::default();
         }
-                self.cur = self.k as i32;
-                self.steps = 0;
-        let mut __next = Compartment::new("Follow");
+        self.cur = self.k as i32;
+        self.steps = 0;
+        let mut __next = HsmCycleComp { state: "Follow".to_string(), vars: HsmCycleVars::Follow {  }, args: HsmCycleArgs::Follow { } };
         self.compartment = __next;
         return Default::default();
     }
 
     fn Follow_step(&mut self) {
         let p = parent_of(&self.parents, self.cur);
-                if p < 0 {
-                    self.k = self.k + 1;
-            let mut __next = Compartment::new("Next");
+        if p < 0 {
+            self.k = self.k + 1;
+            let mut __next = HsmCycleComp { state: "Next".to_string(), vars: HsmCycleVars::Next {  }, args: HsmCycleArgs::Next { } };
             self.compartment = __next;
             return Default::default();
         }
-                if self.steps > self.count {
-                    self.cyclic = true;
-            let mut __next = Compartment::new("Done");
+        if self.steps > self.count {
+            self.cyclic = true;
+            let mut __next = HsmCycleComp { state: "Done".to_string(), vars: HsmCycleVars::Done {  }, args: HsmCycleArgs::Done { } };
             self.compartment = __next;
             return Default::default();
         }
-                self.cur = p;
-                self.steps = self.steps + 1;
-        let mut __next = Compartment::new("Follow");
+        self.cur = p;
+        self.steps = self.steps + 1;
+        let mut __next = HsmCycleComp { state: "Follow".to_string(), vars: HsmCycleVars::Follow {  }, args: HsmCycleArgs::Follow { } };
         self.compartment = __next;
         return Default::default();
     }

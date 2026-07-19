@@ -1,17 +1,6 @@
 use std::collections::HashMap;
 use std::any::Any;
 
-struct Compartment {
-    state: String,
-    state_vars: HashMap<String, Box<dyn Any>>,
-    state_args: HashMap<String, Box<dyn Any>>,
-}
-impl Compartment {
-    fn new(state: &str) -> Compartment {
-        Compartment { state: state.to_string(), state_vars: HashMap::new(), state_args: HashMap::new() }
-    }
-}
-
 
 // Embedded-system-call recognizer, dogfooded as an `@@[scan(u8)]` system — the `@@system`
 // analogue of the hand `embed_call_at`. From the cursor it recognizes
@@ -26,11 +15,34 @@ impl Compartment {
 pub trait EmbedScanInput { fn fsm_get(&self, i: usize) -> u8; fn fsm_len(&self) -> usize; }
 impl EmbedScanInput for &[u8] { fn fsm_get(&self, i: usize) -> u8 { self[i] } fn fsm_len(&self) -> usize { self.len() } }
 
+#[derive(Clone)]
+enum EmbedScanVars {
+    Start {  },
+    Field {  },
+    Method {  },
+    Accept {  },
+    Reject {  },
+}
+#[derive(Clone)]
+enum EmbedScanArgs {
+    Start {  },
+    Field {  },
+    Method {  },
+    Accept {  },
+    Reject {  },
+}
+#[derive(Clone)]
+struct EmbedScanComp {
+    state: String,
+    vars: EmbedScanVars,
+    args: EmbedScanArgs,
+}
+
 pub struct EmbedScan<'a> {
     src: &'a [u8],
     pub cursor: usize,
-    compartment: Compartment,
-    stack: Vec<Compartment>,
+    compartment: EmbedScanComp,
+    stack: Vec<EmbedScanComp>,
     pub field_start: usize,
     pub field_end: usize,
     pub method_start: usize,
@@ -40,7 +52,7 @@ pub struct EmbedScan<'a> {
 
 impl<'a> EmbedScan<'a> {
     pub fn over(src: &'a [u8]) -> Self {
-        let mut compartment = Compartment::new("Start");
+        let compartment = EmbedScanComp { state: "Start".to_string(), vars: EmbedScanVars::Start {  }, args: EmbedScanArgs::Start {  } };
         EmbedScan { src, cursor: 0, compartment, stack: Vec::new(), field_start: 0, field_end: 0, method_start: 0, method_end: 0, paren_open: 0 }
     }
 
@@ -51,8 +63,7 @@ impl<'a> EmbedScan<'a> {
         self.method_start = 0;
         self.method_end = 0;
         self.paren_open = 0;
-        let mut compartment = Compartment::new("Start");
-        self.compartment = compartment;
+        self.compartment = EmbedScanComp { state: "Start".to_string(), vars: EmbedScanVars::Start {  }, args: EmbedScanArgs::Start {  } };
         let mut __steps: usize = 0;
         while self.compartment.state != "Accept" && self.compartment.state != "Reject" {
             self.step();
@@ -73,35 +84,35 @@ impl<'a> EmbedScan<'a> {
 
     fn Start_step(&mut self) {
         if starts_self_dot(self.src, self.cursor) {
-                    self.cursor = self.cursor + 8;
-                    self.field_start = self.cursor;
-            let mut __next = Compartment::new("Field");
+            self.cursor = self.cursor + 8;
+            self.field_start = self.cursor;
+            let mut __next = EmbedScanComp { state: "Field".to_string(), vars: EmbedScanVars::Field {  }, args: EmbedScanArgs::Field { } };
             self.compartment = __next;
             return Default::default();
         }
-        let mut __next = Compartment::new("Reject");
+        let mut __next = EmbedScanComp { state: "Reject".to_string(), vars: EmbedScanVars::Reject {  }, args: EmbedScanArgs::Reject { } };
         self.compartment = __next;
         return Default::default();
     }
 
     fn Field_step(&mut self) {
         if is_ident_at(self.src, self.cursor) {
-                    self.cursor = self.cursor + 1;
-                } else {
-                    if self.cursor == self.field_start {
-                let mut __next = Compartment::new("Reject");
+            self.cursor = self.cursor + 1;
+        } else {
+            if self.cursor == self.field_start {
+                let mut __next = EmbedScanComp { state: "Reject".to_string(), vars: EmbedScanVars::Reject {  }, args: EmbedScanArgs::Reject { } };
                 self.compartment = __next;
                 return Default::default();
             }
-                    if is_dot_at(self.src, self.cursor) {
-                        self.field_end = self.cursor;
-                        self.cursor = self.cursor + 1;
-                        self.method_start = self.cursor;
-                let mut __next = Compartment::new("Method");
+            if is_dot_at(self.src, self.cursor) {
+                self.field_end = self.cursor;
+                self.cursor = self.cursor + 1;
+                self.method_start = self.cursor;
+                let mut __next = EmbedScanComp { state: "Method".to_string(), vars: EmbedScanVars::Method {  }, args: EmbedScanArgs::Method { } };
                 self.compartment = __next;
                 return Default::default();
             }
-            let mut __next = Compartment::new("Reject");
+            let mut __next = EmbedScanComp { state: "Reject".to_string(), vars: EmbedScanVars::Reject {  }, args: EmbedScanArgs::Reject { } };
             self.compartment = __next;
             return Default::default();
         }
@@ -109,29 +120,29 @@ impl<'a> EmbedScan<'a> {
 
     fn Method_step(&mut self) {
         if is_ident_at(self.src, self.cursor) {
-                    self.cursor = self.cursor + 1;
-                } else {
-                    if self.cursor == self.method_start {
-                let mut __next = Compartment::new("Reject");
+            self.cursor = self.cursor + 1;
+        } else {
+            if self.cursor == self.method_start {
+                let mut __next = EmbedScanComp { state: "Reject".to_string(), vars: EmbedScanVars::Reject {  }, args: EmbedScanArgs::Reject { } };
                 self.compartment = __next;
                 return Default::default();
             }
-                    self.method_end = self.cursor;
-                    let p = skip_ws_at(self.src, self.cursor);
-                    if is_open_paren_at(self.src, p) {
-                        self.paren_open = p;
-                        let e = paren_end(self.src, p);
-                        if e > p {
-                            self.cursor = e;
-                    let mut __next = Compartment::new("Accept");
+            self.method_end = self.cursor;
+            let p = skip_ws_at(self.src, self.cursor);
+            if is_open_paren_at(self.src, p) {
+                self.paren_open = p;
+                let e = paren_end(self.src, p);
+                if e > p {
+                    self.cursor = e;
+                    let mut __next = EmbedScanComp { state: "Accept".to_string(), vars: EmbedScanVars::Accept {  }, args: EmbedScanArgs::Accept { } };
                     self.compartment = __next;
                     return Default::default();
                 }
-                let mut __next = Compartment::new("Reject");
+                let mut __next = EmbedScanComp { state: "Reject".to_string(), vars: EmbedScanVars::Reject {  }, args: EmbedScanArgs::Reject { } };
                 self.compartment = __next;
                 return Default::default();
             }
-            let mut __next = Compartment::new("Reject");
+            let mut __next = EmbedScanComp { state: "Reject".to_string(), vars: EmbedScanVars::Reject {  }, args: EmbedScanArgs::Reject { } };
             self.compartment = __next;
             return Default::default();
         }

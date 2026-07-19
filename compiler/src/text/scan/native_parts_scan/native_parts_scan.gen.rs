@@ -1,17 +1,6 @@
 use std::collections::HashMap;
 use std::any::Any;
 
-struct Compartment {
-    state: String,
-    state_vars: HashMap<String, Box<dyn Any>>,
-    state_args: HashMap<String, Box<dyn Any>>,
-}
-impl Compartment {
-    fn new(state: &str) -> Compartment {
-        Compartment { state: state.to_string(), state_vars: HashMap::new(), state_args: HashMap::new() }
-    }
-}
-
 
 // The native-code ISLAND DISPATCH, dogfooded as an `@@[scan(u8)]` system — the `@@system`
 // analogue of the hand `native_parts`. It walks native code and, at each position, tries the
@@ -28,11 +17,28 @@ impl Compartment {
 pub trait NativePartsScanInput { fn fsm_get(&self, i: usize) -> u8; fn fsm_len(&self) -> usize; }
 impl NativePartsScanInput for &[u8] { fn fsm_get(&self, i: usize) -> u8 { self[i] } fn fsm_len(&self) -> usize { self.len() } }
 
+#[derive(Clone)]
+enum NativePartsScanVars {
+    Walk {  },
+    Accept {  },
+}
+#[derive(Clone)]
+enum NativePartsScanArgs {
+    Walk {  },
+    Accept {  },
+}
+#[derive(Clone)]
+struct NativePartsScanComp {
+    state: String,
+    vars: NativePartsScanVars,
+    args: NativePartsScanArgs,
+}
+
 pub struct NativePartsScan<'a> {
     src: &'a [u8],
     pub cursor: usize,
-    compartment: Compartment,
-    stack: Vec<Compartment>,
+    compartment: NativePartsScanComp,
+    stack: Vec<NativePartsScanComp>,
     pub target: Target,
     pub parts: Vec<(i32, usize, usize)>,
     pub text_start: usize,
@@ -40,7 +46,7 @@ pub struct NativePartsScan<'a> {
 
 impl<'a> NativePartsScan<'a> {
     pub fn over(src: &'a [u8], target: Target) -> Self {
-        let mut compartment = Compartment::new("Walk");
+        let compartment = NativePartsScanComp { state: "Walk".to_string(), vars: NativePartsScanVars::Walk {  }, args: NativePartsScanArgs::Walk {  } };
         NativePartsScan { src, cursor: 0, compartment, stack: Vec::new(), target: target, parts: Vec::new(), text_start: 0 }
     }
 
@@ -48,8 +54,7 @@ impl<'a> NativePartsScan<'a> {
         self.cursor = start;
         self.parts = Vec::new();
         self.text_start = 0;
-        let mut compartment = Compartment::new("Walk");
-        self.compartment = compartment;
+        self.compartment = NativePartsScanComp { state: "Walk".to_string(), vars: NativePartsScanVars::Walk {  }, args: NativePartsScanArgs::Walk {  } };
         let mut __steps: usize = 0;
         while self.compartment.state != "Accept" && self.compartment.state != "Reject" {
             self.step();
@@ -68,20 +73,20 @@ impl<'a> NativePartsScan<'a> {
 
     fn Walk_step(&mut self) {
         if self.cursor >= self.src.fsm_len() {
-                    flush_text(&mut self.parts, self.text_start, self.cursor);
-            let mut __next = Compartment::new("Accept");
+            flush_text(&mut self.parts, self.text_start, self.cursor);
+            let mut __next = NativePartsScanComp { state: "Accept".to_string(), vars: NativePartsScanVars::Accept {  }, args: NativePartsScanArgs::Accept { } };
             self.compartment = __next;
             return Default::default();
         }
-                let hit = try_island(self.src, self.cursor, self.target);
-                if hit.0 != 0 {
-                    flush_text(&mut self.parts, self.text_start, self.cursor);
-                    record_part(&mut self.parts, hit.0, self.cursor, hit.1);
-                    self.cursor = hit.1;
-                    self.text_start = self.cursor;
-                } else {
-                    self.cursor = self.cursor + 1;
-                }
+        let hit = try_island(self.src, self.cursor, self.target);
+        if hit.0 != 0 {
+            flush_text(&mut self.parts, self.text_start, self.cursor);
+            record_part(&mut self.parts, hit.0, self.cursor, hit.1);
+            self.cursor = hit.1;
+            self.text_start = self.cursor;
+        } else {
+            self.cursor = self.cursor + 1;
+        }
     }
 
 }
