@@ -202,6 +202,28 @@ the `sections.rs` owner, an owner-gate scope question. Recorded as PM-7;
 the catch itself is D2 evidence — the warden refuted the plan's own
 accounting, not just the builder's code.
 
+**2026-07-19 — NativeParts Phase 1 landed (`6786092`).** The fourth
+conversion set through the full pipeline, landed the same way as the
+prior three: the landing gate re-run by hand (suite 398/0, regeneration
+fixpoint 24/0 across a rebuild, census 11 → 9 / 58 → 55), an atomic
+commit on the lane, a zero-conflict fast-forward onto trunk, and a trunk
+re-verification. Its plan entries record the three deviations (C-2), and
+— this is the part that matters — the accounting correction rides *in the
+landing commit itself*: the commit message, the Change Log, the Audit
+Log, and the Progress ledger all say NativeParts retires `parts.rs`'s
+production recognition, not the campaign's last, with the `sections.rs`
+and `lex.rs` residuals named and the C2 owner-question filed. The
+overclaim is corrected at the same moment the work lands, in the same
+artifact — the correction cannot drift from the claim it fixes.
+
+The campaign now stands: production hand scan loops 55, systems 24, and
+production recognition **9** — `parts.rs` at zero, the residual nine
+awaiting an owner ruling on scope (the `sections.rs` pair and the
+`lex.rs` token definitions, the latter possibly parked-`@@fsm`
+territory). Four sets designed, reviewed, and landed; the build wave that
+opened on 2026-07-18 closes here, with its one milestone claim corrected
+rather than shipped.
+
 ## 2. Discovery register (the paper-worthy claims, each with evidence)
 
 **D1 — A worldview document alone is sufficient agent training.** Blind
@@ -269,12 +291,19 @@ form — *calibrate any signal against a known-healthy instance before
 trusting it* — is a measurement discipline the future paper should state.
 
 **D7 — Design records are executable by fresh minds.** Confirmed across
-three full traversals (DeclWalk, the head readers, ArgScan), each a fresh
-builder agent working from the accepted record alone: no design decisions
-of their own, every interpretation-level deviation reported in the
-builders' completion reports (three on the first; each later build carried
-its own roster), and silent drift bounded by the mechanism, not by trust —
-the byte-parity differentials every landing must pass. One qualifier earned along the way: records **rot** —
+four full traversals (DeclWalk, the head readers, ArgScan, NativeParts),
+each a fresh builder agent working from the accepted record alone: no
+design decisions of their own, every interpretation-level deviation
+reported in the builders' completion reports (three on the first; each
+later build carried its own roster), and silent drift bounded by the
+mechanism, not by trust — the byte-parity differentials every landing
+must pass. The fourth traversal sharpened the qualifier: the builder
+compile-probed the record's corrected seam against a generated artifact
+before editing (executing the record's *claims*, not just its
+instructions), and found a gap in the record's own fact base — a fixture
+consumer the design never enumerated — which it closed by the record's
+own stated policy rather than by improvising. Executable, and
+self-correcting where the record is incomplete. One qualifier earned along the way: records **rot** —
 line numbers cited at design time were stale by build time after sibling
 landings, so executability required a locate-by-symbol discipline stated
 in the brief (see PM-2).
