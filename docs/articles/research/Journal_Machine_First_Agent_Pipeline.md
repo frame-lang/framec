@@ -12,6 +12,12 @@ framec compiler rebuild. Raw material for a future paper. Entries are
 dated; claims carry their evidence; nothing here is polished argument —
 that is the future paper's job.*
 
+*Cadence (owner directive, 2026-07-19): journal **every step** — each
+launch, gate verdict, landing, and correction gets an entry as it happens,
+not in retrospect. The journal now feeds two consumers: the future
+**article** (discoveries, §2) and a **post-mortem improvement cycle**
+(process defects and frictions, §4) to be run at campaign end.*
+
 ---
 
 ## 1. Chronology
@@ -89,6 +95,63 @@ regeneration check finally built) and the first conversion set ever
 implemented **by a builder agent from the design record alone** — all
 green, three deviations honestly reported, zero blockers.
 
+**2026-07-18/19 — the build wave: three conversion sets landed.** Build
+order was derived from the system graph's topology, not judgment: the
+hygiene set first (`af0f79f`), then DeclWalk solo (`6349ba2` — hand
+`decl_of` and `matching_brace` deleted), then a **two-lane parallel build
+trial**: the head readers (`694c043`) and ArgScan (`b9f5162`) built
+*simultaneously* by independent builder agents in isolated git worktrees
+with separate build caches, on extents the graph predicted disjoint. The
+prediction held: both lanes rebased onto the shared trunk with **zero
+conflicts**, and the composed verification ran green — 24 systems, 0
+stale regenerations, and the plan's recorded suite figures: 342/0 tests
+in the compiler package, 1928/0 across the workspace. During the ArgScan
+build the builder found a fresh defect in the hand code it was replacing —
+Bug B(iii): the comma splitter's alphabet counts the `>` of the `$>(`
+sigil itself, mangling two of the six spec examples (#4 and #6, each
+reduced from three arguments to two) — and the warden then *reproduced it
+on the live oracle* at the parity gate: bug-finding had reached the BUILD
+stage. Two tests now hold it: `oracle_stayed_buggy` pins the defect's
+both shapes (unnamed and named) on the hand oracle, and
+`pin_spec_examples` pins the fixed behavior on the system with a
+non-vacuity tooth against that oracle. Campaign scoreboard after the
+wave, per the census loop-proxy (`tools/scan_census.py`; movements
+recorded in the plan's Change Log; a proxy with known blind spots —
+PM-4): production hand scan loops 77 → 58, systems 19 → 24, hand-Lexer
+*production* recognition still 11 — all of it owned by the one remaining
+set.
+
+**2026-07-19 — the closer launched; journaling goes per-step.**
+NativeParts — the conversion set that retires the hand Lexer's last
+production recognition (11 → 0, campaign goal C2) — was handed to a
+builder agent in its own lane worktree. Its brief carries two hard-won
+process artifacts: the **gate amendment** (recorded in the design record
+itself, dated 2026-07-18: the design's original seam mechanism was
+disproved by the reviewer against four generated machines —
+`native_parts_scan`, `body_walk`, `opaque_scan`, `delim_balance`, each
+`.gen.rs` showing `scan_at` reset every literal-initialized field — so
+the corrected constructor-parameter seam is binding), and a **stale-line
+warning** — three sets landed between the design's acceptance and its
+build, so every line number in the record is rot; the builder must locate
+by symbol and re-verify each cited fact. Scope is Phase 1 only: byte
+parity through the parity gate, all 14 ledger terminals carried and named,
+the recorded owner rulings' *fixes* (DP-1, H-1) held as Phase-2 deltas.
+Same day, the owner set the journal's cadence: every step, as it happens,
+feeding both the article and a post-mortem improvement cycle.
+
+**2026-07-19 — the journal entered its own pipeline.** The backfilled
+entries above were adversarially verified before landing: four
+independent verifiers checked 28 factual claims against the repositories
+and refuted 10 — among them a misread notation ("spec examples 4/6"
+means examples #4 and #6, i.e. two of six, not four of six), a wrong
+test-binary count, a suite flake misattributed to the build wave when it
+belonged to the earlier agent experiment, and seven citation gaps where
+a sentence asserted what no named artifact could support. All ten were
+fixed before commit. The journal now holds itself to the discipline it
+documents — and the incident is itself D2 evidence: the writer read past
+every one of those errors; the verifiers' differing obligation (refute,
+don't summarize) caught them.
+
 ## 2. Discovery register (the paper-worthy claims, each with evidence)
 
 **D1 — A worldview document alone is sufficient agent training.** Blind
@@ -98,7 +161,7 @@ machine-finding skill transferred, with novel verified defects as the
 by-product. Instruction files measured as packaging, not capability.
 
 **D2 — Layered fallibility works: every stage misses; the next stage's
-*differing obligations* catch it.** Seven-plus consecutive engagements
+*differing obligations* catch it.** Eight-plus consecutive engagements
 each caught a defect the previous stage missed: finder → designer (the
 blind body-fork terminal), designer → reviewer (the clamp that panics
 debug builds), reviewer → owner (a guardrail exception; a plan-ledger
@@ -106,8 +169,12 @@ overclaim), designer → owner's own ruling (the defaults caveat on
 tie-impossibility), reviewer → designer's mechanism claim (generated
 machines reset all literal-initialized fields — disproved against four
 generated artifacts), examples-agent → repo instrumentation (the doc
-validator that couldn't see subdirectories). The layers work because the
-obligations differ, not because later stages are smarter.
+validator that couldn't see subdirectories), builder → design record (a
+hand-code defect the finder, designer, and reviewer had all read past —
+Bug B(iii)), warden → builder (independent reproduction of that claim on
+the live oracle before the gate verdict). The chain now spans the full
+pipeline, entry to landing. The layers work because the obligations
+differ, not because later stages are smarter.
 
 **D3 — Differential parity cannot certify state-faithfulness; the
 terminal ledger can.** Proof case: a wrong default was faithfully
@@ -128,6 +195,11 @@ generated-artifact reads, predicate re-runs — the weeks-old regeneration
 break fell to a single re-run); adversarial layering (directed
 counterexamples); and execution (compile-and-run examples caught a
 runtime argument-drop bug and a spec divergence no static read could).
+The mechanism reached the BUILD stage in the two-lane wave: a builder
+implementing to byte parity found a sigil-miscount defect (Bug B(iii)) in
+the very hand code its differential uses as reference — the
+implement-to-parity obligation forces a closeness of reading that review
+does not.
 
 **D5 — Bounded beats omnibus, measured.** Narrow-charter agents were
 reliable in every engagement of the campaign; multi-role arms tripled
@@ -141,12 +213,16 @@ killed three healthy agents. Corrective protocol now durable; the general
 form — *calibrate any signal against a known-healthy instance before
 trusting it* — is a measurement discipline the future paper should state.
 
-**D7 — Design records are executable by fresh minds.** The first
-builder-agent implementation worked from the accepted record alone: no
-design decisions of its own, three interpretation-level deviations all
-reported, zero blockers, all gates green. The pipeline's central claim —
-records self-contained enough that a fresh agent can execute them — held
-on first trial.
+**D7 — Design records are executable by fresh minds.** Confirmed across
+three full traversals (DeclWalk, the head readers, ArgScan), each a fresh
+builder agent working from the accepted record alone: no design decisions
+of their own, every interpretation-level deviation reported in the
+builders' completion reports (three on the first; each later build carried
+its own roster), and silent drift bounded by the mechanism, not by trust —
+the byte-parity differentials every landing must pass. One qualifier earned along the way: records **rot** —
+line numbers cited at design time were stale by build time after sibling
+landings, so executability required a locate-by-symbol discipline stated
+in the brief (see PM-2).
 
 **D8 — Schema grown empirically converges.** Two design agents,
 firewalled from each other, independently discovered the same missing
@@ -169,6 +245,19 @@ rather than a stylistic itch. Vocabulary defects behaved exactly like
 code defects: found by use, fixed at the source, regression-guarded by
 the glossary.
 
+**D11 — The system graph is a parallelism budget, and it paid out on
+first trial.** Two conversion sets whose extents the graph showed
+disjoint were built simultaneously by independent agents in isolated
+worktrees; both rebased onto the shared trunk with zero conflicts, and
+the composed verification ran green with no integration work at all. The
+graph's edge structure — not schedule intuition — decided what could be
+parallel, and the merge was the experiment that tested the graph's
+accuracy. (One boundary stated honestly: the graph budgets *code
+extents*, not *machine resources* — an earlier pair of overlapped agent
+runs in this campaign produced a toolchain-level test flake on the shared
+machine (PM-6); the build lanes mitigated with separate build caches and
+ran green.)
+
 ## 3. Supporting artifacts (where the evidence lives)
 
 - The worldview: `docs/articles/Shadows_on_the_Wall.md` (with the two
@@ -184,13 +273,89 @@ the glossary.
 - Agent definitions: the repository's versioned roster; the finder's
   brief includes the Phase-4 architecture-map deliverable.
 
-## 4. Open threads (for the paper's future-work section)
+## 4. Post-mortem register (the improvement cycle's input)
+
+*Process defects and frictions, logged as they occur. Format: what
+happened → evidence → correction applied → durable improvement (adopted,
+proposed, or owed). At campaign end each open row gets ruled: durable
+process change (agent brief, plan guardrail, tool) or explicit won't-fix.
+The discovery register (§2) holds what we learned; this register holds
+what it cost to learn it.*
+
+**PM-1 — Unvalidated liveness gauge killed three healthy agents**
+(2026-07-18). The transcript-size heuristic was invented under time
+pressure, enshrined as protocol, and acted on — before anyone checked it
+against a known-healthy agent (it reads 155 bytes in *every* state).
+*Correction:* same-day protocol rewrite, made durable in the process doc
+and memory. *Improvement adopted:* calibrate any liveness signal against
+a known-healthy instance first; patience ≥ 2× the largest same-shape
+sibling; run synchronously when the result gates the next step; kill only
+on hard evidence. *Root pattern:* we shipped an instrument without a
+calibration step — the same defect class as PM-4.
+
+**PM-2 — Design records rot between acceptance and build** (2026-07-19).
+Three sibling landings between NativeParts' design acceptance and its
+build launch invalidated every line number the record cites; one cited
+seat had changed mechanism entirely (the instantiation island seat in
+`parts.rs` — the record cites the hand `parse_inst_args`; since the
+ArgScan landing `b9f5162` the seat is `inst_scan::scan_node`).
+*Correction applied:* a stale-line
+warning in the builder's brief — locate by symbol, re-verify each cited
+fact. *Improvement proposed:* records should cite symbols and structural
+anchors, never raw line numbers; alternatively a mandatory freshness pass
+(diff the record's citations against HEAD) at builder launch.
+
+**PM-3 — Reports drifted cryptic; the owner had to say so twice**
+(2026-07-18). Dense internal shorthand (codenames, gate labels, compressed
+scoreboards) leaked into owner-facing reports; the owner's "this summary
+is impenetrable" and "too many things to address at once" were the
+measurements. *Correction applied:* plain-language rewrites, scoreboards
+with named columns, questionnaires for multi-decision asks, designs
+presented as node trees. *Improvement adopted:* the owner-facing report
+is a genre with its own obligations; multi-decision asks are always a
+questionnaire. *Improvement proposed:* report templates in the process
+doc, so the genre survives context resets.
+
+**PM-4 — The census instrument has known blind spots, thrice-confirmed**
+(2026-07-18). The loop-proxy misses `while predicate(...)` shapes and
+byte-literal brace matching; every wave has re-confirmed it. *Correction
+applied:* none yet — movements are reported with the caveat. *Improvement
+owed (docketed, blocks C-final):* harden the proxy before any final
+census is treated as a campaign predicate. Same defect class as PM-1: an
+uncalibrated gauge steering decisions.
+
+**PM-5 — Small-tool frictions with outsized cost** (2026-07-17/18).
+BSD sed lacking `\b` left a rename half-done; exact-match edits failed on
+line-wrap differences; one scripted chain in the staging docs repo (the
+RFC-0059 landing arc) reached its commit step after an intermediate edit
+in the chain had failed. *Correction applied:* residuals swept by grep
+after every bulk edit; the missed edit landed in the following docs
+commit.
+*Improvement adopted:* after any bulk text operation, a verification grep
+is part of the operation, not optional; commit steps run alone, never as
+the tail of a compound chain.
+
+**PM-6 — Overlapped agent runs shared machine resources and a suite
+flaked** (2026-07-18). During the four-arm agent experiment, the two arms
+that overlapped for ~25 minutes produced a JVM-toolchain test failure in
+one arm; disjointness of *work* does not give disjointness of *machine*.
+The graph-disjoint two-lane build wave that followed applied the lesson —
+separate build caches per lane — and ran green. *Correction applied:*
+the flaked result is docketed (this row is the docket) for solo
+re-verification before it is trusted. *Improvement proposed:* isolation
+policy names its two axes — code extent (the graph's job) and machine
+resources (the scheduler's job) — and any result produced under overlap
+needs a solo-green run before it counts.
+
+## 5. Open threads (for the paper's future-work section)
 
 The global analysis tier (boundary preprocessing, port joining) gated on
 the completed local benchmark; the explain renderer as a deterministic
 projection with a linting side effect; hosting the agent tree on a
 supervised Frame-machine runtime (agents as effectors, the stall protocol
-reified as machine states); the parallel *build* trial; the fsm-designer
+reified as machine states); a wider-than-two-lane parallel build (the
+two-lane trial having landed — D11) and the PM-6 solo re-verification it
+still owes; the fsm-designer
 re-alignment (RFC-0059 P6) with the recipes guide as its craft companion;
 and the filed-not-worked findings awaiting their phases (the parked
 recognizer-language findings; the remaining naive-splitter seats).
