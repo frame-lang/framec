@@ -2,9 +2,9 @@
 
 ![CI](https://github.com/frame-lang/framec/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue)
-![Version](https://img.shields.io/badge/version-4.6.1-green)
+![Version](https://img.shields.io/crates/v/framec.svg)
 
-framec (aka the **framepiler**) — is the transpiler for the Frame language. Currently framec supports output to 17 target languges + Graphviz. Frame is a domain-specific language for specifying state machines that transpiles to production code in multiple target languages. You write `@@system` blocks inside your native source files, and the framepiler expands them into full state machine implementations. All native code passes through unchanged — your native compiler handles everything outside the `@@system` blocks and other `@@` tagged pragmas and statements.
+framec (aka the **framepiler**) — is the transpiler for the Frame language. Currently framec supports output to 17 target languages + Graphviz. Frame is a domain-specific language for specifying state machines that transpiles to production code in multiple target languages. You write `@@system` blocks inside your native source files, and the framepiler expands them into full state machine implementations. All native code passes through unchanged — your native compiler handles everything outside the `@@system` blocks and other `@@` tagged pragmas and statements.
 
 ## Quick Start
 

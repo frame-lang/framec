@@ -1,7 +1,7 @@
 # System Inventory — the machines the cleanroom must be built out of
 
 **Status:** planning doc. Grounded in the 4.6.0 dogfooded source
-(`/Users/marktruluck/projects/framec` → `framec/src/frame_c/compiler/*.frs`) and in the
+(`<repo-root>` → `framec/src/frame_c/compiler/*.frs`) and in the
 cleanroom's current hand-written `compiler/src/`. See the journal entry *"2026-07-14 —
 FUBAR: I rebuilt the scanner as the exact hand-rolled loop P9 diagnosed as the disease."*
 

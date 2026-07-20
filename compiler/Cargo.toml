@@ -15,6 +15,7 @@
 name = "frame-compiler"
 version.workspace = true
 edition.workspace = true
+publish = false               # in-progress rebuild (framec-ng); do not publish to crates.io until promotion
 license.workspace = true
 repository.workspace = true
 description = "The Frame compiler (rebuild — RFC-0057)"

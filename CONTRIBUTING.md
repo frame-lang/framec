@@ -136,7 +136,7 @@ framec/
 
 ### Compilation Pipeline
 
-Frame source flows through 7 stages:
+Frame source flows through 8 stages:
 
 1. **Segmenter** — Splits file into prolog / `@@system` blocks / epilog
 2. **Lexer** — Tokenizes Frame syntax within system blocks
