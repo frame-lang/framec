@@ -26,3 +26,7 @@ _scratch/
 
 # Project-internal AI agent context (kept local, not published)
 CLAUDE.md
+
+# Runtime / crash artifacts — never track (can leak file paths, memory, in-flight data)
+*.dump
+erl_crash.dump
