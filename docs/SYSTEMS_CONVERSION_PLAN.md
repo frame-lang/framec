@@ -159,14 +159,25 @@ A **campaign gate** runs the Campaign DoD (C1–C10) at the end. The warden's ve
 is written (PASS/FAIL + findings) and appended to the Audit Log (below). A FAIL blocks progress
 to the next milestone until resolved.
 
-**Gate evidence, collected in one pass.** `tools/gate_evidence.sh <BASE> [--oracles …] [--tests …]
-[--probe …] [--new-fns]` runs the standard predicate set (diff, build+warnings, full suite, regen
-fixpoint, census-at-HEAD-and-BASE, working tree, oracle presence, flipped directed tests, new-leaf
-listing, CLI probes) and emits RAW outputs — real evidence, echoing every command, NO verdict — in
-~1 minute. The warden JUDGES the bundle (and runs any delta-specific check the design demands)
-instead of DRIVING each check across dozens of serial turns; the verify-don't-trust discipline is
-unchanged (same commands, re-runnable), only the rote re-derivation is removed. This is the primary
-wall-clock lever for gate latency.
+**Speed levers (measured; none weakens verify-don't-trust — see PM-9).** Gate latency was
+diagnosed by measurement: an incremental recompile is ~2s, so the cost was never compilation — it
+was agents DRIVING rote work across dozens of serial turns, and cold lane rebuilds. Three levers:
+
+1. **`tools/gate_evidence.sh <BASE> [--oracles …] [--tests …] [--probe …] [--new-fns]`** — runs the
+   whole standard predicate set (diff, build+warnings, full suite, regen fixpoint,
+   census-at-HEAD-and-BASE with no build, working tree, oracle presence, flipped directed tests,
+   new-leaf listing, CLI probes) and emits RAW outputs — real evidence, echoing every command, NO
+   verdict — in ~1 minute. The **warden AND the builder** run it and JUDGE the bundle (each still
+   runs the delta-specific checks the design demands) instead of DRIVING each check across dozens of
+   serial turns. Same commands, re-runnable — only the rote re-derivation is removed.
+2. **`tools/new_lane.sh <branch> [base]`** — creates the isolated lane worktree pre-wired to the
+   shared **sccache** compilation cache (via an untracked, gitignored `.cargo/config.toml`), so a
+   fresh lane reuses the already-compiled dependency tree instead of cold-rebuilding it. Parallel-safe
+   (per-lane target, shared cache). Always create lanes with this helper.
+3. **Parallelize graph-disjoint sets** — when the system graph shows two conversion sets touch
+   disjoint code extents (the two-lane trial proved it: zero-conflict rebase, composed verification
+   green), build them in parallel lanes (one `new_lane.sh` each) and gate them independently, instead
+   of running them strictly in sequence. Default to this whenever the graph permits.
 
 ## Course corrections, negotiation, and recording changes
 
