@@ -143,11 +143,6 @@ impl Backend for Java {
         }
     }
 
-    /// `CompletableFuture.completedFuture(v)` — a CALL, so it is already an atom.
-    fn async_wrap(&self, v: Atom) -> Atom {
-        Atom::call("CompletableFuture.completedFuture", v)
-    }
-
     fn route(
         &self,
         _sym: &SystemSym,
@@ -514,14 +509,6 @@ impl Backend for Java {
             out.frame(&format!("        public {t} {n};\n"));
         }
         out.frame("    }\n\n");
-    }
-
-    /// **Java is essentially the only target where dead code is a compile error.**
-    /// A `bool` in a table. The old compiler expressed the same fact as
-    /// `strip_java_unreachable` — a post-emission pass that deleted statements out of
-    /// text it had just generated.
-    fn dead_code_is_an_error(&self) -> bool {
-        true
     }
 }
 

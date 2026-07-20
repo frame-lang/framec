@@ -200,14 +200,6 @@ pub trait Backend {
     /// `async def` + a plain `return`.
     fn async_return_type(&self, t: Option<&str>) -> String;
 
-    /// Wrap a returned value for an async method. Java: `CompletableFuture.completedFuture(v)`.
-    /// Python: the value itself.
-    ///
-    /// Returns an **[`Atom`]** — so an `await` cannot land at the head. That is #225,
-    /// where `await x.f()` invoked `f` on the *Promise* on eight targets, and where
-    /// `java_await_rewrite` existed downstream purely to un-do it.
-    fn async_wrap(&self, v: Atom) -> Atom;
-
     /// **`@@:self.x = <rhs>` / `$.x = <rhs>`** — a FRAME statement.
     ///
     /// framec owns this one end to end, **including the terminator**, which this method
@@ -260,17 +252,6 @@ pub trait Backend {
     /// The `save`/`load` method NAMES are Frame's (`@@[save(snapshot)]`). The mechanism
     /// is fixed per target and type-ignorant: one walk, no per-user-type branch.
     fn persist(&self, m: &crate::text::emit::persist::PersistManifest, out: &mut Sink);
-
-    /// Does this target make **unreachable code a compile error**?
-    ///
-    /// A `bool` in a table, not a `match` in a pass. Java is essentially alone here, and
-    /// the old compiler expressed the same fact as `strip_java_unreachable` — a
-    /// post-emission text pass that deleted statements out of already-generated code.
-    ///
-    /// (We stop emitting after a transition on *every* target regardless, because the
-    /// code is genuinely dead everywhere. This flag exists to record *why* it is not
-    /// merely a tidiness preference on one of them.)
-    fn dead_code_is_an_error(&self) -> bool;
 
     /// Does this target have an async runtime that can realize `@@[async]`? Most do; C
     /// (and a few others, per RFC-0044) do not — there is no coroutine/future primitive

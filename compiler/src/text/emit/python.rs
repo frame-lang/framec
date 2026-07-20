@@ -111,10 +111,6 @@ impl Backend for Python {
         String::new()
     }
 
-    fn async_wrap(&self, v: Atom) -> Atom {
-        v
-    }
-
     fn return_call(&self, rel: u32, _is_async: bool, expr: NativeText, out: &mut Sink) {
         let p = self.pad(rel);
         out.frame(&format!("{p}return "));
@@ -571,13 +567,6 @@ impl Backend for Python {
             out.frame(&format!("        self.{f} = _dec(_raw[{f:?}])\n"));
         }
         out.frame("        return self\n\n");
-    }
-
-    /// Python does not care about unreachable code. Java does — it is a compile error
-    /// there, and essentially nowhere else. **A `bool` in a table, not a `match` in a
-    /// pass.**
-    fn dead_code_is_an_error(&self) -> bool {
-        false
     }
 }
 

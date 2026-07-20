@@ -137,10 +137,6 @@ impl Backend for Rust {
         self.return_type(t)
     }
 
-    fn async_wrap(&self, v: Atom) -> Atom {
-        v // Rust async is on `fn`, and `.await` is postfix — nothing to wrap.
-    }
-
     fn route(
         &self,
         _sym: &SystemSym,
@@ -469,12 +465,6 @@ impl Backend for Rust {
             out.frame(&format!("        self.{n} = __snap.{n};\n"));
         }
         out.frame("    }\n\n");
-    }
-
-    fn dead_code_is_an_error(&self) -> bool {
-        // Rust warns on unreachable code but does not error (unlike Java). The `#![allow]`
-        // header covers it; we stop after a transition anyway because it is genuinely dead.
-        false
     }
 }
 

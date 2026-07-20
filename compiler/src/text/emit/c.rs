@@ -169,10 +169,6 @@ impl Backend for C {
         self.return_type(t)
     }
 
-    fn async_wrap(&self, v: Atom) -> Atom {
-        v // C has no async in the corpus; deferred.
-    }
-
     fn route(
         &self,
         sym: &SystemSym,
@@ -630,10 +626,6 @@ impl Backend for C {
         }
         out.frame("    cJSON_Delete(__root);\n");
         out.frame("}\n\n");
-    }
-
-    fn dead_code_is_an_error(&self) -> bool {
-        false
     }
 
     /// C has no coroutine/future runtime — `@@[async]` on C is E722, not a silent sync
