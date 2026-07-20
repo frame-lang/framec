@@ -672,6 +672,26 @@ the source document belongs in the process doc. Same defect class as PM-1
 and PM-4 — an unvalidated instrument (here, the agents themselves) steering
 decisions until someone calibrated it against ground truth (the paper).
 
+**PM-9 — The gate agents *drove* verification when they could *judge* it**
+(2026-07-19). Asked why the campaign was slow, the honest answer was
+measured, not guessed: an incremental recompile is two seconds, so
+compilation was never the bottleneck — the cost was the warden running the
+standard predicates across dozens of serial read-run-reason turns (one
+GATE-B took 103 minutes over 38 tool-uses, ≈2.7 min/turn, most of it model
+latency between rote checks). *Correction adopted:* `tools/gate_evidence.sh`
+collects the whole standard bundle — diff, build+warnings, suite, regen
+fixpoint, census at HEAD **and** base (net change, no build), oracle
+presence, flipped pins, new-leaf listing, CLI probes — in one ~1-minute run,
+emitting raw re-runnable command outputs and **no verdict**. The warden now
+judges the bundle and spends its turns on the delta-specific checks, not on
+re-deriving boilerplate. The discipline is untouched — same commands, same
+verify-don't-trust rule, the agent still forms its own verdict — only the
+serial *driving* is removed. The general lesson for an agent pipeline:
+distinguish the *judgment* (which is the agent's irreducible value) from the
+*evidence-gathering* (which is scriptable), and don't pay model-latency,
+one turn at a time, for the latter. Not a defect in a result — a defect in
+the *shape* of the work, found by asking where the wall-clock went.
+
 ## 5. Open threads (for the paper's future-work section)
 
 The global analysis tier (boundary preprocessing, port joining) gated on
