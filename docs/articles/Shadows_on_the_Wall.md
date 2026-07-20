@@ -413,15 +413,30 @@ by showing it is a value, a space, or a spec whose engine lives elsewhere. An
 exemption claimed on those grounds should also say *where* the engine lives,
 because someone owns it, and that someone is writing a state machine.
 
-### 4.4 The predicate: the law over the machine
+### 4.4 The predicate: the law that judges
 
 The value is what the machine moves; the predicate is what says whether it
-moved rightly. "Every path to `$Executing` passes through `$Approved`"; "the
-balance is never negative in any configuration"; "every request is eventually
-answered"; a type read, by Curry–Howard, as the proposition it obligates.
+moved rightly. The idea is old and thoroughly worked. An **assertion** attached
+to a point in a program — a proposition required to hold whenever control
+reaches it — is a predicate; Turing used such assertions to check a routine in
+1949, and Floyd and Hoare made them the basis of what a program *means* [12, 13].
 These are neither data at rest nor processes with states of their own. They are
-*laws over a machine's behaviors* — safety and liveness invariants, guards,
-contracts, types-as-propositions — and they are the third role at the boundary.
+**laws**, and what a law judges can be any of the other roles:
+
+- a **value** — a schema, a well-formedness rule, or a refinement type
+  `{v | φ(v)}` that carries an explicit predicate on its inhabitants [17]; by the
+  Curry–Howard correspondence a type simply *is* a proposition, and its values
+  are the proofs [16];
+- a **function** — its type, or a pre-/post-condition contract judging the
+  mapping from inputs to outputs (the Hoare triple `{P} f {Q}` made syntactic as
+  `require`/`ensure`, or an algebraic law the function must obey) [13, 15];
+- a **machine** — a safety invariant over its reachable states or a liveness
+  property over its traces, in the temporal logic of programs [18, 19, 20], up
+  to a reachability law like "every path to `$Executing` passes through
+  `$Approved`." This is the load-bearing case for this paper, because a *named*
+  machine can be **model-checked** against such a law [21] — but the predicate is
+  the same kind of thing in every case: a proposition the thing it judges can
+  satisfy or **violate**.
 
 **Why the predicate is irreducible: the argument from violation.** A value a
 machine computes cannot be *wrong* relative to that machine — its output simply
@@ -439,9 +454,14 @@ machines and values alone.
 computation* — they say what programs **are** (machines moving values), in the
 declarative register of a natural law. But correctness, verification, and
 alignment are **oughts**, and no accumulation of *is* — no operational
-semantics, however complete — yields "this trace is wrong." The predicate is
-where the *ought* lives, and a purely descriptive ontology, which is what a
-two-category picture is, structurally has no room for it. This is not a
+semantics, however complete — yields "this trace is wrong." This is Hume's old
+observation that a normative conclusion cannot be drawn from purely descriptive
+premises [22], turned on program semantics; and it is why philosophers of
+computing classify a *specification* as prescriptive rather than descriptive —
+the criterion by which a system is judged correct or malfunctioning, not a
+report of what it does [23]. The predicate is where the *ought* lives, and a
+purely descriptive ontology, which is what a two-category picture is,
+structurally has no room for it. This is not a
 decorative point: the paper's own headline payoffs depend on it. **Verifiability**
 (§6.1) and any **alignment** guarantee are stated as laws over the transition
 graph — "every route to `$Executing` passes through `$Approved`" is neither a
@@ -485,7 +505,8 @@ descriptive physics of computation has no word for.
 **The predicate in force: the constraint.** A predicate, like the virus, is
 inert until it is *applied*. In a comment or a design note, "balance ≥ 0" does
 nothing; the law acquires force only when it is bound to a site in a machine — a
-guard on a transition, an `assert` at a program point, a validation gate, a pre-
+guard on a transition (Dijkstra's guarded command, where a predicate gates which
+step may fire [14]), an `assert` at a program point, a validation gate, a pre-
 or post-condition — at which point it becomes an **invariant**: the law in force
 over the machine's runs. This applied form earns a name, because it is what one
 actually meets in code. Call it the **constraint** — the predicate's engine,
@@ -594,6 +615,40 @@ machine when it is a process. The failure the table indicts is never *using*
 `Result`; it is using a *flattened* one (or a bare `Option`) for something that
 is a process — thinning a lifecycle's several distinct terminals into one
 anonymous error.
+
+**A companion field guide: where laws hide.** The table above fingerprints the
+machine; the same source carries the other two roles, and an analyst who names
+only the machine will read past them. A **predicate** (a law stated, inert) and
+a **constraint** (that law bound to a site, in force — §4.4) have their own
+recurring shapes:
+
+| Code shape | Role | Judges | How to tell |
+|---|---|---|---|
+| `assert P` / `debug_assert!` | predicate, applied → constraint | data / machine | a boolean about the state *here*; erasable on the happy path (`NDEBUG`, `-O`), aborts only on violation — a law, not a branch you route into |
+| rejecting guard: `if !valid(x): return err / raise` | constraint | machine | a predicate that *gates* the step (Dijkstra's guarded command [14]); remove it and behavior changes — it decides transition enablement, not an arbitrary branch |
+| `require` / `ensures`, `@pre` / `@post` | predicate (constraint if monitored) | function | judges the routine by relating entry to exit — the Hoare triple `{P} f {Q}` made syntactic [13], a design-by-contract clause [15]; a proof obligation, not a datum that flows on |
+| loop / object `invariant P` | predicate | machine | asserted at every step boundary — implicitly quantified over *all* reachable states; re-established each step, yet selects no step |
+| refinement / subset type `{v: Int \| v > 0}`, `x: Nat` | predicate (constraint where the checker enforces it) | data / function | a predicate carried *by the type* [17]; type-checking is that predicate in force |
+| a type read as a proposition; `Option<T>`, `@NonNull` | predicate compiled into the type | data | Curry–Howard: the type *is* the law, enforced by construction, no runtime check [16] |
+| validator fn: `is_valid`, `validate_*`, SQL `CHECK` | predicate (inert), constraint at a gate | data | a side-effect-free boolean — a law reified as a reusable function; does nothing until planted at a site |
+| parser / smart constructor: `Email.parse(s) -> Result<…>` | constraint fusing predicate + type | data | emits a value that *carries its own proof* — "parse, don't validate" [25]; the type distinguishes checked from unchecked |
+| property test: `prop_*`, `forAll(gen)`, an algebraic law | predicate over a function, in force over samples | function | a universally-quantified proposition about the function's behavior [24] |
+| sum type "make illegal states unrepresentable" | predicate compiled into a value's type | data | the law enforced by construction, so a class of bugs cannot be written (Minsky; Wlaschin) |
+| exhaustiveness / total-match obligation | constraint (compiler obliges all cases) | function | a law about the code, discharged at compile time |
+| `raise` / `throw` / `panic` on a broken law | constraint firing | data / function | the observable effect of a law-in-force detecting a breach — but an `Err(ExpectedAlt)` is a plain machine terminal; disambiguate by whether the failure denotes a *violation* or an expected outcome |
+
+Three tells settle the ambiguous cases. (1) A predicate is *erasable on the
+happy path* — compile out an `assert` or an unmonitored `require` and the
+algorithm is unchanged; a machine transition cannot be. (2) A constraint is
+*load-bearing at a gate* — remove a guard, a validating branch, or a type-check
+and behavior changes, because it decides whether a step fires [14]. (3) The
+subject names what the law judges — the *state at a point* (a data predicate),
+a routine's *entry-to-exit* (a function contract [13, 15]), or *all reachable
+states / all traces* (a machine invariant or temporal property [18, 19, 20]).
+The most treacherous shape is the reusable **validator**: the very same pure
+boolean is a bare predicate where it is *defined* and a constraint where it is
+*planted at a gate* — the law and its enforcement are distinct artifacts, and a
+faithful inventory records both.
 
 ---
 
@@ -950,6 +1005,51 @@ System," *IEEE Transactions on Knowledge and Data Engineering*, 6(1), 1994.
 
 [11] C. Böhm and G. Jacopini, "Flow Diagrams, Turing Machines and Languages
 with Only Two Formation Rules," *Communications of the ACM*, 9(5), 1966.
+
+[12] R. W. Floyd, "Assigning Meanings to Programs," in *Mathematical Aspects of
+Computer Science* (J. T. Schwartz, ed.), Proceedings of Symposia in Applied
+Mathematics, vol. 19, American Mathematical Society, pp. 19–32, 1967.
+
+[13] C. A. R. Hoare, "An Axiomatic Basis for Computer Programming,"
+*Communications of the ACM*, 12(10), pp. 576–580, 583, 1969.
+
+[14] E. W. Dijkstra, "Guarded Commands, Nondeterminacy and Formal Derivation of
+Programs," *Communications of the ACM*, 18(8), pp. 453–457, 1975.
+
+[15] B. Meyer, "Applying 'Design by Contract'," *Computer* (IEEE), 25(10),
+pp. 40–51, 1992.
+
+[16] P. Wadler, "Propositions as Types," *Communications of the ACM*, 58(12),
+pp. 75–84, 2015.
+
+[17] T. Freeman and F. Pfenning, "Refinement Types for ML," *Proceedings of the
+ACM SIGPLAN 1991 Conference on Programming Language Design and Implementation
+(PLDI)*, pp. 268–277, 1991.
+
+[18] A. Pnueli, "The Temporal Logic of Programs," *18th Annual Symposium on
+Foundations of Computer Science (FOCS)*, IEEE, pp. 46–57, 1977.
+
+[19] L. Lamport, "Proving the Correctness of Multiprocess Programs," *IEEE
+Transactions on Software Engineering*, SE-3(2), pp. 125–143, 1977.
+
+[20] B. Alpern and F. B. Schneider, "Defining Liveness," *Information Processing
+Letters*, 21(4), pp. 181–185, 1985.
+
+[21] E. M. Clarke and E. A. Emerson, "Design and Synthesis of Synchronization
+Skeletons Using Branching-Time Temporal Logic," in *Logics of Programs* (D.
+Kozen, ed.), Lecture Notes in Computer Science, vol. 131, Springer, pp. 52–71,
+1981.
+
+[22] D. Hume, *A Treatise of Human Nature*, Book III, Part I, Section I, London,
+1739–40.
+
+[23] R. Turner, "Specification," *Minds and Machines*, 21(2), pp. 135–152, 2011.
+
+[24] K. Claessen and J. Hughes, "QuickCheck: A Lightweight Tool for Random
+Testing of Haskell Programs," *Proceedings of the Fifth ACM SIGPLAN
+International Conference on Functional Programming (ICFP)*, pp. 268–279, 2000.
+
+[25] A. King, "Parse, Don't Validate," *lexi-lambda.github.io* (blog), 2019.
 
 ---
 
