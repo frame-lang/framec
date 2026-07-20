@@ -159,9 +159,13 @@ A **campaign gate** runs the Campaign DoD (C1–C10) at the end. The warden's ve
 is written (PASS/FAIL + findings) and appended to the Audit Log (below). A FAIL blocks progress
 to the next milestone until resolved.
 
-**Speed levers (measured; none weakens verify-don't-trust — see PM-9).** Gate latency was
-diagnosed by measurement: an incremental recompile is ~2s, so the cost was never compilation — it
-was agents DRIVING rote work across dozens of serial turns, and cold lane rebuilds. Three levers:
+**Speed levers (measured; none weakens verify-don't-trust — see PM-9/PM-10).** Gate latency was
+diagnosed by measurement, and the measurement corrected the diagnosis. Compilation is NOT a
+bottleneck and there is nothing to cache: `frame-compiler` has an intentionally-empty
+`[dependencies]` (`cargo tree` shows zero external crates), so a fresh lane compiles exactly one
+crate — a true cold build from an empty target is ~2s. The real cost is agents DRIVING rote
+verification across dozens of serial turns. Two levers address that; a third was measured and
+rejected.
 
 1. **`tools/gate_evidence.sh <BASE> [--oracles …] [--tests …] [--probe …] [--new-fns]`** — runs the
    whole standard predicate set (diff, build+warnings, full suite, regen fixpoint,
@@ -170,14 +174,20 @@ was agents DRIVING rote work across dozens of serial turns, and cold lane rebuil
    verdict — in ~1 minute. The **warden AND the builder** run it and JUDGE the bundle (each still
    runs the delta-specific checks the design demands) instead of DRIVING each check across dozens of
    serial turns. Same commands, re-runnable — only the rote re-derivation is removed.
-2. **`tools/new_lane.sh <branch> [base]`** — creates the isolated lane worktree pre-wired to the
-   shared **sccache** compilation cache (via an untracked, gitignored `.cargo/config.toml`), so a
-   fresh lane reuses the already-compiled dependency tree instead of cold-rebuilding it. Parallel-safe
-   (per-lane target, shared cache). Always create lanes with this helper.
-3. **Parallelize graph-disjoint sets** — when the system graph shows two conversion sets touch
+2. **Parallelize graph-disjoint sets** — when the system graph shows two conversion sets touch
    disjoint code extents (the two-lane trial proved it: zero-conflict rebase, composed verification
-   green), build them in parallel lanes (one `new_lane.sh` each) and gate them independently, instead
-   of running them strictly in sequence. Default to this whenever the graph permits.
+   green), build them in parallel lanes and gate them independently, instead of running them strictly
+   in sequence. Default to this whenever the graph permits. `tools/new_lane.sh <branch> [base]`
+   standardizes lane creation (consistent `/tmp/frame-lane-*` path, existence guard, base SHA echo).
+
+**Rejected lever — a shared build cache (sccache), PM-10.** It was committed, then backed out after
+measurement: with zero external dependencies there is no dependency tree to cache; every conversion
+edit changes the single crate's content so sccache is always a miss (measured: 0 hits over an
+edit-rebuild loop); and its required `incremental = false` made the loop ~7% SLOWER (~1.82s vs
+~1.70s) by disabling the intra-crate incremental compilation that actually helps. Lesson: the
+plausible optimization ("cold lanes rebuild the dep tree — cache it") targeted a cost that does not
+exist here; a two-minute measurement (`cargo tree`, a real cold build, an A/B loop) refuted it
+before it could mislead. Default lane creation uses no build-cache wrapper.
 
 ## Course corrections, negotiation, and recording changes
 

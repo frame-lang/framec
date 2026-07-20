@@ -26,6 +26,3 @@ _scratch/
 
 # Project-internal AI agent context (kept local, not published)
 CLAUDE.md
-
-# local build-cache config (sccache) — never commit; created by tools/new_lane.sh and locally
-.cargo/config.toml
