@@ -208,6 +208,24 @@ The plan is a contract; it changes only through a recorded, evaluated process �
   Change Log entry and ESCALATED — never hand-rolled around.
 
 ### Change Log (append-only)
+- *2026-07-20* — **Item 5 (validators) CLOSED as NULL CONVERSION (owner-approved; warden
+  PASS-WITH-CONDITIONS).** *What:* the original Item-5 premise (validate.rs holds hand recognizers to
+  convert) is REFUTED; the item is closed without authoring any `@@system`. *Why:* an 11-agent
+  inventory (4 lenses + 16 adversarial reify∥leave-latent verdicts, all stays-native/no-register at
+  high confidence) and an independent warden re-derivation via the Shadows carried-register test both
+  find no glossed machine — the only two register-bearing machines (E403 HSM-cycle, W401 reachability)
+  were ALREADY reified as the `hsm_cycle`/`reachability` systems; the residue (E402 target-membership,
+  E407 arity-admissibility, E408 unknown-context) is predicate/constraint that reifying would COSTUME.
+  *Touches:* guardrail-4 (no hand recognizer left to sign off); no DoD conversion predicate applies;
+  census unmoved (24 systems / 46 prod loops / 7 prod recognition). *Alternatives considered:* the 16
+  reify-advocate∥leave-latent-skeptic verdicts ARE the recorded alternatives (every candidate given
+  its strongest machine case; all failed honestly). *Deferrals (owner-deferred 2026-07-20, NOT
+  dropped):* E609 (field-is-member, no-op EmbedCall arm) and E113/section-order (a phantom — no hand
+  code; legacy `SectionOrderValidator` lives only under `./framec/`) are NEW-validator features,
+  outside the conversion charter. *Owner decision:* "Close as null-conversion" (correct plan text +
+  retire SectionOrder naming). Evidence: journal D13 (staging `eda9bf7`), workflow `wf_1a058ee3-61c`,
+  warden Audit line below. *Condition owed to C-final (C2):* add `validate.rs` to the C8 native
+  allowlist as the predicate/constraint pass, for Mark's ratification.
 - *2026-07-17* — R1–R11 folded from the two agent reviews (see next section). Touches D4/D5/D6
   (residual consumer count, gate strength), R3 target coverage (ESCALATED — awaiting Mark).
 - *2026-07-17* — **R3 RESOLVED (Mark: GATE).** Gate `target` to the 4 supported backends
@@ -705,6 +723,8 @@ The plan is a contract; it changes only through a recorded, evaluated process �
   campaign** (3d, 3e, NativeParts). Warden GATE-B: PASS-WITH-CONDITIONS → closes (Audit Log below).
 
 ### Audit Log (append-only — warden verdicts)
+- *2026-07-20* — GATE-B/PLAN-CHANGE, Item 5 (validators) closed as **NULL CONVERSION**: **PASS-WITH-CONDITIONS.**
+  Null-conversion SOUND — re-derived independently via the Shadows carried-register test (not a DoD proxy): E402/E407/E408 are predicate/constraint (a law at a point / a value; no register advanced by a cursor), the two register-bearing machines are ALREADY `hsm_cycle`+`reachability` systems (HsmCycle carries `steps`/pigeonhole `$Next/$Follow/$Done`; Reachability carries `visited` fixpoint `$Pass/$Scan/$EndPass`), and both tree-walks are catamorphisms over finished trees (node N independent of 1..N-1). Both failure modes policed: no machine glossed, no costume reified. "SectionOrder" phantom confirmed by grep — `section_order` absent from `compiler/src`; `SectionOrderValidator`/`$Walking`/`$OutOfOrder` exist only under `./framec/` (old transpiler), unreferenced from the `frame-compiler` crate; `tree/*::OutOfOrder` are literal "COMPILER BUG" I1 partition invariants (a different construct). E609 no-op + E113 absent, both owner-deferred. No drift: `validate.rs` UNCHANGED in the working tree (doc-only change), census unmoved (24 systems / 46 prod loops / 7 prod recognition) — a true bookkeeping close, zero systems/recognition added or removed. Concurs with journal D13 / workflow `wf_1a058ee3-61c`, no dissent. **Conditions:** (C1) this dated Change Log line — DISCHARGED; (C2, C-final) add `validate.rs` to the C8 native allowlist as the predicate/constraint pass, Mark to ratify.
 - *2026-07-19* — GATE-B, NativeParts Phase-2 (Δ1 string-aware hole T-N7/R6; Δ2 `{{` T-N8; Δ3 unterminated→one Text run T-N1/N2 DP-1; Δ4 comment delim T-N5; Δ5 RefScan Unknown+E408 T-R1/R2 H-1): **PASS-WITH-CONDITIONS → GATE-B closes; 5 file-appropriate commits (1fdcb91/98abf82/a814ed2/211540f/9c0528e).**
   Teeth non-vacuous both-faces per delta (machine-correct + `oracle_stayed_buggy`); Δ5 MIXED confirmed — native_parts structural diff LOCKS (parts.rs:95/:171 both `ref_scan::scan`), ref_scan diff PARTITIONS vs `frame_ref_at_hand`. DP-1 honored (no diagnostics channel in native_parts, grep-clean); H-1 E408 reproduced (`@@:wat.x` → exit 65 emission-blocked; `@@:self.x` clean). Regen 24/0 across rebuild; suite 409/0; 0 warnings; census net-neutral vs e62a75e (7/14, 46/41, 24). `double_brace_skip`/`unterminated_at`/`first_segment_end` all Category-A by the paper (grounded leaf check). Δ5 read as a glossing-fix (observability + verifiability bought). Conditions discharged at this merge: this Change Log + Audit line + Progress ledger row 4; `brace_balance` production-dead disposition named (C-final: delete/keep-as-Dyck-1). No oracle deleted (C-final owns them).
 - *2026-07-19* — GATE-B, Item 3e Phase-2 (D1 opaque-aware seeks T-S3/H1/T-H8; D2 params-skipping hunt T-S5; D3 limit-bounded probe T-S9): **PASS-WITH-CONDITIONS → GATE-B closes; 3 file-appropriate commits (3df6522/e37b2e9/36f02d8).**
@@ -1003,9 +1023,38 @@ what each item **retires**.
   `rust_raw`/`block_comment`/`hole_at` become deletable. Holes get produced by a
   `BraceBalance`-backed pass (the system already exists from Item 1), delim from `OpaqueScan`.
 
-### Item 5 — validators: ReachableWalker / SectionOrder / HsmCycleWalker
-- `hsm_cycle` and `reachability` are already systems; this converts the `validate.rs` E402/E609
-  section-order and ref checks that remain hand.
+### Item 5 — validators: EXAMINED → NULL CONVERSION (closed 2026-07-19)
+`hsm_cycle` (E403) and `reachability` (W401) are already `@@system` graph-walkers over integer edge
+lists — they were the only genuine machines this pass needs. An 11-agent inventory (4 lenses:
+machine-finder / trichotomy / scope / expressibility, then 16 adversarial verdicts = a reify-advocate
+∥ a leave-latent-skeptic per candidate) found **no hand recognition machine left to convert** in
+[validate.rs](../compiler/src/validate.rs): unanimous `stays-native / no-recognition-register` at
+high confidence on all 8 candidates, every reify-advocate included. `validate.rs` is a pure AST pass
+(its header: "cannot read source bytes"); its residue is predicate/constraint that reifying would
+**costume**, not compress:
+- **E402** (`validate.rs:80-101`) — transition-target set-membership (`state_names.contains`); a law
+  applied at a point, no cursor/register. VOID CONDITION: flips only if target admissibility ever
+  depends on an ordered history of prior transitions (a path/reachability walk over the transition
+  graph).
+- **E407 / `adjudicate` / `admissible`** (`validate.rs:239-342`) — the arity-admissibility law,
+  deliberately the ONE shared function consumed by `validate` (diagnostics) and `emit` (candidate
+  choice) so accept and emit cannot disagree (the E405 accept/emit-divergence this rebuild exists to
+  kill). No register; the `<`/`>` fork recognizer already ran upstream in the scanner. VOID: flips
+  only if admissibility became order-dependent across an unbounded candidate stream carrying a
+  best-partial register.
+- **E408 / `check_unknown_context`** (`validate.rs:187-200`) — unknown-context point-law; the
+  context-word recognizer already ran upstream in `ref_scan` (frozen as the `RefKind` tag). VOID:
+  flips only if the validator itself had to walk dotted context segments against a nested scope.
+
+**"SectionOrder" was a PHANTOM.** No user-facing section-order validator exists in the cleanroom —
+only the walled-off legacy `SectionOrderValidator` (`$Walking`/`$OutOfOrder`) and an unimplemented
+E113. The `TreeDefect::OutOfOrder` / `Defect::OutOfOrder` in `tree/*` are **I1 byte-coverage
+partition invariants** ("COMPILER BUG, not a user error"), not section-order validation — out of
+scope. **E609** (field-is-a-member) remains a deferred no-op (`NativePart::EmbedCall(_) => {}`).
+Building E609 or E113 as new validators would be **new-feature work outside the conversion charter**
+(owner-deferred 2026-07-19, not dropped). Evidence: journal D13 (staging `eda9bf7`); workflow
+`wf_1a058ee3-61c`. This is the trichotomy earning its keep as an analysis tool — the adversarial
+harness is what licensed *believing* the null result instead of forcing a costume.
 
 ### Item 6 — the EmitDriver walk (LAST)
 - The emit body-statement walk (`text/emit/driver.rs`). Per the journal it is a *transducer*,
@@ -1071,5 +1120,5 @@ should stop counting as production. The hardening deliberately did NOT decide th
 | 2 Segmenter | **close_brace capability: warden PASS (GATE-A+B, pending commit).** Body-end recognition off the hand Lexer onto OpaqueScan (`opaque_at`, 3-way signal). Remaining Item-2 scope: `hand_item_starts` oracle (→ C-final sweep) + `BodyBalance` `{}`-counter sub-system (named, before close) | segmenter, +OpaqueScan `kind`/`unterminated` registers | close_brace: yes. Item-2 whole: no (oracle + brace-counter named) |
 | 3 Grammar | **Dispatch-walks COMPLETE** (3c-3 d352021). **3d DeclWalk/DeclRead COMPLETE 2026-07-19** (M-wire done; hand decl_of + matching_brace DELETED; GATE-A PASS; **Phase B T9+T13 LANDED → GATE-B CLOSED**, guardrail-4 params_close bare-counter exception retired onto DelimBalance, body_open_at opaque+params-aware). **3e Head readers COMPLETE 2026-07-19** (lane worktree; hand head parse deleted; GATE-A+B PASS; **Phase-2 deltas D1/D2/D3 LANDED** 3df6522/e37b2e9/36f02d8 — opaque-aware seeks via the `skip` leaf, params-skipping parent hunt, limit-bounded probe; first grounded-warden GATE-B PASS). 3a (fbde61e), 3b (03671f1), BodyBalance (2f9d95c), 3c-1 MachineWalk (fa38988), 3c-2 StateWalk (c7637b3), **3c-3 body→BodyWalk** (warden PASS after D3 fix). All three inner dispatch walks (machine_section/state-member/body) are @@[scan(u8)] systems; BodyWalk fuses a brace COUNTER + a (start,depth) ACCUMULATOR. I1 proven each; loops 86→77, SYSTEMS 15→19. | stmt_scan; DelimBalance; MachineWalk; StateWalk; **BodyWalk** (19th) | 3a/3b/BodyBalance/3c-1/3c-2/3c-3: yes |
 | 4 Islands | **ArgScan LANDED 2026-07-19** (one seat; hand splitters deleted; 12 deltas incl. Bug B(iii); E407 provisional). **NativeParts COMPLETE 2026-07-19** — Phase 1 LANDED (ctor-param seam; 14-row ledger carried; GATE-A+B PASS) + **Phase-2 Δ1–Δ5 LANDED** (1fdcb91/98abf82/a814ed2/211540f/9c0528e — string-aware holes, `{{` phantom, DP-1 unterminated→Text-run, comment-delim honesty, H-1 RefScan Unknown+**E408**; grounded-warden GATE-B PASS). **Live-path production recognition = 0**; the census's 7 = hand-Lexer method DEFS + the SectionScan oracle miscount — C2 (=0) is a C-final milestone by construction, NOT an owner scope gap (see census-hardening entry). `brace_balance` now production-dead (Δ1), C-final delete/keep. | arg_scan + native_parts_scan / opaque_scan holes+delim / ref_scan seat (24 systems) | ArgScan hand path: yes (oracles C-final). NativeParts: no (parity + fix landings; oracles + brace_balance + C-final own deletion) |
-| 5 Validators | not started | hsm_cycle, reachability | no |
+| 5 Validators | **EXAMINED → NULL CONVERSION (closed 2026-07-19)** — 11-agent inventory (4 lenses + 16 adversarial verdicts) found NO hand recognition machine to convert; the two real machines (E403 HsmCycle, W401 Reachability) are already systems; residue (E402/E407/E408) is predicate/constraint that reifying would costume. "SectionOrder" = phantom (legacy-only + unimplemented E113); E609 = deferred no-op. See Item 5 section. | hsm_cycle, reachability (both pre-existing) | n/a — no hand recognition path; residue correctly stays native |
 | 6 EmitDriver | not started | — | n/a (transducer, last) |
