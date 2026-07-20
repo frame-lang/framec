@@ -451,9 +451,9 @@ pub fn emit(src: &Source, ast: &FileAst, syms: &SymbolTable, be: &dyn Backend) -
                         is_async,
                         &mut out,
                     );
-                    let terminated =
+                    let end =
                         emit_body(src, syms, sym, &st.name, &h.event, is_async, &h.body, be, &mut out);
-                    be.close_handler(ret, is_async, terminated, &mut out);
+                    be.close_handler(ret, is_async, end.terminated(), &mut out);
                 }
             }
         }
@@ -489,6 +489,33 @@ pub fn emit(src: &Source, ast: &FileAst, syms: &SymbolTable, be: &dyn Backend) -
 /// Returns TRUE if the body ended in a terminal statement (a transition, a pop, or a
 /// `@@:return`) — so nothing after it would be reachable.
 #[allow(clippy::too_many_arguments)]
+/// How a handler or action body ended — the two distinct terminals the statement walk
+/// reaches, named so they stay distinct at the call site instead of collapsing into a
+/// bare `bool`.
+///
+/// The walk emits statements until a *base-nesting* terminal (a transition / stack-push /
+/// pop / `@@:return` at `depth == 0 && rel == 0`) fires, then stops — so any trailing
+/// statements after it are never spelled (they are dead: a compile error on Java, merely
+/// wrong elsewhere). The old compiler recovered this fact with a post-emission text pass
+/// (`strip_java_unreachable`); here the tree knows the order, so the emitter simply stops.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BodyEnd {
+    /// A base-nesting terminal fired: the walk halted; any trailing statements were dead and
+    /// never spelled. The handler needs no fallback return.
+    Terminated,
+    /// Statements ran out with no base-nesting terminal: control falls through, so a target
+    /// that requires an explicit tail return (Java) gets its fallback.
+    Fell,
+}
+
+impl BodyEnd {
+    /// Did the body terminate at base nesting? (The single bit `close_handler` consults to
+    /// decide whether a fallback return is needed.)
+    fn terminated(self) -> bool {
+        matches!(self, BodyEnd::Terminated)
+    }
+}
+
 fn emit_body(
     src: &Source,
     syms: &SymbolTable,
@@ -499,7 +526,7 @@ fn emit_body(
     body: &Body,
     be: &dyn Backend,
     out: &mut Sink,
-) -> bool {
+) -> BodyEnd {
     // A transition emits an implicit `return`, so everything after it in the same block
     // is dead. In Java that is a COMPILE ERROR; everywhere else it is merely wrong. The
     // old compiler expressed this as `strip_java_unreachable` — deleting statements out
@@ -655,8 +682,11 @@ fn emit_body(
         }
     }
 
-    let _ = be.dead_code_is_an_error();
-    terminated
+    if terminated {
+        BodyEnd::Terminated
+    } else {
+        BodyEnd::Fell
+    }
 }
 
 /// Lower `@@SystemName(args)` (spec §1103) to the target constructor call. **The call-site

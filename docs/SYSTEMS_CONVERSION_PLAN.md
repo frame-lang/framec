@@ -208,6 +208,27 @@ The plan is a contract; it changes only through a recorded, evaluated process �
   Change Log entry and ESCALATED — never hand-rolled around.
 
 ### Change Log (append-only)
+- *2026-07-20* — **Item 6 (EmitDriver) CLOSED as NULL CONVERSION (owner-approved; warden gate
+  below).** *What:* `fn emit_body` is NOT reified; the campaign's last conversion closes with a
+  small native value-refinement instead. *Why:* it IS a genuine Mealy transducer (real `terminated`
+  register, 2 read-back sites), but (1) reify does not pay — the adversarial split *inverted*
+  (reify-advocate → stays-native HIGH; costume-skeptic → reify-pays MEDIUM), compression is negative
+  and verifiability weak on a 1-bit latch, only observability survives, and a prior owner verdict
+  (2026-07-14) already called this exact site a costume; and (2) it is blocked on a net-new framec-ng
+  codegen feature — a borrowed / `<'a>` domain on a plain `@@system`, which no path emits (verified:
+  the `<'a>`+borrow is injected ONLY by `@@[scan(u8)]`, hardcoded `src: &'a [u8]`; the 2 plain
+  `@@systems` are fully owned), while emit_body's context is irreducibly borrowed. Per guardrail 3 the
+  blocker is surfaced, not hand-faked. *What changed (native, behavior-preserving):* `emit_body`
+  returns `BodyEnd { Terminated, Fell }` instead of a bare `bool` (§5 faithful-terminal-structure —
+  the one surviving payoff, observability, captured in the value channel), and the vestigial
+  `let _ = be.dead_code_is_an_error();` read was dropped. Suite 409/0, regen 24/0, only `driver.rs`
+  touched; `end.terminated()` ≡ the prior bool. *Touches:* no DoD conversion predicate (no `.frs`,
+  no oracle, no hand recognizer); the `Backend` trait spellings stay native permanently.
+  *Alternatives considered:* build the borrowed-domain codegen feature then reify (rejected by owner
+  — net-new compiler work for a single call site whose reify is itself contested); partial-reify
+  (rejected — the "loop merely moved" costume). *Owner decision:* "Close as null-conversion." *Result:
+  the campaign's conversion phase is COMPLETE → C-final.* Evidence: workflow `wf_25bb87c4-1f4`,
+  journal D14, warden Audit line below.
 - *2026-07-20* — **Item 5 (validators) CLOSED as NULL CONVERSION (owner-approved; warden
   PASS-WITH-CONDITIONS).** *What:* the original Item-5 premise (validate.rs holds hand recognizers to
   convert) is REFUTED; the item is closed without authoring any `@@system`. *Why:* an 11-agent
@@ -723,6 +744,8 @@ The plan is a contract; it changes only through a recorded, evaluated process �
   campaign** (3d, 3e, NativeParts). Warden GATE-B: PASS-WITH-CONDITIONS → closes (Audit Log below).
 
 ### Audit Log (append-only — warden verdicts)
+- *2026-07-20* — GATE (MILESTONE+PLAN-CHANGE+CODE-CHANGE), Item 6 (EmitDriver) closed as **NULL CONVERSION**: **PASS-WITH-CONDITIONS.**
+  Null-conversion SOUND, re-derived via the Shadows carried-register test: `emit_body` IS a genuine Mealy transducer (real `terminated` register — decl driver.rs:537, written :607/:621/:644/:657, read back at loop head :568 AND by close_handler :456), but it is a degenerate 2-state absorbing latch — no hidden depth counter (depth read per-statement from the tree, not accumulated; no glossing), and reifying the 1-bit halt latch would be costume (§6.2). The one payoff (observability) correctly banked in the value channel: `terminated: bool` → `BodyEnd{Terminated,Fell}` (§5). Blocker REAL and independently foreclosing: 22/24 gen systems borrow only `src: &'a [u8]`; hsm_cycle+reachability owned; emit_body's context is an irreducible non-`src` borrow (`&dyn Backend`,`&mut Sink`,…) no codegen path emits (guardrail-3 surfaced, not hand-faked). Refinement BEHAVIOR-PRESERVING: `end.terminated()` ≡ prior bool, dropped `dead_code_is_an_error()` read is a pure discarded no-op, suite 409/0, regen 24/0, only driver.rs touched (35+/5-), 0 warnings. Plan faithful, census unmoved (24 systems / 46 prod loops / 7 prod recognition — driver.rs outside the text/scan census scope). Conditions: (1) commit atomically (driver.rs + plan) — done in this commit; (2, C-final) Mark ratifies driver.rs into the C8 native allowlist as the transducer pass — allowlist change is the owner's call. Non-blocking finding: `dead_code_is_an_error` is now an orphaned `pub trait` capability flag (no warning) — keep-as-documented or delete at C-final housekeeping, owner's spelling call. Concurs with wf_25bb87c4-1f4 (reify-advocate stays-native HIGH) + journal D14, no dissent.
 - *2026-07-20* — GATE-B/PLAN-CHANGE, Item 5 (validators) closed as **NULL CONVERSION**: **PASS-WITH-CONDITIONS.**
   Null-conversion SOUND — re-derived independently via the Shadows carried-register test (not a DoD proxy): E402/E407/E408 are predicate/constraint (a law at a point / a value; no register advanced by a cursor), the two register-bearing machines are ALREADY `hsm_cycle`+`reachability` systems (HsmCycle carries `steps`/pigeonhole `$Next/$Follow/$Done`; Reachability carries `visited` fixpoint `$Pass/$Scan/$EndPass`), and both tree-walks are catamorphisms over finished trees (node N independent of 1..N-1). Both failure modes policed: no machine glossed, no costume reified. "SectionOrder" phantom confirmed by grep — `section_order` absent from `compiler/src`; `SectionOrderValidator`/`$Walking`/`$OutOfOrder` exist only under `./framec/` (old transpiler), unreferenced from the `frame-compiler` crate; `tree/*::OutOfOrder` are literal "COMPILER BUG" I1 partition invariants (a different construct). E609 no-op + E113 absent, both owner-deferred. No drift: `validate.rs` UNCHANGED in the working tree (doc-only change), census unmoved (24 systems / 46 prod loops / 7 prod recognition) — a true bookkeeping close, zero systems/recognition added or removed. Concurs with journal D13 / workflow `wf_1a058ee3-61c`, no dissent. **Conditions:** (C1) this dated Change Log line — DISCHARGED; (C2, C-final) add `validate.rs` to the C8 native allowlist as the predicate/constraint pass, Mark to ratify.
 - *2026-07-19* — GATE-B, NativeParts Phase-2 (Δ1 string-aware hole T-N7/R6; Δ2 `{{` T-N8; Δ3 unterminated→one Text run T-N1/N2 DP-1; Δ4 comment delim T-N5; Δ5 RefScan Unknown+E408 T-R1/R2 H-1): **PASS-WITH-CONDITIONS → GATE-B closes; 5 file-appropriate commits (1fdcb91/98abf82/a814ed2/211540f/9c0528e).**
@@ -1056,10 +1079,43 @@ Building E609 or E113 as new validators would be **new-feature work outside the 
 `wf_1a058ee3-61c`. This is the trichotomy earning its keep as an analysis tool — the adversarial
 harness is what licensed *believing* the null result instead of forcing a costume.
 
-### Item 6 — the EmitDriver walk (LAST)
-- The emit body-statement walk (`text/emit/driver.rs`). Per the journal it is a *transducer*,
-  not a traversal; converting it is deliberate and last, and the per-backend **spellings**
-  stay native regardless.
+### Item 6 — the EmitDriver walk: EXAMINED → NULL CONVERSION (closed 2026-07-20)
+The emit body-statement walk (`fn emit_body`, `text/emit/driver.rs`) IS a genuine Mealy
+transducer — unlike Item 5 it carries a real register, `terminated: bool`, read back at the loop
+head (`if terminated { break }`) and again by `close_handler` (the second read-back site proves it
+is genuinely carried). But an 11-agent understand-phase (4 lenses + 16 adversarial verdicts) and the
+owner both ruled it a NULL conversion, for two independent reasons:
+
+1. **Merits — reify does not pay (the adversarial split *inverted*).** The reify-advocate lens
+   concluded `stays-native` at HIGH confidence; the costume-skeptic reached `reify-pays` at only
+   MEDIUM. Consensus: the register is real and the convertible/native boundary is crisp, but
+   compression is *negative* (states + a leaf interface wrap a 1-bit monotone halt latch), and
+   verifiability is weak (a 2-state absorbing latch). The sole surviving payoff is **observability**
+   — naming the two terminals ($Terminated vs $Fell) the `bool` return merged. A prior owner verdict
+   (journal 2026-07-14) already ruled this exact site a costume ("ceremony over a wound already
+   closed"), and Item 5 closed null via the identical carried-register test.
+2. **Feasibility — blocked on a net-new framec-ng codegen feature.** Even if reify-worthy, the
+   transducer cannot be *constructed*: framec-ng emits a lifetime parameter + borrow ONLY on the
+   `@@[scan(u8)]` path, hardcoded to `src: &'a [u8]` (verified: 22/24 generated systems are
+   `Struct<'a>` with exactly that field; the 2 plain `@@systems` — reachability/hsm_cycle — are fully
+   owned). emit_body's context is irreducibly borrowed (`&dyn Backend`, `&SymbolTable`, `&Source`,
+   `&mut Sink`, `&[Stmt]`) — a *non-`src`* borrow on a *non-scan* `@@system`, which no codegen path
+   emits. Per guardrail 3 this is a STOP-and-surface blocker; hand-faking it (a native wrapper
+   carrying the borrows around a fake owned machine) would just be the hand walk in a costume.
+
+**The one real payoff, banked natively (not via a machine).** The observability win is the
+trichotomy's own advice — name the distinct terminals in the *value channel*, not by reifying a
+walk. `fn emit_body` now returns a `BodyEnd { Terminated, Fell }` enum instead of a bare `bool`
+(§5 faithful-terminal-structure), with `BodyEnd::terminated()` supplying the single bit
+`close_handler` consults. Behavior-preserving (suite 409/0 unchanged, regen 24/0, only `driver.rs`
+touched; `end.terminated()` ≡ the old bool). The vestigial `let _ = be.dead_code_is_an_error();`
+read was dropped at the same time (the dead-code suppression is unconditional via the register; the
+capability flag stays as documented `Backend` API). The `Backend` trait spellings stay native
+permanently (the Oceans / type-ignorance boundary). Evidence: workflow `wf_25bb87c4-1f4`; journal
+D14. **With Item 6 closed, the campaign's conversion phase is COMPLETE → C-final** (delete the
+`_hand` oracles + hand Lexer; ratify the C8 native allowlist, now to include `validate.rs` and
+`driver.rs` as the predicate/constraint + transducer passes whose only register-bearing machines are
+already systems).
 
 ## Hand-Lexer retirement — the explicit dependency
 
@@ -1121,4 +1177,4 @@ should stop counting as production. The hardening deliberately did NOT decide th
 | 3 Grammar | **Dispatch-walks COMPLETE** (3c-3 d352021). **3d DeclWalk/DeclRead COMPLETE 2026-07-19** (M-wire done; hand decl_of + matching_brace DELETED; GATE-A PASS; **Phase B T9+T13 LANDED → GATE-B CLOSED**, guardrail-4 params_close bare-counter exception retired onto DelimBalance, body_open_at opaque+params-aware). **3e Head readers COMPLETE 2026-07-19** (lane worktree; hand head parse deleted; GATE-A+B PASS; **Phase-2 deltas D1/D2/D3 LANDED** 3df6522/e37b2e9/36f02d8 — opaque-aware seeks via the `skip` leaf, params-skipping parent hunt, limit-bounded probe; first grounded-warden GATE-B PASS). 3a (fbde61e), 3b (03671f1), BodyBalance (2f9d95c), 3c-1 MachineWalk (fa38988), 3c-2 StateWalk (c7637b3), **3c-3 body→BodyWalk** (warden PASS after D3 fix). All three inner dispatch walks (machine_section/state-member/body) are @@[scan(u8)] systems; BodyWalk fuses a brace COUNTER + a (start,depth) ACCUMULATOR. I1 proven each; loops 86→77, SYSTEMS 15→19. | stmt_scan; DelimBalance; MachineWalk; StateWalk; **BodyWalk** (19th) | 3a/3b/BodyBalance/3c-1/3c-2/3c-3: yes |
 | 4 Islands | **ArgScan LANDED 2026-07-19** (one seat; hand splitters deleted; 12 deltas incl. Bug B(iii); E407 provisional). **NativeParts COMPLETE 2026-07-19** — Phase 1 LANDED (ctor-param seam; 14-row ledger carried; GATE-A+B PASS) + **Phase-2 Δ1–Δ5 LANDED** (1fdcb91/98abf82/a814ed2/211540f/9c0528e — string-aware holes, `{{` phantom, DP-1 unterminated→Text-run, comment-delim honesty, H-1 RefScan Unknown+**E408**; grounded-warden GATE-B PASS). **Live-path production recognition = 0**; the census's 7 = hand-Lexer method DEFS + the SectionScan oracle miscount — C2 (=0) is a C-final milestone by construction, NOT an owner scope gap (see census-hardening entry). `brace_balance` now production-dead (Δ1), C-final delete/keep. | arg_scan + native_parts_scan / opaque_scan holes+delim / ref_scan seat (24 systems) | ArgScan hand path: yes (oracles C-final). NativeParts: no (parity + fix landings; oracles + brace_balance + C-final own deletion) |
 | 5 Validators | **EXAMINED → NULL CONVERSION (closed 2026-07-19)** — 11-agent inventory (4 lenses + 16 adversarial verdicts) found NO hand recognition machine to convert; the two real machines (E403 HsmCycle, W401 Reachability) are already systems; residue (E402/E407/E408) is predicate/constraint that reifying would costume. "SectionOrder" = phantom (legacy-only + unimplemented E113); E609 = deferred no-op. See Item 5 section. | hsm_cycle, reachability (both pre-existing) | n/a — no hand recognition path; residue correctly stays native |
-| 6 EmitDriver | not started | — | n/a (transducer, last) |
+| 6 EmitDriver | **EXAMINED → NULL CONVERSION (closed 2026-07-20)** — `emit_body` IS a genuine Mealy transducer (real `terminated` register, 2 read-back sites), but reify does not pay (inverted split: advocate stays-native HIGH vs skeptic reify-pays MEDIUM; compression negative, only observability survives; prior 2026-07-14 costume verdict) AND is blocked on a net-new framec-ng codegen feature (borrowed/`<'a>` domain on a plain @@system — no path exists). Observability payoff banked natively: `terminated: bool` → `BodyEnd{Terminated,Fell}` enum + dropped the vestigial `dead_code_is_an_error()` read (suite 409/0, regen 24/0). See Item 6 section. | — (Backend spellings stay native permanently) | n/a — genuine transducer, but reify blocked + doesn't pay; register named in the value channel instead |
