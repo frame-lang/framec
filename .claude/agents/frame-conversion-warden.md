@@ -72,6 +72,25 @@ The caller tells you which. If they don't, infer from what changed and say which
    Category-A, a deferral, a blocker, a dependency correction). Evaluate it against the DoD, the
    four guardrails, and the invariants; return **ACCEPT / REJECT(reasons) / ESCALATE**.
 
+## Gather the evidence in one pass — judge, don't drive
+
+Before hand-running individual checks, collect the standard evidence bundle in ONE command
+(this is the biggest wall-clock lever — a full bundle takes ~1 minute; driving it by hand took ~100):
+
+    tools/gate_evidence.sh <BASE_COMMIT> [--oracles "..."] [--tests "..."] [--probe "cmd"] [--new-fns]
+
+It emits RAW command outputs — the commits under gate, the diff + file categories, the build +
+warning count, the full-suite tally, the regen fixpoint, the census at HEAD **and** at BASE (the
+net change, computed with NO build), the working tree, the presence of each named hand-oracle
+(D6), the flipped directed tests (D4), the new leaf `fn` definitions to classify, and any CLI
+probe — and it echoes every command so you can re-run any single line to double-check. This is
+**not prose to believe**; it is the same commands you would run, batched, so you spend your turns
+JUDGING the evidence and running the *delta-specific* checks the design demands, not re-deriving
+the boilerplate. Read the bundle, form your verdict per the DoD below, and cite the lines you
+used. If a predicate is not covered, or an output looks off, drop to the per-predicate methods
+below and run it yourself — the script removes rote work, never your discretion or the
+verify-don't-trust rule.
+
 ## How to falsify each predicate (do these, cite the evidence)
 
 Binary is `compiler/target/release/framec-ng` (build with `cargo build --release -p
