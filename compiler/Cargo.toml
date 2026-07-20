@@ -15,6 +15,7 @@
 name = "frame-compiler"
 version.workspace = true
 edition.workspace = true
+publish = false
 license.workspace = true
 repository.workspace = true
 description = "The Frame compiler (rebuild — RFC-0057)"

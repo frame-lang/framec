@@ -19,10 +19,8 @@ __pycache__/
 # Local scratch space for in-progress design work — never committed
 _scratch/
 
-# Claude Code local settings (worktrees, local/personal settings stay local),
-# but version the durable project agent roster.
+# Claude Code local settings + the agent roster stay local (not published).
 .claude/*
-!.claude/agents/
 
 # Project-internal AI agent context (kept local, not published)
 CLAUDE.md
