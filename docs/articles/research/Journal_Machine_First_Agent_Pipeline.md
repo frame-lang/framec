@@ -512,6 +512,40 @@ owner's one-line probe (*"is the warden trained on the shadows?"*), which
 makes the owner gate a grounding check on the agents themselves, not only
 a guardrail-and-scope check (extends D2).
 
+**D13 — The worldview predicts NULL conversions, and the pipeline confirmed
+one adversarially.** Item 5 of the campaign ("validators") was expected to
+convert hand code into `@@systems` like every item before it. Examined, it
+did the opposite: the pure-AST validator pass (`validate.rs`, whose own
+header boasts it "cannot read source bytes") contains *no hand recognition
+machine left to convert*. An 11-agent inventory (4 independent lenses —
+machine-finder, trichotomy-classifier, scope-resolver, expressibility —
+then a perspective-diverse adversarial pass of 16 verdicts, a reify-advocate
+and a leave-latent-skeptic per candidate) returned a unanimous
+`stays-native / recognition_register_present:false` at high confidence on
+every one of the eight candidates — *including every reify-advocate, whose
+assigned job was to argue the machine case*. The two genuine machines the
+pass needs (HSM-cycle E403, reachability W401) were already reified as
+`@@system` graph-walkers over integer edge lists; the residue (E402 target
+membership, E407 arity adjudication, E408 unknown-context) is
+predicate/constraint that reifying would *costume*, not compress. This is
+the trichotomy earning its keep as an analysis tool rather than a
+conversion mandate: §4.4's prediction "not everything is a machine; name the
+laws as laws" came true at a real seam, and the adversarial harness is what
+licensed *believing* the null result instead of forcing a costume to hit a
+scoreboard. Two process notes rode along. (i) The named target "SectionOrder"
+is a **phantom** in the cleanroom — no user-facing section-order validator
+exists (only the walled-off legacy `SectionOrderValidator` and an
+unimplemented E113); the plan text naming it, and describing E402/E609 as
+"section-order," is imprecise and predates the code. (ii) *Verify-don't-trust
+caught the delegated search under-reporting*: the scope agent declared
+section-order "not implemented anywhere," but the owner's own confirming grep
+surfaced `TreeDefect::OutOfOrder`/`Defect::OutOfOrder` — which on inspection
+are I1 byte-coverage *partition* invariants ("COMPILER BUG, not a user
+error"), a different construct that leaves the agent's substantive conclusion
+intact but its literal claim wrong. The lesson compounds D2/D12: an agent's
+conclusion can be right while its coverage claim is incomplete — the cheap
+independent check is not optional even when every lens agrees.
+
 ## 3. Supporting artifacts (where the evidence lives)
 
 - The worldview: `docs/articles/Shadows_on_the_Wall.md` (with the two
