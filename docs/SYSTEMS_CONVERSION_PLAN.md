@@ -640,7 +640,43 @@ The plan is a contract; it changes only through a recorded, evaluated process �
   invariant. **Item 3e Phase-2 is now complete** (the 3d + 3e per-delta-entry obligations are both
   discharged). Warden GATE-B: PASS-WITH-CONDITIONS → closes (Audit Log below).
 
+- *2026-07-19* — **NativeParts Phase-2 LANDED (Δ1–Δ5) — the last per-set Phase-2 work in the
+  campaign; five file-appropriate commits `1fdcb91`/`98abf82`/`a814ed2`/`211540f`/`9c0528e`.** Each a
+  recorded behavior-change delta flipping a Phase-1 bug-pin to assert the fix, with the mechanism the
+  design specifies per row (fix-with-teeth PARTITIONED with non-vacuous `oracle_stayed_buggy` both-faces
+  teeth, or shared-source LOCKED — read each ledger row). **Δ1 (T-N7/R6):** `opaque_scan::hole_skip`
+  routes a Python `{…}` hole through opaque-aware `DelimBalance` (not string-blind `brace_balance`) —
+  `f"{ d['}'] }"` closes at the real `}`; the extent change legitimately rippled to 5 consumer
+  differentials (native_parts/opaque_scan/skip_opaque/close_brace/delim_balance), each made PARTITIONED
+  and string-aware-CORRECT (not a regression). **Δ2 (T-N8):** a new `double_brace_skip` O(1) leaf
+  consumes `{{` whole so the second brace can't phantom-open a hole. **Δ3 (T-N1/T-N2, DP-1):** an
+  unterminated comment/literal in water flushes its interior as ONE plain Text run to `limit` — no
+  island-scan, NO diagnostics channel (DP-1 ruling) — stopping the #224/#215 splice class. **Δ4
+  (T-N5):** the comment node's `delim` is the real opener byte (`#`/`/`) from the probe, not fabricated
+  `b'/'`. **Δ5 (T-R1/T-R2, H-1):** RefScan segment-matches (not `starts_with`) and emits
+  `RefKind::Unknown` for unrecognized `@@:` context words (no ContextSelf default); `validate.rs` owns
+  the diagnosis with a NEW **E408**; 4 emit backends get an error-blocked arm. **H-1 verification
+  finding:** neither `validate.rs` nor `resolve.rs` diagnosed unknown context refs before — so Δ5 is a
+  genuine correctness fix (the warden read it as a *glossing*-fix: the merged ContextSelf-swallows-
+  unknowns terminal split into a named `Unknown` terminal + a checkable law bound at the validate
+  constraint seam). MIXED mechanism: the native_parts structural differential LOCKS (parts.rs:95 and
+  :171 both route through `ref_scan::scan`), the dedicated ref_scan differential PARTITIONS vs the
+  still-buggy `frame_ref_at_hand`. Suite **409/0**; regen fixpoint **24/0** across rebuild; 0 library
+  warnings; **census net-neutral vs base** (recognition 7/14, loops 46/41, SYSTEMS 24 — byte-identical;
+  the new leaves `double_brace_skip`/`unterminated_at`/`first_segment_end` are all Category-A by the
+  paper's carried-register-vs-cursor test, no new hand loop). E408 reproduced end-to-end: `@@:wat.x` →
+  exit 65 (emission blocked), `@@:self.x` → clean. **No oracle deleted** (Phase-2 ≠ C-final;
+  native_parts_hand/frame_ref_at_hand/hole_at/brace_balance all present, C-final owns their deletion).
+  **`brace_balance` disposition (warden condition 2):** Δ1 left it PRODUCTION-DEAD (zero production
+  callers of `::scan`; production hole delimitation goes exclusively through `delim_balance`, so there
+  is NO dual-recognizer hazard). It stays a declared, tested pure Dyck-1 counter until **C-final, where
+  its disposition is: delete** (or keep as a reusable Dyck-1 primitive if a future system wants it) —
+  recorded here so the orphan does not rot silently. **This CLOSES all per-set Phase-2 work in the
+  campaign** (3d, 3e, NativeParts). Warden GATE-B: PASS-WITH-CONDITIONS → closes (Audit Log below).
+
 ### Audit Log (append-only — warden verdicts)
+- *2026-07-19* — GATE-B, NativeParts Phase-2 (Δ1 string-aware hole T-N7/R6; Δ2 `{{` T-N8; Δ3 unterminated→one Text run T-N1/N2 DP-1; Δ4 comment delim T-N5; Δ5 RefScan Unknown+E408 T-R1/R2 H-1): **PASS-WITH-CONDITIONS → GATE-B closes; 5 file-appropriate commits (1fdcb91/98abf82/a814ed2/211540f/9c0528e).**
+  Teeth non-vacuous both-faces per delta (machine-correct + `oracle_stayed_buggy`); Δ5 MIXED confirmed — native_parts structural diff LOCKS (parts.rs:95/:171 both `ref_scan::scan`), ref_scan diff PARTITIONS vs `frame_ref_at_hand`. DP-1 honored (no diagnostics channel in native_parts, grep-clean); H-1 E408 reproduced (`@@:wat.x` → exit 65 emission-blocked; `@@:self.x` clean). Regen 24/0 across rebuild; suite 409/0; 0 warnings; census net-neutral vs e62a75e (7/14, 46/41, 24). `double_brace_skip`/`unterminated_at`/`first_segment_end` all Category-A by the paper (grounded leaf check). Δ5 read as a glossing-fix (observability + verifiability bought). Conditions discharged at this merge: this Change Log + Audit line + Progress ledger row 4; `brace_balance` production-dead disposition named (C-final: delete/keep-as-Dyck-1). No oracle deleted (C-final owns them).
 - *2026-07-19* — GATE-B, Item 3e Phase-2 (D1 opaque-aware seeks T-S3/H1/T-H8; D2 params-skipping hunt T-S5; D3 limit-bounded probe T-S9): **PASS-WITH-CONDITIONS → GATE-B closes; 3 file-appropriate commits (3df6522/e37b2e9/36f02d8).**
   Grounded leaf check (Shadows): `skip` = run-and-unwrap of the OpaqueScan sub-system (recognition register in the system, not the leaf); `is_dollar_name` = O(1) in-bounds fact — both Category-A, no smuggled walk. Differentials LOCK (shared `skip`/`hunt_start`/`is_dollar_name`; machine==oracle green); P1 pins DELETED, P2 directed tests assert the fix both-faces + non-vacuity controls. Regen 24/0 across rebuild; suite 401/0; library build 0 warnings; census net-neutral vs base 40a18a4 (prod loops 46, oracle 41, recognition 7/14, systems 24 — every metric byte-identical). Guarded `loop {}` ruled HONEST (preserves the invisibility class of the `while predicate(...)` loops it replaced; oracle-bucket, cannot touch C1) — NOT a proxy-dodge, NOT escalated. Target-aware comment + string-decoy deviation faithful (a uniform comment-open offset across 4 targets is false — Python3 has no block comments). Conditions discharged at this merge: per-delta Change Log entry above; this Audit line; ledger row 3 → "Phase-2 deltas LANDED"; census brace-matcher span-attribution fragility filed as a pre-C-final hardening item.
 - *2026-07-19* — GATE-B, Item 3d Phase-B (T9 params_close→DelimBalance; T13 body_open_at): **PASS-WITH-CONDITIONS → GATE-B closes; landed as 2 commits.**
@@ -1004,6 +1040,6 @@ should stop counting as production. The hardening deliberately did NOT decide th
 | 1 OpaqueScan | **warden PASS (GATE-A + GATE-B) — committed** | OpaqueScan, RawString, BraceBalance | skip path is the system; try_island routed; residual = holes (Item 4), close_brace (Item 2), machine skip (Item 3), + 3 oracles — all named; batteries+fuzz+milestone green |
 | 2 Segmenter | **close_brace capability: warden PASS (GATE-A+B, pending commit).** Body-end recognition off the hand Lexer onto OpaqueScan (`opaque_at`, 3-way signal). Remaining Item-2 scope: `hand_item_starts` oracle (→ C-final sweep) + `BodyBalance` `{}`-counter sub-system (named, before close) | segmenter, +OpaqueScan `kind`/`unterminated` registers | close_brace: yes. Item-2 whole: no (oracle + brace-counter named) |
 | 3 Grammar | **Dispatch-walks COMPLETE** (3c-3 d352021). **3d DeclWalk/DeclRead COMPLETE 2026-07-19** (M-wire done; hand decl_of + matching_brace DELETED; GATE-A PASS; **Phase B T9+T13 LANDED → GATE-B CLOSED**, guardrail-4 params_close bare-counter exception retired onto DelimBalance, body_open_at opaque+params-aware). **3e Head readers COMPLETE 2026-07-19** (lane worktree; hand head parse deleted; GATE-A+B PASS; **Phase-2 deltas D1/D2/D3 LANDED** 3df6522/e37b2e9/36f02d8 — opaque-aware seeks via the `skip` leaf, params-skipping parent hunt, limit-bounded probe; first grounded-warden GATE-B PASS). 3a (fbde61e), 3b (03671f1), BodyBalance (2f9d95c), 3c-1 MachineWalk (fa38988), 3c-2 StateWalk (c7637b3), **3c-3 body→BodyWalk** (warden PASS after D3 fix). All three inner dispatch walks (machine_section/state-member/body) are @@[scan(u8)] systems; BodyWalk fuses a brace COUNTER + a (start,depth) ACCUMULATOR. I1 proven each; loops 86→77, SYSTEMS 15→19. | stmt_scan; DelimBalance; MachineWalk; StateWalk; **BodyWalk** (19th) | 3a/3b/BodyBalance/3c-1/3c-2/3c-3: yes |
-| 4 Islands | **ArgScan LANDED 2026-07-19** (one seat; hand splitters deleted; 12 deltas incl. Bug B(iii); E407 provisional). **NativeParts Phase 1 LANDED 2026-07-19** (lane worktree; ctor-param seam; 14-row ledger carried; GATE-A+B PASS; DP-1/H-1 FIXES = Phase-2 Δ1–Δ5). Retires **`parts.rs`'s** production recognition (11→9), NOT the campaign's last — warden Finding 4: `sections.rs::section_keyword_starts` (2 calls) + 7 `lex.rs` defs remain; **C2 (recognition=0) blocked on an OWNER ruling: who owns `sections.rs`? are the `lex.rs` defs in C2 scope or parked-@@fsm?** | arg_scan + native_parts_scan / opaque_scan holes+delim / ref_scan seat (24 systems) | ArgScan hand path: yes (oracles C-final). NativeParts Phase 1: no (parity landing; oracles + Δ1–Δ5 + C-final own deletion) |
+| 4 Islands | **ArgScan LANDED 2026-07-19** (one seat; hand splitters deleted; 12 deltas incl. Bug B(iii); E407 provisional). **NativeParts COMPLETE 2026-07-19** — Phase 1 LANDED (ctor-param seam; 14-row ledger carried; GATE-A+B PASS) + **Phase-2 Δ1–Δ5 LANDED** (1fdcb91/98abf82/a814ed2/211540f/9c0528e — string-aware holes, `{{` phantom, DP-1 unterminated→Text-run, comment-delim honesty, H-1 RefScan Unknown+**E408**; grounded-warden GATE-B PASS). **Live-path production recognition = 0**; the census's 7 = hand-Lexer method DEFS + the SectionScan oracle miscount — C2 (=0) is a C-final milestone by construction, NOT an owner scope gap (see census-hardening entry). `brace_balance` now production-dead (Δ1), C-final delete/keep. | arg_scan + native_parts_scan / opaque_scan holes+delim / ref_scan seat (24 systems) | ArgScan hand path: yes (oracles C-final). NativeParts: no (parity + fix landings; oracles + brace_balance + C-final own deletion) |
 | 5 Validators | not started | hsm_cycle, reachability | no |
 | 6 EmitDriver | not started | — | n/a (transducer, last) |
