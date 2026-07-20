@@ -675,10 +675,10 @@ fn probe_no_double_brace_phantom_hole_delta2() {
 #[test]
 fn probe_comment_kind_and_end_match_opaque_at() {
     use frame_compiler::text::scan::opaque_scan::opaque_probe;
-    for (src, t) in [
-        ("// line\nx", Target::Rust),
-        ("/* block */x", Target::C),
-        ("# py\nx", Target::Python3),
+    for (src, t, delim) in [
+        ("// line\nx", Target::Rust, b'/'),
+        ("/* block */x", Target::C, b'/'),
+        ("# py\nx", Target::Python3, b'#'),
     ] {
         let b = src.as_bytes();
         let p = opaque_probe(b, 0, t).expect("comment probes");
@@ -687,9 +687,9 @@ fn probe_comment_kind_and_end_match_opaque_at() {
             OpaqueAt::Comment(end) => assert_eq!(p.end, end, "probe.end ≡ opaque_at end"),
             other => panic!("expected Comment for {src:?}, got {other:?}"),
         }
-        // The probe reports NO delim for a comment — the `b'/'` every comment NODE carries
-        // is the driver's fabrication (T-N5, flips at Δ4), not a machine register.
-        assert_eq!(p.delim, 0, "comment delim register on {src:?}");
+        // Δ4 (T-N5): the probe now reports the comment's REAL opener byte (`#`/`/`), so the
+        // driver sources it instead of fabricating `b'/'`.
+        assert_eq!(p.delim, delim, "comment delim register on {src:?}");
         assert!(p.holes.is_empty(), "comments have no holes");
     }
 }

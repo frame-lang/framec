@@ -333,38 +333,68 @@ fn b4_comment_clamps_where_literal_demotes() {
         let to_in_comment = comment_at_pos + 6;
         let parts = machine(b, 0, to_in_comment, t);
         let lit = first_literal(&parts).expect("clamped comment node exists");
-        assert_eq!(lit.delim, b'/', "it is the comment kind ({t:?})");
+        // Δ4: the comment delim is the real opener byte — `#` for Python, `/` for a `/`-comment.
+        let expect_delim = if matches!(t, Target::Python3) { b'#' } else { b'/' };
+        assert_eq!(lit.delim, expect_delim, "it is the comment kind ({t:?})");
         assert_eq!(
             lit.span.end, to_in_comment,
             "the comment is CLAMPED to `to`, not demoted ({t:?})"
         );
-        // A `to` INSIDE the string: demoted (no literal node at all).
+        // A `to` INSIDE the string: demoted (no STRING-LITERAL node at all — a string literal
+        // has a quote delim `"`/`'`, distinct from a comment's `#`/`/`).
         let str_pos = src.find('=').unwrap() + 2;
         let to_in_string = str_pos + 2;
         let cut = machine(b, 0, to_in_string, t);
         assert!(
             !cut.iter()
-                .any(|p| matches!(p, NativePart::Literal(l) if l.delim != b'/')),
+                .any(|p| matches!(p, NativePart::Literal(l) if matches!(l.delim, b'"' | b'\''))),
             "the literal crossing `to` must DEMOTE ({t:?})"
         );
-        agree_sweep(src, t);
+        // Partition-aware: the Python `#` comment is a Δ4 fixed row (machine `#` vs hand `/`).
+        agree_or_fixed_sweep(src, t);
     }
 }
 
-/// B-5 (T-N5, carried — flips at Δ4): EVERY comment node fabricates `delim: b'/'`, false
-/// for a Python `#` comment. Zero readers of `LiteralNode.delim` today; pinned so the
-/// first reader cannot inherit it silently.
+/// B-5 (T-N5 — FLIPPED at Δ4): a comment node's `delim` is now the ACTUAL opener byte, sourced
+/// from the probe — `#` for a Python `#` comment, `/` for a C/Java/Rust `//`|`/*`. FIXED row on
+/// Python — the hand oracle still fabricates `b'/'` (oracle_stayed_buggy).
 #[test]
-fn b5_python_hash_comment_carries_the_slash_fabrication() {
+fn b5_python_hash_comment_delim_is_the_real_opener() {
     let src = "x = 1 # a note";
     let parts = machine(src.as_bytes(), 0, src.len(), Target::Python3);
     let lit = first_literal(&parts).expect("the comment is a node");
+    assert_eq!(lit.delim, b'#', "the Python comment delim is now the real opener `#` (Δ4)");
+    // FIXED row: the machine diverges from the still-fabricating (`b'/'`) hand oracle.
+    assert_ne!(
+        format!("{parts:?}"),
+        format!("{:?}", hand(src.as_bytes(), 0, src.len(), Target::Python3)),
+        "Δ4 fix VACUOUS: the hand oracle already agrees (it must still fabricate `b'/'`)"
+    );
+
+    // A block/line comment on a `/`-comment target keeps delim `/` — carried (real opener == `/`).
+    for (csrc, t) in [
+        ("x = 1 // note", Target::Rust),
+        ("a /* b */ c", Target::C),
+    ] {
+        let p = machine(csrc.as_bytes(), 0, csrc.len(), t);
+        let l = first_literal(&p).expect("the comment is a node");
+        assert_eq!(l.delim, b'/', "a `/`-comment's real opener is `/` ({t:?})");
+    }
+}
+
+/// `oracle_stayed_buggy` (Δ4 anti-vacuity): the hand `native_parts_hand` still FABRICATES
+/// `delim: b'/'` on every comment node, including a Python `#` comment. Any repair makes the
+/// Δ4 fix teeth vacuous.
+#[test]
+fn oracle_stayed_buggy_comment_delim_fabrication() {
+    let src = "x = 1 # a note";
+    let h = hand(src.as_bytes(), 0, src.len(), Target::Python3);
+    let lit = first_literal(&h).expect("the comment is a node");
     assert_eq!(
         lit.delim,
         b'/',
-        "the fabricated delim is CURRENT behavior (Δ4 makes it the real opener byte)"
+        "the hand oracle was fixed (no longer fabricates `b'/'`) — the Δ4 fix teeth are vacuous"
     );
-    agree_sweep(src, Target::Python3);
 }
 
 /// B-6 (T-N7 / R6 — FLIPPED at Δ1): string-AWARE hole delimitation. In `f"{ d['}'] }"` the
@@ -850,7 +880,8 @@ fn structural_differential_fuzz_with_teeth() {
             }
             for p in &parts {
                 if let NativePart::Literal(l) = p {
-                    if l.delim != b'/' {
+                    // A STRING literal has a quote delim (`"`/`'`); a comment has `#`/`/` (Δ4).
+                    if matches!(l.delim, b'"' | b'\'') {
                         literals += 1;
                         if l.parts.iter().any(|lp| matches!(lp, LiteralPart::Hole(_))) {
                             holes += 1;
@@ -884,8 +915,9 @@ fn structural_differential_fuzz_with_teeth() {
                         if i < to {
                             fixed_rows += agree_or_fixed_window(b, i, to, t) as usize;
                             let w = machine(b, i, to, t);
+                            // A comment node carries the real opener delim now (`#`/`/`, Δ4).
                             if w.iter().any(
-                                |p| matches!(p, NativePart::Literal(l) if l.delim == b'/' && l.span.end == to),
+                                |p| matches!(p, NativePart::Literal(l) if matches!(l.delim, b'#' | b'/') && l.span.end == to),
                             ) {
                                 clamped_comments += 1;
                             }

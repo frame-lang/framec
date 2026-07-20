@@ -48,15 +48,20 @@ pub fn native_parts(bytes: &[u8], from: usize, to: usize, target: Target) -> Vec
             }),
             // A comment: opaque, and it stays opaque. (It is still a NODE, because framec
             // must know it is there in order NOT to splice a `;` into it — which is
-            // precisely what the old compiler did.) `delim: b'/'` is CARRIED fabrication —
-            // false for a Python `#` comment (ledger T-N5, zero readers today, fix Δ4).
-            5 => NativePart::Literal(LiteralNode {
-                span: Span::new(s, e),
-                delim: b'/',
-                parts: vec![LiteralPart::Content(TriviaNode {
+            // precisely what the old compiler did.) Δ4 (T-N5): the `delim` is the ACTUAL opener
+            // byte (`#` for Python, `/` for a block/line comment) sourced from the SAME machine
+            // the walk ran (`opaque_probe`) — no longer the fabricated `b'/'`.
+            5 => {
+                let p = super::opaque_scan::opaque_probe(bytes, s, target)
+                    .expect("walk-confirmed comment start must probe");
+                NativePart::Literal(LiteralNode {
                     span: Span::new(s, e),
-                })],
-            }),
+                    delim: p.delim,
+                    parts: vec![LiteralPart::Content(TriviaNode {
+                        span: Span::new(s, e),
+                    })],
+                })
+            }
             // A literal. Its CONTENT is bytes; its HOLES are code. delim + holes come from
             // the SAME machine the walk ran (`opaque_probe` — one source).
             1 => {

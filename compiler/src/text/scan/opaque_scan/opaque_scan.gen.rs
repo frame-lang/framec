@@ -122,6 +122,10 @@ impl<'a> OpaqueScan<'a> {
         let lc = line_comment_len(self.src, self.cursor, self.target);
         if lc > 0 {
             self.kind = 1;
+            // Δ4 (T-N5): the comment's delim is the ACTUAL opener byte (`#` / `/`), read
+            // at dispatch — not the fabricated `b'/'` the driver used to stamp on every
+            // comment node. The opener's first byte IS the delim.
+            self.delim = self.src.fsm_get(self.cursor);
             self.cursor = self.cursor + lc;
             let mut __next = OpaqueScanComp { state: "LineBody".to_string(), vars: OpaqueScanVars::LineBody {  }, args: OpaqueScanArgs::LineBody { } };
             self.compartment = __next;
@@ -130,6 +134,7 @@ impl<'a> OpaqueScan<'a> {
         let bo = block_open_len(self.src, self.cursor, self.target);
         if bo > 0 {
             self.kind = 1;
+            self.delim = self.src.fsm_get(self.cursor);
             self.nests = block_nests(self.target);
             self.depth = 1;
             self.cursor = self.cursor + bo;
