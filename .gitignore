@@ -22,7 +22,12 @@ _scratch/
 # Claude Code local settings (worktrees, local/personal settings stay local),
 # but version the durable project agent roster.
 .claude/*
-!.claude/agents/
+
+# Editor / merge backup artifacts — never track
+*.orig
+*.rej
+*.bak
+*~
 
 # Project-internal AI agent context (kept local, not published)
 CLAUDE.md

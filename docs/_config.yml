@@ -53,6 +53,7 @@ back_to_top_text: "Back to top"
 # {{ }} sequences — needs {% raw %} wrapping to publish), and the RFC scratch file.
 exclude:
   - AGENTS_README.md
+  - SYSTEM_INVENTORY.md     # internal, self-declared-stale planning doc; keep off the public docs site
   - admin/                  # local symlink into the private frame-admin repo
   - contributing/
   - per_language_guides/

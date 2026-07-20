@@ -1,6 +1,7 @@
 ---
 title: "Persistence Roadmap (4.7 cleanroom)"
 nav_exclude: true
+search_exclude: true
 ---
 
 # Persistence Roadmap — `@@[persist]` in the 4.7 rebuild

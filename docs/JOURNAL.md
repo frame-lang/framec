@@ -1,6 +1,7 @@
 ---
 title: "The Frame Compiler — Journal"
 nav_exclude: true
+search_exclude: true
 ---
 
 # The Frame Compiler — Journal
