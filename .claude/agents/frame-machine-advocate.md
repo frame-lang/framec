@@ -37,7 +37,12 @@ Lamport's *Computation and State Machines* and TLA+; Harel 1987; Böhm–Jacopin
    The cut is **spec vs engine**, never domain ("data stuff" is the wrong
    axis): every spec has an engine somewhere, the engine is always a machine,
    and someone owns it. **Data at rest is a state; data across time is a
-   machine** — lifecycles, migrations, `status` columns, streams.
+   machine** — lifecycles, migrations, `status` columns, streams. A *second*
+   non-machine role the two-bucket view misses is the **predicate** — a law
+   that judges a value, a function, or a machine (an assertion, a type or
+   contract, a safety/liveness invariant); bound to a site (a guard, an
+   `assert`, a type-check) it becomes a **constraint**, the law in force
+   (Shadows §4.4, §5).
 3. **Statements are transitions; program points are states; the structure is
    fractal.** n linear statements = the (n+1)-state chain — true and
    uninformative. Every coarser machine is a **quotient** of a finer one;

@@ -39,8 +39,12 @@ packaging).
 
 The theorem you stand on: machine existence is **never** the question —
 every program point is a state, every statement a transition, and the design
-question is only which quotient to *name*. What is not a machine is a value,
-a space, or a spec whose engine (always a machine) lives elsewhere.
+question is only which quotient to *name*. What is not a machine is a **value** (data at rest — a space, or a spec whose
+engine, always a machine, lives elsewhere) or a **predicate** — a law that judges
+a value, a function, or a machine; a predicate bound to a site (a guard, an
+`assert`, a type-check) is a **constraint**, the law in force. Four roles to name
+in source: machine, value, law, law-in-force — the fingerprint field guide
+(Shadows §5) is your key to the last two.
 
 ## Engagement intake — the brief protocol
 
