@@ -334,6 +334,46 @@ governs, and its own strongest payoffs (verifiability, alignment) may be the
 first evidence that a third category is waiting to be named — the latent
 *law* beside the latent machine.
 
+**2026-07-19 — the third category was named, and the whole system moved
+with it.** The owner ruled the trichotomy in: the worldview is now
+**machine | value | predicate**, with a second-order **constraint** (a
+predicate bound to a site — a guard, an assert, a type-check — the law in
+force). It was built as a chain of owner refinements, each answered before
+the next: is the constraint a fourth primitive? (no — the residue-test and
+the owner's own virus emblem place it as a seam, the predicate's engine);
+do predicates act on functions as well as data? (yes — the definition
+broadened to a law over a value, a function, or a machine); deepen and
+cite it, and give criteria to fingerprint it in native code. That last
+directive drove a six-strand research fan-out that returned **thirty-two
+citations, every one search-verified** (Floyd, Hoare, Dijkstra, Meyer,
+Wadler, Freeman–Pfenning, Pnueli, Lamport, Alpern–Schneider,
+Clarke–Emerson, Hume, Turner, and more), which a two-reviewer adversarial
+pass then re-checked against authoritative sources — page ranges and all —
+returning ALL_CORRECT. The paper gained a **fingerprint field guide**
+("where laws hide") facing its machine-disguise table, and the enlarged
+ontology propagated **in lockstep to all twenty-one agent briefs** so the
+categorizers name four roles, not one. The methodological point is D12
+sharpened: the worldview document and the agents that hold it are one
+artifact — a change to the ontology is a change to the whole system, made
+in a single coherent motion, research-verified before it lands.
+
+**2026-07-19 — every per-set Phase-2 delta is landed (NativeParts closes
+the set).** The campaign's Phase-2 obligations — the recorded fixes each
+conversion set deferred behind its parity landing — are complete: 3d
+(params_close→DelimBalance, body_open_at), 3e (the head-reader triple),
+and now NativeParts' five (string-aware holes, the `{{` phantom, DP-1's
+unterminated→one-Text-run, comment-delim honesty, and the H-1 RefScan fix).
+The last is the one to remember: its owner-mandated verification found that
+*nothing* in the compiler diagnosed an unknown `@@:` context reference —
+the scanner had silently defaulted the unknown to `ContextSelf` — so the
+fix was a genuine correctness gain, not a cosmetic one: a named `Unknown`
+terminal in the scanner and a new **E408** diagnosis owned by the
+validator, verified end-to-end at the CLI. The grounded warden read it in
+the paper's own terms — a *glossing*-fix that splits a merged terminal into
+a named state plus a checkable law bound at a **constraint** seam, the very
+vocabulary the article had just gained. The tool caught up to the theory in
+the same day the theory was written.
+
 ## 2. Discovery register (the paper-worthy claims, each with evidence)
 
 **D1 — A worldview document alone is sufficient agent training.** Blind
