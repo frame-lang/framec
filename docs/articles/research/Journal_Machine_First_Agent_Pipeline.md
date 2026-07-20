@@ -692,6 +692,33 @@ distinguish the *judgment* (which is the agent's irreducible value) from the
 one turn at a time, for the latter. Not a defect in a result — a defect in
 the *shape* of the work, found by asking where the wall-clock went.
 
+**PM-10 — A plausible optimization was committed, then the measurement it
+skipped refuted it** (2026-07-19). PM-9's same "make the gates faster" push
+produced a second lever that *sounded* right and was wrong: wire each lane
+worktree to a shared `sccache` compilation cache, on the premise that a fresh
+`/tmp` lane cold-rebuilds the whole dependency tree in minutes. It was
+committed and pushed before being measured. Measured afterward, every load-
+bearing assumption failed: `frame-compiler` has an intentionally-empty
+`[dependencies]` (`cargo tree` shows zero external crates), so a fresh lane
+compiles exactly one crate and a true cold build from an *empty* target is
+~2 s — there is no dependency tree to cache; sccache scored **0 hits** across
+an edit-rebuild loop, because every conversion edit changes the single
+crate's content and content-keyed caching is therefore always a miss; and the
+`incremental = false` that sccache requires made the loop **~7% slower**
+(~1.82 s vs ~1.70 s) by disabling the intra-crate incremental compilation that
+actually helps. *Correction adopted:* the lever was backed out in the open —
+`new_lane.sh` reduced to a plain lane-creation helper, the local cache config
+deleted, and the plan's "Speed levers" note now records the rejected lever and
+its lesson rather than silently dropping it. The general lesson mirrors the
+host-runtime rule *check that the evidence supports this specific action
+before changing state*: an optimization is a state change, and "everyone knows
+cold Rust builds are slow" is a training prior, not a measurement of **this**
+repo. A two-minute probe (`cargo tree`; one real `rm -rf target` build; an A/B
+edit-rebuild loop) would have pre-empted the whole detour. The honest close is
+not that the tool was harmless — it was a net regression — but that the
+correction is itself part of the record: verify-don't-trust binds the pipeline's
+own tooling, not only the code it converts.
+
 ## 5. Open threads (for the paper's future-work section)
 
 The global analysis tier (boundary preprocessing, port joining) gated on
