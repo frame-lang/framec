@@ -161,41 +161,54 @@ fn first_literal(parts: &[NativePart]) -> Option<&LiteralNode> {
 
 // ------------------------------------------------------------------ the ledger pins
 
-/// B-1 (T-N1, carried — flips at Δ3): an UNTERMINATED block comment's `Err` is silently
-/// discarded; the bytes become water and the scan continues INSIDE the comment interior.
+/// B-1 (T-N1 — FLIPPED at Δ3, DP-1): an UNTERMINATED block comment's interior is no longer
+/// scanned for islands — the rescued interior becomes ONE plain Text run to `to`. The lexer's
+/// refusal is honored (content, not code); `native_parts` grows no diagnostics channel. FIXED
+/// row — the hand oracle still island-scans the interior (oracle_stayed_buggy).
 #[test]
-fn b1_unterminated_comment_interior_is_water_today() {
+fn b1_unterminated_comment_interior_is_one_text_run() {
     let src = "x /* never closes $.n";
     for t in [Target::C, Target::Java, Target::Rust] {
-        // Teeth: the input really is on the `Err` path (a refusal, not a miss).
+        // Teeth: the input really is on the `Err`/Unterminated path (a refusal, not a miss).
         assert_eq!(
             opaque_at(src.as_bytes(), 2, t),
             OpaqueAt::Unterminated,
             "the fixture must exercise the swallow ({t:?})"
         );
         let parts = machine(src.as_bytes(), 0, src.len(), t);
-        // Pin (CURRENT behavior): no comment node — and worse, the `$.n` INSIDE the
-        // comment interior is recognized as a Ref. The lexer said Err; the walk carried on.
+        // Pin (Δ3): no comment node, no `$.n` ref — the interior is ONE Text run to `to`.
         assert!(
             !parts.iter().any(
                 |p| matches!(p, NativePart::Literal(l) if l.delim == b'/')
             ),
             "no comment node may be built from an unterminated comment ({t:?})"
         );
-        assert_eq!(
-            ref_texts(&parts, src),
-            vec!["$.n"],
-            "the interior is scanned for islands today ({t:?} — Δ3 flips this)"
+        assert!(
+            ref_texts(&parts, src).is_empty(),
+            "the unterminated interior is content, not code — no island ({t:?})"
         );
-        agree_sweep(src, t);
+        assert_eq!(
+            parts.len(),
+            1,
+            "the whole range is ONE plain Text run ({t:?})"
+        );
+        assert!(matches!(&parts[0], NativePart::Text(x) if x.span.start == 0 && x.span.end == src.len()));
+        // FIXED row: the machine diverges from the still-island-scanning hand oracle.
+        assert_ne!(
+            format!("{parts:?}"),
+            format!("{:?}", hand(src.as_bytes(), 0, src.len(), t)),
+            "Δ3 fix VACUOUS: the hand oracle already agrees (it must still island-scan)"
+        );
+        check_partition(&parts, 0, src.len(), src);
     }
 }
 
-/// B-2 (T-N2, carried — flips at Δ3): an unterminated LITERAL's interior is island-scanned —
-/// a `$.x` / `@@Sub()` inside the user's (mis-terminated) string is recognized and would be
-/// spliced (the #224/#215 corruption class, live at this boundary).
+/// B-2 (T-N2 — FLIPPED at Δ3, DP-1): an unterminated LITERAL's interior is no longer
+/// island-scanned — the `$.x` / `@@Sub()` inside the user's mis-terminated string (the
+/// #224/#215 corruption class) is content, not code. The rescued interior becomes ONE plain
+/// Text run. FIXED row — the hand oracle still splices those phantom islands (oracle_stayed_buggy).
 #[test]
-fn b2_islands_inside_unterminated_literal_interior() {
+fn b2_unterminated_literal_interior_is_one_text_run() {
     let src = "a = \"unterminated $.x and @@Sub() ";
     for t in TARGETS {
         assert_eq!(
@@ -204,22 +217,31 @@ fn b2_islands_inside_unterminated_literal_interior() {
             "the fixture must exercise the literal swallow ({t:?})"
         );
         let parts = machine(src.as_bytes(), 0, src.len(), t);
-        assert_eq!(
-            ref_texts(&parts, src),
-            vec!["$.x"],
-            "a ref IS found inside the unterminated string's interior today ({t:?})"
+        assert!(
+            ref_texts(&parts, src).is_empty(),
+            "NO ref is found inside the unterminated string's interior now ({t:?})"
         );
         assert!(
-            parts
+            !parts
                 .iter()
                 .any(|p| matches!(p, NativePart::Instantiate(i) if i.name == "Sub")),
-            "an instantiation IS found inside the interior today ({t:?})"
+            "NO instantiation is found inside the interior now ({t:?})"
         );
-        agree_sweep(src, t);
+        // The whole range is ONE plain Text run to `to` (DP-1).
+        assert_eq!(parts.len(), 1, "the interior is ONE plain Text run ({t:?})");
+        assert!(matches!(&parts[0], NativePart::Text(x) if x.span.start == 0 && x.span.end == src.len()));
+        // FIXED row: the machine diverges from the still-splicing hand oracle.
+        assert_ne!(
+            format!("{parts:?}"),
+            format!("{:?}", hand(src.as_bytes(), 0, src.len(), t)),
+            "Δ3 fix VACUOUS: the hand oracle already agrees (it must still island-scan)"
+        );
+        check_partition(&parts, 0, src.len(), src);
     }
 
-    // The hole-interior variant (python): the unterminated `'` INSIDE a hole is swallowed
-    // by the recursion (the T-N1/T-N2 reachability includes hole interiors).
+    // The hole-interior variant (python): the unterminated `'` INSIDE a hole is likewise
+    // text-run by the recursion — carried both before and after Δ3 (the interior has no
+    // islands either way), so it stays a CARRIED row (machine == hand).
     let py = "f\"{ 'x } $.y \"";
     let parts = machine(py.as_bytes(), 0, py.len(), Target::Python3);
     let lit = first_literal(&parts).expect("the f-string is a literal");
@@ -233,12 +255,38 @@ fn b2_islands_inside_unterminated_literal_interior() {
         .expect("the hole exists");
     assert!(
         hole.parts.iter().all(|p| matches!(p, NativePart::Text(_))),
-        "the hole's unterminated `'x ` interior is all water today (Δ3 flips this)"
+        "the hole's unterminated `'x ` interior is one Text run (carried — no island either way)"
     );
     // `$.y` sits in the literal's CONTENT (after the hole) — not a ref, and that part is
     // correct forever: content is not code.
     assert!(ref_texts(&parts, py).is_empty());
-    agree_sweep(py, Target::Python3);
+    // Partition-aware: the FULL window is carried, but a sub-window that STARTS inside the
+    // unterminated `'` is a Δ3 fixed row (the machine text-runs the interior + trailing `$.y`;
+    // the string-blind hand splices the `$.y`).
+    agree_or_fixed_sweep(py, Target::Python3);
+}
+
+/// `oracle_stayed_buggy` (Δ3 anti-vacuity): the fix teeth (`!= hand`) go VACUOUS if anyone
+/// "repairs" the hand `native_parts_hand`. Pin that the hand STILL island-scans an unterminated
+/// interior — it recognizes the `$.x` ref and the `@@Sub()` instantiation inside the user's
+/// mis-terminated string — so any repair of the oracle is loud.
+#[test]
+fn oracle_stayed_buggy_unterminated_interior() {
+    let comment = "x /* never closes $.n";
+    let h = hand(comment.as_bytes(), 0, comment.len(), Target::C);
+    assert_eq!(
+        ref_texts(&h, comment),
+        vec!["$.n"],
+        "the hand oracle was fixed (no longer island-scans an unterminated comment) — Δ3 vacuous"
+    );
+
+    let lit = "a = \"unterminated $.x and @@Sub() ";
+    let h2 = hand(lit.as_bytes(), 0, lit.len(), Target::C);
+    assert_eq!(ref_texts(&h2, lit), vec!["$.x"], "the hand oracle still splices the phantom ref");
+    assert!(
+        h2.iter().any(|p| matches!(p, NativePart::Instantiate(i) if i.name == "Sub")),
+        "the hand oracle still splices the phantom instantiation — else the Δ3 teeth are vacuous"
+    );
 }
 
 /// B-3 (T-N3, carried): a literal whose extent crosses `to` is DEMOTED to water and its
@@ -766,7 +814,7 @@ fn structural_differential_fuzz_with_teeth() {
     let mut literals = 0usize;
     let mut holes = 0usize;
     let mut unterminated = 0usize;
-    let mut islands_in_interiors = 0usize;
+    let mut interior_islands_suppressed = 0usize;
     let mut clamped_comments = 0usize;
     let mut fixed_rows = 0usize;
 
@@ -801,24 +849,31 @@ fn structural_differential_fuzz_with_teeth() {
                 }
             }
             for p in &parts {
-                match p {
-                    NativePart::Literal(l) if l.delim != b'/' => {
+                if let NativePart::Literal(l) = p {
+                    if l.delim != b'/' {
                         literals += 1;
                         if l.parts.iter().any(|lp| matches!(lp, LiteralPart::Hole(_))) {
                             holes += 1;
                         }
                     }
-                    NativePart::Ref(r) => {
-                        if first_untermed.is_some_and(|u| r.span.start > u) {
-                            islands_in_interiors += 1;
-                        }
-                    }
-                    NativePart::Instantiate(i) => {
-                        if first_untermed.is_some_and(|u| i.span.start > u) {
-                            islands_in_interiors += 1;
-                        }
-                    }
-                    _ => {}
+                }
+            }
+            // Δ3 teeth (fix ACTIVELY firing, not the old bug): count windows where the hand
+            // oracle splices an island (ref/inst) into an unterminated interior that the machine
+            // correctly SUPPRESSES (text-runs). A false-positive `first_untermed` inside a
+            // terminated literal shows the SAME islands on both sides → not counted; only a genuine
+            // unterminated interior shows hand > machine.
+            if let Some(u) = first_untermed {
+                let after = |ps: &[NativePart]| {
+                    ps.iter()
+                        .filter(|p| {
+                            matches!(p, NativePart::Ref(r) if r.span.start > u)
+                                || matches!(p, NativePart::Instantiate(i) if i.span.start > u)
+                        })
+                        .count()
+                };
+                if after(&hand(b, 0, b.len(), t)) > after(&parts) {
+                    interior_islands_suppressed += 1;
                 }
             }
             // Clamped comments need a `to` inside a comment — probe one directly.
@@ -846,7 +901,9 @@ fn structural_differential_fuzz_with_teeth() {
         (literals, "literals", 50),
         (holes, "holed literals", 10),
         (unterminated, "unterminated positions", 50),
-        (islands_in_interiors, "islands inside swallowed interiors", 10),
+        // Δ3 fix-with-teeth: the machine must actually SUPPRESS islands the hand splices into
+        // unterminated interiors (else the fix is never exercised by the fuzz).
+        (interior_islands_suppressed, "interior islands suppressed (Δ3)", 10),
         (clamped_comments, "clamped comments", 10),
         // Δ1 fix-with-teeth: the fuzz must actually reach the string-aware-hole FIXED class
         // (machine != string-blind hand), or the partition-aware differential is vacuous.

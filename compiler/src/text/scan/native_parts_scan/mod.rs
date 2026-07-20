@@ -46,6 +46,20 @@ fn try_island(src: &[u8], i: usize, limit: usize, target: Target) -> (i32, usize
     (0, i)
 }
 
+/// Δ3 (T-N1/T-N2, DP-1): does an opaque body OPEN at `i` but never close (unterminated)? When it
+/// does, the walk stops scanning its interior for islands — the rescued interior becomes ONE plain
+/// Text run to `limit`. The lexer's refusal is HONORED (a `FrameRef` inside what the user meant as
+/// unterminated string/comment content is content, not code — the #224/#215 corruption class),
+/// not carried. Per the DP-1 ruling `native_parts` grows NO diagnostics channel; the target
+/// compiler still reports the user's real (unterminated) error. Category A: runs OpaqueScan and
+/// reads the `unterminated` register.
+fn unterminated_at(src: &[u8], i: usize, target: Target) -> bool {
+    matches!(
+        super::opaque_scan::opaque_at(src, i, target),
+        super::opaque_scan::OpaqueAt::Unterminated
+    )
+}
+
 fn flush_text(parts: &mut Vec<(i32, usize, usize)>, from: usize, to: usize) {
     if from < to {
         parts.push((0, from, to));
@@ -64,7 +78,7 @@ mod fsm {
         unused_mut,
         unused_imports
     )]
-    use super::{flush_text, record_part, try_island, Target};
+    use super::{flush_text, record_part, try_island, unterminated_at, Target};
     include!("native_parts_scan.gen.rs");
 }
 

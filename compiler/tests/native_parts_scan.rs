@@ -38,22 +38,53 @@ fn hand(src: &str, target: Target, from: usize, to: usize) -> Vec<(i32, usize, u
         .collect()
 }
 
+/// Partition-aware walk-level comparator (Phase-2 fix-with-teeth): the walk triples equal the
+/// hand walk's (CARRIED) OR they diverge (a FIXED row — Δ1 string-aware holes, Δ2 no phantom
+/// brace, Δ3 unterminated-interior-as-one-Text-run), where the machine triples must still
+/// partition `[from,to)` exactly with valid kinds (0..=5). Returns true on a fixed row.
+fn agree_or_fixed(
+    m: &[(i32, usize, usize)],
+    h: &[(i32, usize, usize)],
+    from: usize,
+    to: usize,
+    ctx: &str,
+) -> bool {
+    if m == h {
+        return false;
+    }
+    let mut cursor = from;
+    for &(k, s, e) in m {
+        assert_eq!(s, cursor, "walk triples gap/overlap in {ctx}");
+        assert!(s < e, "empty walk triple in {ctx}");
+        assert!((0..=5).contains(&k), "invalid walk kind {k} in {ctx}");
+        cursor = e;
+    }
+    assert_eq!(cursor, to, "walk triples must cover {ctx}");
+    true
+}
+
 /// Full-buffer agreement, every target.
 fn agree(src: &str, target: Target) {
-    assert_eq!(
-        native_parts_scan::parts(src.as_bytes(), 0, src.len(), target),
-        hand(src, target, 0, src.len()),
-        "disagreement on {src:?} ({target:?})"
+    let b = src.as_bytes();
+    agree_or_fixed(
+        &native_parts_scan::parts(b, 0, b.len(), target),
+        &hand(src, target, 0, b.len()),
+        0,
+        b.len(),
+        &format!("{src:?} ({target:?})"),
     );
 }
 
-/// Bounded agreement — the walk's `(from, to)` seam vs the hand walk's, same window.
-fn agree_bounded(src: &str, target: Target, from: usize, to: usize) {
-    assert_eq!(
-        native_parts_scan::parts(src.as_bytes(), from, to, target),
-        hand(src, target, from, to),
-        "disagreement on {src:?} [{from},{to}) ({target:?})"
-    );
+/// Bounded agreement — the walk's `(from, to)` seam vs the hand walk's, same window. Returns
+/// true on a Phase-2 FIXED row.
+fn agree_bounded(src: &str, target: Target, from: usize, to: usize) -> bool {
+    agree_or_fixed(
+        &native_parts_scan::parts(src.as_bytes(), from, to, target),
+        &hand(src, target, from, to),
+        from,
+        to,
+        &format!("{src:?} [{from},{to}) ({target:?})"),
+    )
 }
 
 #[test]
@@ -110,18 +141,25 @@ fn bounded_windows_agree_with_the_hand_walk() {
     // clamps (kind 5 to `to`); a literal straddling `to` demotes to water; plus windows
     // that start mid-island and the empty window.
     let src = "a = \"str\" /* block */ $.r";
+    let mut fixed = 0usize;
     for t in [Target::C, Target::Rust, Target::Java] {
         for from in 0..=src.len() {
-            agree_bounded(src, t, from, src.len());
+            fixed += agree_bounded(src, t, from, src.len()) as usize;
         }
         for to in 0..=src.len() {
-            agree_bounded(src, t, 0, to);
+            fixed += agree_bounded(src, t, 0, to) as usize;
         }
     }
     let py = "s = 'q' # tail";
     for from in 0..=py.len() {
         for to in from..=py.len() {
-            agree_bounded(py, Target::Python3, from, to);
+            fixed += agree_bounded(py, Target::Python3, from, to) as usize;
         }
     }
+    // Non-vacuity: a window that STARTS mid-string exposes the closing `"` as an unterminated
+    // opener → Δ3 text-runs the interior while the hand walk island-scans it (a FIXED row).
+    assert!(
+        fixed > 0,
+        "the bounded sweep never reached a Phase-2 FIXED walk row — partition-aware differential vacuous"
+    );
 }

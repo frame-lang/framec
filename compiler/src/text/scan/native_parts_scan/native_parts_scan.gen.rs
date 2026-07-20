@@ -93,6 +93,16 @@ impl<'a> NativePartsScan<'a> {
             self.compartment = __next;
             return Default::default();
         }
+        // Δ3 (T-N1/T-N2, DP-1): an UNTERMINATED comment/literal opening here is not
+        // scanned for islands — its rescued interior becomes ONE plain Text run to
+        // `limit` (content, not code). No diagnostics channel (DP-1).
+        if unterminated_at(self.src, self.cursor, self.target) {
+            flush_text(&mut self.parts, self.text_start, self.limit);
+            self.cursor = self.limit;
+            let mut __next = NativePartsScanComp { state: "Accept".to_string(), vars: NativePartsScanVars::Accept {  }, args: NativePartsScanArgs::Accept { } };
+            self.compartment = __next;
+            return Default::default();
+        }
         let hit = try_island(self.src, self.cursor, self.limit, self.target);
         if hit.0 != 0 {
             flush_text(&mut self.parts, self.text_start, self.cursor);
