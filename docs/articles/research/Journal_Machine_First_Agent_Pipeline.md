@@ -546,6 +546,38 @@ intact but its literal claim wrong. The lesson compounds D2/D12: an agent's
 conclusion can be right while its coverage claim is incomplete — the cheap
 independent check is not optional even when every lens agrees.
 
+**D14 — A *genuine* machine can still be correctly left native, and the campaign
+converged by finding where the machines run out.** Item 6 (the emit driver) was
+the campaign's last and most deliberate conversion, and — unlike Item 5's
+degenerate walks — `emit_body` is a *bona fide* Mealy transducer: it carries a
+real recognition register (`terminated`), read back at the loop head to suppress
+dead code and again by `close_handler`. The naive campaign expectation was
+"genuine machine ⇒ reify." It closed NULL anyway, for two independent reasons the
+understand-phase surfaced and an independent warden re-derived. (i) *Reify does
+not pay.* The adversarial pass *inverted*: the reify-advocate lens concluded
+stays-native at HIGH confidence while the costume-skeptic reached reify-pays at
+only MEDIUM — a 1-bit monotone absorbing latch gives negative compression and
+trivial verifiability, leaving observability the sole payoff, and §5 says the
+right home for a set-of-distinct-outcomes is the *value channel*, not a reified
+walk. (ii) *It is blocked on a real, nameable compiler capability that does not
+exist*: framec-ng emits a lifetime-parametric borrowed domain only on the
+`@@[scan(u8)]` path, hardcoded to `src: &'a [u8]` (verified independently: 22 of
+24 generated systems carry exactly that, the 2 plain `@@systems` are fully owned),
+whereas emit_body's context is an irreducible *non-`src`* borrow — so per
+guardrail 3 the blocker is surfaced, never hand-faked. The disciplined outcome was
+to bank the one real payoff *natively* — rename the `bool` return to a
+`BodyEnd{Terminated,Fell}` sum, the §5 faithful-terminal-structure fix in the value
+channel — behavior-preserving (suite unchanged), and leave the walk native. Two
+things make this the campaign's cleanest note. First, the trichotomy stopped being
+a conversion mandate and became a *disposition* instrument: *existence of a machine
+was never the question; whether naming it pays was* — and here, twice at the tail
+(Items 5 and 6), it did not. Second, the campaign converged not by converting
+everything but by correctly locating where the recognition registers run out — the
+two that remained (HSM-cycle, reachability) were already systems, and everything
+past them is predicate, value, or a machine whose reification would be costume or
+is blocked. A conversion campaign that knows when to *stop* converting is the
+strongest evidence the worldview is load-bearing and not a hammer.
+
 ## 3. Supporting artifacts (where the evidence lives)
 
 - The worldview: `docs/articles/Shadows_on_the_Wall.md` (with the two
