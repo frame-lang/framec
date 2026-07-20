@@ -159,6 +159,15 @@ A **campaign gate** runs the Campaign DoD (C1–C10) at the end. The warden's ve
 is written (PASS/FAIL + findings) and appended to the Audit Log (below). A FAIL blocks progress
 to the next milestone until resolved.
 
+**Gate evidence, collected in one pass.** `tools/gate_evidence.sh <BASE> [--oracles …] [--tests …]
+[--probe …] [--new-fns]` runs the standard predicate set (diff, build+warnings, full suite, regen
+fixpoint, census-at-HEAD-and-BASE, working tree, oracle presence, flipped directed tests, new-leaf
+listing, CLI probes) and emits RAW outputs — real evidence, echoing every command, NO verdict — in
+~1 minute. The warden JUDGES the bundle (and runs any delta-specific check the design demands)
+instead of DRIVING each check across dozens of serial turns; the verify-don't-trust discipline is
+unchanged (same commands, re-runnable), only the rote re-derivation is removed. This is the primary
+wall-clock lever for gate latency.
+
 ## Course corrections, negotiation, and recording changes
 
 The plan is a contract; it changes only through a recorded, evaluated process — never silently.
