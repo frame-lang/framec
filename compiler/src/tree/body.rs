@@ -374,6 +374,12 @@ pub enum RefKind {
     ContextEvent,
     ContextSystemState,
     SelfCall,
+    /// `@@:word` whose first segment is not a known context (`self`/`data`/`params`/`return`/
+    /// `event`/`system`). The scanner recognizes the SHAPE but refuses to guess the membership —
+    /// Δ5 (T-R1/T-R2, H-1): it is **refusal as data**, never a silent `ContextSelf` default. The
+    /// enclosing `FrameRef` carries the span so `validate.rs` can diagnose it (E408); whether the
+    /// word is in the arcanum is semantics, owned by the validator, not the scanner.
+    Unknown,
 }
 
 #[derive(Debug)]

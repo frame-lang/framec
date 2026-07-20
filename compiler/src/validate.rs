@@ -104,6 +104,12 @@ pub fn validate(ast: &FileAst, syms: &SymbolTable) -> Vec<Diagnostic> {
                             Stmt::Native(n) => {
                                 check_refs(&n.parts, &sv, &domain, &iface, &sym.name, syms, &mut out);
                             }
+                            // A frame assignment (`@@:self.x = e`): the LHS is a Frame ref (its
+                            // membership is diagnosed here, Δ5/E408) and the RHS is native parts.
+                            Stmt::Assign(a) => {
+                                check_unknown_context(&a.lhs, &mut out);
+                                check_refs(&a.rhs, &sv, &domain, &iface, &sym.name, syms, &mut out);
+                            }
                             _ => {}
                         }
                     }
@@ -175,6 +181,24 @@ pub fn validate(ast: &FileAst, syms: &SymbolTable) -> Vec<Diagnostic> {
 /// string is not a reference, its expression byte-loop said it is, and **both shipped**
 /// (#224). Here there is nothing to decide — a `FrameRef` is a node, and a node inside
 /// `LiteralPart::Content` cannot exist.
+/// Δ5 (H-1): diagnose a Frame ref whose context word the scanner refused (`RefKind::Unknown`).
+/// The scanner recognized the shape and left membership to semantics; this is that semantics —
+/// a proper error (E408) carrying the ref's span. A known context is a no-op here.
+fn check_unknown_context(r: &crate::tree::body::FrameRef, out: &mut Vec<Diagnostic>) {
+    if r.kind == RefKind::Unknown {
+        out.push(Diagnostic {
+            code: "E408",
+            severity: Severity::Error,
+            span: r.span,
+            message: format!(
+                "unknown context reference `@@:{}` — its first segment is not a Frame context \
+                 (`self`, `data`, `params`, `return`, `event`, `system`)",
+                r.name
+            ),
+        });
+    }
+}
+
 fn check_refs(
     parts: &[NativePart],
     state_vars: &[&str],
@@ -186,10 +210,14 @@ fn check_refs(
 ) {
     for p in parts {
         match p {
-            NativePart::Ref(_r) => {
-                // (Name-level checks land here once refs carry their parsed name.
-                // The SHAPE is what matters today: the ref is a node, in the tree,
-                // reachable without reading a byte.)
+            NativePart::Ref(r) => {
+                // Δ5 (H-1): the validator OWNS membership. The scanner recognizes only the SHAPE
+                // and, when the first segment is not a known context, reports `RefKind::Unknown`
+                // — a refusal as data, never a guess. Diagnosing non-membership is semantics, so
+                // it lives HERE (E408), not in the scanner. Every other kind is a recognized
+                // context whose name-level checks stay deferred (the SHAPE is a node in the tree,
+                // reachable without reading a byte).
+                check_unknown_context(r, out);
             }
             NativePart::Literal(l) => {
                 for lp in &l.parts {

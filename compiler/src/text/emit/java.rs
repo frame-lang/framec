@@ -451,7 +451,9 @@ impl Backend for Java {
             RefKind::ContextSelf => Atom::field(Atom::ident("this"), &r.name),
             RefKind::ContextParams => Atom::ident(&r.name),
             RefKind::ContextSystemState => Atom::field(comp, "__frame_state"),
-            RefKind::ContextReturn | RefKind::ContextEvent | RefKind::SelfCall => {
+            // `Unknown` (Δ5) is error-blocked by `validate` (E408) before emission; degrade
+            // gracefully rather than panic on any direct-emit path.
+            RefKind::ContextReturn | RefKind::ContextEvent | RefKind::SelfCall | RefKind::Unknown => {
                 Atom::ident(&r.name)
             }
         }

@@ -614,17 +614,20 @@ fn b11_deep_nested_holes_are_correct() {
     agree_window(src.as_bytes(), 0, src.len(), Target::Python3);
 }
 
-/// B-9 (T-R1, carried — flips at Δ5, gated on H-1): an UNKNOWN `@@:word` context defaults
-/// to `ContextSelf` instead of the documented refusal — on the ROUTED production path (the
-/// statement scanner's assign-LHS now runs `ref_scan::scan` — Item 4 Commit C) AND the
-/// oracle, identically (the recorded proof that differentials carry glosses).
+/// B-9 (T-R1 — FLIPPED at Δ5, H-1): an UNKNOWN `@@:word` context is REFUSED (`RefKind::Unknown`,
+/// refusal as data), not silently defaulted to `ContextSelf` — on the ROUTED production path (the
+/// statement scanner's assign-LHS runs `ref_scan::scan`) AND directly. The validator OWNS
+/// membership: it diagnoses the Unknown ref with E408. FIXED row — the hand `frame_ref_at_hand`
+/// oracle still defaults to ContextSelf (oracle_stayed_buggy).
 #[test]
-fn b9_unknown_context_word_defaults_to_contextself() {
+fn b9_unknown_context_word_is_refused_and_diagnosed() {
+    use frame_compiler::resolve::resolve;
     use frame_compiler::scan::segment;
     use frame_compiler::text::scan::parts::frame_ref_at_hand;
     use frame_compiler::text::scan::ref_scan;
     use frame_compiler::tree::body::Stmt;
     use frame_compiler::tree::{Item, MachineMember, Section, StateMember};
+    use frame_compiler::validate::validate;
     use frame_compiler::Source;
 
     // The real statement path: a handler body whose only statement is `@@:wat.x = 1`.
@@ -663,43 +666,57 @@ fn b9_unknown_context_word_defaults_to_contextself() {
         .expect("the @@:wat.x assignment IS an Assign statement (via the gloss)");
     assert_eq!(
         assign.lhs.kind,
-        RefKind::ContextSelf,
-        "unknown context word silently defaults to ContextSelf today (Δ5 makes it a refusal)"
+        RefKind::Unknown,
+        "an unknown context word is REFUSED (Unknown), not defaulted to ContextSelf (Δ5)"
     );
-    assert_eq!(assign.lhs.name, "x");
+    assert_eq!(assign.lhs.name, "wat.x", "the whole word is carried for the diagnostic");
 
-    // Both recognizers carry the gloss identically.
+    // The validator OWNS membership (H-1): it diagnoses the Unknown ref with E408.
+    let (syms, _) = resolve(&ast);
+    let vdiags = validate(&ast, &syms);
+    let e408: Vec<_> = vdiags.iter().filter(|d| d.code == "E408").collect();
+    assert_eq!(e408.len(), 1, "expected exactly one E408 for `@@:wat.x`: {vdiags:#?}");
+    assert_eq!(e408[0].span, assign.lhs.span, "the diagnostic carries the ref's span");
+
+    // The SYSTEM refuses; the hand oracle stays buggy (defaults ContextSelf).
     let b = b"@@:wat.x = 1";
-    let (k, n, _) = ref_scan::scan(b, 0).expect("system recognizes");
-    assert_eq!((k, n.as_str()), (RefKind::ContextSelf, "x"));
+    let (k, n, _) = ref_scan::scan(b, 0).expect("system recognizes the shape");
+    assert_eq!((k, n.as_str()), (RefKind::Unknown, "wat.x"), "system: refusal as data");
     let r = frame_ref_at_hand(b, 0, b.len()).expect("oracle recognizes");
-    assert_eq!((r.kind, r.name.as_str()), (RefKind::ContextSelf, "x"));
+    assert_eq!(
+        (r.kind, r.name.as_str()),
+        (RefKind::ContextSelf, "x"),
+        "the hand oracle was fixed (no longer defaults ContextSelf) — the Δ5 fix teeth are vacuous"
+    );
 }
 
-/// B-10 (T-R2, carried — flips at Δ5): prefix-overmatch — the kind ladder uses
-/// `starts_with`, not segment-match, so `@@:database.k` reads as ContextData and
-/// `@@:selfish.y` as ContextSelf. Same ladder in system and oracle.
+/// B-10 (T-R2 — FLIPPED at Δ5): prefix-overmatch is FIXED — the kind ladder now uses a proper
+/// segment/word-boundary match, so `@@:database` (segment `database` ≠ `data`) and `@@:selfish`
+/// (`selfish` ≠ `self`) are Unknown, not ContextData/ContextSelf. FIXED row — the hand
+/// `frame_ref_at_hand` still `starts_with`-prefix-matches (oracle_stayed_buggy).
 #[test]
-fn b10_prefix_overmatch_pinned() {
+fn b10_prefix_overmatch_refused_by_segment_match() {
     use frame_compiler::text::scan::parts::frame_ref_at_hand;
     use frame_compiler::text::scan::ref_scan;
 
-    for (src, kind, name) in [
-        ("@@:database.k", RefKind::ContextData, "database.k"),
-        ("@@:selfish.y", RefKind::ContextSelf, "selfish.y"),
-        ("@@:paramsX.z", RefKind::ContextParams, "paramsX.z"),
+    // (input, the WORD, the oracle's WRONG prefix kind, the oracle's name = rest after first `.`)
+    for (src, word, oracle_kind) in [
+        ("@@:database.k", "database.k", RefKind::ContextData),
+        ("@@:selfish.y", "selfish.y", RefKind::ContextSelf),
+        ("@@:paramsX.z", "paramsX.z", RefKind::ContextParams),
     ] {
         let b = src.as_bytes();
-        let (k, n, _) = ref_scan::scan(b, 0).expect("system recognizes");
-        // NOTE the NAME is everything after the first `.` — `k`, `y`, `z` — while the KIND
-        // came from a PREFIX match on the word. Both sides, identically.
-        let expect_name = name.split_once('.').map(|(_, rest)| rest).unwrap_or(name);
-        assert_eq!((k, n.as_str()), (kind, expect_name), "system on {src:?}");
+        // The SYSTEM segment-matches: the first segment is not a known context → Unknown, and
+        // the whole word is the name.
+        let (k, n, _) = ref_scan::scan(b, 0).expect("system recognizes the shape");
+        assert_eq!((k, n.as_str()), (RefKind::Unknown, word), "system segment-match on {src:?}");
+        // The oracle still PREFIX-matches (its kind came from `starts_with`, name after first `.`).
+        let oracle_name = word.split_once('.').map(|(_, rest)| rest).unwrap_or(word);
         let r = frame_ref_at_hand(b, 0, b.len()).expect("oracle recognizes");
         assert_eq!(
             (r.kind, r.name.as_str()),
-            (kind, expect_name),
-            "oracle on {src:?}"
+            (oracle_kind, oracle_name),
+            "the hand oracle was fixed (no longer prefix-matches) — the Δ5 teeth are vacuous on {src:?}"
         );
     }
 }

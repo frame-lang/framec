@@ -402,7 +402,10 @@ impl Backend for Rust {
             RefKind::ContextSystemState => {
                 Atom::method(Atom::field(Atom::field(Atom::ident("self"), "compartment"), "state"), "clone", "")
             }
-            RefKind::ContextReturn | RefKind::ContextEvent | RefKind::SelfCall => {
+            // `Unknown` is diagnosed as an error by `validate` (E408), which BLOCKS emission, so
+            // it is unreachable on the real pipeline; degrade gracefully (name as an identifier)
+            // rather than panic on any direct-emit path.
+            RefKind::ContextReturn | RefKind::ContextEvent | RefKind::SelfCall | RefKind::Unknown => {
                 Atom::ident(&r.name)
             }
         }

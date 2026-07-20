@@ -25,31 +25,37 @@ fn is_ident_or_dot_at(src: &[u8], i: usize) -> bool {
     i < src.len() && (src[i].is_ascii_alphanumeric() || src[i] == b'_' || src[i] == b'.')
 }
 
-/// Classify a `@@:word` context ref by its leading word — the same ladder as the hand
-/// `frame_ref_at_hand`: `self`/`data`/`params`/`return`/`event`/`system`, else ContextSelf
-/// (T-R1, carried) — by `starts_with`, not segment-match (T-R2, carried; fix Δ5).
+/// The first segment of a `@@:word` — up to the first `.`, or the whole word if there is none
+/// (`self.factor` -> `self`, `return` -> `return`, `database.k` -> `database`). This is the
+/// context KEYWORD, and it is what classification matches — a proper word boundary, never a prefix.
+fn first_segment_end(src: &[u8], ws: usize, we: usize) -> usize {
+    (ws..we).find(|&k| src[k] == b'.').unwrap_or(we)
+}
+
+/// Classify a `@@:word` context ref by its FIRST SEGMENT (Δ5, T-R2): a proper segment/word-
+/// boundary match against `self`/`data`/`params`/`return`/`event`/`system`, NOT a `starts_with`
+/// prefix match — so `@@:database` is no longer `data`, `@@:selfish` no longer `self`. An
+/// unrecognized keyword is **Unknown** (kind 8, Δ5 T-R1): a refusal as data, never a
+/// `ContextSelf` guess. The scanner recognizes shape; membership is the validator's (E408).
 fn classify_context(src: &[u8], ws: usize, we: usize) -> i32 {
-    let word = &src[ws..we];
-    if word.starts_with(b"self") {
-        2
-    } else if word.starts_with(b"data") {
-        3
-    } else if word.starts_with(b"params") {
-        4
-    } else if word.starts_with(b"return") {
-        5
-    } else if word.starts_with(b"event") {
-        6
-    } else if word.starts_with(b"system") {
-        7
-    } else {
-        2
+    match &src[ws..first_segment_end(src, ws, we)] {
+        b"self" => 2,
+        b"data" => 3,
+        b"params" => 4,
+        b"return" => 5,
+        b"event" => 6,
+        b"system" => 7,
+        _ => 8,
     }
 }
 
 /// The name of a context ref begins after the first `.` in the word (`self.factor` -> at
-/// `factor`), or is the whole word if there is no dot (`return`).
+/// `factor`), or is the whole word if there is no dot (`return`). For an UNKNOWN context (kind 8)
+/// the WHOLE word is the name — `validate.rs` is byte-free and renders `@@:<name>` from it.
 fn name_start_ctx(src: &[u8], ws: usize, we: usize) -> usize {
+    if classify_context(src, ws, we) == 8 {
+        return ws;
+    }
     for k in ws..we {
         if src[k] == b'.' {
             return k + 1;
@@ -90,6 +96,7 @@ pub fn scan(bytes: &[u8], i: usize) -> Option<(RefKind, String, usize)> {
         5 => RefKind::ContextReturn,
         6 => RefKind::ContextEvent,
         7 => RefKind::ContextSystemState,
+        8 => RefKind::Unknown, // Δ5 (T-R1): unrecognized context word — refusal as data.
         _ => return None,
     };
     let name = String::from_utf8_lossy(&bytes[m.name_out..m.name_end]).into_owned();

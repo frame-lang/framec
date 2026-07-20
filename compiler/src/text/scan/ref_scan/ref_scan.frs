@@ -9,7 +9,8 @@
 // kind lookup. A differential test proves it agrees with `frame_ref_at` at every position.
 //
 // kind: 0=none 1=StateVar 2=ContextSelf 3=ContextData 4=ContextParams 5=ContextReturn
-//       6=ContextEvent 7=ContextSystemState
+//       6=ContextEvent 7=ContextSystemState 8=Unknown (Δ5: unrecognized `@@:word` — refusal
+//       as data, diagnosed by validate.rs; segment/word-boundary match, not prefix)
 //
 // Regen: framec-ng -l rust --emit ref_scan.frs | grep -v '^#!\[allow' > ref_scan.gen.rs
 

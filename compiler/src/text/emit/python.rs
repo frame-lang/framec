@@ -379,7 +379,9 @@ impl Backend for Python {
             RefKind::ContextSelf => Atom::field(Atom::ident("self"), &r.name),
             RefKind::ContextParams => Atom::ident(&r.name),
             RefKind::ContextSystemState => Atom::field(comp, "state"),
-            RefKind::ContextReturn | RefKind::ContextEvent | RefKind::SelfCall => {
+            // `Unknown` (Δ5) is error-blocked by `validate` (E408) before emission; degrade
+            // gracefully rather than panic on any direct-emit path.
+            RefKind::ContextReturn | RefKind::ContextEvent | RefKind::SelfCall | RefKind::Unknown => {
                 Atom::ident(&r.name)
             }
         }

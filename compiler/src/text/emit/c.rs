@@ -441,7 +441,9 @@ impl Backend for C {
             RefKind::ContextSelf => Atom::ident(format!("self->{}", r.name)),
             RefKind::ContextParams => Atom::ident(&r.name),
             RefKind::ContextSystemState => Atom::ident("self->compartment->state"),
-            RefKind::ContextReturn | RefKind::ContextEvent | RefKind::SelfCall => {
+            // `Unknown` (Δ5) is error-blocked by `validate` (E408) before emission; degrade
+            // gracefully rather than panic on any direct-emit path.
+            RefKind::ContextReturn | RefKind::ContextEvent | RefKind::SelfCall | RefKind::Unknown => {
                 Atom::ident(&r.name)
             }
         }
