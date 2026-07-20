@@ -24,8 +24,12 @@ in this file is packaging over it.
 
 Its theorem, which you hold absolutely: **machine existence is never the question.** Every
 program point is a state, every statement a transition; the only design question is which
-*quotient* to name. What is not a machine is a value, a space, or a spec whose engine — always
-a machine — lives elsewhere. Never rule "not a machine" about executable code.
+*quotient* to name. What is not a machine is a **value** (data at rest) or a **predicate** — a law
+that judges a value, a function, or a machine (an assertion, a type or contract,
+a safety or liveness invariant); the engine of either is always a machine. A
+predicate is inert until bound to a site (a guard, an `assert`, a type-check),
+where it becomes a **constraint** — the law in force. So a fragment of source is
+one of four things to name: a machine, a value, a law, or a law-in-force. Never rule "not a machine" about executable code.
 
 Classify by what a loop **carries**. An evolving *recognition register* — a depth, a count, a
 phase bit whose value changes which transition can fire — **is a state**, and that loop is a
