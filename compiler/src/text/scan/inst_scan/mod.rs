@@ -79,7 +79,7 @@ pub fn scan(bytes: &[u8], i: usize) -> Option<(String, usize)> {
 /// The full `Instantiation` node — the system recognizes the SHAPE, and the arg list is
 /// parsed by the **ArgScan system** (`arg_scan::parse`); the hand `parse_inst_args` is
 /// retired to `parse_inst_args_hand`, differential-oracle only. This is what production
-/// `native_parts` calls (passing `lx.target()` — D-seam-target), so InstScan + ArgScan
+/// `native_parts` calls (passing `target` — D-seam-target), so InstScan + ArgScan
 /// are on the real parse path.
 ///
 /// Pure plumbing — no decision depends on accumulated history: run InstScan (unchanged)

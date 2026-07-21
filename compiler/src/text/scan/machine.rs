@@ -8,7 +8,6 @@
 //! covers the bytes between its braces; a native statement's parts cover the statement.
 //! There is no "just formatting" and there is no blob.
 
-use super::lex::Lexer;
 use super::literals::Target;
 use super::parts::native_parts;
 use crate::tree::body::{
@@ -27,8 +26,8 @@ use crate::Span;
 /// nodes from them. The boundary the system finds and the extent `state()` carries share one
 /// source (`state_extent`), so they cannot drift. (Retires the hand state-dispatch loop; its
 /// oracle survives as `machine_walk::state_starts_hand`.)
-pub fn machine_section(lx: &Lexer, bytes: &[u8], span: Span, kw: Span) -> MachineSection {
-    let starts = super::machine_walk::state_starts(bytes, kw.end, span.end, lx.target());
+pub fn machine_section(target: Target, bytes: &[u8], span: Span, kw: Span) -> MachineSection {
+    let starts = super::machine_walk::state_starts(bytes, kw.end, span.end, target);
     let mut members = Vec::new();
     let mut cursor = kw.end;
 
@@ -38,7 +37,7 @@ pub fn machine_section(lx: &Lexer, bytes: &[u8], span: Span, kw: Span) -> Machin
                 span: Span::new(cursor, start),
             }));
         }
-        let st = state(lx, bytes, start, span.end);
+        let st = state(target, bytes, start, span.end);
         cursor = st.span.end;
         members.push(MachineMember::State(st));
     }
@@ -59,14 +58,14 @@ pub fn machine_section(lx: &Lexer, bytes: &[u8], span: Span, kw: Span) -> Machin
 }
 
 /// `$Name(params) { …handlers… }`
-fn state(lx: &Lexer, bytes: &[u8], at: usize, limit: usize) -> StateNode {
+fn state(target: Target, bytes: &[u8], at: usize, limit: usize) -> StateNode {
     // The WHOLE head — name, params group, parent, opening `{`, and its matching `}` — from ONE
     // run of the dogfooded `StateHeadScan` system (`state_head_scan.frs`), the SAME source the
     // `MachineWalk` system's `state_end` leaf reads (via [`state_extent`]), so the boundary the
     // walk finds and every head field this node carries cannot drift — by construction, not by
     // convention. (Retires the hand params/parent scan-lets; their verbatim composition survives
     // as `state_head_scan::state_head_hand`, the differential oracle.)
-    let h = super::state_head_scan::scan(bytes, at, limit, lx.target());
+    let h = super::state_head_scan::scan(bytes, at, limit, target);
     let (name_end, open, end) = (h.name_end, h.open, h.end);
     let close = end.saturating_sub(1);
     let name = String::from_utf8_lossy(&bytes[at + 1..name_end]).into_owned();
@@ -100,7 +99,7 @@ fn state(lx: &Lexer, bytes: &[u8], at: usize, limit: usize) -> StateNode {
     // or a handler head), skipping opaque + each member's extent; this driver builds the Trivia +
     // StateVar/Handler nodes. Each member's extent is re-derived from the SAME shared source the
     // walk used (`to_end_of_line` / `handler_head`), so they cannot drift.
-    let starts = super::state_walk::member_starts(bytes, open + 1, close, lx.target());
+    let starts = super::state_walk::member_starts(bytes, open + 1, close, target);
     let mut members = Vec::new();
     let mut cursor = open + 1;
 
@@ -114,12 +113,12 @@ fn state(lx: &Lexer, bytes: &[u8], at: usize, limit: usize) -> StateNode {
             // `$.name: T = init` — a state variable (Frame's own declaration), read through
             // the dogfooded `DeclRead` system (the SAME reader `decl_section` uses).
             let e = to_end_of_line(bytes, start, close);
-            let shape = super::decl_read::read(bytes, start + 2, e, lx.target());
+            let shape = super::decl_read::read(bytes, start + 2, e, target);
             members.push(StateMember::StateVar(super::decl_read::member_decl_of(
                 bytes, &shape, e, start,
             )));
             cursor = e;
-        } else if let Some(h) = handler_at(lx, bytes, start, close) {
+        } else if let Some(h) = handler_at(target, bytes, start, close) {
             // A handler: `name(...) {` / `$>() {` / `<$() {`.
             cursor = h.span.end;
             members.push(StateMember::Handler(h));
@@ -216,8 +215,8 @@ pub(crate) fn handler_end(bytes: &[u8], i: usize, limit: usize, target: Target) 
 }
 
 /// A handler starting at `i`, if there is one — built from the shared [`handler_head`].
-fn handler_at(lx: &Lexer, bytes: &[u8], i: usize, limit: usize) -> Option<HandlerNode> {
-    let h = handler_head(bytes, i, limit, lx.target())?;
+fn handler_at(target: Target, bytes: &[u8], i: usize, limit: usize) -> Option<HandlerNode> {
+    let h = handler_head(bytes, i, limit, target)?;
     let close = h.end.saturating_sub(1);
     Some(HandlerNode {
         span: Span::new(i, h.end),
@@ -232,7 +231,7 @@ fn handler_at(lx: &Lexer, bytes: &[u8], i: usize, limit: usize) -> Option<Handle
             kind: "HandlerHeader",
         },
         // *** THE TREE THE OLD COMPILER DID NOT HAVE ***
-        body: body(lx, bytes, Span::new(h.open + 1, close)),
+        body: body(target, bytes, Span::new(h.open + 1, close)),
         close_node: FrameSpan {
             span: Span::new(close, h.end),
             kind: "Close",
@@ -254,9 +253,9 @@ fn handler_at(lx: &Lexer, bytes: &[u8], i: usize, limit: usize) -> Option<Handle
 ///
 /// Depth is a NUMBER, never a KIND: framec counts braces; it never asks whether the block is an
 /// `if`, a `while`, or a lambda — that would be a parse of native code, which framec does not do.
-pub fn body(lx: &Lexer, bytes: &[u8], span: Span) -> Body {
+pub fn body(target: Target, bytes: &[u8], span: Span) -> Body {
     let (starts, final_depth) =
-        super::body_walk::stmt_starts(bytes, span.start, span.end, lx.target());
+        super::body_walk::stmt_starts(bytes, span.start, span.end, target);
     let mut stmts = Vec::new();
     let mut cursor = span.start;
 
@@ -266,17 +265,17 @@ pub fn body(lx: &Lexer, bytes: &[u8], span: Span) -> Body {
         // recorded `start` because one of these opens there (via the shared extent heads), so one
         // returns `Some`. `depth` is the recorded brace depth at `start` — used for BOTH the native
         // gap before the statement and the statement node's own `depth` field.
-        let st = frame_call(lx, bytes, start, span.end, depth, col)
-            .or_else(|| frame_assign(lx, bytes, start, span.end, col))
+        let st = frame_call(target, bytes, start, span.end, depth, col)
+            .or_else(|| frame_assign(target, bytes, start, span.end, col))
             .or_else(|| frame_stmt(bytes, start, span.end, depth, col));
         if let Some(st) = st {
             let sp = stmt_span(&st);
-            push_native(lx, bytes, &mut stmts, cursor, sp.start, span.start, depth, target(lx));
+            push_native(target, bytes, &mut stmts, cursor, sp.start, span.start, depth);
             stmts.push(st);
             cursor = sp.end;
         }
     }
-    push_native(lx, bytes, &mut stmts, cursor, span.end, span.start, final_depth, target(lx));
+    push_native(target, bytes, &mut stmts, cursor, span.end, span.start, final_depth);
 
     Body { span, stmts }
 }
@@ -311,24 +310,19 @@ fn depth_is_knowable(t: super::literals::Target) -> bool {
     }
 }
 
-fn target(lx: &Lexer) -> super::literals::Target {
-    lx.target()
-}
-
 /// Everything between Frame statements is native. It is **delimited, never
 /// interpreted** — but it is a CONTAINER: its string literals and its Frame refs are
 /// nodes, because framec must know where the literals are in order to leave them
 /// alone, and where the refs are in order to splice them.
 #[allow(clippy::too_many_arguments)]
 fn push_native(
-    lx: &Lexer,
+    target: Target,
     bytes: &[u8],
     out: &mut Vec<Stmt>,
     from: usize,
     to: usize,
     body_start: usize,
     depth: u32,
-    tgt: super::literals::Target,
 ) {
     if from >= to {
         return;
@@ -354,7 +348,7 @@ fn push_native(
     }
     out.push(Stmt::Native(NativeStmt {
         span: Span::new(a, z),
-        parts: native_parts(bytes, a, z, lx.target()),
+        parts: native_parts(bytes, a, z, target),
         // The statement's column. RENDER's re-indent basis: the emitted method sits at
         // the TARGET's nesting depth, while these bytes were written at FRAME's — so
         // something must re-indent, and it needs to know by how much.
@@ -364,7 +358,7 @@ fn push_native(
         // where anything was — which is why it stripped the margin off lines INSIDE
         // string literals and silently changed the VALUE of the user's string (#215).
         logical_indent: column_of(bytes, a, body_start),
-        block_depth: if depth_is_knowable(tgt) {
+        block_depth: if depth_is_knowable(target) {
             Some(depth)
         } else {
             None
@@ -384,7 +378,7 @@ pub fn stmt_eol(bytes: &[u8], i: usize, limit: usize) -> usize {
 /// The offset one past the balanced `(...)` at `i`, or `i` if unbalanced. NOT string-aware —
 /// matches the hand `(exit)` classifier, which uses a bare paren counter.
 pub fn stmt_balanced_close(bytes: &[u8], i: usize, limit: usize) -> usize {
-    balanced(_lexer_none(), bytes, i, limit, b'(', b')').unwrap_or(i)
+    balanced(Target::Python3, bytes, i, limit, b'(', b')').unwrap_or(i)
 }
 /// Does the arrow tail `[from, to)` resolve to a `$Target`? (The transition guard.)
 pub fn arrow_has_target(bytes: &[u8], from: usize, to: usize) -> bool {
@@ -421,7 +415,7 @@ fn frame_stmt(bytes: &[u8], i: usize, limit: usize, depth: u32, col: u32) -> Opt
         // Transition (1) or StackPop (3) — may carry `(exit)` args before the arrow.
         1 | 3 => {
             let (exit_args, arrow_at) = if bytes.get(i) == Some(&b'(') {
-                match balanced(_lexer_none(), bytes, i, limit, b'(', b')') {
+                match balanced(Target::Python3, bytes, i, limit, b'(', b')') {
                     Some(close) => {
                         let ea = trimmed(&bytes[i + 1..close.saturating_sub(1)]);
                         let mut j = close;
@@ -487,22 +481,12 @@ fn parse_after_arrow(bytes: &[u8], from: usize, to: usize) -> (Option<String>, O
     // Optional enter args, only if the `(` comes BEFORE the `$Target`.
     let mut enter_args = None;
     if i < to && bytes[i] == b'(' {
-        if let Some(close) = balanced(_lexer_none(), bytes, i, to, b'(', b')') {
+        if let Some(close) = balanced(Target::Python3, bytes, i, to, b'(', b')') {
             enter_args = trimmed(&bytes[i + 1..close.saturating_sub(1)]);
             i = close;
         }
     }
     (enter_args, target_of(bytes, i, to), args_of(bytes, i, to))
-}
-
-/// A lexer-less balanced-paren finder for the transition grammar (no strings expected
-/// in a transition head). Reuses the real `balanced` with a throwaway lexer.
-fn _lexer_none() -> &'static Lexer<'static> {
-    // `balanced` only uses the lexer to skip strings/comments; a transition head has
-    // none, so a minimal Python lexer over an empty slice is a safe stand-in.
-    use std::sync::OnceLock;
-    static LX: OnceLock<Lexer<'static>> = OnceLock::new();
-    LX.get_or_init(|| Lexer::new(b"", super::literals::Target::Python3))
 }
 
 fn find(bytes: &[u8], from: usize, to: usize, pat: &[u8]) -> Option<usize> {
@@ -575,8 +559,10 @@ pub(crate) fn skip_opaque(bytes: &[u8], i: usize, limit: usize, target: Target) 
 /// `limit`. The hand counter loop (and its per-language-brace-counter ancestors, #219) is gone;
 /// `delim_balance::balanced_hand` survives as the differential oracle. The state/handler param
 /// scans route here; the decl-body extent asks `decl_extent` (same DelimBalance underneath).
-fn balanced(lx: &Lexer, bytes: &[u8], open: usize, limit: usize, o: u8, c: u8) -> Option<usize> {
-    super::delim_balance::balanced(bytes, open, limit, o, c, lx.target())
+/// Transition-head callers (no strings/comments possible) pass a fixed `Target::Python3` — the
+/// former throwaway-lexer stand-in — whose value the balance never observes.
+fn balanced(target: Target, bytes: &[u8], open: usize, limit: usize, o: u8, c: u8) -> Option<usize> {
+    super::delim_balance::balanced(bytes, open, limit, o, c, target)
 }
 
 /// The `(name_end, open, end)` header extent of the state that starts at `at` (the `$`): the
@@ -703,9 +689,9 @@ pub(crate) fn decl_extent(
 /// Attribute lines, opaque runs, and whitespace land in Trivia gaps — the partition invariant
 /// is this driver's only job. (Retires the hand decl dispatch loop and `decl_of`; their
 /// oracles survive as `decl_starts_hand` / `decl_of_hand`.)
-pub fn decl_section(lx: &Lexer, bytes: &[u8], span: Span, kw: Span, with_bodies: bool) -> DeclSection {
+pub fn decl_section(target: Target, bytes: &[u8], span: Span, kw: Span, with_bodies: bool) -> DeclSection {
     let (starts, _unterminated) =
-        super::decl_walk::decl_starts(bytes, kw.end, span.end, with_bodies, lx.target());
+        super::decl_walk::decl_starts(bytes, kw.end, span.end, with_bodies, target);
     let mut members = Vec::new();
     let mut cursor = kw.end;
 
@@ -715,9 +701,9 @@ pub fn decl_section(lx: &Lexer, bytes: &[u8], span: Span, kw: Span, with_bodies:
                 span: Span::new(cursor, start),
             }));
         }
-        match decl_extent(bytes, start, span.end, with_bodies, lx.target()) {
+        match decl_extent(bytes, start, span.end, with_bodies, target) {
             DeclExtent::Line { eol } => {
-                let shape = super::decl_read::read(bytes, start, eol, lx.target());
+                let shape = super::decl_read::read(bytes, start, eol, target);
                 members.push(Decl::Member(super::decl_read::member_decl_of(
                     bytes, &shape, eol, start,
                 )));
@@ -726,7 +712,7 @@ pub fn decl_section(lx: &Lexer, bytes: &[u8], span: Span, kw: Span, with_bodies:
             // `actions:` / `operations:` members have a NATIVE body in braces.
             DeclExtent::Body { open, end, .. } => {
                 let close = end.saturating_sub(1);
-                let shape = super::decl_read::read(bytes, start, open, lx.target());
+                let shape = super::decl_read::read(bytes, start, open, target);
                 let sig = super::decl_read::member_decl_of(bytes, &shape, open, start);
                 members.push(Decl::WithBody(BodyDecl {
                     span: Span::new(start, end),
@@ -737,7 +723,7 @@ pub fn decl_section(lx: &Lexer, bytes: &[u8], span: Span, kw: Span, with_bodies:
                         span: Span::new(start, open + 1),
                         kind: "Signature",
                     },
-                    body: body(lx, bytes, Span::new(open + 1, close)),
+                    body: body(target, bytes, Span::new(open + 1, close)),
                     close_node: FrameSpan {
                         span: Span::new(close, end),
                         kind: "Close",
@@ -800,8 +786,8 @@ fn args_of(bytes: &[u8], from: usize, to: usize) -> Option<String> {
                 let open = j;
                 // The matching `)` via DelimBalance — the same @@system the sibling enter-arg
                 // scan (`parse_after_arrow`) already uses; retires the duplicate `(`/`)` depth
-                // counter. `_lexer_none()` supplies the target (a transition head has no strings).
-                let close = balanced(_lexer_none(), bytes, open, to, b'(', b')')?;
+                // counter. `Target::Python3` is a fixed, irrelevant target (a transition head has no strings).
+                let close = balanced(Target::Python3, bytes, open, to, b'(', b')')?;
                 let inner =
                     String::from_utf8_lossy(&bytes[open + 1..close.saturating_sub(1)]).into_owned();
                 return if inner.trim().is_empty() { None } else { Some(inner) };
@@ -890,7 +876,7 @@ fn frame_assign_parse(bytes: &[u8], i: usize, limit: usize) -> Option<AssignHead
     })
 }
 
-fn frame_assign(lx: &Lexer, bytes: &[u8], i: usize, limit: usize, col: u32) -> Option<Stmt> {
+fn frame_assign(target: Target, bytes: &[u8], i: usize, limit: usize, col: u32) -> Option<Stmt> {
     let h = frame_assign_parse(bytes, i, limit)?;
     Some(Stmt::Assign(AssignStmt {
         span: Span::new(i, h.eol),
@@ -899,7 +885,7 @@ fn frame_assign(lx: &Lexer, bytes: &[u8], i: usize, limit: usize, col: u32) -> O
         op: TriviaNode {
             span: Span::new(h.lhs_end, h.rhs_start),
         },
-        rhs: native_parts(bytes, h.rhs_start, h.rhs_end, lx.target()),
+        rhs: native_parts(bytes, h.rhs_start, h.rhs_end, target),
         rhs_span: Span::new(h.rhs_start, h.rhs_end),
         tail: if h.rhs_end < h.eol {
             Some(TriviaNode {
@@ -994,8 +980,8 @@ fn frame_call_parse(bytes: &[u8], i: usize, limit: usize, target: Target) -> Opt
 /// framec authored these calls, so framec terminates them. The old compiler lowered the
 /// `@@:self` part to a *reference* and left `.report()` as native text with no
 /// terminator (#229) — because there was no node to ask.
-fn frame_call(lx: &Lexer, bytes: &[u8], i: usize, limit: usize, depth: u32, col: u32) -> Option<Stmt> {
-    let h = frame_call_parse(bytes, i, limit, lx.target())?;
+fn frame_call(target: Target, bytes: &[u8], i: usize, limit: usize, depth: u32, col: u32) -> Option<Stmt> {
+    let h = frame_call_parse(bytes, i, limit, target)?;
     match h.kind {
         CallHeadKind::Return { open, close } => Some(Stmt::ReturnCall(ReturnCallStmt {
             span: Span::new(i, h.end),
@@ -1007,7 +993,7 @@ fn frame_call(lx: &Lexer, bytes: &[u8], i: usize, limit: usize, depth: u32, col:
                 span: Span::new(close - 1, h.end),
             },
             depth,
-            expr: native_parts(bytes, open + 1, close - 1, lx.target()),
+            expr: native_parts(bytes, open + 1, close - 1, target),
             expr_span: Span::new(open + 1, close - 1),
         })),
         CallHeadKind::SelfCall {

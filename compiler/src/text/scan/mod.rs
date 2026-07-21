@@ -64,12 +64,10 @@ use super::{Source, Span};
 use crate::tree::{
     BomItem, EfsmItem, FileAst, Item, NativeItem, Param, PragmaItem, SystemItem, SystemParams,
 };
-use lex::{LexError, Lexer};
 use literals::Target;
 
 #[derive(Debug)]
 pub enum SegmentError {
-    Lex(LexError),
     /// A `@@system`/`@@fsm` whose body never closes.
     UnclosedBody { open: Span, name: String },
     /// A `@@` we do not recognize.
@@ -84,16 +82,9 @@ pub enum SegmentError {
     UnknownPragma { span: Span, text: String },
 }
 
-impl From<LexError> for SegmentError {
-    fn from(e: LexError) -> Self {
-        SegmentError::Lex(e)
-    }
-}
-
 /// Pass [1]. Split the source into top-level items.
 pub fn segment(src: &Source, target: Target) -> Result<FileAst, SegmentError> {
     let bytes = src.open(); // the one door
-    let lx = Lexer::new(bytes, target);
     let n = bytes.len();
 
     let mut items: Vec<Item> = Vec::new();
@@ -126,7 +117,7 @@ pub fn segment(src: &Source, target: Target) -> Result<FileAst, SegmentError> {
                 parts: parts::native_parts(bytes, water_start, start, target),
             }));
         }
-        let item = read_pragma(&lx, bytes, start)?;
+        let item = read_pragma(target, bytes, start)?;
         water_start = item.span().end;
         items.push(item);
     }
@@ -159,8 +150,7 @@ pub fn segment(src: &Source, target: Target) -> Result<FileAst, SegmentError> {
 /// hand `read_pragma` — item construction is transformation, legitimately native. On an
 /// unclosed item, consume to end-of-input.
 pub fn item_end_at(bytes: &[u8], at: usize, target: Target) -> usize {
-    let lx = Lexer::new(bytes, target);
-    match read_pragma(&lx, bytes, at) {
+    match read_pragma(target, bytes, at) {
         Ok(item) => item.span().end,
         Err(_) => bytes.len(),
     }
@@ -178,7 +168,7 @@ pub fn skip_opaque_at(bytes: &[u8], i: usize, target: Target) -> usize {
 }
 
 /// Read one `@@…` island starting at `at` (which points at the first `@`).
-fn read_pragma(lx: &Lexer, bytes: &[u8], at: usize) -> Result<Item, SegmentError> {
+fn read_pragma(target: Target, bytes: &[u8], at: usize) -> Result<Item, SegmentError> {
     let after = at + 2;
     let word = read_word(bytes, after);
     let word_text = std::str::from_utf8(&bytes[after..word]).unwrap_or("");
@@ -187,12 +177,12 @@ fn read_pragma(lx: &Lexer, bytes: &[u8], at: usize) -> Result<Item, SegmentError
         "system" => {
             let (name, private, public_keyword, params, brace) =
                 read_name_params_brace(bytes, word)?;
-            let end = close_brace(bytes, brace, &name, lx.target())?;
+            let end = close_brace(bytes, brace, &name, target)?;
             let span = Span::new(at, end);
             Ok(Item::System(SystemItem {
                 span,
                 name,
-                sections: sections::sections(lx, bytes, span),
+                sections: sections::sections(target, bytes, span),
                 params,
                 private,
                 public_keyword,
@@ -200,7 +190,7 @@ fn read_pragma(lx: &Lexer, bytes: &[u8], at: usize) -> Result<Item, SegmentError
         }
         "fsm" => {
             let (name, _private, _public, _params, brace) = read_name_params_brace(bytes, word)?;
-            let end = close_brace(bytes, brace, &name, lx.target())?;
+            let end = close_brace(bytes, brace, &name, target)?;
             Ok(Item::Efsm(EfsmItem {
                 span: Span::new(at, end),
                 name,

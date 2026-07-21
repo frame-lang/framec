@@ -7,7 +7,7 @@
 //! formatting" category, because a byte with no node is a byte some later pass will
 //! have to *guess* about, and guessing is what we are here to delete.
 
-use super::lex::Lexer;
+use super::literals::Target;
 use super::machine::{decl_section, machine_section};
 use crate::tree::{HeaderSection, Section, TriviaNode};
 use crate::Span;
@@ -21,19 +21,19 @@ const KEYWORDS: &[&str] = &["interface", "machine", "domain", "actions", "operat
 /// members do not. That distinction is not cosmetic — it decides whether the member's
 /// braces contain the user's code (which framec must decompose but never interpret) or
 /// nothing at all.
-fn build(idx: usize, lx: &Lexer, bytes: &[u8], span: Span, kw: Span) -> Section {
+fn build(idx: usize, target: Target, bytes: &[u8], span: Span, kw: Span) -> Section {
     match idx {
-        0 => Section::Interface(decl_section(lx, bytes, span, kw, false)),
-        1 => Section::Machine(machine_section(lx, bytes, span, kw)),
-        2 => Section::Domain(decl_section(lx, bytes, span, kw, false)),
-        3 => Section::Actions(decl_section(lx, bytes, span, kw, true)),
-        4 => Section::Operations(decl_section(lx, bytes, span, kw, true)),
+        0 => Section::Interface(decl_section(target, bytes, span, kw, false)),
+        1 => Section::Machine(machine_section(target, bytes, span, kw)),
+        2 => Section::Domain(decl_section(target, bytes, span, kw, false)),
+        3 => Section::Actions(decl_section(target, bytes, span, kw, true)),
+        4 => Section::Operations(decl_section(target, bytes, span, kw, true)),
         _ => unreachable!("KEYWORDS has 5 entries"),
     }
 }
 
 /// Split `[open_brace+1, close_brace)` into sections; add the header and the close.
-pub fn sections(lx: &Lexer, bytes: &[u8], sys: Span) -> Vec<Section> {
+pub fn sections(target: Target, bytes: &[u8], sys: Span) -> Vec<Section> {
     let mut out = Vec::new();
 
     // The header runs from `@@system` up to and including the opening `{`.
@@ -58,7 +58,7 @@ pub fn sections(lx: &Lexer, bytes: &[u8], sys: Span) -> Vec<Section> {
     // **Production runs the dogfooded SectionScan system** (docs/JOURNAL.md); the hand
     // `section_keyword_starts` remains only as the differential-test oracle.
     let starts =
-        super::section_scan::keyword_starts(bytes, body_start, close_start, lx.target());
+        super::section_scan::keyword_starts(bytes, body_start, close_start, target);
 
     // Sections run from their keyword to the next keyword (or to the closing brace).
     let mut cursor = body_start;
@@ -71,7 +71,7 @@ pub fn sections(lx: &Lexer, bytes: &[u8], sys: Span) -> Vec<Section> {
         let sec_end = starts.get(n + 1).map(|s| s.0).unwrap_or(close_start);
         out.push(build(
             idx,
-            lx,
+            target,
             bytes,
             Span::new(kw_start, sec_end),
             Span::new(kw_start, kw_end),
