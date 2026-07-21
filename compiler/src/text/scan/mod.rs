@@ -374,23 +374,19 @@ fn read_name_params_brace(
     let mut params = SystemParams::default();
     if i < bytes.len() && bytes[i] == b'(' {
         let open = i;
-        let mut d = 0i32;
-        while i < bytes.len() {
-            match bytes[i] {
-                b'(' => d += 1,
-                b')' => {
-                    d -= 1;
-                    if d == 0 {
-                        break;
-                    }
-                }
-                _ => {}
-            }
-            i += 1;
-        }
-        let inner = String::from_utf8_lossy(&bytes[open + 1..i]).into_owned();
+        // The matching `)` — via the ParenBalance @@system. Unlike the old naive `(`/`)`
+        // counter this is string-aware: a `)` inside a "…"-string in a default value is
+        // skipped, not counted. An unbalanced group runs off the end → UnclosedBody, exactly
+        // as the hand loop did (it ran to EOF, then failed the skip-to-`{`).
+        let Some(after_close) = paren_balance::scan(bytes, open) else {
+            return Err(SegmentError::UnclosedBody {
+                open: Span::new(ns, bytes.len()),
+                name,
+            });
+        };
+        let inner = String::from_utf8_lossy(&bytes[open + 1..after_close - 1]).into_owned();
         params = split_system_params(&inner);
-        i += 1;
+        i = after_close;
     }
     // Skip an optional `: Base, Base` and anything up to `{`.
     let mut j = i;
