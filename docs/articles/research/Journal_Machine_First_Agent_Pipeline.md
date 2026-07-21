@@ -578,6 +578,75 @@ past them is predicate, value, or a machine whose reification would be costume o
 is blocked. A conversion campaign that knows when to *stop* converting is the
 strongest evidence the worldview is load-bearing and not a hammer.
 
+**D15 — The reify-or-leave-latent vocabulary was a false binary; an adversarial
+agent chain found the missing third term — *engine reified elsewhere* — and,
+with it, the three-organ shape of type-ignorant recognition.** The campaign's
+dispositions had hardened into two poles: *reify* the latent machine, or *leave
+it latent* as a degenerate costume. Roughly twelve folds still carried the
+leave-latent tag (docket items 32–43), and a fresh maximalist agent —
+`ghost-buster`, chartered to "convert everything" and to refuse every
+leave-latent as an unbusted ghost — was run at them deliberately, to see what
+the refusal would shake loose. It won *no* conversions. But the chain it forced
+is the finding. The `frame-machine-advocate` it provoked conceded the twelve as
+machines-in-principle yet compressed *why* none should convert into a single
+hand-wave; the `frame-compiler-architect` then ruled them costume / leave-latent
+— the same terminating binary the 2026-07-17 bias incident had already been
+caught making once, now reached from the opposite direction. The owner broke the
+loop not with a verdict but with a memory: the already-shipped `ArgScan` fork
+(Option C, `SYSTEMS_CONVERSION_PLAN.md:520`, gated 2026-07-18), which the
+architect had *mislabeled*. The `fsm-designer`, ruling on that pointer and
+re-grounding every claim against source, named the category both poles had been
+missing: a fold that **consumes** a machine's stamped output is neither a costume
+(it was never dressed as a state machine) nor a gloss (nothing is hidden) — its
+**engine is reified elsewhere**, upstream, as a named and shipped `@@system`. Its
+Shadows plea is the existing one — *a spec/value whose engine is a machine
+someone owns* — made concrete. The twelve folds' *verdict* stayed UNCHANGED
+(convert none; no `.frs`, no regen, no snapshot churn); their *disposition* was
+corrected from "leave-latent / costume" to "engine reified elsewhere —
+downstream consumer of a shipped machine" (ArgScan's fork for 42/43; the shipped
+byte-walks BodyWalk/StateWalk/MachineWalk/DeclWalk/Segmenter/SectionScan/
+NativePartsScan for 32–40; 41 consumes ParamSplit).
+
+Three things make this more than a relabel. (i) *The pattern has a shape.* Where
+Frame cannot resolve an ambiguity locally because it does not parse native types
+(is `<` a generic-open or a less-than? is a `,` a separator or inside
+`Map<K,V>`?), the correct architecture is **fork-and-adjudicate**, and it
+decomposes into three organs that must never be conflated: a **recognition
+machine** that carries BOTH hypotheses in ONE byte pass, stamping a viability bit
+at every boundary (ArgScan's `depth`+`adepth` counters, `arg_scan.frs:127-145`)
+— this is the machine, reify it; a **materialization fold** that reads the
+stamped bits to produce a candidate (`merge_g`, `mod.rs:230`) — a function over
+already-decided data, engine reified elsewhere, do not reify; and an
+**adjudication predicate** that picks the reading using Frame-side knowledge only,
+as a point-law (`validate.rs::adjudicate`, `validate.rs:279`, E407 on tie/miss)
+— this reads no bytes and carries no register, it is the #242 *predicate*, not a
+machine. (ii) *The diagnostic that tells consumer from costume:* before calling a
+driver a costume, check whether its "register" is a FROZEN decision it *reads* out
+of a producer's output versus one it *carries* — `body()` reads `depth` out of
+the `(start, depth)` triples `BodyWalk` already computed (`body_walk.frs:39,48-57`)
+and counts nothing itself; `merge_g`'s control decision is driven by the frozen
+`g_end` bit (`mod.rs:238`), its `run_start` only supplying a slice index, never
+gating a transition. Both are engine-elsewhere, not costume. (iii) *The one
+genuine reify candidate the pass surfaced (F5, owner-deferred):*
+`split_system_params` / `args_of` comma-split is **blind to angles** — the exact
+Bug-B angle-blindness ArgScan cured, left un-fixed for system-params and
+transition-args, still carrying the Bug-A-shape `trim_end_matches(')')`
+(`mod.rs:331,333`; `argscan_design.md:1225-1232`). Unlike the twelve, this *is* an
+unbusted ghost — a byte-level recognizer blind to an ambiguity it should carry —
+and reifying it is one new fork-and-adjudicate byte walk with a real payoff
+(correct `@@system Foo(x: Vec<A,B>)` and `-> $S(args)`) fixing a latent
+correctness bug today. It is not one of the twelve folds; it is an owner decision.
+
+The methodological point closes a loop the journal keeps re-finding (D2/D9/D12):
+the maximalist agent that lost every argument was the load-bearing one — its
+refusal to accept "leave latent" is what forced the re-examination that surfaced
+*both* the advocate's twelve-item gloss and the honest third category the binary
+framing had no word for; and the correction that finally landed came from the
+owner's *memory of a shipped precedent* overriding an architect's confident
+mislabel — the same "is the agent grounded in what already shipped?" probe PM-8
+turned into a standing audit, here applied to a claim about the codebase rather
+than about the paper.
+
 ## 3. Supporting artifacts (where the evidence lives)
 
 - The worldview: `docs/articles/Shadows_on_the_Wall.md` (with the two

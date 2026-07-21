@@ -745,6 +745,65 @@ stands. It is maximalism about **honesty**: the machine may reasonably remain
 latent, but only as a *stated* decision with a *stated* justification, exactly
 as one would justify any other abstraction choice.
 
+### 6.4 Engine reified elsewhere, and the fork-and-adjudicate factoring
+
+Between the two failure modes sits a disposition that is neither. Glossing
+selects a quotient too coarse; costuming, one too fine. But a loop can be
+exactly quotiented and still be no machine to reify — because it is the
+downstream **consumer** of a machine that is *already* reified and shipped. Such
+a loop is not a gloss: nothing in it is hidden, because the states it turns on
+were named upstream, where the recognition happens. And it is not a costume: it
+was never dressed as a machine at all. It is the plea of §4.2 and §6.3 — *a
+value or spec whose engine lives elsewhere* — made concrete, with "elsewhere"
+resolved to a proper name: not vaguely offstage, but a **named upstream
+machine**, owned and written down. Call the disposition **engine reified
+elsewhere**.
+
+Scoring it correctly asks one refinement of §6.2's load-bearing test. Before
+charging such a loop with carrying an unnamed register, check whether its
+apparent register is not a register at all but a **frozen decision the upstream
+machine already made** — a bit the producer stamped, a counter value copied out
+of a record the producer built. If the loop only *reads* that value — branches
+on a stamped flag, slices at an index the machine computed — it is **reading a
+register, not carrying one**. The register lives upstream; the loop is its
+reader, and reifying the reader names nothing the machine did not already name.
+
+**The fork-and-adjudicate factoring.** The sharpest instance arises under
+*type-ignorance* — a translator that transcribes a host language's types
+without parsing them, and so cannot settle, at the site, an ambiguity the types
+would settle: reading a `<`, it cannot know whether the character opens a
+generic parameter list or means *less-than*. The two wrong responses are the
+failure modes in disguise: guess, and you have glossed a fork into a single arm;
+leave it wholly native, and you have declined to build a machine that is plainly
+there. The right response factors the problem into **three organs**, one for
+each primitive of §4.1's trichotomy:
+
+- a **recognition machine** that makes one pass over the bytes carrying *every*
+  hypothesis at once — a nesting counter per reading, stamping a viability bit
+  at each boundary. It never guesses; it records what holds under each reading.
+  This organ is the **machine**, and it is the only one of the three that is.
+- a **materialization fold** that reads those stamped bits to assemble each
+  candidate. It walks decided data and computes no register of its own — a
+  function, a **value** whose engine is the machine upstream. Reifying *this* as
+  a machine is **costume**.
+- an **adjudication point-law** that selects the surviving reading by knowledge
+  the bytes never carried — a declared arity, a symbol table — and rejects on a
+  tie or a miss. It reads no input and holds no state; it *judges*. This organ
+  is a **predicate** (§4.4), and reifying it as a machine is not costume but a
+  **category error**: naming a law as a process.
+
+A scanner deciding whether `<` opens a generic exhibits all three at once — a
+single pass carries both the bracket-nesting and the angle-nesting counts and
+stamps which readings survive; a downstream fold materializes each candidate
+argument list from the stamped boundaries; a downstream law keeps the reading
+whose argument count matches the declared arity, and raises where none does.
+Only the first is a machine to name. So the discipline of §6 has a third exit
+beside *reify* and *leave latent*: recognize the loop that is a shipped
+machine's consumer — engine reified elsewhere — and refuse to mistake the
+materialization fold for a machine, or the adjudicating law for one. The
+trichotomy of §4 is not only an ontology of what code *is*; it is the factoring
+a well-built recognizer already wears.
+
 ---
 
 ## 7. Finding the Machines: A Method
