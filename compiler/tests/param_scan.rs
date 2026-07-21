@@ -478,3 +478,48 @@ fn stray_closer_refuses_to_verbatim() {
     assert_eq!(parts.len(), 1, "stray closer → one verbatim part (named StrayCloser refusal)");
     assert_eq!(parts[0], (ParamGroup::Domain, "a](b, c".to_string()));
 }
+
+// ============================================================================
+// KNOWN LIMITATION #248 — param-list `<>` disambiguation FAVORS THE TEMPLATE (the old,
+// angle-aware `parse_type` reading: count `<`/`>`, merge when they balance). It is correct for
+// every generic type and for the associated-type binding `x: Map<K, Item = V>`. The ONE case it
+// gets wrong is a BALANCED comparison-operator straddle across adjacent defaults: the `<` of one
+// default and the `>` of the next balance across the comma, so the two params MERGE into one
+// (the second is folded into the first's default). ACCEPTED — favor the template when there is
+// no clean signal (owner decision 2026-07-21). Stakes are bounded: it is rare, and the mis-merge
+// emits mal-formed native the target compiler rejects LOUDLY (not silent); the workaround is to
+// parenthesize (`= (x < y)`). Future work — type-hint extraction + an ambiguity warning — is
+// tracked in https://github.com/frame-lang/framec/issues/248. Two fixtures document it: the
+// CURRENT accepted behavior (pinned, runs) and the IDEAL (skipped until #248 lands).
+// ============================================================================
+
+#[test]
+fn limitation_248_operator_straddle_current_favors_template() {
+    // CURRENT ACCEPTED BEHAVIOR (favor the template): the balanced `<`…`>` merges the two
+    // comparison-default params into ONE (the second, `b`, folds into `a`'s default) — the old
+    // angle-aware `parse_type` reading. Pinned so any change to the policy is noticed.
+    let parts = param_scan::parse_decl(b"a: int = x < y, b: int = z > w");
+    assert_eq!(
+        parts.len(),
+        1,
+        "favor-the-template: the operator straddle merges to one param (accepted; see #248)"
+    );
+    assert_eq!(
+        parts[0],
+        (ParamGroup::Domain, "a: int = x < y, b: int = z > w".to_string())
+    );
+}
+
+#[test]
+#[ignore = "KNOWN LIMITATION #248: the param-list `<>` split FAVORS THE TEMPLATE, so a balanced \
+            comparison-operator straddle across adjacent defaults merges into one param. Accepted \
+            (favor the template — the old way); a real fix needs type-hint extraction. This asserts \
+            the IDEAL 2-param split — un-ignore when #248 lands."]
+fn limitation_248_operator_straddle_ideal_two_params() {
+    // IDEAL: `a: int = x < y, b: int = z > w` is TWO params, each a comparison default. Favoring
+    // the template loses this (see the current-behavior test above). Tracked in issue #248.
+    let parts = param_scan::parse_decl(b"a: int = x < y, b: int = z > w");
+    assert_eq!(parts.len(), 2, "#248: the operator straddle should be two params");
+    assert_eq!(parts[0], (ParamGroup::Domain, "a: int = x < y".to_string()));
+    assert_eq!(parts[1], (ParamGroup::Domain, "b: int = z > w".to_string()));
+}
