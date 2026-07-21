@@ -12,10 +12,9 @@ use super::machine::{decl_section, machine_section};
 use crate::tree::{HeaderSection, Section, TriviaNode};
 use crate::Span;
 
-/// The section keywords. Frame's own vocabulary — a closed set, and framec's to know.
-const KEYWORDS: &[&str] = &["interface", "machine", "domain", "actions", "operations"];
-
-/// Build the right section for keyword index `idx`.
+/// Build the right section for keyword index `idx` (0..5, from the SectionScan system's
+/// keyword recognition — Frame's closed section vocabulary: interface/machine/domain/
+/// actions/operations).
 ///
 /// `actions:` and `operations:` members have NATIVE bodies; `interface:` and `domain:`
 /// members do not. That distinction is not cosmetic — it decides whether the member's
@@ -28,7 +27,7 @@ fn build(idx: usize, target: Target, bytes: &[u8], span: Span, kw: Span) -> Sect
         2 => Section::Domain(decl_section(target, bytes, span, kw, false)),
         3 => Section::Actions(decl_section(target, bytes, span, kw, true)),
         4 => Section::Operations(decl_section(target, bytes, span, kw, true)),
-        _ => unreachable!("KEYWORDS has 5 entries"),
+        _ => unreachable!("section keyword index out of range 0..5: {idx}"),
     }
 }
 

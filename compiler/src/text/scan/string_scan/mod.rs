@@ -1,7 +1,7 @@
 //! Quoted-string extent recognizer, **dogfooded as an `@@[scan(u8)]` system**.
 //!
 //! [`string_scan.frs`] recognizes the same grammar as
-//! [`super::lex::Lexer::quoted`] with `delim = b'"'`, `escapes = true`,
+//! the retired hand lexer's `quoted` with `delim = b'"'`, `escapes = true`,
 //! `multiline = false`: a `"`-delimited string with `\`-escapes, unterminated at a bare
 //! newline. The generated machine borrows the input (`over(&[u8])`, zero copy) and scans a
 //! prefix at a moving cursor (`scan_at(i)`), leaving the extent in `cursor`.
@@ -31,8 +31,8 @@ mod fsm {
 }
 
 /// Recognize a `"`-quoted string at `bytes[i..]`. Returns the offset one past the closing
-/// quote, or `None` if there is no terminated string there — the same extent
-/// [`super::lex::Lexer::quoted`] computes for `b'"'` (escapes on, single-line).
+/// quote, or `None` if there is no terminated string there — the same extent the
+/// retired hand lexer's `quoted` computed for `b'"'` (escapes on, single-line).
 ///
 /// The machine finds the extent; this wrapper is the native leaf, and it does nothing but
 /// run it and read `cursor` — no recognition logic lives here.

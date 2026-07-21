@@ -108,7 +108,7 @@ pub fn native_parts(bytes: &[u8], from: usize, to: usize, target: Target) -> Vec
 
 /// A literal, decomposed into content and holes. **They partition the literal.** The fold
 /// shape is the hand `literal_node`'s, verbatim; delim + holes arrive from the walk's own
-/// machine (`opaque_probe`) instead of the hand `LiteralExtent`.
+/// machine (`opaque_probe`) instead of the retired hand lexer.
 fn literal_node(
     bytes: &[u8],
     start: usize,

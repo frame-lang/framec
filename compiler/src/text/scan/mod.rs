@@ -7,7 +7,6 @@
 //! (`Source::open` is `pub(in crate::scan)`). Everything downstream holds spans
 //! and opaque text.
 
-pub mod lex;
 pub mod literals;
 pub mod machine;
 pub mod parts;
