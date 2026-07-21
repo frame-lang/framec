@@ -8,14 +8,13 @@
 //! span and accumulates the declaration-start offsets (plus the `unterminated_body` register,
 //! ledger T2), skipping opaque regions, whitespace, and `@@[` attribute lines, and jumping each
 //! decl's whole extent (line → eol; body → past the matching `}`, DelimBalance, clamped to
-//! `limit` when unbalanced). This proves — by running — that the offsets match the hand
-//! `decl_section` boundary loop (`decl_starts_hand`, the factored differential oracle) at EVERY
+//! `limit` when unbalanced). This proves — by running — that the offsets form a well-formed
+//! partition (strictly increasing, in `[from, limit)`, never at a whitespace byte) at EVERY
 //! `(from, limit)` position, for all four cleanroom targets, for BOTH `with_bodies` values, over
-//! realistic AND adversarial decl sections AND a deterministic fuzz corpus. The two
-//! implementations share the SAME leaves (`skip_opaque`, `is_attr`, `to_end_of_line`,
-//! `decl_end` → `machine::decl_extent`), so what the differential proves is the WALK — the thing
-//! being converted. PHASE 1 IS BYTE-PARITY: the hand path's bugs are REPRODUCED and PINNED here
-//! (T13's string-blind body fork), never fixed on the sly — fixes are Phase-B deltas.
+//! realistic AND adversarial decl sections AND a deterministic fuzz corpus, PLUS a memoryless
+//! suffix-consistency invariant (re-running from any recorded start reproduces the tail). The
+//! exact offsets/registers for each ledger row are pinned self-contained by the directed T*
+//! tests below.
 //!
 //! LEDGER ROSTER (design §6 — one test per walk-side Phase-1 row):
 //!   T1  SectionEnd / trailing trivia  -> `t1_section_end_and_trailing_trivia` + the I1
@@ -38,7 +37,7 @@
 //!       STATEMENT below.
 //!
 //! T15 STATEMENT (gate amendment 2026-07-18): this battery demonstrates panic-freedom of the
-//! MACHINE CHAIN (`decl_starts`/`decl_starts_hand`/`decl_extent`) over its entire window sweep —
+//! MACHINE CHAIN (`decl_starts`/`decl_extent`) over its entire window sweep —
 //! including the `{`-as-final-byte inputs — in debug builds (every `Span`/slice assert live).
 //! DRIVER-level windows are KNOWINGLY EXCLUDED: `decl_section` (now the M-wired driver over
 //! these systems) carries the hand path's `Span::new(open + 1, end - 1)` construction VERBATIM —
@@ -48,24 +47,17 @@
 //! Calling `decl_section` directly on a `{`-final-byte section stays out of this battery by that
 //! recorded argument; the walk/read systems themselves never construct that span.
 
-use frame_compiler::text::scan::decl_walk::{decl_starts, decl_starts_hand};
+use frame_compiler::text::scan::decl_walk::decl_starts;
 use frame_compiler::text::scan::literals::Target;
 
 const TARGETS: [Target; 4] = [Target::C, Target::Java, Target::Rust, Target::Python3];
 
-/// The differential: the system and the factored hand oracle must return the byte-identical
-/// `Vec<usize>` of decl-start offsets for these exact `(from, limit, with_bodies)` arguments —
-/// plus oracle-independent sanity on the machine's output: strictly increasing, in range, and
-/// never at a whitespace byte (the ws arm consumes those; a recorded ws start would be a
-/// dispatch-order break even if the oracle agreed).
+/// The standalone partition invariant on the machine's decl-start offsets for these exact
+/// `(from, limit, with_bodies)` arguments: strictly increasing, in range, and never at a
+/// whitespace byte (the ws arm consumes those; a recorded ws start would be a dispatch-order
+/// break). No oracle.
 fn agree(bytes: &[u8], from: usize, limit: usize, with_bodies: bool, target: Target) {
     let (machine, _unterm) = decl_starts(bytes, from, limit, with_bodies, target);
-    let hand = decl_starts_hand(bytes, from, limit, with_bodies, target);
-    assert_eq!(
-        machine, hand,
-        "MISMATCH target {target:?} from={from} limit={limit} with_bodies={with_bodies} on {:?}:\n  machine={machine:?}\n  hand  ={hand:?}",
-        String::from_utf8_lossy(bytes),
-    );
     let mut prev: Option<usize> = None;
     for &s in &machine {
         assert!(

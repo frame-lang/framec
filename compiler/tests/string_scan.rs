@@ -1,79 +1,97 @@
-//! **The first dogfooded scanner agrees with the hand lexer — proven by running.**
+//! **The first dogfooded scanner recognizes the known quoted-string extents — standalone.**
 //!
 //! `string_scan::scan` is generated from `string_scan.frs`, a `@@[scan(u8)]` Frame system
-//! (the resolution of the fubar in `docs/JOURNAL.md`). This test proves the generated
-//! machine computes the SAME quoted-string extent as the hand-written
-//! [`Lexer::quoted`] — for `delim = '"'`, single-line, escapes on — at **every** position
-//! of a corpus, including the string-blindness cases (a `}` inside a string, an escaped
-//! quote, a bare newline, an unterminated tail). If the machine and the hand loop ever
-//! disagree, this fails.
+//! (the resolution of the fubar in `docs/JOURNAL.md`). This test proves the generated machine
+//! computes the correct quoted-string extent — for `delim = '"'`, single-line, escapes on — at
+//! **every** `"`-position of a corpus, against KNOWN-CORRECT extents captured from the running
+//! system (no hand oracle). It exercises the string-blindness cases (a `}` inside a string, an
+//! escaped quote, a bare newline, an unterminated tail), which are the whole reason the mode
+//! has to be a state, not a native `in_string` byte.
 //!
-//! The reference is `Target::Java` (`Quoted { '"', multiline:false, escapes:true }`, and no
-//! interpolation) — exactly StringScan's grammar.
+//! The grammar mirrored is `Quoted { '"', multiline:false, escapes:true }` with no
+//! interpolation. `scan(bytes, i)` returns `Some(end)` on a terminated string opening at `i`
+//! (`end` is one past the closing quote), or `None` on "no string / unterminated".
+//!
+//! SCAFFOLDING (white-box: calls the internal `string_scan::scan` and asserts extents). Shaped
+//! as a standalone extent spec, but NOT promotable while shipping lacks `@@[scan]`-on-`@@system`.
 
-use frame_compiler::text::scan::lex::Lexer;
-use frame_compiler::text::scan::literals::Target;
 use frame_compiler::text::scan::string_scan;
 
-/// The hand lexer's quoted extent at `i`, as an `Option<end>`: `Some` on a terminated
-/// string, `None` on "no string here" or "unterminated" (which the machine reports as
-/// reject).
-fn hand(bytes: &[u8], i: usize) -> Option<usize> {
-    let lx = Lexer::new(bytes, Target::Java);
-    match lx.literal_at(i) {
-        Ok(Some(ext)) => Some(ext.span.end),
-        _ => None, // Ok(None) = not a literal here; Err = unterminated
-    }
-}
-
-/// Assert the machine and the hand lexer agree at every `"`-started position.
-fn agree(src: &str) {
+/// Assert `string_scan::scan` yields the KNOWN extent at every `"`-position of `src`. `expected`
+/// must list EVERY quote position (a completeness guard: it cannot silently omit a position), and
+/// each entry pins the exact `Option<end>`.
+fn check(src: &str, expected: &[(usize, Option<usize>)]) {
     let bytes = src.as_bytes();
-    for i in 0..bytes.len() {
-        if bytes[i] != b'"' {
-            continue;
-        }
-        let machine = string_scan::scan(bytes, i);
-        let reference = hand(bytes, i);
+    let quote_positions: Vec<usize> = (0..bytes.len()).filter(|&i| bytes[i] == b'"').collect();
+    let listed: Vec<usize> = expected.iter().map(|&(i, _)| i).collect();
+    assert_eq!(
+        quote_positions, listed,
+        "expected must cover EVERY `\"` position of {src:?} (completeness)"
+    );
+    for &(i, want) in expected {
         assert_eq!(
-            machine, reference,
-            "disagreement at byte {i} of {src:?}: machine={machine:?} hand={reference:?}"
+            string_scan::scan(bytes, i),
+            want,
+            "extent at byte {i} of {src:?}"
         );
     }
 }
 
 #[test]
-fn plain_strings_agree() {
-    agree(r#"let a = "hello"; let b = "world";"#);
+fn plain_strings() {
+    // Two adjacent strings; each `"` is either an opener (Some) or a trailing/closing quote that
+    // opens a fresh (unterminated or re-paired) scan — the recognizer is position-agnostic.
+    check(
+        r#"let a = "hello"; let b = "world";"#,
+        &[(8, Some(15)), (14, Some(26)), (25, Some(32)), (31, None)],
+    );
 }
 
 #[test]
-fn the_string_blindness_cases_agree() {
-    // A brace inside a string must NOT be seen as code — the whole reason the mode has to
-    // be a state, not a native `in_string` byte.
-    agree(r#"x = "a } brace and a $.ref"; y = 1;"#);
-    // An escaped quote does not close the string.
-    agree(r#"s = "he said \"hi\" ok"; t = 2;"#);
-    // A backslash before the closing quote (escaped backslash then quote).
-    agree(r#"p = "back\\"; q = 3;"#);
-    // Empty string.
-    agree(r#"e = ""; f = 4;"#);
-    // Adjacent strings.
-    agree(r#""ab""cd""#);
+fn the_string_blindness_cases() {
+    // A brace inside a string must NOT be seen as code — the extent runs past `}` to the real `"`.
+    check(r#"x = "a } brace and a $.ref"; y = 1;"#, &[(4, Some(27)), (26, None)]);
+    // An escaped quote does not close the string: the extent reaches the real closer at 22.
+    check(
+        r#"s = "he said \"hi\" ok"; t = 2;"#,
+        &[(4, Some(23)), (14, Some(23)), (18, Some(23)), (22, None)],
+    );
+    // A backslash before the closing quote (escaped backslash then quote): `"back\\"` ends at 12.
+    check(r#"p = "back\\"; q = 3;"#, &[(4, Some(12)), (11, None)]);
+    // Empty string `""` — opener at 4, closer at 5, extent 6.
+    check(r#"e = ""; f = 4;"#, &[(4, Some(6)), (5, None)]);
+    // Adjacent strings `"ab""cd"`.
+    check(r#""ab""cd""#, &[(0, Some(4)), (3, Some(5)), (4, Some(8)), (7, None)]);
 }
 
 #[test]
-fn unterminated_and_newline_agree() {
-    // Unterminated tail — both report "no extent".
-    agree("g = \"open and never closed");
-    // A bare newline terminates (single-line) — unterminated, so reject.
-    agree("h = \"line one\nstill\"");
-    // A `"` that is actually the close of a prior string, then junk.
-    agree(r#"z = "one" + not_a_string"#);
+fn unterminated_and_newline() {
+    // Unterminated tail — no extent.
+    check("g = \"open and never closed", &[(4, None)]);
+    // A bare newline terminates (single-line) — unterminated, so both `"` reject.
+    check("h = \"line one\nstill\"", &[(4, None), (19, None)]);
+    // A `"` that closes a prior string, then junk.
+    check(r#"z = "one" + not_a_string"#, &[(4, Some(9)), (8, None)]);
 }
 
 #[test]
-fn every_position_of_a_dense_corpus_agrees() {
-    // A dense mix so the loop hits many `"` offsets and interleavings.
-    agree(r#"a="x";b="y\"z";c="{}";d="";e="\\";f="tail"#);
+fn every_position_of_a_dense_corpus() {
+    // A dense mix so the check hits many `"` offsets and interleavings.
+    check(
+        r#"a="x";b="y\"z";c="{}";d="";e="\\";f="tail"#,
+        &[
+            (2, Some(5)),
+            (4, Some(9)),
+            (8, Some(14)),
+            (11, Some(14)),
+            (13, Some(18)),
+            (17, Some(21)),
+            (20, Some(25)),
+            (24, Some(26)),
+            (25, Some(30)),
+            (29, Some(33)),
+            (32, Some(37)),
+            (36, None),
+        ],
+    );
 }

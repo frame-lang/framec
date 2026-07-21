@@ -221,13 +221,31 @@ fn b220() -> Status {
 
 /// #221 — a Python-only quote-swap applied to all 17 targets, emitting a CHAR literal.
 fn b221() -> Status {
-    // The fact lives in ONE table, asked once.
-    assert!(Target::Python3.single_quote_is_string());
-    assert!(!Target::Java.single_quote_is_string());
-    assert!(!Target::CSharp.single_quote_is_string());
-    assert!(!Target::Kotlin.single_quote_is_string());
-    assert!(!Target::Swift.single_quote_is_string());
-    // And no emitter re-derives it: the delimiter is carried on the LiteralNode.
+    use frame_compiler::text::scan::parts::native_parts;
+    use frame_compiler::tree::body::NativePart;
+
+    // The delimiter is CARRIED on the LiteralNode — the quote byte the user actually wrote — so
+    // no emitter re-derives it and the #221 quote-swap is unrepresentable. Double-quoted literals
+    // carry delim `"` on EVERY target; single-quoted literals carry delim `'` where the target HAS
+    // a single-quote literal form, and are NOT a literal at all where it does not (Swift). The
+    // node is the single source of the delimiter, never a per-target swap.
+    fn delim(code: &str, t: Target) -> Option<u8> {
+        native_parts(code.as_bytes(), 0, code.len(), t)
+            .iter()
+            .find_map(|p| match p {
+                NativePart::Literal(l) => Some(l.delim),
+                _ => None,
+            })
+    }
+    for t in [Target::Python3, Target::Java, Target::CSharp, Target::Kotlin, Target::Swift] {
+        assert_eq!(delim("\"x\"", t), Some(b'"'), "double-quote delim carried on the node for {t:?}");
+    }
+    // Single-quote IS a literal delimiter on these targets — carried as `'`, never swapped.
+    for t in [Target::Python3, Target::Java, Target::CSharp, Target::Kotlin] {
+        assert_eq!(delim("'x'", t), Some(b'\''), "single-quote delim carried on the node for {t:?}");
+    }
+    // Swift has no single-quote literal form: `'x'` is not a literal node at all.
+    assert_eq!(delim("'x'", Target::Swift), None, "Swift `'` is not a literal delimiter");
     Impossible
 }
 

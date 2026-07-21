@@ -1,38 +1,28 @@
-//! **The machine-section state walk, as a system, agrees with the hand walk — proven by
-//! running.** SCAFFOLDING (differential vs the retired hand oracle + the internal `Source`/
-//! `segment` entry and tree spans; conversion-internal — never promoted; needs `@@[scan(u8)]`-
-//! on-`@@system`, a cleanroom-only capability today, plus the hand oracle it is racing).
+//! **The machine-section state walk, as a system, obeys its standalone partition invariants —
+//! proven by running.** SCAFFOLDING (white-box on the internal `state_starts` + the internal
+//! `Source`/`segment` entry and tree spans; conversion-internal — never promoted; needs
+//! `@@[scan(u8)]`-on-`@@system`, a cleanroom-only capability today).
 //!
 //! `machine_walk::state_starts` is generated from `machine_walk.frs`, a `@@[scan(u8)]` Frame
 //! system that now DRIVES `machine::machine_section`. This proves — by running — that the
-//! `$Name` state-start offsets it accumulates match the pre-conversion hand loop
-//! (`state_starts_hand`, kept ONLY as the differential oracle) at EVERY (`from`, `limit`)
-//! position, for all four cleanroom targets, over realistic machine bodies AND adversarial
-//! ones (`$Name` inside a string/comment; `$.x`/`$>`/`<$` heads; nested `{}`; adjacent states;
-//! unterminated body; empty span) AND a deterministic frame-ish fuzz corpus.
-//!
-//! The two implementations share the SAME leaves (`skip_opaque`, `state_extent`) exactly as the
-//! segmenter's `hand_item_starts` shares `item_end_at`, so what the differential proves is the
-//! WALK — the thing being converted. A MISMATCH here is a real machine/oracle divergence and is
-//! reproducible from its printed inputs (or seed).
+//! `$Name` state-start offsets it accumulates form a well-formed partition (strictly increasing,
+//! in `[from, limit)`, each pointing at a `$` byte) at EVERY (`from`, `limit`) position, for all
+//! four cleanroom targets, over realistic machine bodies AND adversarial ones (`$Name` inside a
+//! string/comment; `$.x`/`$>`/`<$` heads; nested `{}`; adjacent states; unterminated body; empty
+//! span) AND a deterministic frame-ish fuzz corpus. Exact state COUNTS for hand-verified inputs
+//! are pinned self-contained in `known_state_counts_self_contained`, and the end-to-end
+//! decomposition through the real pipeline in `machine_decomposes_into_the_right_states`.
 
 use frame_compiler::text::scan::literals::Target;
-use frame_compiler::text::scan::machine_walk::{state_starts, state_starts_hand};
+use frame_compiler::text::scan::machine_walk::state_starts;
 
 const TARGETS: [Target; 4] = [Target::C, Target::Java, Target::Rust, Target::Python3];
 
-/// The differential: the system and the retired hand oracle must return the byte-identical
-/// `Vec<usize>` of state-start offsets for these exact `(from, limit)` arguments.
+/// The standalone partition invariant: the recorded state-start offsets are strictly increasing,
+/// each is a real index in `[from, limit)`, and each points at a `$` byte (the only byte a state
+/// head can begin with). Holds for these exact `(from, limit)` arguments, no oracle.
 fn agree(bytes: &[u8], from: usize, limit: usize, target: Target) {
     let machine = state_starts(bytes, from, limit, target);
-    let hand = state_starts_hand(bytes, from, limit, target);
-    assert_eq!(
-        machine, hand,
-        "MISMATCH target {target:?} from={from} limit={limit} on {:?}:\n  machine={machine:?}\n  hand  ={hand:?}",
-        String::from_utf8_lossy(bytes),
-    );
-    // A partition sanity check that holds independently of the oracle: the recorded starts are
-    // strictly increasing and every one is a real index in [from, limit).
     let mut prev: Option<usize> = None;
     for &s in &machine {
         assert!(s >= from && s < limit, "start {s} out of [{from},{limit}) on {:?}", String::from_utf8_lossy(bytes));

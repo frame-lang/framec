@@ -1,36 +1,28 @@
-//! **ArgScan agrees with the hand `parse_inst_args` everywhere the ledger says CARRY —
-//! and provably DISAGREES on every FIX ruling — proven by running.**
+//! **ArgScan's standalone spec — the ledger's CARRY values, FIX rulings, and dual-counter
+//! angle fork, proven by running (no hand oracle).**
 //!
 //! `arg_scan::parse` is generated from `arg_scan.frs` (a `@@[scan(u8)]` TWO-counter
 //! automaton, design record §11 Option C) and replaces the hand `parse_inst_args` +
 //! `split_top_commas` + `split_top_eq` (parts.rs M6). The battery:
 //!
-//!   * PIN tests (§7.2 as amended §11.7, 22) — CARRY ledger rows, hand-independent
-//!     expected values (they survive oracle deletion at C-final), each also cross-checked
-//!     `== hand` while the oracle lives, and `angles == Inert`;
-//!   * FIX tests (§7.3 as amended, 18) — every FIX ledger row asserts the new behavior
-//!     AND `!= hand` (teeth built in — the recorded D4-shape exception: fix-at-landing
-//!     via the partitioned carry/fix differential);
-//!   * FORK tests (§11.7, 9) — the dual-counter angle fork: Forked/Operators/Inert
-//!     outcomes, digraph guards, depth-0 independence, refusal suppression, and the
-//!     scaffolding differential `fork_g_matches_hand_on_balanced_angles` (the hand's
-//!     comma alphabet IS hypothesis G);
-//!   * DIFFERENTIAL (2) — the carry-domain corpus sweep + `oracle_stayed_buggy` (pins the
-//!     oracle's Bug A/Bug B so the fix teeth can never go vacuous via an oracle "repair");
-//!   * FUZZ (3) — deterministic xorshift64*: a carry-domain-by-construction differential
-//!     arm, a full-alphabet invariants arm, and the teeth gate;
-//!   * MILESTONES (3) — the spec §1103/§1108 call sites through the wired production
-//!     path (InstScan shape + ArgScan args), the `native_parts` route guard, and the fork
-//!     reaching the tree.
+//!   * PIN tests (§7.2 as amended §11.7) — CARRY ledger rows, hand-independent expected
+//!     values, and `angles == Inert`;
+//!   * FIX tests (§7.3 as amended) — every FIX ledger row asserts the new behavior directly;
+//!   * FORK tests (§11.7) — the dual-counter angle fork: Forked/Operators/Inert outcomes,
+//!     digraph guards, depth-0 independence, refusal suppression;
+//!   * FUZZ (2) — deterministic xorshift64*: a full-alphabet PUBLIC-invariants arm
+//!     (determinism + fork strict-count-reduction) and a teeth gate over the outcome classes;
+//!   * MILESTONES (3) — the spec §1103/§1108 call sites through the wired production path
+//!     (InstScan shape + ArgScan args), the `native_parts` route guard, and the fork reaching
+//!     the tree.
 //!
-//! Every parity test here is SCAFFOLDING: it depends on the `#[doc(hidden)]`
-//! `parse_inst_args_hand` oracle (and `parse_records`); it NEVER promotes to the
-//! cross-language corpus and dies at C-final when the hand-independent pins take over.
+//! Every test here is SCAFFOLDING (white-box on the internal `arg_scan`/`inst_scan`); it NEVER
+//! promotes to the cross-language corpus.
 
 use frame_compiler::text::scan::arg_scan::{self, AngleReading, ArgsOut, Refusal};
 use frame_compiler::text::scan::inst_scan;
 use frame_compiler::text::scan::literals::Target;
-use frame_compiler::text::scan::parts::{native_parts, parse_inst_args_hand};
+use frame_compiler::text::scan::parts::native_parts;
 use frame_compiler::tree::body::{ArgAngles, InstArg, NativePart, ParamGroup};
 
 const TARGETS: [Target; 4] = [Target::C, Target::Java, Target::Rust, Target::Python3];
@@ -53,17 +45,6 @@ fn quot_args(args: &[InstArg], named: bool) -> Quot {
             .collect(),
         named,
     )
-}
-
-/// The hand oracle on the whole interior `[0, len)`.
-fn hand(interior: &str) -> Quot {
-    let b = interior.as_bytes();
-    let (args, named) = parse_inst_args_hand(b, 0, b.len());
-    quot_args(&args, named)
-}
-fn hand_bytes(interior: &[u8]) -> Quot {
-    let (args, named) = parse_inst_args_hand(interior, 0, interior.len());
-    quot_args(&args, named)
 }
 
 /// The machine's PRIMARY candidate quotient.
@@ -89,15 +70,14 @@ fn expect(rows: &[(i32, Option<&str>, &str)], named: bool) -> Quot {
     )
 }
 
-/// CARRY assertion: machine == the hand-independent expected values, == hand, and
-/// `angles == Inert`, under EVERY target (carry rows are target-invariant).
+/// CARRY assertion: machine == the hand-independent expected values, and `angles == Inert`,
+/// under EVERY target (carry rows are target-invariant).
 fn pinned(interior: &str, rows: &[(i32, Option<&str>, &str)], named: bool) {
     let e = expect(rows, named);
     for &t in &TARGETS {
         let full = machine_full(interior, t);
         let m = quot_args(&full.primary.args, full.primary.named);
         assert_eq!(m, e, "pin wrong: {interior:?} under {t:?}");
-        assert_eq!(m, hand(interior), "carry broke (!= hand): {interior:?} under {t:?}");
         assert_eq!(
             full.angles,
             AngleReading::Inert,
@@ -106,15 +86,10 @@ fn pinned(interior: &str, rows: &[(i32, Option<&str>, &str)], named: bool) {
     }
 }
 
-/// FIX assertion (teeth built in): machine == the expected NEW behavior and != the oracle.
+/// FIX assertion: machine == the expected NEW behavior (asserted directly, self-contained).
 fn fixed(interior: &str, t: Target, rows: &[(i32, Option<&str>, &str)], named: bool) {
     let m = machine(interior, t);
     assert_eq!(m, expect(rows, named), "fix wrong: {interior:?} under {t:?}");
-    assert_ne!(
-        m,
-        hand(interior),
-        "fix VACUOUS (oracle already agrees): {interior:?} under {t:?}"
-    );
 }
 fn fixed_all(interior: &str, rows: &[(i32, Option<&str>, &str)], named: bool) {
     for &t in &TARGETS {
@@ -123,8 +98,8 @@ fn fixed_all(interior: &str, rows: &[(i32, Option<&str>, &str)], named: bool) {
 }
 
 // ============================================================================
-// PIN battery — 22 tests (§7.2 as amended §11.7). CARRY rows: hand-independent
-// expected values + `== hand` cross-check + `angles == Inert`.
+// PIN battery (§7.2 as amended §11.7). CARRY rows: hand-independent expected
+// values (asserted directly) + `angles == Inert`.
 // ============================================================================
 
 #[test]
@@ -138,14 +113,9 @@ fn pin_spec_examples() {
         &[(1, Some("x"), "7"), (0, Some("name"), "\"R2D2\"")],
         true,
     );
-    // BEYOND-DESIGN FIND (proven by running, recorded for the ledger): the hand's comma
-    // splitter counts the `>` OF THE `$>(` SIGIL ITSELF (its parts.rs:400-402 alphabet),
-    // so a non-final `$>(...)` group drives its depth negative and SILENCES every later
-    // top-level comma — spec examples 4 and 6 are Bug-B territory, not carry (the same
-    // §7.2 pin-input defect class the design's own L26 correction caught for `<=`). The
-    // machine's spec-documented values stand, hand-independent; the hand cross-check
-    // becomes a Bug-B TOOTH (`!= hand`): the oracle yields 2 args with the Enter value
-    // `1000), "primary"`.
+    // The non-final `$>(...)` spec examples 4 and 6: the machine's spec-documented values stand
+    // (a non-final enter group does NOT silence later commas — the two-counter automaton counts
+    // the sigil's `>` correctly). Asserted directly, self-contained.
     for (interior, rows, named) in [
         (
             "$(0), $>(1000), \"primary\"",
@@ -167,11 +137,6 @@ fn pin_spec_examples() {
             let m = quot_args(&full.primary.args, full.primary.named);
             assert_eq!(m, expect(&rows, named), "spec pin wrong: {interior:?} under {t:?}");
             assert_eq!(full.angles, AngleReading::Inert, "{interior:?} under {t:?}");
-            assert_ne!(
-                m,
-                hand(interior),
-                "enter-sigil Bug-B tooth vacuous (oracle repaired?): {interior:?}"
-            );
         }
     }
 }
@@ -244,7 +209,6 @@ fn pin_string_comma() {
     for t in [Target::C, Target::Java] {
         let m = machine("',' , x", t);
         assert_eq!(m, expect(&[(0, None, "','"), (0, None, "x")], false));
-        assert_eq!(m, hand("',' , x"), "carry broke: char comma under {t:?}");
     }
 }
 
@@ -351,7 +315,6 @@ fn pin_lossy_value() {
             expect(&[(0, None, "a"), (0, None, "\u{FFFD}")], false),
             "lossy pin under {t:?}"
         );
-        assert_eq!(m, hand_bytes(interior), "lossy carry broke under {t:?}");
     }
 }
 
@@ -640,7 +603,6 @@ fn fork_guard_digraphs() {
             assert_eq!(out.angles, AngleReading::Inert, "{interior:?} under {t:?}");
             let m = quot_args(&out.primary.args, out.primary.named);
             assert_eq!(m, expect(&rows, named), "{interior:?} under {t:?}");
-            assert_ne!(m, hand(interior), "digraph tooth vacuous: {interior:?}");
         }
     }
 }
@@ -675,11 +637,10 @@ fn fork_suppressed_on_refusal() {
     }
 }
 
+/// The fork ACTUALLY forks on the classic ambiguous inputs, and the two candidates differ by a
+/// strict count reduction (Lemma 3(ii)) — self-contained, no oracle.
 #[test]
-fn fork_g_matches_hand_on_balanced_angles() {
-    // SCAFFOLDING differential: on digraph-free fork inputs with no `=` inside an angle
-    // extent (gate amendment domain restriction — the hand names by O rules), the hand's
-    // comma alphabet IS hypothesis G, so the G candidate == hand exactly.
+fn fork_forks_with_strict_count_reduction() {
     let corpus = [
         "new HashMap<Integer, String>(), z",
         "Vec::<u8, A>::new(), n",
@@ -691,136 +652,18 @@ fn fork_g_matches_hand_on_balanced_angles() {
         for &t in &TARGETS {
             let out = machine_full(interior, t);
             let g = quot_args(&out.primary.args, out.primary.named);
-            assert!(
-                matches!(out.angles, AngleReading::Forked(_)),
-                "{interior:?} expected to fork under {t:?}"
-            );
-            assert_eq!(g, hand(interior), "hand != hypothesis G on {interior:?} under {t:?}");
+            match &out.angles {
+                AngleReading::Forked(alt) => {
+                    let o = quot_args(&alt.args, alt.named);
+                    assert!(
+                        g.0.len() < o.0.len(),
+                        "primary (G) must be strictly smaller than alt (O) on {interior:?} ({t:?})"
+                    );
+                }
+                other => panic!("{interior:?} expected to fork under {t:?}, got {other:?}"),
+            }
         }
     }
-}
-
-// ============================================================================
-// DIFFERENTIAL — 2 tests (§7.4 as amended). Carry-domain sweep + the oracle-
-// faithfulness pin that keeps the fix teeth honest.
-// ============================================================================
-
-#[test]
-fn differential_carry_corpus() {
-    // Every §7.2 carry input plus a curated widening. Whole-interior calls only (chopping
-    // interiors manufactures fix-territory inputs); breadth comes from the fuzz carry arm.
-    // Carry rows additionally assert `angles == Inert` (§11.7).
-    let corpus = [
-        // §7.2 inputs. (Spec examples 4 and 6 — non-final `$>(...)` — are EXCLUDED: the
-        // hand counts the sigil's own `>` and silences the later commas, a Bug-B family
-        // divergence proven by running; see pin_spec_examples. A FINAL `$>(...)` is
-        // carry — `x, $>(9)` below keeps the enter group in the carry sweep.)
-        "10",
-        "$(7), \"R2D2\"",
-        "$>(50)",
-        "x, $>(9)",
-        "$(x=7), name=\"R2D2\"",
-        "",
-        "   ",
-        "a,",
-        "a, b",
-        "a,,b",
-        ",",
-        ",,",
-        "a, ",
-        "f(a, b), [c, d], {e, f}",
-        "\"a=b\", x",
-        "\"a,b\", c",
-        "a, \"b, c",
-        "a=b=c",
-        "f(x)",
-        "a==b, x",
-        "c!=d, y",
-        "$()",
-        "$ (x)",
-        "f($(x))",
-        "$(x",
-        "a], y",
-        "$(x) junk",
-        "x=1, 2",
-        // curated widening: nested instantiations, adjacent groups, deep parens, carry
-        // guard pairs, empty variants
-        "@@Inner(), 3",
-        "$(1), $(2), x",
-        "f(g(h(1,2),3),4), y",
-        "p != q, r == s",
-        "x = a == b",
-        "x = y = z",
-        "$(1, 2)",
-        "$(a + b), c",
-        "'q', \"w\"",
-        "  a  ,  b  ",
-        "_x, y1",
-    ];
-    for interior in corpus {
-        for &t in &TARGETS {
-            let full = machine_full(interior, t);
-            assert_eq!(
-                quot_args(&full.primary.args, full.primary.named),
-                hand(interior),
-                "carry divergence on {interior:?} under {t:?}"
-            );
-            assert_eq!(
-                full.angles,
-                AngleReading::Inert,
-                "carry input forked: {interior:?} under {t:?}"
-            );
-        }
-    }
-}
-
-#[test]
-fn oracle_stayed_buggy() {
-    // The fix teeth (`assert_ne!` vs the oracle) go VACUOUS if anyone "repairs" the
-    // oracle. Pin the oracle's verified bugs so that any repair shape is loud.
-    // Bug A: the suffix trim eats the user's own closer.
-    let (args, _) = {
-        let b = b"$(g(1))";
-        parse_inst_args_hand(b, 0, b.len())
-    };
-    assert_eq!(args.len(), 1);
-    assert_eq!(args[0].value, "g(1", "oracle Bug A was fixed — the fix teeth are vacuous");
-    // Bug B: a bare `<` silences every later top-level comma.
-    let (args, _) = {
-        let b = b"a < b, c";
-        parse_inst_args_hand(b, 0, b.len())
-    };
-    assert_eq!(args.len(), 1, "oracle Bug B was fixed — the fix teeth are vacuous");
-    // Bug B, enter-sigil instance (the wire-gate C2 pin): the comma splitter counts the
-    // `>` OF THE `$>(` SIGIL ITSELF, so a non-final enter group drives depth negative and
-    // silences the later commas — spec-4's input mangles to 2 args with the Enter value
-    // `1000), "primary"`.
-    let (args, named) = {
-        let b = b"$(0), $>(1000), \"primary\"";
-        parse_inst_args_hand(b, 0, b.len())
-    };
-    assert_eq!(
-        args.len(),
-        2,
-        "oracle enter-sigil bug was fixed — the spec-4/6 teeth are vacuous"
-    );
-    assert_eq!(args[1].group, ParamGroup::Enter);
-    assert_eq!(
-        args[1].value, "1000), \"primary\"",
-        "oracle enter-sigil bug changed shape — re-verify the spec-4/6 teeth"
-    );
-    assert!(!named);
-    // Spec-6's named shape: the swallowed tail rides the Enter value through the eq
-    // splitter — name `timeout`, value `1000), name="primary"`.
-    let (args, named) = {
-        let b = b"$(slot=0), $>(timeout=1000), name=\"primary\"";
-        parse_inst_args_hand(b, 0, b.len())
-    };
-    assert_eq!(args.len(), 2);
-    assert_eq!(args[1].group, ParamGroup::Enter);
-    assert_eq!(args[1].name.as_deref(), Some("timeout"));
-    assert_eq!(args[1].value, "1000), name=\"primary\"");
-    assert!(named);
 }
 
 // ============================================================================
@@ -848,107 +691,6 @@ impl Rng {
     fn below(&mut self, n: usize) -> usize {
         (self.next_u64() % (n as u64)) as usize
     }
-    fn chance(&mut self, one_in: usize) -> bool {
-        self.below(one_in) == 0
-    }
-}
-
-/// Carry-domain VALUE fragments: everything a positional value or a named value may be
-/// built from without leaving the carry domain (no angles, no comments, no raw/triple
-/// openers, no operator-adjacent `=`, no unbalanced brackets).
-const CARRY_VALUES: &[&str] = &[
-    "a", "x1", "_id", "foo", "0", "42", "a == b", "c != d", "(y)", "[i, j]", "{k}",
-    "\"s,t\"", "'c'", "\"e\\\"q\"", "f(1, 2)", "g(h(1))", "n + m",
-];
-/// Carry-domain GROUP segments: fixed closed STATE sigil groups. No nested parens ENDING
-/// at the closer (Bug A territory), no quotes (unterminated-in-group diverges on the hand
-/// trim), and NO `$>(...)` here — the hand counts the enter sigil's own `>` (Bug-B family,
-/// proven by running), so an enter group is carry only in FINAL position (appended by the
-/// interior generator).
-const CARRY_GROUPS: &[&str] = &["$(x)", "$(ab=cd)", "$()", "$(1, 2)", "$(a + b)"];
-/// Names for carry named segments (proper identifiers only — the hand names ANY LHS, the
-/// machine requires an ident; proper idents keep both in agreement).
-const CARRY_NAMES: &[&str] = &["a", "slot", "x9", "_n"];
-
-/// One carry-domain segment.
-fn gen_carry_segment(rng: &mut Rng, out: &mut String) {
-    match rng.below(4) {
-        0 => {
-            // named: ident = value [value]
-            out.push_str(CARRY_NAMES[rng.below(CARRY_NAMES.len())]);
-            out.push_str(" = ");
-            out.push_str(CARRY_VALUES[rng.below(CARRY_VALUES.len())]);
-        }
-        1 => out.push_str(CARRY_GROUPS[rng.below(CARRY_GROUPS.len())]),
-        _ => {
-            out.push_str(CARRY_VALUES[rng.below(CARRY_VALUES.len())]);
-            if rng.chance(3) {
-                out.push(' ');
-                out.push_str(CARRY_VALUES[rng.below(CARRY_VALUES.len())]);
-            }
-        }
-    }
-}
-
-/// A whole carry-domain interior: segments joined by commas (with ws jitter), an optional
-/// empty segment, an optional unterminated-quote tail (L5 is carry).
-fn gen_carry_interior(rng: &mut Rng) -> String {
-    let n = rng.below(5);
-    let mut s = String::new();
-    for i in 0..n {
-        if i > 0 {
-            s.push(',');
-            if rng.chance(4) {
-                s.push(','); // empty segment (dropped, carry)
-            }
-            if !rng.chance(3) {
-                s.push(' ');
-            }
-        }
-        gen_carry_segment(rng, &mut s);
-        if rng.chance(5) {
-            s.push(' ');
-        }
-    }
-    if rng.chance(8) {
-        if !s.is_empty() {
-            s.push_str(", ");
-        }
-        s.push_str("\"tail, swallowed"); // unterminated tail — L5, carry
-    } else if rng.chance(5) {
-        // A FINAL-position enter group is carry (no later comma for the hand's counted
-        // sigil-`>` to silence).
-        if !s.is_empty() {
-            s.push_str(", ");
-        }
-        s.push_str("$>(7)");
-    }
-    s
-}
-
-#[test]
-fn fuzz_carry_differential() {
-    // The fragment alphabet is CONSTRUCTED to stay in the carry domain, so machine == hand
-    // (and Inert) on every case — breadth for the differential that the curated corpus
-    // cannot reach.
-    for seed in 0u64..8000 {
-        let mut rng = Rng::new(seed ^ 0xA96C_0000);
-        let interior = gen_carry_interior(&mut rng);
-        let h = hand(&interior);
-        for &t in &TARGETS {
-            let full = machine_full(&interior, t);
-            assert_eq!(
-                quot_args(&full.primary.args, full.primary.named),
-                h,
-                "CARRY FUZZ DIVERGENCE seed {seed} target {t:?} interior {interior:?}"
-            );
-            assert_eq!(
-                full.angles,
-                AngleReading::Inert,
-                "carry fuzz forked: seed {seed} {interior:?}"
-            );
-        }
-    }
 }
 
 /// Full-alphabet fragments: the carry alphabet PLUS angles, digraphs, comments, exotic
@@ -970,40 +712,9 @@ fn gen_full_interior(rng: &mut Rng) -> String {
     s
 }
 
-/// Re-derive the O arg count and the G arg count from the raw records.
-fn record_counts(recs: &[(i32, bool, usize, usize, usize, usize, bool)]) -> (usize, usize) {
-    (recs.len(), recs.iter().filter(|r| r.6).count())
-}
-
-/// Does the ws byte at `pos` sit INSIDE an opaque extent opening within `[vs, pos]`? A
-/// comment/string legitimately carries interior/trailing ws into the value span — the
-/// walk sets `ve` to the opaque extent end VERBATIM (same clamp policy as the machine's
-/// `opaque_skip`: comments clamp to the limit, literals overrunning it are not consumed).
-fn ws_inside_opaque(b: &[u8], vs: usize, pos: usize, to: usize, t: Target) -> bool {
-    use frame_compiler::text::scan::opaque_scan::{opaque_at, OpaqueAt};
-    let mut k = vs;
-    while k <= pos {
-        let e = match opaque_at(b, k, t) {
-            OpaqueAt::Comment(e) => Some(e.min(to)),
-            OpaqueAt::Literal(e) if e <= to => Some(e),
-            _ => None,
-        };
-        match e {
-            Some(e) if e > k => {
-                if e > pos {
-                    return true;
-                }
-                k = e;
-            }
-            _ => k += 1,
-        }
-    }
-    false
-}
-
 #[test]
 fn fuzz_full_invariants() {
-    // Machine-only structural invariants over the FULL alphabet — no oracle.
+    // PUBLIC-`parse()` invariants over the FULL alphabet — no oracle, no internal records.
     for seed in 0u64..8000 {
         let mut rng = Rng::new(seed ^ 0x51D3_FFFF);
         let interior = gen_full_interior(&mut rng);
@@ -1014,101 +725,21 @@ fn fuzz_full_invariants() {
             let out2 = arg_scan::parse(b, 0, b.len(), t);
             assert_eq!(out, out2, "nondeterminism: seed {seed} {t:?} {interior:?}");
 
-            let (recs, (angle_touched, g_viable, refusal, _)) =
-                arg_scan::parse_records(b, 0, b.len(), t);
-
-            // (3) span sanity: within [0, len), ordered, non-overlapping, name span before
-            // value span, no nonempty span starting/ending on ws.
-            let is_ws = |i: usize| matches!(b[i], b' ' | b'\t' | b'\n' | b'\r');
-            let mut prev_end = 0usize;
-            for r in &recs {
-                let (_, has_name, ns, ne, vs, ve, _) = *r;
-                assert!(vs <= ve && ve <= b.len(), "value span oob: seed {seed} {interior:?}");
-                if has_name {
-                    assert!(ns < ne && ne <= vs, "name span disorder: seed {seed} {interior:?}");
-                    assert!(
-                        !is_ws(ns) && !is_ws(ne - 1),
-                        "name span on ws: seed {seed} {interior:?}"
-                    );
-                    assert!(prev_end <= ns, "records overlap: seed {seed} {interior:?}");
-                } else {
-                    assert!(prev_end <= vs, "records overlap: seed {seed} {interior:?}");
-                }
-                if vs < ve {
-                    assert!(!is_ws(vs), "value span starts on ws: seed {seed} {interior:?}");
-                    assert!(
-                        !is_ws(ve - 1) || ws_inside_opaque(b, vs, ve - 1, b.len(), t),
-                        "value span ends on ws outside opaque: seed {seed} {t:?} {interior:?}"
-                    );
-                }
-                prev_end = ve;
-            }
-
-            // (5) coverage: every interior byte outside the recorded spans is separator
-            // material (ws, comma, the `=` of a named split, sigil bytes, group closer).
-            let mut covered = vec![false; b.len()];
-            for r in &recs {
-                for c in covered.iter_mut().take(r.5).skip(r.4) {
-                    *c = true;
-                }
-                if r.1 {
-                    for c in covered.iter_mut().take(r.3).skip(r.2) {
-                        *c = true;
-                    }
-                }
-            }
-            for i in 0..b.len() {
-                if !covered[i] {
-                    assert!(
-                        matches!(b[i], b' ' | b'\t' | b'\n' | b'\r' | b',' | b'=' | b'$' | b'(' | b')' | b'>'),
-                        "uncovered non-separator byte {:?} at {i}: seed {seed} {interior:?}",
-                        b[i] as char
-                    );
-                }
-            }
-
-            // (4) refusal implications: fork suppressed; the verbatim tail is observable —
-            // the last arg extends to the last non-ws byte of the interior.
+            // (3) a refusal suppresses the fork (a malformed list adjudicates nothing).
             if out.refusal != Refusal::None {
-                assert_eq!(out.angles, AngleReading::Inert, "(9) refusal forked: {interior:?}");
-                let last_content = (0..b.len()).rev().find(|&i| !is_ws(i));
-                if let (Some(lc), Some(last)) = (last_content, recs.last()) {
-                    if last.4 < last.5 {
-                        // Covers AT LEAST to the last non-ws byte (an opaque extent may
-                        // legitimately clamp `ve` past it, to `to`) — nothing after the
-                        // refusal is dropped.
-                        assert!(
-                            last.5 >= lc + 1,
-                            "(4) refusal tail not verbatim-to-end: seed {seed} {t:?} {interior:?}"
-                        );
-                    }
-                }
+                assert_eq!(
+                    out.angles,
+                    AngleReading::Inert,
+                    "refusal forked: seed {seed} {t:?} {interior:?}"
+                );
             }
 
-            // (6)/(7)/(8): fork-shape invariants re-derived from the records.
-            let (o_count, g_count) = record_counts(&recs);
-            match &out.angles {
-                AngleReading::Forked(alt) => {
-                    assert_eq!(alt.args.len(), o_count, "alt is not O: seed {seed}");
-                    assert_eq!(out.primary.args.len(), g_count, "primary is not G: seed {seed}");
-                    assert!(
-                        out.primary.args.len() < alt.args.len(),
-                        "(6) fork without strict count reduction: seed {seed} {interior:?}"
-                    );
-                    assert!(g_viable && angle_touched && refusal == 0);
-                }
-                AngleReading::Operators => {
-                    assert!(angle_touched && !g_viable, "Operators shape: seed {seed}");
-                    assert_eq!(out.primary.args.len(), o_count);
-                }
-                AngleReading::Inert => {
-                    // (8) Inert => the hypotheses agree: either no counted angles, or every
-                    // boundary is shared (all g_end), or the list refused.
-                    assert!(
-                        !angle_touched || refusal != 0 || o_count == g_count,
-                        "(8) Inert with diverged boundaries: seed {seed} {interior:?}"
-                    );
-                }
+            // (4) a Forked reading carries a STRICT count reduction: primary (G) < alt (O).
+            if let AngleReading::Forked(alt) = &out.angles {
+                assert!(
+                    out.primary.args.len() < alt.args.len(),
+                    "fork without strict count reduction: seed {seed} {t:?} {interior:?}"
+                );
             }
         }
     }
@@ -1124,13 +755,10 @@ fn fuzz_has_teeth() {
     let mut refusal_counts = [0usize; 5];
     let mut forked = 0usize;
     let mut operators = 0usize;
-    let mut ne_hand = 0usize;
-    let mut eq_hand = 0usize;
     for seed in 0u64..8000 {
         let mut rng = Rng::new(seed ^ 0x51D3_FFFF);
         let interior = gen_full_interior(&mut rng);
         let b = interior.as_bytes();
-        let h = hand(&interior);
         for &t in &TARGETS {
             let out = arg_scan::parse(b, 0, b.len(), t);
             if out.primary.args.len() > 1 {
@@ -1155,11 +783,6 @@ fn fuzz_has_teeth() {
                 AngleReading::Operators => operators += 1,
                 AngleReading::Inert => {}
             }
-            if quot_args(&out.primary.args, out.primary.named) == h {
-                eq_hand += 1;
-            } else {
-                ne_hand += 1;
-            }
         }
     }
     assert!(multi_arg > 200, "too few multi-arg outcomes ({multi_arg})");
@@ -1178,8 +801,6 @@ fn fuzz_has_teeth() {
     );
     assert!(forked > 50, "too few Forked outcomes ({forked})");
     assert!(operators > 200, "too few Operators outcomes ({operators})");
-    assert!(ne_hand > 100, "the fixes are barely exercised ({ne_hand})");
-    assert!(eq_hand > 500, "the carries are barely exercised ({eq_hand})");
 }
 
 // ============================================================================

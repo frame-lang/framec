@@ -7,18 +7,15 @@
 //! → $ParentSeek → $ParentName → $ParentIdent → $SeekOpen → $Body → $Accept`, no `$Reject`
 //! (the MachineWalk's `is_state_start` did the gating; malformedness is REGISTERS:
 //! `params_unbalanced` = T-S6, `open_found == false` = T-S2, `body_clamped` = T-S1). This
-//! proves — by running — that one fused machine pass equals the hand's INDEPENDENT scan-lets
-//! (`state_head_hand`: `state_extent`'s name skip + open seek + clamp, `state()`'s params
-//! scan and parent hunt, factored verbatim) as FULL `StateHeadParts` equality at EVERY
+//! proves — by running — that one fused machine pass yields a well-formed `StateHeadParts` (the
+//! offsets are ordered within the window: `at <= name_end <= open <= end <= limit`) at EVERY
 //! `(at, limit)` position pair with `at < limit <= len` (the callers' position contract,
 //! T-S8 — the CONTENT at `at` is unconstrained and swept off-contract too), for all four
 //! cleanroom targets, over realistic AND adversarial heads AND a deterministic fuzz corpus.
 //! The parts carry OFFSETS, not Strings, so the T-S9 empty-parent (`Some("")`) case stays
-//! distinguishable from no-parent. The differential proves the FUSION (machine == oracle) —
-//! both share the leaves, so it stays LOCKED across the Phase-2 deltas. All THREE Phase-2
-//! deltas have LANDED (the machine AND the oracle moved together): D1 opaque-aware seeks
+//! distinguishable from no-parent. All THREE Phase-2 deltas have LANDED: D1 opaque-aware seeks
 //! (T-S3 / H1), D2 params-skipping parent hunt (T-S5), D3 limit-bounded parent probe (T-S9).
-//! The NEW behavior of each is pinned by its directed test, not by the differential.
+//! The behavior of each is pinned self-contained by its directed test below.
 //!
 //! LEDGER ROSTER (design §5/§7 — one test per Phase-1 row):
 //!   T-S1 unbalanced body clamps       -> `t_s1_unbalanced_body_clamps_pinned` (register +
@@ -45,19 +42,24 @@
 
 use frame_compiler::text::scan::literals::Target;
 use frame_compiler::text::scan::machine::state_extent;
-use frame_compiler::text::scan::state_head_scan::{scan, state_head_hand, StateHeadParts};
+use frame_compiler::text::scan::state_head_scan::{scan, StateHeadParts};
 
 const TARGETS: [Target; 4] = [Target::C, Target::Java, Target::Rust, Target::Python3];
 
-/// The differential: FULL `StateHeadParts` struct equality (offsets + flags) between the
-/// fused machine pass and the hand's independent scan-lets, at this exact `(at, limit)`.
+/// Run the fused pass and assert the standalone well-formedness invariant: the recorded offsets
+/// are ordered inside the window (`at <= name_end <= open <= end <= limit`). Returns the machine
+/// output so the directed tests can assert exact values. No oracle.
 fn agree(bytes: &[u8], at: usize, limit: usize, target: Target) -> StateHeadParts {
     let machine = scan(bytes, at, limit, target);
-    let hand = state_head_hand(bytes, at, limit, target);
-    assert_eq!(
-        machine,
-        hand,
-        "MISMATCH target {target:?} at={at} limit={limit} on {:?}",
+    assert!(
+        at <= machine.name_end
+            && machine.name_end <= machine.open
+            && machine.open <= machine.end
+            && machine.end <= limit,
+        "offsets not ordered in [{at},{limit}]: name_end={} open={} end={} on {:?}",
+        machine.name_end,
+        machine.open,
+        machine.end,
         String::from_utf8_lossy(bytes),
     );
     machine
@@ -148,8 +150,8 @@ fn differential_every_position_adversarial() {
 }
 
 // ===========================================================================
-// One directed test per Phase-1 ledger row. Every pin ALSO asserts machine ==
-// hand at the pinned position (the pin is a statement about TODAY'S truth).
+// One directed test per Phase-1 ledger row. Each pin asserts the exact offsets/registers the
+// machine produces (self-contained; `agree` also checks well-formedness). A statement about TODAY.
 // ===========================================================================
 
 /// T-S1 (carry-and-name): an unbalanced state body clamps `end` to `limit` — byte-exact with

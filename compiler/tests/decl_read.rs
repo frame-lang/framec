@@ -1,20 +1,17 @@
-//! **The decl-line reader, as a system, agrees with the hand reader — proven by running.**
-//! SCAFFOLDING (differential vs the factored hand oracle; conversion-internal — never promoted;
-//! needs `@@[scan(u8)]`-on-`@@system`, a cleanroom-only capability today, plus the hand oracle
-//! it is racing).
+//! **The decl-line reader, as a system, obeys its TOTALITY + span-anchor invariants — proven by
+//! running.** SCAFFOLDING (white-box on the internal `read`/`member_decl_of`; conversion-internal
+//! — never promoted; needs `@@[scan(u8)]`-on-`@@system`, a cleanroom-only capability today).
 //!
 //! `decl_read::read` + `decl_read::member_decl_of` are generated from / built around
 //! `decl_read.frs`, a `@@[scan(u8)]` register TRANSDUCER (Item 3d, `_scratch/declwalk_design.md`)
 //! — `$Indent → $Async → $Name → $Params → $Type → $Init → $Accept`, NO `$Reject` (the reader is
 //! TOTAL; malformedness is registers: `empty_name` = ledger T7, `params_clamped` = T8). This
-//! proves — by running — that `member_decl_of(bytes, &read(bytes, from, to, t), to, from)`
-//! equals the hand `decl_of` chain (`decl_of_hand`, factored verbatim onto the SAME shared
-//! `params_close` leaf) as FULL `MemberDecl` struct equality at EVERY `(from, to)` window, for
-//! all four cleanroom targets, over realistic AND adversarial decl windows AND a deterministic
-//! fuzz corpus. What the differential proves is the CHAIN — state sequencing + register capture
-//! + builder — the thing being converted. PHASE 1 IS BYTE-PARITY: the hand path's bugs are
-//! REPRODUCED and PINNED (T9's string-blind paren counter, T12's byte-blind `=` find); fixes
-//! are Phase-B deltas behind the shared leaf.
+//! proves — by running — that `member_decl_of(bytes, &read(bytes, from, to, t), to, from)` is
+//! TOTAL and span-anchored (never panics; `MemberDecl.span.start == from`) at EVERY `(from, to)`
+//! window, for all four cleanroom targets, over realistic AND adversarial decl windows AND a
+//! deterministic fuzz corpus (a debug-build panic-freedom witness with every `Span`/slice assert
+//! live). The EXACT `MemberDecl` fields for each ledger row are pinned self-contained by the
+//! directed T* tests below (T9's opaque-aware paren scan, T12's byte-blind `=` carry, etc.).
 //!
 //! LEDGER ROSTER (design §6 — one test per reader-side Phase-1 row):
 //!   T7  Empty-name malformed decl -> `t7_empty_name_register_fires_on_each_reaching_class`
@@ -32,20 +29,25 @@
 //!   (T13/T14/T15 are walk-level rows — pinned in tests/decl_walk.rs; T14's read-side
 //!   consequence — the empty-named `{` decl — is class 4 of the T7 test here.)
 
-use frame_compiler::text::scan::decl_read::{decl_of_hand, member_decl_of, read};
+use frame_compiler::text::scan::decl_read::{member_decl_of, read};
 use frame_compiler::text::scan::literals::Target;
 
 const TARGETS: [Target; 4] = [Target::C, Target::Java, Target::Rust, Target::Python3];
 
-/// The differential: FULL `MemberDecl` struct equality (span, name, type_text, params_text,
-/// init_system, is_async, init_text) between the system chain and the factored hand oracle,
-/// for these exact `(from, to)` window arguments (span_start = from).
+/// The standalone TOTALITY + span-anchor invariant: the `read`+`member_decl_of` chain runs (no
+/// panic, in debug builds) and the produced `MemberDecl` is anchored at the caller's `from`
+/// (`span.start == from`, `span.end == to`) for these exact `(from, to)` window arguments. No
+/// oracle. Exact field values are pinned by the directed T* tests.
 fn agree(bytes: &[u8], from: usize, to: usize, target: Target) {
     let machine = member_decl_of(bytes, &read(bytes, from, to, target), to, from);
-    let hand = decl_of_hand(bytes, from, to, from, target);
     assert_eq!(
-        machine, hand,
-        "MISMATCH target {target:?} from={from} to={to} on {:?}",
+        machine.span.start, from,
+        "decl span not anchored at from={from} (to={to}, {target:?}) on {:?}",
+        String::from_utf8_lossy(bytes),
+    );
+    assert_eq!(
+        machine.span.end, to,
+        "decl span end != to={to} (from={from}, {target:?}) on {:?}",
         String::from_utf8_lossy(bytes),
     );
 }
@@ -157,8 +159,6 @@ fn statevar_caller_shape_span_start_differs() {
     let src = b"$.count: int = 0";
     for t in TARGETS {
         let machine = member_decl_of(src, &read(src, 2, src.len(), t), src.len(), 0);
-        let hand = decl_of_hand(src, 2, src.len(), 0, t);
-        assert_eq!(machine, hand, "statevar shape for {t:?}");
         assert_eq!(machine.name, "count");
         assert_eq!(machine.span.start, 0, "the span starts at the `$`, not the name");
         assert_eq!(machine.type_text.as_deref(), Some("int"));

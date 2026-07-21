@@ -1,95 +1,114 @@
-//! **The Frame-reference recognizer, as a system, agrees with the hand `frame_ref_at_hand`.**
+//! **The Frame-reference recognizer, as a system, yields the known refs — standalone.**
 //!
-//! `ref_scan::scan` is generated from `ref_scan.frs`, a `@@[scan(u8)]` Frame system. This
-//! proves — by running — that it yields the SAME (kind, name, end) as the hand recognizer
-//! at EVERY position of a corpus, across all the context kinds and the reject cases. As of
-//! Item 4 Commit C the system holds the LAST production seat (the statement scanner's
-//! assign-LHS); the hand fn is oracle-only, deleted at C-final.
+//! `ref_scan::scan` is generated from `ref_scan.frs`, a `@@[scan(u8)]` Frame system. This proves
+//! — by running — that it yields the KNOWN-CORRECT `(kind, name, end)` (captured from the running
+//! system; no hand oracle) at EVERY position of a corpus, across all the context kinds and the
+//! reject cases. As of Item 4 Commit C the system holds the LAST production seat (the statement
+//! scanner's assign-LHS).
+//!
+//! It also pins the Δ5 (T-R1/T-R2) behavior directly: an UNKNOWN context word segment-matches to
+//! `RefKind::Unknown` carrying the WHOLE word (refusal as data), and a prefix like `database`
+//! (segment `database` ≠ `data`) is Unknown, not `ContextData` — self-contained, no oracle.
+//!
+//! SCAFFOLDING (white-box on the internal `ref_scan::scan`).
 
-use frame_compiler::text::scan::parts::frame_ref_at_hand;
 use frame_compiler::text::scan::ref_scan;
+use frame_compiler::tree::body::RefKind;
 
-fn hand(bytes: &[u8], i: usize) -> Option<(String, String, usize)> {
-    frame_ref_at_hand(bytes, i, bytes.len())
-        .map(|r| (format!("{:?}", r.kind), r.name, r.span.end))
-}
-
-fn machine(bytes: &[u8], i: usize) -> Option<(String, String, usize)> {
-    ref_scan::scan(bytes, i).map(|(k, n, e)| (format!("{k:?}"), n, e))
-}
-
-fn agree(src: &str) {
-    let bytes = src.as_bytes();
-    for i in 0..bytes.len() {
-        assert_eq!(
-            machine(bytes, i),
-            hand(bytes, i),
-            "disagreement at byte {i} of {src:?}"
-        );
+/// Assert `ref_scan::scan` recognizes a ref at exactly the listed positions (with the pinned
+/// `(kind, name, end)`), and REJECTS (`None`) at every other position of `src`.
+fn check(src: &str, hits: &[(usize, RefKind, &str, usize)]) {
+    let b = src.as_bytes();
+    for i in 0..b.len() {
+        let got = ref_scan::scan(b, i);
+        match hits.iter().find(|h| h.0 == i) {
+            Some(&(_, kind, name, end)) => assert_eq!(
+                got,
+                Some((kind, name.to_string(), end)),
+                "expected {kind:?} `{name}` ending {end} at byte {i} of {src:?}"
+            ),
+            None => assert_eq!(got, None, "unexpected ref at byte {i} of {src:?}"),
+        }
     }
 }
 
 #[test]
-fn state_vars_agree() {
-    agree("x = $.count + $.n; y = $.total_amount;");
-    agree("$.a $.b $.c");
+fn state_vars() {
+    check(
+        "x = $.count + $.n; y = $.total_amount;",
+        &[
+            (4, RefKind::StateVar, "count", 11),
+            (14, RefKind::StateVar, "n", 17),
+            (23, RefKind::StateVar, "total_amount", 37),
+        ],
+    );
+    check(
+        "$.a $.b $.c",
+        &[
+            (0, RefKind::StateVar, "a", 3),
+            (4, RefKind::StateVar, "b", 7),
+            (8, RefKind::StateVar, "c", 11),
+        ],
+    );
 }
 
 #[test]
-fn every_context_kind_agrees() {
-    agree("@@:self.factor");
-    agree("@@:data.k");
-    agree("@@:params.arg");
-    agree("@@:return");
-    agree("@@:event");
-    agree("@@:system");
-    agree("a = @@:self.x + @@:params.y - @@:data.z;");
+fn every_context_kind() {
+    check("@@:self.factor", &[(0, RefKind::ContextSelf, "factor", 14)]);
+    check("@@:data.k", &[(0, RefKind::ContextData, "k", 9)]);
+    check("@@:params.arg", &[(0, RefKind::ContextParams, "arg", 13)]);
+    check("@@:return", &[(0, RefKind::ContextReturn, "return", 9)]);
+    check("@@:event", &[(0, RefKind::ContextEvent, "event", 8)]);
+    check("@@:system", &[(0, RefKind::ContextSystemState, "system", 9)]);
+    check(
+        "a = @@:self.x + @@:params.y - @@:data.z;",
+        &[
+            (4, RefKind::ContextSelf, "x", 13),
+            (16, RefKind::ContextParams, "y", 27),
+            (30, RefKind::ContextData, "z", 39),
+        ],
+    );
 }
 
 #[test]
-fn the_reject_cases_agree() {
+fn the_reject_cases() {
     // A bare `$` or `@@` without the ref shape, and identifiers that merely start like one.
-    agree("$ alone, $x no-dot, @@ pair, @@system decl, plain words");
-    agree("email@@host $money");
-    agree("");
+    check("$ alone, $x no-dot, @@ pair, @@system decl, plain words", &[]);
+    check("email@@host $money", &[]);
+    check("", &[]);
 }
 
 #[test]
-fn refs_packed_against_neighbours_agree() {
-    agree("f($.a,@@:self.b)+$.c");
-    agree("@@:self.a.b.c");   // dotted context path
-    agree("$.x$.y");          // adjacent state vars
+fn refs_packed_against_neighbours() {
+    check(
+        "f($.a,@@:self.b)+$.c",
+        &[
+            (2, RefKind::StateVar, "a", 5),
+            (6, RefKind::ContextSelf, "b", 15),
+            (17, RefKind::StateVar, "c", 20),
+        ],
+    );
+    check("@@:self.a.b.c", &[(0, RefKind::ContextSelf, "a.b.c", 13)]); // dotted context path
+    check(
+        "$.x$.y",
+        &[(0, RefKind::StateVar, "x", 3), (3, RefKind::StateVar, "y", 6)],
+    ); // adjacent state vars
 }
 
-/// Δ5 (T-R1/T-R2) TEETH — the differential PARTITIONS here: the SYSTEM segment-matches and
-/// REFUSES an unknown context word (`RefKind::Unknown`, whole word as the name), while the hand
-/// `frame_ref_at_hand` oracle stays buggy — it `starts_with`-prefix-matches and defaults an
-/// unrecognized word to `ContextSelf`. Pin the divergence + `oracle_stayed_buggy` so the fix
-/// can never be agreed vacuously. (The `agree` corpus above is all KNOWN contexts, which
-/// segment-match identically — those stay carried.)
+/// Δ5 (T-R1/T-R2), self-contained: the SYSTEM segment-matches and REFUSES an unknown context word
+/// (`RefKind::Unknown`, the WHOLE word as the name), and a prefix-lookalike is refused too — it
+/// does NOT `starts_with`-prefix-match `data`/`self`/`params`. Facts, not comparisons.
 #[test]
-fn delta5_unknown_and_prefix_diverge_from_the_oracle() {
-    use frame_compiler::tree::body::RefKind;
-    // (input, the oracle's WRONG kind, the oracle's name = rest after the first `.`)
-    for (src, oracle_kind, oracle_name) in [
-        ("@@:wat.x", RefKind::ContextSelf, "x"), // T-R1: unknown → oracle defaults ContextSelf
-        ("@@:database.k", RefKind::ContextData, "k"), // T-R2: prefix → oracle ContextData
-        ("@@:selfish.y", RefKind::ContextSelf, "y"), // T-R2: prefix → oracle ContextSelf
-        ("@@:paramsX.z", RefKind::ContextParams, "z"), // T-R2: prefix → oracle ContextParams
+fn delta5_unknown_and_prefix_are_refused() {
+    for (src, word) in [
+        ("@@:wat.x", "wat.x"),       // T-R1: unknown context → Unknown (whole word)
+        ("@@:database.k", "database.k"), // T-R2: `database` ≠ `data` → Unknown
+        ("@@:selfish.y", "selfish.y"),   // T-R2: `selfish` ≠ `self` → Unknown
+        ("@@:paramsX.z", "paramsX.z"),   // T-R2: `paramsX` ≠ `params` → Unknown
     ] {
         let b = src.as_bytes();
-        let word = src.strip_prefix("@@:").unwrap();
-        // System: Unknown (refusal as data), the WHOLE word as the name.
         let (k, n, _) = ref_scan::scan(b, 0).expect("system recognizes the shape");
         assert_eq!(k, RefKind::Unknown, "system must refuse on {src:?}");
-        assert_eq!(n, word, "the whole word is the name on {src:?}");
-        // oracle_stayed_buggy: the hand still guesses (prefix / ContextSelf default).
-        let r = frame_ref_at_hand(b, 0, b.len()).expect("oracle recognizes");
-        assert_eq!(
-            (r.kind, r.name.as_str()),
-            (oracle_kind, oracle_name),
-            "the hand oracle was fixed — the Δ5 teeth are vacuous on {src:?}"
-        );
-        assert_ne!(k, r.kind, "the system and oracle must DIVERGE (fix teeth) on {src:?}");
+        assert_eq!(n, word, "the WHOLE word is the name (refusal as data) on {src:?}");
     }
 }

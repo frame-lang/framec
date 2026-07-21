@@ -119,8 +119,7 @@ fn multiple_refs_in_one_native_statement() {
 #[test]
 fn holes_nest() {
     // Re-pinned on a 4-target equivalent (Item 4 / R3: non-core targets are refused before
-    // `segment()`, so the TS-template original is unreachable in production; it lives on in
-    // the `native_parts_hand` battery until C-final — tests/native_parts.rs). Depth 2 for
+    // `segment()`, so the TS-template original is unreachable in production). Depth 2 for
     // real: outer f-string hole → inner single-quoted literal → inner hole → ref.
     let found = ref_texts("s = f\"a { f'b {$.deep} c' } d\"", Target::Python3);
     assert_eq!(found, vec!["$.deep"], "a ref in a NESTED hole is still a ref");
@@ -145,8 +144,8 @@ fn a_sigil_in_a_comment_is_not_a_reference() {
 /// byte of the user's code is dropped or double-counted.
 #[test]
 fn parts_partition_the_native_span() {
-    // The TS/JS cases are re-pinned on 4-target equivalents (Item 4 / R3 — the originals
-    // move to the `native_parts_hand` battery in tests/native_parts.rs until C-final).
+    // The TS/JS cases are re-pinned on 4-target equivalents (Item 4 / R3 — the non-core
+    // targets are refused before `segment()`, so their originals are unreachable in production).
     for (code, target) in [
         (r#"print(f"count is {$.count}")"#, Target::Python3),
         ("let t = $.a + f(@@:self.b) * 3; // $.c\n", Target::Rust),

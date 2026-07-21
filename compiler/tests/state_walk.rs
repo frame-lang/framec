@@ -1,24 +1,22 @@
-//! **The state-member walk, as a system, agrees with the hand walk — proven by running.**
-//! SCAFFOLDING (differential vs the retired hand oracle + the internal `Source`/`segment` entry
-//! and tree spans; conversion-internal — never promoted; needs `@@[scan(u8)]`-on-`@@system`, a
-//! cleanroom-only capability today, plus the hand oracle it is racing).
+//! **The state-member walk, as a system, obeys its standalone partition invariants — proven by
+//! running.** SCAFFOLDING (white-box on the internal `member_starts` + the internal
+//! `Source`/`segment` entry and tree spans; conversion-internal — never promoted; needs
+//! `@@[scan(u8)]`-on-`@@system`, a cleanroom-only capability today).
 //!
 //! `state_walk::member_starts` is generated from `state_walk.frs`, a `@@[scan(u8)]` Frame system
 //! that now DRIVES `machine::state()`'s member loop. This proves — by running — that the
 //! member-start offsets it accumulates (a `$.x` state variable, or a handler head `ev(...) {` /
-//! `$>() {` / `<$() {`) match the pre-conversion hand loop (`member_starts_hand`, kept ONLY as the
-//! differential oracle) at EVERY (`from`, `close`) position, for all four cleanroom targets, over
-//! realistic state bodies AND adversarial ones (a `}` inside a string/comment in a handler body; a
-//! `$.`/handler-looking token buried in opaque; nested `{}`; adjacent members; unterminated body;
-//! state var at EOF; empty body) AND a deterministic frame-ish fuzz corpus.
-//!
-//! The two implementations share the SAME leaves (`skip_opaque`, `to_end_of_line`, `handler_end`)
-//! exactly as `MachineWalk`/`Segmenter` share theirs, so what the differential proves is the WALK —
-//! the thing being converted. A MISMATCH here is a real machine/oracle divergence and is
-//! reproducible from its printed inputs (or seed).
+//! `$>() {` / `<$() {`) form a well-formed partition (strictly increasing, in `[from, close)`,
+//! each pointing at a member-start byte) at EVERY (`from`, `close`) position, for all four
+//! cleanroom targets, over realistic state bodies AND adversarial ones (a `}` inside a
+//! string/comment in a handler body; a `$.`/handler-looking token buried in opaque; nested `{}`;
+//! adjacent members; unterminated body; state var at EOF; empty body) AND a deterministic
+//! frame-ish fuzz corpus. Exact member COUNTS for hand-verified inputs are pinned self-contained
+//! in `known_member_counts_self_contained`, and the end-to-end decomposition through the real
+//! pipeline in `state_decomposes_into_the_right_members`.
 
 use frame_compiler::text::scan::literals::Target;
-use frame_compiler::text::scan::state_walk::{member_starts, member_starts_hand};
+use frame_compiler::text::scan::state_walk::member_starts;
 
 const TARGETS: [Target; 4] = [Target::C, Target::Java, Target::Rust, Target::Python3];
 
@@ -31,19 +29,11 @@ fn is_valid_member_start_byte(b: u8) -> bool {
     b == b'$' || b == b'<' || b.is_ascii_alphabetic() || b == b'_'
 }
 
-/// The differential: the system and the retired hand oracle must return the byte-identical
-/// `Vec<usize>` of member-start offsets for these exact `(from, close)` arguments — plus an
-/// oracle-independent partition sanity check on the machine's output.
+/// The standalone partition invariant: the recorded member-start offsets are strictly increasing,
+/// each in `[from, close)`, and each points at a byte a real member form can begin with. Holds
+/// for these exact `(from, close)` arguments, no oracle.
 fn agree(bytes: &[u8], from: usize, close: usize, target: Target) {
     let machine = member_starts(bytes, from, close, target);
-    let hand = member_starts_hand(bytes, from, close, target);
-    assert_eq!(
-        machine, hand,
-        "MISMATCH target {target:?} from={from} close={close} on {:?}:\n  machine={machine:?}\n  hand  ={hand:?}",
-        String::from_utf8_lossy(bytes),
-    );
-    // Partition sanity, independent of the oracle: strictly increasing, each in [from, close),
-    // each pointing at a byte a real member form can begin with.
     let mut prev: Option<usize> = None;
     for &s in &machine {
         assert!(

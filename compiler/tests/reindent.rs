@@ -42,31 +42,30 @@ fn identity_lowering<'a>() -> frame_compiler::text::emit::reindent::Lowering<'a>
     }
 }
 use frame_compiler::text::scan::literals::Target;
-use frame_compiler::text::scan::machine::body;
-use frame_compiler::text::scan::lex::Lexer;
-use frame_compiler::tree::body::Stmt;
+use frame_compiler::text::scan::parts::native_parts;
+use frame_compiler::tree::body::NativeStmt;
 use frame_compiler::{Source, Span};
 
-/// Parse `code` as a handler body and re-indent every native statement by `delta`.
+/// Build a native statement over the whole `code` (its parts via the production `native_parts`
+/// decomposition — a run of consecutive native water is ONE statement, exactly as `body()` groups
+/// it) and re-indent it by `delta`. `render_native` folds over the parts, so this exercises the
+/// same Text-reindent / Literal-verbatim protection production uses.
 fn reindented(code: &str, target: Target, delta: i32) -> String {
     let src = Source::new("t", code.as_bytes().to_vec()).unwrap();
-    // `body` needs the bytes; we are outside `crate::text`, so we cannot call
-    // `Source::open`. We hand the lexer the same bytes we already own — which is the
-    // point: the WALL means a test cannot reach into the compiler's buffer either.
     let bytes = code.as_bytes();
-    let lx = Lexer::new(bytes, target);
-    let b = body(&lx, bytes, Span::new(0, bytes.len()));
+    let stmt = NativeStmt {
+        span: Span::new(0, bytes.len()),
+        parts: native_parts(bytes, 0, bytes.len(), target),
+        logical_indent: 0,
+        block_depth: Some(0),
+    };
 
-    // NOTE: this test cannot read the rendered text directly — it is outside
-    // `crate::text`, so `NativeText::finish` is private to it. It must go through the
-    // SINK, like every other consumer. The wall binds the tests too, and that is the
-    // point: if a test could grep emitted text, so could a compiler pass.
+    // NOTE: this test cannot read the rendered text directly — it is outside `crate::text`, so
+    // `NativeText::finish` is private to it. It must go through the SINK, like every other
+    // consumer. The wall binds the tests too: if a test could grep emitted text, so could a
+    // compiler pass.
     let mut sink = Sink::new();
-    for st in &b.stmts {
-        if let Stmt::Native(n) = st {
-            sink.native(render_native(&src, n, delta, &identity_lowering()));
-        }
-    }
+    sink.native(render_native(&src, &stmt, delta, &identity_lowering()));
     sink.finish()
 }
 
@@ -138,73 +137,27 @@ fn every_multiline_literal_form_is_protected() {
     }
 }
 
-/// The JS-template and C++-raw originals, **against the hand oracle** (`native_parts_hand`
-/// still knows all 16 targets' forms; production refuses those targets before `segment()` —
-/// R3). `render_native` folds a statement's parts, so the hand-built tree exercises the
-/// same protection. Deleted with the oracle at C-final.
-#[test]
-fn js_and_cpp_multiline_forms_protected_via_the_hand_oracle() {
-    use frame_compiler::text::scan::parts::native_parts_hand;
-    use frame_compiler::tree::body::NativeStmt;
-
-    for (code, target, must_survive) in [
-        (
-            "const s = `\n        KEEP\n        `;",
-            Target::JavaScript,
-            "\n        KEEP\n",
-        ),
-        (
-            "auto s = R\"x(\n        KEEP\n        )x\";",
-            Target::Cpp,
-            "\n        KEEP\n",
-        ),
-    ] {
-        let src = Source::new("t", code.as_bytes().to_vec()).unwrap();
-        let bytes = code.as_bytes();
-        let lx = Lexer::new(bytes, target);
-        let stmt = NativeStmt {
-            span: Span::new(0, bytes.len()),
-            parts: native_parts_hand(&lx, bytes, 0, bytes.len()),
-            logical_indent: 0,
-            block_depth: Some(0),
-        };
-        let mut sink = Sink::new();
-        sink.native(render_native(&src, &stmt, -6, &identity_lowering()));
-        let out = sink.finish();
-        assert!(
-            out.contains(must_survive),
-            "{target:?} (hand oracle): the literal's interior must survive a dedent \
-             verbatim.\ngot:\n{out}"
-        );
-    }
-}
-
 /// A comment is a node too — which is why a `;` can never be spliced *inside* one.
 #[test]
 fn a_trailing_comment_is_a_node() {
     let code = "x = 1 // a } brace and a $.ref in a comment";
     let src = Source::new("t", code.as_bytes().to_vec()).unwrap();
     let bytes = code.as_bytes();
-    let lx = Lexer::new(bytes, Target::Rust);
-    let b = body(&lx, bytes, Span::new(0, bytes.len()));
+    let stmt = NativeStmt {
+        span: Span::new(0, bytes.len()),
+        parts: native_parts(bytes, 0, bytes.len(), Target::Rust),
+        logical_indent: 0,
+        block_depth: Some(0),
+    };
 
-    let n = b
-        .stmts
-        .iter()
-        .find_map(|s| match s {
-            Stmt::Native(n) => Some(n),
-            _ => None,
-        })
-        .expect("a native statement");
-
-    // The comment is a Literal node — so framec KNOWS it is there. The old compiler
-    // did not, and spliced a `;` into the middle of one.
+    // The comment is a Literal node — so framec KNOWS it is there. The old compiler did not,
+    // and spliced a `;` into the middle of one.
     let mut sink = Sink::new();
-    sink.native(render_native(&src, n, 0, &identity_lowering()));
+    sink.native(render_native(&src, &stmt, 0, &identity_lowering()));
     let out = sink.finish();
     assert_eq!(out, code, "verbatim");
     assert!(
-        n.parts.len() >= 2,
+        stmt.parts.len() >= 2,
         "the statement must decompose into code + comment, not one opaque blob"
     );
 }

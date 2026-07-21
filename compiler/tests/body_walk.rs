@@ -1,7 +1,7 @@
-//! **The handler-BODY statement dispatch walk, as a system, agrees with the hand walk — proven by
-//! running.** SCAFFOLDING (differential vs the retired hand oracle + the internal `Source`/
-//! `segment` entry and tree spans; conversion-internal — never promoted; needs `@@[scan(u8)]`-on-
-//! `@@system`, a cleanroom-only capability today, plus the hand oracle it is racing).
+//! **The handler-BODY statement dispatch walk, as a system, obeys its standalone partition +
+//! depth invariants — proven by running.** SCAFFOLDING (white-box on the internal `stmt_starts`
+//! + the internal `Source`/`segment` entry and tree spans; conversion-internal — never promoted;
+//! needs `@@[scan(u8)]`-on-`@@system`, a cleanroom-only capability today).
 //!
 //! `body_walk::stmt_starts` is generated from `body_walk.frs`, a `@@[scan(u8)]` Frame system that
 //! now DRIVES `machine::body()`. It is the FIRST system to fuse a segmenter-style ACCUMULATOR
@@ -10,54 +10,41 @@
 //! a saturating `{`/`}` counter over the native water (opaque-skipped), and returns the FINAL depth
 //! at `limit` (for the trailing native gap).
 //!
-//! This test proves — by running — that BOTH the `Vec<(usize, u32)>` of `(start, depth)` pairs AND
-//! the final `u32` depth match the pre-conversion hand loop (`stmt_starts_hand`, kept ONLY as the
-//! differential oracle) at EVERY (`from`, `limit`) position, for all four cleanroom targets, over
-//! realistic AND adversarial handler bodies (every Frame-statement form; native code with NESTED
-//! braces so depth VARIES; a `@@:`/`$.x=`/`->`/`{`/`}` buried in a comment or string; unbalanced
-//! braces so the final depth is nonzero; empty body) AND a deterministic frame-ish fuzz corpus.
+//! This test proves — by running — that the `Vec<(usize, u32)>` of `(start, depth)` pairs forms a
+//! well-formed partition (starts strictly increasing, each in `[from, limit)`, each pointing at a
+//! Frame-statement-start byte) at EVERY (`from`, `limit`) position, for all four cleanroom
+//! targets, over realistic AND adversarial handler bodies (every Frame-statement form; native code
+//! with NESTED braces so depth VARIES; a `@@:`/`$.x=`/`->`/`{`/`}` buried in a comment or string;
+//! unbalanced braces so the final depth is nonzero; empty body) AND a deterministic frame-ish fuzz
+//! corpus.
 //!
-//! The two implementations share the SAME leaves (`stmt_end` = the drift-safe `frame_call_end` /
-//! `frame_assign_end` / `stmt_scan::classify` heads, `skip` = OpaqueScan) exactly as the sibling
-//! `StateWalk`/`MachineWalk` walks share theirs, so what the differential proves is the WALK — the
-//! dispatch order AND the running depth counter, the thing being converted. A MISMATCH here is a
-//! real machine/oracle divergence and is reproducible from its printed inputs (or seed).
-//!
-//! TEETH: a differential whose inputs all yield the empty vector at depth 0 proves nothing (the
-//! #232 lie), and a depth counter that is a no-op is worse. Dedicated teeth assert, by running the
-//! SYSTEM (not the oracle), that recorded depths VARY (a statement at depth 0 AND one at depth >=1),
-//! that the final depth is nonzero for an unbalanced body, and that a `{`/`}` inside a comment or
-//! string does NOT perturb depth — so the counter is proven load-bearing.
+//! TEETH + self-contained specs carry the exact behavior: dedicated tests assert, by running the
+//! SYSTEM, KNOWN `(start-count, recorded-depth, final-depth)` values for hand-verified bodies —
+//! recorded depths VARY (a statement at depth 0 AND one at depth >=1), the final depth is nonzero
+//! for an unbalanced body, and a `{`/`}` inside a comment or string does NOT perturb depth — so
+//! the counter is proven load-bearing without any oracle.
 
-use frame_compiler::text::scan::body_walk::{stmt_starts, stmt_starts_hand};
+use frame_compiler::text::scan::body_walk::stmt_starts;
 use frame_compiler::text::scan::literals::Target;
 
 const TARGETS: [Target; 4] = [Target::C, Target::Java, Target::Rust, Target::Python3];
 
 /// A recorded statement start must point at the first byte of a recognized Frame-statement form.
-/// This is the CLOSED set of bytes such a form can begin with — hand-derived from the recognizers
-/// (`frame_call_parse` → `@@:` = `@`; `frame_assign_parse` LHS is a frame ref = `$` or `@`;
-/// `frame_stmt_hand` = `push$`/`pop$` = `p`, `->` = `-`, `(exit) ->` = `(`, `=> $^` = `=`), NOT from
-/// the oracle. Oracle-INDEPENDENT: even if the oracle and the machine agreed on a wrong offset, a
-/// start pointing at (say) a `{` would still be caught here.
+/// This is the CLOSED set of bytes such a form can begin with — derived from the recognizers
+/// (`@@:` call = `@`; a frame-ref assign LHS = `$` or `@`; the `frame_stmt` forms `push$`/`pop$`
+/// = `p`, `->` = `-`, `(exit) ->` = `(`, `=> $^` = `=`). A start pointing at (say) a `{` is caught
+/// here, independent of anything else.
 fn is_valid_stmt_start_byte(b: u8) -> bool {
     b == b'@' || b == b'$' || b == b'-' || b == b'(' || b == b'p' || b == b'='
 }
 
-/// The differential: the system and the retired hand oracle must return the byte-identical
-/// `(Vec<(usize, u32)>, u32)` — BOTH the `(start, depth)` pairs AND the final depth — for these
-/// exact `(from, limit)` arguments, plus an oracle-independent partition sanity check on the
-/// machine's output.
+/// The standalone partition invariant on the machine's `(Vec<(usize, u32)>, u32)` output for
+/// these exact `(from, limit)` arguments: the recorded STARTS are strictly increasing, each in
+/// `[from, limit)`, and each points at a Frame-statement-start byte. No oracle.
 fn agree(bytes: &[u8], from: usize, limit: usize, target: Target) {
     let machine = stmt_starts(bytes, from, limit, target);
-    let hand = stmt_starts_hand(bytes, from, limit, target);
-    assert_eq!(
-        machine, hand,
-        "MISMATCH target {target:?} from={from} limit={limit} on {:?}:\n  machine={machine:?}\n  hand  ={hand:?}",
-        String::from_utf8_lossy(bytes),
-    );
 
-    // Partition sanity, independent of the oracle: the recorded STARTS are strictly increasing
+    // Partition sanity: the recorded STARTS are strictly increasing
     // (the depths are a running counter and need NOT be monotone), each start is in [from, limit),
     // and each points at a byte a real Frame statement can begin with.
     let (starts, _final_depth) = &machine;
@@ -104,8 +91,8 @@ fn sweep_all_positions(src: &str) {
 // ===========================================================================
 // The curated corpus. Each string is a handler-BODY span — the bytes a handler's
 // `{ … }` encloses (what `body()` receives as `bytes[open+1..close]`). Enumerated
-// from `body_walk.frs` + the shared extent heads (`frame_call_parse`,
-// `frame_assign_parse`, `frame_stmt_hand`): a statement start is a `@@:…` call
+// from `body_walk.frs` + the shared extent heads (the `@@:…` call parser, the
+// frame-assign parser, and the `frame_stmt` classifier): a statement start is a `@@:…` call
 // (`@@:(e)` / `@@:return(e)` / `@@:self.m(a)`), a `$.x = e` / `@@:… = e` frame
 // assignment, or a `frame_stmt` (`-> $S`, `push$ -> $S`, `-> pop$`, `pop$`, `=> $^`,
 // `(exit) -> $S`). Braces of NATIVE water increment/decrement a saturating depth;

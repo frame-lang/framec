@@ -9,13 +9,12 @@
 //! the head line / unbalanced params — the exit the old three-way description missed / no `{`
 //! on the head line) share ONE `$Reject` (identical futures; the scan(u8) pump halts only on
 //! `Accept`/`Reject`), with the CAUSE in the `reject_reason` register (1..4). This proves —
-//! by running — that the machine equals the hand `machine.rs::handler_head`
-//! (`handler_head_hand`, factored verbatim onto offsets) as `Option<HandlerHeadParts>`
-//! equality at EVERY `(i, limit)` position pair with `i < limit <= len` (the callers'
-//! position contract, T-H9 — the hand `bytes[i]` panics outside it), for all four cleanroom
-//! targets, over realistic AND adversarial heads AND a deterministic fuzz corpus. PHASE 1 IS
-//! BYTE-PARITY: the hand path's quirks are REPRODUCED and PINNED; fixes are recorded Phase-2
-//! deltas (D1 opaque-aware head-line seeks).
+//! by running — that the machine's `Option<HandlerHeadParts>` is well-formed (on Accept the
+//! offsets are ordered within the window: `i <= name_start`, `open < end <= limit`) at EVERY
+//! `(i, limit)` position pair with `i < limit <= len` (the callers' position contract, T-H9),
+//! for all four cleanroom targets, over realistic AND adversarial heads AND a deterministic fuzz
+//! corpus. The EXACT parts/registers for each ledger row are pinned self-contained by the
+//! directed T-H* tests and `known_heads_self_contained`.
 //!
 //! LEDGER ROSTER (design §5/§7 — one test per Phase-1 row):
 //!   T-H1 no event name           -> `t_h1_reject_no_name_directed` (reason 1).
@@ -40,24 +39,32 @@
 //!   T-H9 `bytes[i]` panic        -> no test (position precondition, documented in the mod
 //!        docs; the sweep respects `i < limit <= len`).
 
-use frame_compiler::text::scan::handler_head_scan::{
-    handler_head_hand, scan, scan_shape, HandlerHeadParts,
-};
+use frame_compiler::text::scan::handler_head_scan::{scan, scan_shape, HandlerHeadParts};
 use frame_compiler::text::scan::literals::Target;
 
 const TARGETS: [Target; 4] = [Target::C, Target::Java, Target::Rust, Target::Python3];
 
-/// The differential: `Option<HandlerHeadParts>` equality (offsets + flags, `None` == `None`)
-/// between the machine and the factored hand reader, at this exact `(i, limit)`.
+/// Run the reader and assert the standalone well-formedness invariant on any Accept: the recorded
+/// offsets are ordered and inside the window `[i, limit]`. Returns the machine output so the
+/// directed tests can assert exact values. No oracle.
 fn agree(bytes: &[u8], i: usize, limit: usize, target: Target) -> Option<HandlerHeadParts> {
     let machine = scan(bytes, i, limit, target);
-    let hand = handler_head_hand(bytes, i, limit, target);
-    assert_eq!(
-        machine,
-        hand,
-        "MISMATCH target {target:?} i={i} limit={limit} on {:?}",
-        String::from_utf8_lossy(bytes),
-    );
+    if let Some(p) = &machine {
+        assert!(
+            i <= p.name_start && p.name_end <= limit,
+            "name span [{},{}) escapes [{i},{limit}] on {:?}",
+            p.name_start,
+            p.name_end,
+            String::from_utf8_lossy(bytes),
+        );
+        assert!(
+            i <= p.open && p.open < p.end && p.end <= limit,
+            "body span open={} end={} escapes [{i},{limit}] on {:?}",
+            p.open,
+            p.end,
+            String::from_utf8_lossy(bytes),
+        );
+    }
     machine
 }
 
@@ -140,8 +147,8 @@ fn differential_every_position() {
 }
 
 // ===========================================================================
-// One directed test per Phase-1 ledger row. Every pin ALSO asserts machine ==
-// hand at the pinned position.
+// One directed test per Phase-1 ledger row. Each pin asserts the exact parts/registers the
+// machine produces at the pinned position (self-contained; `agree` also checks well-formedness).
 // ===========================================================================
 
 /// T-H1 (carry-and-name): no event name (not `$>` / `<$` / identifier-start) -> `None`,
