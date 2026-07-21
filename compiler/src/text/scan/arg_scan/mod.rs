@@ -48,11 +48,11 @@ use crate::tree::body::{InstArg, ParamGroup};
 /// Exact 2-byte prefix compare: a `$(` sigil at `i` (State group). Sigils are recognized
 /// at an argument start ONLY — and exactly-prefixed, which is also what keeps `$ (x)` a
 /// legal Java call (`$` is a Java identifier).
-fn is_sigil_state(src: &[u8], i: usize, to: usize) -> bool {
+pub(super) fn is_sigil_state(src: &[u8], i: usize, to: usize) -> bool {
     i + 1 < to && src[i] == b'$' && src[i + 1] == b'('
 }
 /// Exact 3-byte prefix compare: a `$>(` sigil at `i` (Enter group).
-fn is_sigil_enter(src: &[u8], i: usize, to: usize) -> bool {
+pub(super) fn is_sigil_enter(src: &[u8], i: usize, to: usize) -> bool {
     i + 2 < to && src[i] == b'$' && src[i + 1] == b'>' && src[i + 2] == b'('
 }
 /// Skip a whole opaque region (comment/literal) at `i`, or `i` unchanged. REUSES the
@@ -72,7 +72,7 @@ fn opaque_unterm(src: &[u8], i: usize, target: Target) -> bool {
 /// Operator-digraph guard for the byte at `i` (a `<` or `>`), O(1) byte compares
 /// (`eq_guard_ok` precedent): `<=` never opens; `>=`, `->`, `=>` never close. Guarded
 /// bytes are not counted — ordinary content under BOTH hypotheses.
-fn angle_guard(src: &[u8], i: usize, from: usize, to: usize) -> bool {
+pub(super) fn angle_guard(src: &[u8], i: usize, from: usize, to: usize) -> bool {
     if src[i] == b'<' {
         return i + 1 < to && src[i + 1] == b'=';
     }

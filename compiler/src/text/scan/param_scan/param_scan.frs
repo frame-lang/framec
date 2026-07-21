@@ -1,0 +1,266 @@
+@@[target("rust")]
+@@[scan(u8)]
+
+// Declaration-site header param parser — the `@@system` sibling of ArgScan (call-site args),
+// REPLACING the string-blind + sigil-blind hand split (`split_system_params` + retired ParamSplit).
+// ONE left-to-right walk over the ALREADY-`(`-balanced interior: top-level commas end params;
+// a `$(`/`$>(` sigil at a param start opens a group whose closer is the BALANCED `)` (kills the
+// old `trim_end_matches(')')` truncation, scan/mod.rs); a dual counter forks angles (`Map<K,V>` vs
+// operator `<`/`>`) and adjudicates by ANGLE SELF-CONSISTENCY (`g_viable`) — a declaration has no
+// arity. Deltas vs ArgScan: (1) `"`-only StringScan opacity (NOT target-aware OpaqueScan) — agrees
+// with ParenBalance's interior boundary AND dodges the Rust `'a`-lifetime hazard, so a `'…'` char
+// default stays CARRIED (F5 #2); (2) NO eq-naming — the whole `name: type = default` body is the
+// value, split natively by parse_one_param. `<`/`>` are NEVER bracket-counted here (that was the
+// ParamSplit `$>(` `>` miscount, F5 #3); they only move `adepth`.
+//
+//   depth  — the merged `([{` counter (Dyck-1); the group closer is the BALANCED `)` found by the
+//            walk (fixes F5 #4 — the hand `trim_end_matches(')')` ate the user's own `)`).
+//   adepth — angle nesting under hypothesis G (angles-as-brackets), counted ONLY at bracket depth 0,
+//            outside `"…"`, in $Value (never in $GroupValue — group interiors sit at depth >= 1).
+//            `g_viable` is cleared by a counted `>` at adepth 0 (operator evidence) or by adepth != 0
+//            at end-of-interior (unclosed angle). Each record's `g_end` bit ("adepth == 0 at this
+//            boundary") marks the boundaries that hold under G too. The wrapper folds the G candidate
+//            from the records (`merge_g`) and takes G iff self-consistent — no arity, no guess.
+//
+// framec owns the WALK (dispatch + the two counters + the value-span register); `skip_string` only
+// runs StringScan, `record_part` only pushes the emitted extent — no walk lives in a leaf.
+//
+// Regen: framec-ng -l rust --emit param_scan.frs | grep -v '^#!\[allow' > param_scan.gen.rs
+
+@@system ParamScan {
+    interface:
+        step()
+    machine:
+        // At a param boundary: interior start, or just past a top-level comma. Only here is a
+        // `$(`/`$>(` a sigil, and only here is a bare `,` an empty segment.
+        $SegStart {
+            step() {
+                if self.cursor >= self.src.fsm_len() {
+                    if self.adepth != 0 {
+                        self.g_viable = false;
+                    }
+                    -> $Accept
+                }
+                let b = self.src.fsm_get(self.cursor);
+                if b == 32 || b == 9 || b == 10 || b == 13 {
+                    self.cursor = self.cursor + 1;
+                    -> $SegStart
+                }
+                if b == 44 {
+                    // `,,` / leading `,`: the empty segment is dropped (counted, so observable).
+                    self.dropped_empty = self.dropped_empty + 1;
+                    self.cursor = self.cursor + 1;
+                    -> $SegStart
+                }
+                if is_sigil_enter(self.src, self.cursor, self.src.fsm_len()) {
+                    self.group = 2;
+                    self.cursor = self.cursor + 3;   // `$>(`
+                    self.depth = 1;
+                    -> $GroupValue
+                }
+                if is_sigil_state(self.src, self.cursor, self.src.fsm_len()) {
+                    self.group = 1;
+                    self.cursor = self.cursor + 2;   // `$(`
+                    self.depth = 1;
+                    -> $GroupValue
+                }
+                self.group = 0;
+                self.depth = 0;
+                -> $Value                            // reclassify this byte as value content
+            }
+        }
+        // Inside a bare (Domain) param. `,` at depth 0 ends it. The value span `vs..ve` is
+        // maintained by the walk: `vs` latches on the first content byte, ws advances the cursor
+        // without touching `ve` — auto-trim, no trim leaf. No eq-naming: `=` is ordinary content.
+        $Value {
+            step() {
+                if self.cursor >= self.src.fsm_len() {
+                    if self.adepth != 0 {
+                        self.g_viable = false;
+                    }
+                    record_part(&mut self.parts, self.group, self.has_val, self.vs, self.ve, self.cursor, true);
+                    -> $Accept
+                }
+                // Opacity FIRST — a `,`/bracket/angle inside a `"…"`-string never takes part.
+                // `"`-only (StringScan): declines on `'` and on an unterminated `"` (returns
+                // `cursor` unchanged), matching ParenBalance/ParamSplit — the F5 #2 carry.
+                let sk = skip_string(self.src, self.cursor);
+                if sk > self.cursor {
+                    if self.has_val == false { self.vs = self.cursor; self.has_val = true; }
+                    self.cursor = sk;
+                    self.ve = sk;
+                    -> $Value
+                }
+                let b = self.src.fsm_get(self.cursor);
+                // The dual-counter angle branch: a counted `<`/`>` at bracket depth 0 updates
+                // hypothesis G's registers, then FALLS THROUGH as ordinary content. Digraphs
+                // (`<=` `>=` `->` `=>`) are guard-excluded and never counted.
+                if (b == 60 || b == 62) && self.depth == 0 {
+                    if angle_guard(self.src, self.cursor, 0, self.src.fsm_len()) == false {
+                        self.angle_touched = true;
+                        if b == 60 {
+                            self.adepth = self.adepth + 1;
+                        }
+                        if b == 62 {
+                            if self.adepth == 0 {
+                                self.g_viable = false;   // operator evidence: `>` with no open `<`
+                            } else {
+                                self.adepth = self.adepth - 1;
+                            }
+                        }
+                    }
+                    // fall through: the byte is ordinary content under both hypotheses
+                }
+                if b == 44 && self.depth == 0 {
+                    // Top-level comma: the O boundary. g_end = "holds under G too" (adepth 0).
+                    record_part(&mut self.parts, self.group, self.has_val, self.vs, self.ve, self.cursor, self.adepth == 0);
+                    self.group = 0;
+                    self.has_val = false;
+                    self.cursor = self.cursor + 1;
+                    -> $SegStart
+                }
+                if b == 40 || b == 91 || b == 123 {  // ( [ {  — merged counter
+                    self.depth = self.depth + 1;
+                    if self.has_val == false { self.vs = self.cursor; self.has_val = true; }
+                    self.cursor = self.cursor + 1;
+                    self.ve = self.cursor;
+                    -> $Value
+                }
+                if b == 41 || b == 93 || b == 125 {  // ) ] }
+                    if self.depth == 0 {
+                        self.refusal = 2;            // StrayCloser
+                        self.g_viable = false;
+                        -> $VerbatimTail
+                    }
+                    self.depth = self.depth - 1;
+                    if self.has_val == false { self.vs = self.cursor; self.has_val = true; }
+                    self.cursor = self.cursor + 1;
+                    self.ve = self.cursor;
+                    -> $Value
+                }
+                if b == 32 || b == 9 || b == 10 || b == 13 {
+                    self.cursor = self.cursor + 1;   // ws: cursor moves, ve does not (auto-trim)
+                    -> $Value
+                }
+                if self.has_val == false { self.vs = self.cursor; self.has_val = true; }
+                self.cursor = self.cursor + 1;
+                self.ve = self.cursor;
+                -> $Value
+            }
+        }
+        // Inside `$( … )` / `$>( … )`. A `,` NEVER ends the param (depth >= 1 throughout); the
+        // group ends when `)` returns depth to 0 — KIND-CHECKED (a `]`/`}` there is a StrayCloser).
+        // No eq-naming, no angle branch (group interiors are hypothesis-independent). End-of-interior
+        // before the closer is refusal 4, routed through $VerbatimTail so all refusals share one path.
+        $GroupValue {
+            step() {
+                if self.cursor >= self.src.fsm_len() {
+                    self.refusal = 4;                // UnclosedGroup
+                    self.g_viable = false;
+                    -> $VerbatimTail
+                }
+                let sk = skip_string(self.src, self.cursor);
+                if sk > self.cursor {
+                    if self.has_val == false { self.vs = self.cursor; self.has_val = true; }
+                    self.cursor = sk;
+                    self.ve = sk;
+                    -> $GroupValue
+                }
+                let b = self.src.fsm_get(self.cursor);
+                if b == 40 || b == 91 || b == 123 {
+                    self.depth = self.depth + 1;
+                    if self.has_val == false { self.vs = self.cursor; self.has_val = true; }
+                    self.cursor = self.cursor + 1;
+                    self.ve = self.cursor;
+                    -> $GroupValue
+                }
+                if b == 41 || b == 93 || b == 125 {
+                    if self.depth == 1 {
+                        if b == 41 {
+                            // The group's own BALANCED closer. F5 #4 dies here: `$(g: int = f(1))`
+                            // keeps `f(1)`; the hand suffix-trimmed every trailing `)`.
+                            self.depth = 0;
+                            self.cursor = self.cursor + 1;
+                            -> $AfterGroup
+                        }
+                        self.refusal = 2;            // StrayCloser (`]`/`}` closing a `(` group)
+                        self.g_viable = false;
+                        -> $VerbatimTail
+                    }
+                    self.depth = self.depth - 1;
+                    if self.has_val == false { self.vs = self.cursor; self.has_val = true; }
+                    self.cursor = self.cursor + 1;
+                    self.ve = self.cursor;
+                    -> $GroupValue
+                }
+                if b == 32 || b == 9 || b == 10 || b == 13 {
+                    self.cursor = self.cursor + 1;
+                    -> $GroupValue
+                }
+                if self.has_val == false { self.vs = self.cursor; self.has_val = true; }
+                self.cursor = self.cursor + 1;
+                self.ve = self.cursor;
+                -> $GroupValue
+            }
+        }
+        // Group closed: only ws-then-`,` or ws-then-end are well-formed. Anything else is named
+        // refusal 3 (the hand had no post-group position — it never found the real closer).
+        $AfterGroup {
+            step() {
+                if self.cursor >= self.src.fsm_len() {
+                    if self.adepth != 0 {
+                        self.g_viable = false;
+                    }
+                    record_part(&mut self.parts, self.group, self.has_val, self.vs, self.ve, self.cursor, true);
+                    -> $Accept
+                }
+                let b = self.src.fsm_get(self.cursor);
+                if b == 32 || b == 9 || b == 10 || b == 13 {
+                    self.cursor = self.cursor + 1;
+                    -> $AfterGroup
+                }
+                if b == 44 {
+                    record_part(&mut self.parts, self.group, self.has_val, self.vs, self.ve, self.cursor, self.adepth == 0);
+                    self.group = 0;
+                    self.has_val = false;
+                    self.cursor = self.cursor + 1;
+                    -> $SegStart
+                }
+                self.refusal = 3;                    // TrailingAfterGroup
+                self.g_viable = false;
+                -> $VerbatimTail
+            }
+        }
+        // A refusal occurred: the REST of the interior joins the current param VERBATIM. No opacity,
+        // no depth, no angles — pure accumulation to end-of-interior, then emit and Accept.
+        $VerbatimTail {
+            step() {
+                if self.cursor >= self.src.fsm_len() {
+                    record_part(&mut self.parts, self.group, self.has_val, self.vs, self.ve, self.cursor, true);
+                    -> $Accept
+                }
+                let b = self.src.fsm_get(self.cursor);
+                if b == 32 || b == 9 || b == 10 || b == 13 {
+                    self.cursor = self.cursor + 1;
+                    -> $VerbatimTail
+                }
+                if self.has_val == false { self.vs = self.cursor; self.has_val = true; }
+                self.cursor = self.cursor + 1;
+                self.ve = self.cursor;
+                -> $VerbatimTail
+            }
+        }
+        $Accept { }
+    domain:
+        depth: i32 = 0
+        adepth: i32 = 0
+        g_viable: bool = true
+        angle_touched: bool = false
+        group: i32 = 0
+        vs: usize = 0
+        ve: usize = 0
+        has_val: bool = false
+        refusal: i32 = 0
+        dropped_empty: i32 = 0
+        parts: Vec<(i32, usize, usize, bool)> = Vec::new()
+}

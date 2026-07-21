@@ -15,7 +15,6 @@ pub mod sections;
 pub mod string_scan;
 /// Balanced-`()` extent, dogfooded as a Frame `@@[scan(u8)]` counter automaton.
 pub mod paren_balance;
-pub mod paramsplit;
 /// Balanced-`{}` extent (Python holes), dogfooded as a Frame `@@[scan(u8)]` counter automaton.
 pub mod brace_balance;
 /// Rust raw-string extent, dogfooded as a Frame `@@[scan(u8)]` counter automaton.
@@ -56,10 +55,13 @@ pub mod section_scan;
 pub mod stmt_scan;
 /// The instantiation arg-list parser (dual-counter angle fork), dogfooded as a Frame @@[scan(u8)] system.
 pub mod arg_scan;
+/// The declaration-site header param parser (dual-counter angle fork, `"`-only), dogfooded as a Frame @@[scan(u8)] system.
+pub mod param_scan;
 /// HSM parent-chain cycle detector, dogfooded as a plain @@system graph walker.
 pub mod hsm_cycle;
 pub mod reachability;
 use super::{Source, Span};
+use crate::tree::body::ParamGroup;
 use crate::tree::{
     BomItem, EfsmItem, FileAst, Item, NativeItem, Param, PragmaItem, SystemItem, SystemParams,
 };
@@ -315,30 +317,21 @@ fn read_name_params_brace(
 
 /// Split `$(a: T), $>(b: T), c: T = d` into the three groups. Sigil decides the group;
 /// each param is `name : type = default` (type/default verbatim).
+///
+/// The group split + sigil recognition + balanced-`)` group closer + angle fork are the
+/// **ParamScan @@system** (`param_scan::parse_decl`) — the declaration-site sibling of ArgScan.
+/// It fixes F5 #1 (an operator `<`/`>` in a default no longer merges params), #3 (a `$>(` sigil's
+/// `>` is no longer bracket-counted, so a trailing param is not dropped) and #4 (a group's balanced
+/// `)` is found, so `$(g: int = f(1))` keeps `f(1)` — the hand `trim_end_matches(')')` is GONE).
+/// The `name : type = default` body split stays native (`parse_one_param`).
 fn split_system_params(inner: &str) -> SystemParams {
     let mut out = SystemParams::default();
-    // Top-level comma-split extents via the ParamSplit @@system (string-aware — a `,` inside a
-    // `"…"` default is not a separator; the old hand `(`/`)` depth loop was string-blind). The
-    // per-part sigil parse below stays native.
-    let b = inner.as_bytes();
-    for (s, e) in paramsplit::split(b) {
-        let raw = inner[s..e].trim();
-        if raw.is_empty() {
-            continue;
-        }
-        // Group sigil: `$>( … )` enter, `$( … )` state, else bare domain.
-        let (group, body): (u8, &str) = if let Some(rest) = raw.strip_prefix("$>(") {
-            (2, rest.trim_end_matches(')'))
-        } else if let Some(rest) = raw.strip_prefix("$(") {
-            (1, rest.trim_end_matches(')'))
-        } else {
-            (0, raw)
-        };
-        let param = parse_one_param(body);
+    for (group, body) in param_scan::parse_decl(inner.as_bytes()) {
+        let param = parse_one_param(&body);
         match group {
-            1 => out.state.push(param),
-            2 => out.enter.push(param),
-            _ => out.domain.push(param),
+            ParamGroup::State => out.state.push(param),
+            ParamGroup::Enter => out.enter.push(param),
+            ParamGroup::Domain => out.domain.push(param),
         }
     }
     out
