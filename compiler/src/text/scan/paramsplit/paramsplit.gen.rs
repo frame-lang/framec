@@ -19,12 +19,34 @@ use std::any::Any;
 // `depth == 0`), so on any input with no `"` the machine is byte-for-byte the hand loop; the
 // SOLE intended divergence is string-awareness. It is TOTAL (always Accepts at end-of-input).
 //
-// STRING/OPAQUE POLICY (stated deliberately): StringScan, DOUBLE-QUOTE only — matching
-// ParenBalance, the sibling that already delimits this very interior. The enclosing `)` was
-// matched by `paren_balance::scan` (also `"`-only, no `target`); ParamSplit splits the SAME
-// interior, so it must use the SAME opacity model or its extents could disagree with the
-// interior boundary. Single-quote char defaults (`= ')'`) stay miscounted — the #219-adjacent
-// gap, CARRIED, identical to ParenBalance/DelimBalance's `"`-only limitation.
+// STRING/ANGLE OPACITY (CARRIED — one root, sharpened 2026-07-21). ParamSplit replicates the
+// retired hand loop's merged-Dyck alphabet EXACTLY: `$Scan` counts `<`/`>` as brackets alongside
+// `()[]{}`, and skips `"`-strings ONLY (`skip_string` runs StringScan, double-quote only —
+// matching ParenBalance, the `"`-only sibling that delimits this very interior via
+// `paren_balance::scan`; the split extents must share ParenBalance's opacity model or disagree
+// with the interior boundary). THREE known miscounts follow from that alphabet, ALL CARRIED:
+//   (1) an operator/shift `<`/`>` in a default value MERGES params: `a: int = x < y, b: int`
+//       inflates depth so the separator comma is swallowed; a lone `>` underflows depth. LOW
+//       reachability (a top-level relational/shift as a default is unusual; `Map<K,V>` type
+//       positions are the CARRIED-CORRECT case — the angle-as-bracket reading is right there).
+//   (2) a `'…'` char default OVER-splits (`sep: char = ','`) or MIS-merges (`= ')'`) — the
+//       `"`-only limit shared with ParenBalance/DelimBalance (#219). NOT separable: a `'`-aware
+//       skip carries the Rust `'a`-lifetime hazard (literals.rs annotates the Rust `'` form
+//       "char / lifetime" — it cannot tell `'a` from `'a'`), so it couples to a target-aware
+//       char-vs-lifetime leaf across the whole `"`-only balance family. LOW–MODERATE reach.
+//   (3) a `$(`/`$>(` header SIGIL is not recognized here (split_system_params does the sigil
+//       parse natively, AFTER the split): the `>` of `$>(` is counted as a bracket-close, so a
+//       header state/enter group with a TRAILING param drops it (`$(slot), $>(timeout), name`
+//       silently loses `name` — pinned #[ignore]d in tests/paramsplit.rs), and
+//       `trim_end_matches(')')` in split_system_params (scan/mod.rs) truncates a nested-paren
+//       group default (`$(g: int = f(1))` → `f(1`). These are the declaration-site twins of the
+//       Bug-A/Bug-B that ArgScan fixed at the CALL site. (3) is the REACHABLE one (a standard
+//       multi-group header) and is currently UNTESTED apart from the ignore-pin.
+// VOID CONDITION: the moment header state/enter-param correctness is in scope, this whole area is
+// REPLACED by a declaration-site ArgScan — sigil recognition + the dual-counter fork adjudicated
+// by ANGLE SELF-CONSISTENCY (`g_viable`), NOT declared arity (a declaration has none) — which
+// subsumes ALL THREE. Do NOT patch the counter piecemeal: any change to its angle/opacity model
+// forces a broad differential re-bless (the hand oracle counts angles and is sigil-blind).
 //
 // framec owns the WALK (dispatch + the depth counter + the part-start register); `skip_string`
 // only runs StringScan, `record_part` only pushes the emitted extent — no walk lives in a leaf.

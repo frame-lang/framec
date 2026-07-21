@@ -463,3 +463,62 @@ fn milestone_system_header_comma_in_string_default_is_protected() {
     assert_eq!(sys.params.domain[2].name, "c");
     assert_eq!(sys.params.domain[2].ty.as_deref(), Some("C"));
 }
+
+// ============================================================================
+// F5 #3 PIN (#[ignore]d — a KNOWN, currently-UNFIXED bug, made visible and honest rather than
+// silent). ParamSplit counts the `>` of a `$>(` enter-sigil as a bracket-CLOSE (merged-Dyck
+// alphabet, angle-committed), driving depth negative, so every separator comma AFTER a `$>(…)`
+// group is silenced and a TRAILING domain param is swallowed into the enter group's type. Thus
+// `@@system Svc($(slot: int), $>(timeout: int), name: String)` SILENTLY DROPS `name`. This is the
+// declaration-site twin of the Bug-B that ArgScan fixed at the CALL site. The fix is NOT a
+// counter-patch — it rides the declaration-site ArgScan unification (sigil recognition + the
+// dual-counter fork adjudicated by `g_viable`); see the VOID CONDITION in paramsplit.frs. This
+// test asserts the CORRECT result and is #[ignore]d until that lands, so the bug is RECORDED and
+// visible (`cargo test -- --ignored`) instead of silent. Complement to the CARRIED pin in
+// `carried_no_string_agrees_byte_for_byte` (`"$(x), $>(y), z"`), which pins the buggy machine ==
+// buggy hand parity; this pins what CORRECT would be.
+// ============================================================================
+
+#[test]
+#[ignore = "F5 #3 (known, unfixed): a `$>(` enter-sigil's `>` is miscounted as a bracket-close, \
+            silently dropping a trailing domain param. Fix rides the declaration-site ArgScan \
+            unification (see the VOID CONDITION in paramsplit.frs); this asserts the correct result."]
+fn f5_sigil_gt_miscount_drops_trailing_param() {
+    // slot (state) + timeout (enter) + name (domain). ParamSplit counts the `>` of `$>(`, so the
+    // commas after it fall at depth < 0 and are not separators: `name: String` is merged into the
+    // enter group and `domain` comes back EMPTY. CORRECT = state 1 / enter 1 / domain 1.
+    let text = "@@system Svc($(slot: int), $>(timeout: int), name: String) {\n\
+                \x20   interface:\n\
+                \x20       go()\n\
+                \x20   machine:\n\
+                \x20       $A { go() { } }\n\
+                }\n";
+    let src = Source::new("t.frm", text.as_bytes().to_vec()).unwrap();
+    let ast = segment(&src, Target::Rust).unwrap();
+    let sys = ast
+        .items
+        .iter()
+        .find_map(|it| match it {
+            Item::System(s) => Some(s),
+            _ => None,
+        })
+        .expect("expected exactly one @@system");
+
+    assert_eq!(sys.params.state.len(), 1, "one $() state param (slot)");
+    assert_eq!(sys.params.state[0].name, "slot");
+    assert_eq!(sys.params.enter.len(), 1, "one $>() enter param (timeout)");
+    assert_eq!(sys.params.enter[0].name, "timeout");
+    assert_eq!(
+        sys.params.enter[0].ty.as_deref(),
+        Some("int"),
+        "the enter type must be `int`, not the swallowed `int), name: String`"
+    );
+    // THE DROP: `name: String` is a domain param — currently swallowed into the enter group.
+    assert_eq!(
+        sys.params.domain.len(),
+        1,
+        "the trailing `name: String` domain param is silently dropped (F5 #3)"
+    );
+    assert_eq!(sys.params.domain[0].name, "name");
+    assert_eq!(sys.params.domain[0].ty.as_deref(), Some("String"));
+}
