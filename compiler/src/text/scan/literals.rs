@@ -225,34 +225,6 @@ impl Target {
         Literals { forms }
     }
 
-    /// Does `'x'` delimit a **string** in this target, or a **char**?
-    ///
-    /// #221: a Python-only workaround (swap the dict key to the opposite quote inside
-    /// an interpolation) was applied to all seventeen targets. In C#, Java, Kotlin,
-    /// Swift, C, C++, Go and Rust, `'n'` is a **char literal** — so the emitted code
-    /// did not compile. One table, asked once, instead of a fact re-guessed per site.
-    pub fn single_quote_is_string(self) -> bool {
-        match self {
-            Target::Python3
-            | Target::JavaScript
-            | Target::TypeScript
-            | Target::Ruby
-            | Target::Php
-            | Target::Lua
-            | Target::GdScript
-            | Target::Dart => true,
-
-            Target::C
-            | Target::Cpp
-            | Target::Java
-            | Target::CSharp
-            | Target::Kotlin
-            | Target::Swift
-            | Target::Go
-            | Target::Rust => false,
-        }
-    }
-
     pub fn name(self) -> &'static str {
         match self {
             Target::Python3 => "python",

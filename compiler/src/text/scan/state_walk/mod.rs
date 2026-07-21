@@ -65,33 +65,3 @@ pub fn member_starts(bytes: &[u8], from: usize, close: usize, target: Target) ->
     m.scan_at(from);
     m.starts
 }
-
-/// The retired hand walk — kept ONLY as the `member_starts` differential-test oracle until the
-/// parity is locked and the hand recognition is deleted. This is exactly the pre-conversion
-/// `state()` member boundary loop (skip opaque; a `$.x` → record + skip to end-of-line; a handler
-/// → record + skip past its body), factored out from the node-building driver. Shares the leaves
-/// with the system (as `MachineWalk`/`Segmenter` oracles do) — the differential proves the WALK.
-/// Not used in production.
-#[doc(hidden)]
-pub fn member_starts_hand(bytes: &[u8], from: usize, close: usize, target: Target) -> Vec<usize> {
-    let mut starts = Vec::new();
-    let mut i = from;
-    while i < close {
-        if let Some(next) = skip_opaque(bytes, i, close, target) {
-            i = next;
-            continue;
-        }
-        if is_statevar(bytes, i) {
-            starts.push(i);
-            i = to_end_of_line(bytes, i, close);
-            continue;
-        }
-        if let Some(e) = handler_end(bytes, i, close, target) {
-            starts.push(i);
-            i = e;
-            continue;
-        }
-        i += 1;
-    }
-    starts
-}

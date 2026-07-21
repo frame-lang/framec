@@ -69,35 +69,3 @@ pub fn stmt_starts(bytes: &[u8], from: usize, limit: usize, target: Target) -> (
     m.scan_at(from);
     (m.starts, m.depth)
 }
-
-/// The retired hand walk — kept ONLY as the `stmt_starts` differential-test oracle until the
-/// parity is locked and the hand recognition is deleted. This is exactly the pre-conversion
-/// `body()` boundary loop (a Frame statement → record `(start, depth)` + skip its extent; else
-/// opaque-skip; else count one brace of native water), factored out from the node-building driver.
-/// Shares the leaves with the system (as the other walk oracles do) — the differential proves the
-/// WALK (dispatch + the running depth counter). Not used in production.
-#[doc(hidden)]
-pub fn stmt_starts_hand(bytes: &[u8], from: usize, limit: usize, target: Target) -> (Vec<(usize, u32)>, u32) {
-    let mut starts = Vec::new();
-    let mut i = from;
-    let mut depth = 0u32;
-    while i < limit {
-        let se = stmt_end(bytes, i, limit, target);
-        if se > i {
-            starts.push((i, depth));
-            i = se;
-            continue;
-        }
-        if let Some(next) = skip_opaque(bytes, i, limit, target) {
-            i = next;
-            continue;
-        }
-        match bytes[i] {
-            b'{' => depth += 1,
-            b'}' => depth = depth.saturating_sub(1),
-            _ => {}
-        }
-        i += 1;
-    }
-    (starts, depth)
-}

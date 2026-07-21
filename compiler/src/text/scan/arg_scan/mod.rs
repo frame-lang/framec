@@ -254,31 +254,6 @@ fn merge_g(bytes: &[u8], recs: &[(i32, bool, usize, usize, usize, usize, bool)])
     Candidate { args, named }
 }
 
-/// TEST SCAFFOLDING ONLY: the machine's raw O records + fork registers, for the fuzz
-/// batteries' span/boundary invariants (`tests/arg_scan.rs`) — the wrapper materializes
-/// strings, but invariants like "no span starts on ws" and "G boundaries = the `g_end`
-/// subset" are span facts. Record shape: `(group, has_name, ns, ne, vs, ve, g_end)`;
-/// registers: `(angle_touched, g_viable, refusal, dropped_empty)`. Never a production
-/// entry; dies with the differential scaffolding at C-final.
-#[doc(hidden)]
-#[allow(clippy::type_complexity)]
-pub fn parse_records(
-    bytes: &[u8],
-    from: usize,
-    to: usize,
-    target: Target,
-) -> (
-    Vec<(i32, bool, usize, usize, usize, usize, bool)>,
-    (bool, bool, i32, i32),
-) {
-    let mut m = fsm::ArgScan::over(bytes, target, from, to);
-    m.scan_at(from);
-    (
-        m.args.clone(),
-        (m.angle_touched, m.g_viable, m.refusal, m.dropped_empty),
-    )
-}
-
 /// Parse the arg-list interior `[from, to)` by running the `ArgScan` system, then build
 /// the fork per §11.2: refusal → `Inert` (fork suppressed — a malformed list adjudicates
 /// nothing); no counted angles → `Inert`; G nonviable → `Operators` (the sole O reading);

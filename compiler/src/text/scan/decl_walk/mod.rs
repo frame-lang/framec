@@ -99,42 +99,6 @@ pub fn decl_starts(
     (m.starts, m.unterminated_body)
 }
 
-/// The hand walk's boundary decisions, factored — kept ONLY as the `decl_starts`
-/// differential-test oracle until the parity is locked and the hand recognition is deleted.
-/// This is exactly the production `decl_section` boundary loop (machine.rs: skip-opaque / ws /
-/// `@@[`-attr / record + extent-jump), stripped of node building; it shares the leaves
-/// (`skip_opaque`, `is_attr`, `to_end_of_line`, `decl_end`) with the system, as every sibling
-/// walk oracle does — the differential proves the WALK, which is the thing being converted.
-/// Not used in production.
-#[doc(hidden)]
-pub fn decl_starts_hand(
-    bytes: &[u8],
-    from: usize,
-    limit: usize,
-    with_bodies: bool,
-    target: Target,
-) -> Vec<usize> {
-    let mut starts = Vec::new();
-    let mut i = from;
-    while i < limit {
-        if let Some(next) = skip_opaque(bytes, i, limit, target) {
-            i = next;
-            continue;
-        }
-        if bytes[i].is_ascii_whitespace() {
-            i += 1;
-            continue;
-        }
-        if is_attr(bytes, i, limit) {
-            i = to_end_of_line(bytes, i, limit);
-            continue;
-        }
-        starts.push(i);
-        i = decl_end(bytes, i, limit, with_bodies, target);
-    }
-    starts
-}
-
 /// In-crate pins for the single-source `machine::decl_extent` head (it is `pub(crate)`, so its
 /// facts — including the `open` offset the `decl_section` driver keys the Signature/body split
 /// off — are pinned here, not in the integration battery). SCAFFOLDING.

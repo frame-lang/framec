@@ -59,28 +59,3 @@ pub fn state_starts(bytes: &[u8], from: usize, limit: usize, target: Target) -> 
     m.scan_at(from);
     m.starts
 }
-
-/// The retired hand walk — kept ONLY as the `state_starts` differential-test oracle until the
-/// parity is locked and the hand recognition is deleted. This is exactly the pre-conversion
-/// `machine_section` boundary loop (skip opaque; on a `$Name` record it and skip the state body),
-/// factored out from the node-building driver. Shares the leaves with the system (as the
-/// segmenter's `hand_item_starts` shares `item_end_at`) — the differential proves the WALK, which
-/// is the thing being converted. Not used in production.
-#[doc(hidden)]
-pub fn state_starts_hand(bytes: &[u8], from: usize, limit: usize, target: Target) -> Vec<usize> {
-    let mut starts = Vec::new();
-    let mut i = from;
-    while i < limit {
-        if let Some(next) = skip_opaque(bytes, i, limit, target) {
-            i = next;
-            continue;
-        }
-        if is_state_start(bytes, i) {
-            starts.push(i);
-            i = state_extent(bytes, i, limit, target).2;
-            continue;
-        }
-        i += 1;
-    }
-    starts
-}
