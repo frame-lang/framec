@@ -16,6 +16,7 @@ pub mod sections;
 pub mod string_scan;
 /// Balanced-`()` extent, dogfooded as a Frame `@@[scan(u8)]` counter automaton.
 pub mod paren_balance;
+pub mod paramsplit;
 /// Balanced-`{}` extent (Python holes), dogfooded as a Frame `@@[scan(u8)]` counter automaton.
 pub mod brace_balance;
 /// Rust raw-string extent, dogfooded as a Frame `@@[scan(u8)]` counter automaton.
@@ -406,25 +407,12 @@ fn read_name_params_brace(
 /// each param is `name : type = default` (type/default verbatim).
 fn split_system_params(inner: &str) -> SystemParams {
     let mut out = SystemParams::default();
-    // Top-level comma split (respecting nested parens/brackets/angles for wrapped types).
-    let mut parts = Vec::new();
+    // Top-level comma-split extents via the ParamSplit @@system (string-aware — a `,` inside a
+    // `"…"` default is not a separator; the old hand `(`/`)` depth loop was string-blind). The
+    // per-part sigil parse below stays native.
     let b = inner.as_bytes();
-    let (mut start, mut depth) = (0usize, 0i32);
-    for (k, &c) in b.iter().enumerate() {
-        match c {
-            b'(' | b'[' | b'<' | b'{' => depth += 1,
-            b')' | b']' | b'>' | b'}' => depth -= 1,
-            b',' if depth == 0 => {
-                parts.push(inner[start..k].trim());
-                start = k + 1;
-            }
-            _ => {}
-        }
-    }
-    if start < inner.len() {
-        parts.push(inner[start..].trim());
-    }
-    for raw in parts {
+    for (s, e) in paramsplit::split(b) {
+        let raw = inner[s..e].trim();
         if raw.is_empty() {
             continue;
         }
