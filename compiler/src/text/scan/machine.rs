@@ -477,117 +477,6 @@ fn frame_stmt(bytes: &[u8], i: usize, limit: usize, depth: u32, col: u32) -> Opt
     }
 }
 
-/// The hand classifier — kept ONLY as the StmtScan differential oracle (production runs the
-/// system via `frame_stmt`). `-> $S(args)`, `push$ -> $S`, `-> pop$`, `=> $^`.
-fn frame_stmt_hand(bytes: &[u8], i: usize, limit: usize, depth: u32, col: u32) -> Option<Stmt> {
-    // `push$ -> (enter) $S(state)`
-    if starts(bytes, i, b"push$", limit) {
-        let e = to_end_of_line(bytes, i, limit);
-        let arrow = find(bytes, i, e, b"->");
-        let (enter_args, target, args_text) = parse_after_arrow(bytes, arrow.map(|a| a + 2).unwrap_or(i), e);
-        return Some(Stmt::StackPush(TransitionStmt {
-            span: Span::new(i, e),
-            col,
-            depth,
-            target,
-            args: None,
-            args_text,
-            exit_args: None,
-            enter_args,
-        }));
-    }
-    // bare `pop$` — pop and DISCARD (stay). Distinct from `-> pop$` (restore) below.
-    if starts(bytes, i, b"pop$", limit) {
-        let e = to_end_of_line(bytes, i, limit);
-        return Some(Stmt::StackPopBare(SimpleStmt {
-            span: Span::new(i, e),
-            col,
-            depth,
-            exit_args: None,
-            enter_args: None,
-        }));
-    }
-    // `(exit) -> (enter) $S(state)` — a transition whose EXIT args precede the arrow.
-    if bytes[i] == b'(' {
-        if let Some(close) = balanced(_lexer_none(), bytes, i, limit, b'(', b')') {
-            let mut j = close;
-            while j < limit && (bytes[j] == b' ' || bytes[j] == b'\t') {
-                j += 1;
-            }
-            if starts(bytes, j, b"->", limit) {
-                let e = to_end_of_line(bytes, i, limit);
-                let exit_args = trimmed(&bytes[i + 1..close.saturating_sub(1)]);
-                let (enter_args, target, args_text) = parse_after_arrow(bytes, j + 2, e);
-                // `(reason) -> (enter) pop$` is a StackPop carrying BOTH arg sets, NOT a
-                // transition. Enter args ride to the restored state's `$>` after the pop.
-                if window(&bytes[j..e], b"pop$") {
-                    return Some(Stmt::StackPop(SimpleStmt {
-                        span: Span::new(i, e),
-                        col,
-                        depth,
-                        exit_args,
-                        enter_args,
-                    }));
-                }
-                // ONLY a transition if the arrow resolves to a $Target. A native
-                // `(*p)->field` or `(a) -> b` has no `$Target`, so it is NOT a transition
-                // and falls through to native code.
-                if target.is_none() {
-                    return None;
-                }
-                return Some(Stmt::Transition(TransitionStmt {
-                    span: Span::new(i, e),
-                    col,
-                    depth,
-                    target,
-                    args: None,
-                    args_text,
-                    exit_args,
-                    enter_args,
-                }));
-            }
-        }
-    }
-    // `-> pop$` / `-> (enter) $S(state)`
-    if starts(bytes, i, b"->", limit) {
-        let e = to_end_of_line(bytes, i, limit);
-        let seg = &bytes[i..e];
-        let (enter_args, target, args_text) = parse_after_arrow(bytes, i + 2, e);
-        // `-> (enter) pop$` — the enter args ride to the restored state's `$>` after pop.
-        if window(seg, b"pop$") {
-            return Some(Stmt::StackPop(SimpleStmt {
-                span: Span::new(i, e),
-                col,
-                depth,
-                exit_args: None,
-                enter_args,
-            }));
-        }
-        return Some(Stmt::Transition(TransitionStmt {
-            span: Span::new(i, e),
-            col,
-            depth,
-            target,
-            args: None,
-            args_text,
-            exit_args: None,
-            enter_args,
-        }));
-    }
-    // `=> $^`
-    if starts(bytes, i, b"=>", limit) {
-        let e = to_end_of_line(bytes, i, limit);
-        return Some(Stmt::Forward(SimpleStmt {
-            span: Span::new(i, e),
-            col,
-            depth,
-            exit_args: None,
-            enter_args: None,
-        }));
-    }
-    None
-}
-
 /// Parse the part of a transition after `->`: an optional `(enter_args)`, then
 /// `$Target(state_args)`. Returns `(enter_args, target, state_args)`.
 fn parse_after_arrow(bytes: &[u8], from: usize, to: usize) -> (Option<String>, Option<String>, Option<String>) {
@@ -681,25 +570,6 @@ pub(crate) fn skip_opaque(bytes: &[u8], i: usize, limit: usize, target: Target) 
     }
 }
 
-/// The retired hand implementation — kept ONLY as the `skip_opaque` differential-test oracle
-/// (the `machine_opaque_tests` module below) until the parity is locked and the hand lexer
-/// recognition is deleted (Item 4). Self-contained (builds its own `Lexer`); not used in
-/// production. Mirrors the hand policy exactly: comment clamps, literal rejects-on-overrun, an
-/// `Err` (unterminated) or `Ok(None)` falls through to `None`.
-#[doc(hidden)]
-pub fn skip_opaque_hand(bytes: &[u8], i: usize, limit: usize, target: Target) -> Option<usize> {
-    let lx = Lexer::new(bytes, target);
-    if let Ok(Some(e)) = lx.comment_at(i) {
-        return Some(e.min(limit).max(i + 1));
-    }
-    if let Ok(Some(l)) = lx.literal_at(i) {
-        if l.span.end <= limit {
-            return Some(l.span.end.max(i + 1));
-        }
-    }
-    None
-}
-
 /// The matching-closer finder — **now the dogfooded `DelimBalance` system**
 /// (`delim_balance.frs`): an opaque-aware Dyck-1 counter over the `(o, c)` pair, bounded by
 /// `limit`. The hand counter loop (and its per-language-brace-counter ancestors, #219) is gone;
@@ -739,10 +609,6 @@ pub(crate) fn to_end_of_line(bytes: &[u8], mut i: usize, limit: usize) -> usize 
 
 fn starts(bytes: &[u8], i: usize, pat: &[u8], limit: usize) -> bool {
     i + pat.len() <= limit && &bytes[i..i + pat.len()] == pat
-}
-
-fn window(hay: &[u8], needle: &[u8]) -> bool {
-    hay.windows(needle.len()).any(|w| w == needle)
 }
 
 fn is_name_start(bytes: &[u8], i: usize) -> bool {

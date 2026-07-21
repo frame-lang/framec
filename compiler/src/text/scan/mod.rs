@@ -177,28 +177,6 @@ pub fn skip_opaque_at(bytes: &[u8], i: usize, target: Target) -> usize {
     opaque_scan::opaque_extent(bytes, i, target).unwrap_or(i)
 }
 
-/// The retired hand implementation of the FULL three-way classification — the differential-test
-/// oracle for [`opaque_scan::opaque_at`] (`tests/opaque_scan.rs`). Not used in production. Maps
-/// the hand `Lexer` verdicts to `OpaqueAt`: `comment_at` Ok(Some) → `Comment`, `literal_at`
-/// Ok(Some) → `Literal`, an `Err` from either recognizer (an unterminated body) → `Unterminated`,
-/// and Ok(None) from both → `None`. The dispatch order (comment before literal) mirrors the
-/// machine's `$Start`.
-#[doc(hidden)]
-pub fn opaque_at_hand(bytes: &[u8], i: usize, target: Target) -> opaque_scan::OpaqueAt {
-    use opaque_scan::OpaqueAt;
-    let lx = Lexer::new(bytes, target);
-    match lx.comment_at(i) {
-        Ok(Some(end)) => return OpaqueAt::Comment(end),
-        Err(_) => return OpaqueAt::Unterminated,
-        Ok(None) => {}
-    }
-    match lx.literal_at(i) {
-        Ok(Some(l)) => OpaqueAt::Literal(l.span.end),
-        Err(_) => OpaqueAt::Unterminated,
-        Ok(None) => OpaqueAt::None,
-    }
-}
-
 /// Read one `@@…` island starting at `at` (which points at the first `@`).
 fn read_pragma(lx: &Lexer, bytes: &[u8], at: usize) -> Result<Item, SegmentError> {
     let after = at + 2;
