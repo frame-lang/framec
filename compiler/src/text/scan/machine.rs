@@ -945,27 +945,14 @@ fn args_of(bytes: &[u8], from: usize, to: usize) -> Option<String> {
                 j += 1;
             }
             if j < to && bytes[j] == b'(' {
-                let mut d = 0i32;
                 let open = j;
-                while j < to {
-                    match bytes[j] {
-                        b'(' => d += 1,
-                        b')' => {
-                            d -= 1;
-                            if d == 0 {
-                                let inner =
-                                    String::from_utf8_lossy(&bytes[open + 1..j]).into_owned();
-                                return if inner.trim().is_empty() {
-                                    None
-                                } else {
-                                    Some(inner)
-                                };
-                            }
-                        }
-                        _ => {}
-                    }
-                    j += 1;
-                }
+                // The matching `)` via DelimBalance — the same @@system the sibling enter-arg
+                // scan (`parse_after_arrow`) already uses; retires the duplicate `(`/`)` depth
+                // counter. `_lexer_none()` supplies the target (a transition head has no strings).
+                let close = balanced(_lexer_none(), bytes, open, to, b'(', b')')?;
+                let inner =
+                    String::from_utf8_lossy(&bytes[open + 1..close.saturating_sub(1)]).into_owned();
+                return if inner.trim().is_empty() { None } else { Some(inner) };
             }
             return None;
         }
