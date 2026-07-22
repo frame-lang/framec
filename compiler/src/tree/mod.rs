@@ -128,6 +128,32 @@ pub struct SystemParams {
     pub enter: Vec<Param>,
     /// bare `name: type = default` — constructor args, in scope for domain inits.
     pub domain: Vec<Param>,
+    /// How `<`/`>` read in the header param list (RFC-0060, #248 detection) — the
+    /// declaration-site sibling of [`body::ArgAngles`]. `state`/`enter`/`domain` above
+    /// are always the EMITTED (favor-the-template) reading, unchanged; this records
+    /// whether the operator reading also survived, so the validation pass can surface
+    /// `W417` without the scanner minting a diagnostic. The scanner never guesses.
+    pub angles: ParamAngles,
+}
+
+/// The angle-hypothesis outcome carried on a [`SystemParams`] (RFC-0060). Mirrors
+/// [`body::ArgAngles`]: the O (angles-as-operators) reading rides the tree so the
+/// well-formedness adjudicator can run where diagnostics are minted (validate), never at
+/// scan. `state`/`enter`/`domain` hold the favored G reading in every case.
+#[derive(Debug, Default, Clone)]
+pub enum ParamAngles {
+    /// No angle question: the hypotheses coincide (or the list refused — a malformed list
+    /// adjudicates nothing).
+    #[default]
+    Inert,
+    /// Only the operator reading is viable (a `>` with no open `<`, or an unclosed `<`);
+    /// the emitted `state`/`enter`/`domain` groups ARE that sole reading. Never `W417`.
+    Operators,
+    /// Both readings viable and divergent: the emitted groups are G (brackets, fewer
+    /// params, favor-the-template) and `alt` is the O reading (operators, more params).
+    /// `span` covers the offending `(...)` param list. `W417` fires here iff BOTH readings
+    /// are well-formed parameter lists (every segment's name a bare identifier).
+    Forked { alt: Vec<Param>, span: Span },
 }
 
 #[derive(Debug, Clone)]

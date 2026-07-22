@@ -107,18 +107,58 @@ fn merge_g(bytes: &[u8], recs: &[(i32, usize, usize, bool)]) -> Vec<(ParamGroup,
     out
 }
 
-/// Parse the header param-list interior into `(group, trimmed body)` pairs, taking the
-/// angle-self-consistency (`g_viable`) reading. Mirrors `arg_scan::parse`'s `primary` selection,
-/// collapsed to one reading (a declaration has no arity, so G is preferred iff self-consistent):
-/// O on refusal / no-angles / `!g_viable` / all-boundaries-shared; else G (`merge_g`).
-pub fn parse_decl(bytes: &[u8]) -> Vec<(ParamGroup, String)> {
+/// The relationship between the two angle hypotheses on a header param list — the
+/// declaration-site collapse of [`super::arg_scan::AngleReading`], minus arity (a
+/// declaration has nothing to adjudicate against). The EMITTED reading is always
+/// [`ParamsOut::primary`] (favor-the-template); this only records whether the operator
+/// reading ALSO survived, which the validation pass needs for `W417` (RFC-0060).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ParamReading {
+    /// Hypotheses coincide, or the list refused / has no counted angles.
+    Inert,
+    /// Only the operator reading is viable; `primary` IS that sole reading.
+    Operators,
+    /// Both viable and divergent: `primary` = G (brackets), payload = the O (operators)
+    /// reading bodies.
+    Forked(Vec<(ParamGroup, String)>),
+}
+
+/// The forked parse: the emitted reading plus the angle relationship. `primary` is
+/// BYTE-IDENTICAL to the pre-RFC-0060 `parse_decl` output — favor-the-template is
+/// unchanged; `W417` is additive visibility, never an emission change.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParamsOut {
+    pub primary: Vec<(ParamGroup, String)>,
+    pub angles: ParamReading,
+}
+
+/// Parse the header param-list interior, RETAINING both angle readings. Mirrors
+/// `arg_scan::parse`'s `primary`/`AngleReading` selection exactly (a declaration has no
+/// arity, so G is favored iff self-consistent): O on refusal / no-angles / `!g_viable` /
+/// all-boundaries-shared → `Inert`/`Operators`; else G (`merge_g`) with the O reading as
+/// the `Forked` payload. NO `.frs` change — the machine already stamps `g_viable`/`g_end`;
+/// the pre-RFC-0060 wrapper simply discarded the losing reading.
+pub fn parse_decl_forked(bytes: &[u8]) -> ParamsOut {
     let mut m = fsm::ParamScan::over(bytes);
     m.scan_at(0);
-    let use_g =
-        m.refusal == 0 && m.angle_touched && m.g_viable && !m.parts.iter().all(|r| r.3);
-    if use_g {
-        merge_g(bytes, &m.parts)
+    let o = reading_o(bytes, &m.parts);
+    let (primary, angles) = if m.refusal != 0 || !m.angle_touched {
+        (o, ParamReading::Inert)
+    } else if !m.g_viable {
+        (o, ParamReading::Operators)
+    } else if m.parts.iter().all(|r| r.3) {
+        (o, ParamReading::Inert)
     } else {
-        reading_o(bytes, &m.parts)
-    }
+        (merge_g(bytes, &m.parts), ParamReading::Forked(o))
+    };
+    ParamsOut { primary, angles }
+}
+
+/// The EMITTED reading only — the angle-self-consistency (`g_viable`) reading,
+/// byte-identical to before RFC-0060. Favor-the-template: O on refusal / no-angles /
+/// `!g_viable` / all-boundaries-shared; else G. The two emit-side consumers
+/// (`param_names`, `params_split`) and the tree's `state`/`enter`/`domain` groups all
+/// take this; the fork rides the tree separately via [`parse_decl_forked`].
+pub fn parse_decl(bytes: &[u8]) -> Vec<(ParamGroup, String)> {
+    parse_decl_forked(bytes).primary
 }

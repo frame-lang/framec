@@ -43,6 +43,7 @@ fn domain_params(decls: &[(&str, Option<&str>)]) -> SystemParams {
                 default: d.map(str::to_string),
             })
             .collect(),
+        ..SystemParams::default()
     }
 }
 

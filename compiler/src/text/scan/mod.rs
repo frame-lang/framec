@@ -65,7 +65,8 @@ pub mod reachability;
 use super::{Source, Span};
 use crate::tree::body::ParamGroup;
 use crate::tree::{
-    BomItem, EfsmItem, FileAst, Item, NativeItem, Param, PragmaItem, SystemItem, SystemParams,
+    BomItem, EfsmItem, FileAst, Item, NativeItem, Param, ParamAngles, PragmaItem, SystemItem,
+    SystemParams,
 };
 use literals::Target;
 
@@ -302,7 +303,9 @@ fn read_name_params_brace(
             });
         };
         let inner = String::from_utf8_lossy(&bytes[open + 1..after_close - 1]).into_owned();
-        params = split_system_params(&inner);
+        // The absolute span of the `(...)` param list — carried onto the tree so a `W417`
+        // (RFC-0060) minted downstream at validation can point at the offending list.
+        params = split_system_params(&inner, Span::new(open, after_close));
         i = after_close;
     }
     // Skip an optional `: Base, Base` and anything up to `{` — **OPAQUE-AWARE** (#249 B5). A `{`
@@ -339,9 +342,10 @@ fn read_name_params_brace(
 /// `>` is no longer bracket-counted, so a trailing param is not dropped) and #4 (a group's balanced
 /// `)` is found, so `$(g: int = f(1))` keeps `f(1)` — the hand `trim_end_matches(')')` is GONE).
 /// The `name : type = default` body split stays native (`parse_one_param`).
-fn split_system_params(inner: &str) -> SystemParams {
+fn split_system_params(inner: &str, span: Span) -> SystemParams {
     let mut out = SystemParams::default();
-    for (group, body) in param_scan::parse_decl(inner.as_bytes()) {
+    let parsed = param_scan::parse_decl_forked(inner.as_bytes());
+    for (group, body) in parsed.primary {
         let param = parse_one_param(&body);
         match group {
             ParamGroup::State => out.state.push(param),
@@ -349,6 +353,20 @@ fn split_system_params(inner: &str) -> SystemParams {
             ParamGroup::Domain => out.domain.push(param),
         }
     }
+    // Surface the angle fork on the tree (RFC-0060). The `state`/`enter`/`domain` groups
+    // above are the favored G (template) reading, UNCHANGED — `W417` is added visibility,
+    // never an emission change. Only `Forked` carries the alternate O reading (each body
+    // split by the SAME `parse_one_param` the primary uses) plus the list span, so the
+    // validation pass can run the well-formedness adjudicator and mint `W417`. The scanner
+    // records a fact framec put here about framec's own scan; it never guesses (Oceans).
+    out.angles = match parsed.angles {
+        param_scan::ParamReading::Inert => ParamAngles::Inert,
+        param_scan::ParamReading::Operators => ParamAngles::Operators,
+        param_scan::ParamReading::Forked(alt_bodies) => ParamAngles::Forked {
+            alt: alt_bodies.iter().map(|(_g, b)| parse_one_param(b)).collect(),
+            span,
+        },
+    };
     out
 }
 

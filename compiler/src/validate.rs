@@ -17,7 +17,10 @@
 
 use crate::resolve::{Diagnostic, Severity, SymbolTable};
 use crate::tree::body::{ArgAngles, InstArg, Instantiation, NativePart, ParamGroup, RefKind, Stmt};
-use crate::tree::{FileAst, Item, MachineMember, Param, Section, StateMember, SystemParams};
+use crate::tree::{
+    FileAst, Item, MachineMember, Param, ParamAngles, Section, StateMember, SystemItem,
+    SystemParams,
+};
 
 /// Check the tree against the symbol table.
 pub fn validate(ast: &FileAst, syms: &SymbolTable) -> Vec<Diagnostic> {
@@ -25,6 +28,10 @@ pub fn validate(ast: &FileAst, syms: &SymbolTable) -> Vec<Diagnostic> {
 
     for item in &ast.items {
         let Item::System(sys) = item else { continue };
+        // W417 — an ambiguous declaration-site `<`/`>` fork in a header parameter default
+        // (RFC-0060). Independent of name resolution: it is a property of the param-list
+        // text framec scanned, recorded on the tree at scan, minted here.
+        check_system_params(sys, &mut out);
         let Some(sym) = syms.systems.iter().find(|s| s.name == sys.name) else {
             continue;
         };
@@ -250,6 +257,93 @@ fn check_refs(
         }
     }
     let _ = (state_vars, domain, iface, system, RefKind::StateVar);
+}
+
+/// W417 — surface an ambiguous declaration-site `<`/`>` fork (RFC-0060), the declaration-
+/// site sibling of the call-site arity error (E407). A declaration has no arity to
+/// adjudicate with, so the weaker, semantic-free oracle is **parameter well-formedness**:
+/// warn iff BOTH readings are well-formed parameter lists — every segment's name a bare
+/// identifier. Exactly-one-well-formed (the common generic `Map<K, V>`, whose operator
+/// reading yields the non-identifier segment `V>`) is taken in silence; neither-well-formed
+/// is malformed input (the §1167 refusal channel), not W417.
+///
+/// This reads only the tree — the two readings' already-parsed `Param` names — never a byte
+/// and never a type (Oceans Model): the adjudicator is an identifier check, not a type
+/// check. Emission is UNCHANGED: `sys.params` already holds the favored G reading, so this
+/// only decides whether to warn. Mirrors `adjudicate`/`e407` for the call site exactly —
+/// both-admissible is diagnosed, never guessed.
+fn check_system_params(sys: &SystemItem, out: &mut Vec<Diagnostic>) {
+    let ParamAngles::Forked { alt, span } = &sys.params.angles else {
+        return;
+    };
+    // The emitted (G/template) reading, across all three groups — group order is
+    // irrelevant to well-formedness. The alternate (O/operators) reading rides `alt`.
+    let primary_iter = || {
+        sys.params
+            .state
+            .iter()
+            .chain(&sys.params.enter)
+            .chain(&sys.params.domain)
+    };
+    let primary_wf = primary_iter().all(|p| is_ident(&p.name));
+    let alt_wf = alt.iter().all(|p| is_ident(&p.name));
+    if !(primary_wf && alt_wf) {
+        return; // exactly-one-well-formed → favor-the-template in silence; see doc.
+    }
+    let n_generic = sys.params.state.len() + sys.params.enter.len() + sys.params.domain.len();
+    out.push(Diagnostic {
+        code: "W417",
+        severity: Severity::Warning,
+        span: *span,
+        message: format!(
+            "ambiguous `<`/`>` in a parameter default of `@@system {name}(...)`\n  \
+             read as a generic (framec favors the template when it cannot tell):\n    \
+             as generic brackets ({n_generic} param{gs}): {generic}\n    \
+             as comparison operators ({n_alt} params): {operators}\n  \
+             framec cannot resolve this without a type system, so it guessed.\n  \
+             help: parenthesize the comparison to disambiguate — e.g. wrap `(a < b)`",
+            name = sys.name,
+            gs = if n_generic == 1 { "" } else { "s" },
+            generic = render_params(primary_iter()),
+            n_alt = alt.len(),
+            operators = render_params(alt.iter()),
+        ),
+    });
+}
+
+/// Is `s` a single bare identifier? The declaration-site well-formedness oracle: a
+/// segment's NAME (its bytes before the first top-level `:`/`=`, already extracted by
+/// `parse_one_param`) must be an identifier for the segment to be a valid parameter. No
+/// type knowledge — identifier SHAPE only (type-ignorance preserved).
+fn is_ident(s: &str) -> bool {
+    let b = s.as_bytes();
+    !b.is_empty()
+        && (b[0].is_ascii_alphabetic() || b[0] == b'_')
+        && b[1..].iter().all(|&c| c.is_ascii_alphanumeric() || c == b'_')
+}
+
+/// Render a reading's params as `` `name[: type][ = default]` `` each, joined ` · ` — the
+/// E407 render style, reused for the W417 both-readings message.
+fn render_params<'a>(params: impl Iterator<Item = &'a Param>) -> String {
+    let rendered: Vec<String> = params
+        .map(|p| {
+            let mut s = p.name.clone();
+            if let Some(t) = &p.ty {
+                s.push_str(": ");
+                s.push_str(t);
+            }
+            if let Some(d) = &p.default {
+                s.push_str(" = ");
+                s.push_str(d);
+            }
+            format!("`{s}`")
+        })
+        .collect();
+    if rendered.is_empty() {
+        "(none)".to_string()
+    } else {
+        rendered.join(" · ")
+    }
 }
 
 /// The outcome of holding an instantiation's angle reading(s) against the declared params.

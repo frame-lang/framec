@@ -50,6 +50,8 @@ struct Row {
 // capability from the audit; demand from the construct. NA axes never deficient.
 const M: &[Row] = &[
     // ---- native-typed comma/delimiter splitters: demand target-aware opacity + Dyck-1 nesting ----
+    // #248 decl-site angle fork is now SURFACED as W417 (RFC-0060) — a diagnostic layered on top,
+    // NOT a class change: param_scan stays Dyck1 + `"`-only, still Carried(#219). Detection ≠ resolution.
     Row{scanner:"param_scan",        construct:"system-header params",   op_cap:Opacity::DoubleQuote, nest_cap:Nesting::Dyck1, op_demand:Opacity::TargetAware, nest_demand:Nesting::Dyck1, status:Carried("#219 char/lifetime: \"-only, not target-aware")},
     Row{scanner:"arg_scan",          construct:"instantiation args",     op_cap:Opacity::TargetAware, nest_cap:Nesting::Dyck1, op_demand:Opacity::TargetAware, nest_demand:Nesting::Dyck1, status:Ok},
     Row{scanner:"parse_one_param",   construct:"name:type=default split",op_cap:Opacity::DoubleQuote, nest_cap:Nesting::Dyck1, op_demand:Opacity::TargetAware, nest_demand:Nesting::Dyck1, status:Carried("#219 B2: `=` split via TopLevelEq (Dyck1 + digraph-guarded angle, \"-only); char/lifetime carried")},
