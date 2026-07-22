@@ -35,6 +35,34 @@ pub fn validate(ast: &FileAst, syms: &SymbolTable) -> Vec<Diagnostic> {
         let Some(sym) = syms.systems.iter().find(|s| s.name == sys.name) else {
             continue;
         };
+
+        // E641 — a `&mut` borrowed domain field. A read-only borrow (`&T`) lets a plain
+        // `@@system` walk immutable data (an AST, a symbol table, source bytes) and return owned
+        // text — the tree-walker emit model — and is realized as a `&'a T` field. A `&mut` borrow
+        // is never needed for that (the walk mutates only its OWNED domain: the accumulated
+        // output, the counters) and would make the system alias-hostile, so framec refuses it
+        // here rather than emit a `&'a mut T` field that fights the borrow checker downstream.
+        for f in &sym.domain {
+            if let crate::resolve::TypeRef::Opaque(t) = &f.ty {
+                if is_mut_borrow(t) {
+                    out.push(Diagnostic {
+                        code: "E641",
+                        severity: Severity::Error,
+                        span: f.span,
+                        message: format!(
+                            "domain field `{}: {}` is a `&mut` borrow.\n  \
+                             a `@@system` reads immutable data and returns owned output, so a \
+                             borrowed field must be read-only — use a shared borrow `&{}`.\n  \
+                             (mutable domain state stays OWNED: accumulate into an owned field \
+                             and return it.)",
+                            f.name,
+                            t.trim(),
+                            t.trim_start().trim_start_matches('&').trim_start().trim_start_matches("mut").trim(),
+                        ),
+                    });
+                }
+            }
+        }
         let state_names: Vec<&str> = sym.states.iter().map(|s| s.name.as_str()).collect();
         let iface: Vec<&str> = sym.interface.iter().map(|m| m.name.as_str()).collect();
         let domain: Vec<&str> = sym.domain.iter().map(|f| f.name.as_str()).collect();
@@ -309,6 +337,23 @@ fn check_system_params(sys: &SystemItem, out: &mut Vec<Diagnostic>) {
             operators = render_params(alt.iter()),
         ),
     });
+}
+
+/// Is the type text a **mutable** shared borrow — `&mut T`? Purely lexical (a leading `&`
+/// then `mut` as a whole word), never a parse: framec does not read inside the user's type.
+/// `&T` (read-only) and `&mutex` (an owned type that merely starts with `mut`) both return
+/// false. Used only to REFUSE `&mut` on a domain field (E641); the read-only `&T` case is the
+/// feature the refusal protects.
+fn is_mut_borrow(t: &str) -> bool {
+    let Some(rest) = t.trim_start().strip_prefix('&') else {
+        return false;
+    };
+    let rest = rest.trim_start();
+    match rest.strip_prefix("mut") {
+        // `mut` must be a whole word: `&mut T` yes, `&mutex` no (next char is a boundary).
+        Some(after) => after.is_empty() || !after.as_bytes()[0].is_ascii_alphanumeric() && after.as_bytes()[0] != b'_',
+        None => false,
+    }
 }
 
 /// Is `s` a single bare identifier? The declaration-site well-formedness oracle: a

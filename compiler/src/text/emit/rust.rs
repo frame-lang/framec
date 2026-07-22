@@ -63,6 +63,17 @@ impl Backend for Rust {
         }
 
         emit_compartment_types(sym, out);
+
+        // READ-ONLY BORROWED DOMAIN (the plain-`@@system` analogue of a scanner's `&'a [u8]`).
+        // A tree-walker emitter reads immutable data (an AST, a symbol table, backing source
+        // bytes) and returns owned text — so its domain wants a `&T` field, not an owned copy.
+        // When ANY domain field is a shared borrow (`&Syms`, `&dyn Backend`), the struct, its
+        // `impl`, and the constructor all take ONE lifetime `'a`, exactly as `open_scanner`
+        // threads it for `src`. Owned fields are untouched, and a system with no borrowed field
+        // emits byte-identically to before (`lt` is empty). `&mut` never reaches here — validate
+        // rejects it (E641): the mandate is read-only.
+        let lt = if sym.domain.iter().any(is_borrowed_field) { "<'a>" } else { "" };
+
         // A persist-reachable system is embedded BY VALUE in a parent's snapshot struct
         // (`inner: Inner`), so its own struct must clone + serialize + deserialize — serde then
         // recurses the whole sub-system (compartment, stack, domain) with no reflection and no
@@ -73,15 +84,16 @@ impl Backend for Rust {
         // `@@system private` -> a crate-private `struct` (no `pub`); the `pub fn` methods stay
         // usable within the crate. Default is `pub struct`.
         let svis = if sym.private { "" } else { "pub " };
-        out.frame(&format!("{svis}struct {name} {{\n"));
+        out.frame(&format!("{svis}struct {name}{lt} {{\n"));
         out.frame(&format!("    compartment: {name}Comp,\n"));
         out.frame(&format!("    stack: Vec<{name}Comp>,\n"));
         // Domain fields — the user's declared type, VERBATIM. `pub`, like a scanner's: the
         // domain IS the system's readable state (a walker's result, a counter), so a native
-        // wrapper can read it after driving the machine.
+        // wrapper can read it after driving the machine. A borrowed field carries the system
+        // lifetime (`&Syms` -> `&'a Syms`); `thread_lt` is the identity on an owned type.
         for f in &sym.domain {
             let ty = match &f.ty {
-                TypeRef::Opaque(t) => t.clone(),
+                TypeRef::Opaque(t) => thread_lt(t),
                 TypeRef::System(s) | TypeRef::WrappedSystem { system: s, .. } => s.clone(),
                 TypeRef::None => "()".to_string(),
             };
@@ -91,10 +103,17 @@ impl Backend for Rust {
 
         // new()
         let first = sym.states.first().map(|s| s.name.as_str()).unwrap_or("");
-        out.frame(&format!("impl {name} {{\n"));
-        // Constructor params — state, then enter, then domain (§203). Rust: `name: type`.
-        let plist = self.param_list(&super::driver::ctor_params_text(&sym.params));
-        out.frame(&format!("    pub fn new({plist}) -> {name} {{\n"));
+        out.frame(&format!("impl{lt} {name}{lt} {{\n"));
+        // Constructor params — state, then enter, then domain (§203). Rust: `name: type`. A
+        // borrowed param carries `'a` too (`syms: &Syms` -> `syms: &'a Syms`), so the field it
+        // initializes and the arg it is built from agree on the one lifetime. With no borrowed
+        // field this is exactly `ctor_params_text` + `param_list` (byte-identical).
+        let plist = if lt.is_empty() {
+            self.param_list(&super::driver::ctor_params_text(&sym.params))
+        } else {
+            ctor_params_lt(&sym.params)
+        };
+        out.frame(&format!("    pub fn new({plist}) -> {name}{lt} {{\n"));
         // The start compartment, TYPED: vars seed from their inits, args from the header's
         // state/enter params (§203) that name the start state's params (a distinct
         // `enter_args` is deferred — see `args_ctor_expr`).
@@ -807,4 +826,43 @@ fn rust_ident(event: &str) -> String {
         "<$" => "__exit".to_string(),
         other => other.to_string(),
     }
+}
+
+/// Is this domain field a **read-only shared borrow** (`&Syms`, `&dyn Backend`)? Only an
+/// `Opaque` type can be — a `&Sub` sub-system is caught earlier by E640 (borrow a system via
+/// `= @@Sub()`, not `&`). The check is purely lexical (a leading `&`), never a parse: the type
+/// is the user's text and framec does not read inside it. `&mut` is a borrow too, but validate
+/// (E641) has already refused it, so a `&mut` never reaches this predicate on the real pipeline.
+fn is_borrowed_field(f: &crate::resolve::FieldSym) -> bool {
+    matches!(&f.ty, TypeRef::Opaque(t) if t.trim_start().starts_with('&'))
+}
+
+/// Thread the system lifetime `'a` through a borrowed type: `&T` -> `&'a T`, `&dyn Tr` ->
+/// `&'a dyn Tr`. A non-borrowed type is returned UNCHANGED, so this is the identity on every
+/// owned domain field and every scalar ctor param — which is what keeps a borrow-free system
+/// byte-identical. framec inserts the lifetime token right after the `&`; it never otherwise
+/// reads or rewrites the user's type text.
+fn thread_lt(ty: &str) -> String {
+    match ty.trim_start().strip_prefix('&') {
+        Some(rest) => format!("&'a {}", rest.trim_start()),
+        None => ty.to_string(),
+    }
+}
+
+/// Constructor params in Frame's `name: type` form, CONSTRUCTOR order (state, enter, domain),
+/// with the system lifetime threaded through each borrowed type. This is the borrowed-system
+/// twin of [`super::driver::ctor_params_text`]; it is Rust-specific (the `'a` spelling), so it
+/// stays out of the target-blind driver. Rust already writes `name: type`, so no `param_list`
+/// reorder is needed — only the per-type `thread_lt`.
+fn ctor_params_lt(p: &crate::tree::SystemParams) -> String {
+    p.state
+        .iter()
+        .chain(&p.enter)
+        .chain(&p.domain)
+        .map(|param| match &param.ty {
+            Some(t) => format!("{}: {}", param.name, thread_lt(t)),
+            None => param.name.clone(),
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
