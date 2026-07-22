@@ -31,13 +31,14 @@ native code both **demand** `TargetAware` opacity + `Dyck1` nesting.
 |---|---|---|---|---|---|
 | `arg_scan` | instantiation args | TargetAware ✓ | Dyck1 ✓ | arity (E407) | **OK — the reference splitter** |
 | `param_scan` | system-header params | DoubleQuote **✗** TargetAware | Dyck1 ✓ | g_viable fork | **CARRIED #219** (char/lifetime) |
-| `parse_one_param` | `name:type=default` split | None **✗** TargetAware | None **✗** Dyck1 | none | **OPEN B2 (#249)** |
-| `params_split` | state/handler params | None **✗** TargetAware | None **✗** Dyck1 | none | **OPEN B1 (#249)** |
-| `param_names` | state/handler param names | None **✗** TargetAware | None **✗** Dyck1 | none | **OPEN B1 (#249)** |
+| `top_level_eq` | first top-level `=` (default/init sep) | DoubleQuote ✓ | Dyck1 ✓ (+angle) | none | OK (shared primitive; `"`-only scope) |
+| `parse_one_param` | `name:type=default` split | DoubleQuote **✗** TargetAware | Dyck1 ✓ | none | **CARRIED #219 B2** (routed through `top_level_eq`) |
+| `params_split` | state/handler params | DoubleQuote **✗** TargetAware | Dyck1 ✓ | none | **CARRIED #219 B1** (routed through `param_scan`+`parse_one_param`) |
+| `param_names` | state/handler param names | DoubleQuote **✗** TargetAware | Dyck1 ✓ | none | **CARRIED #219 B1** (routed through `param_scan`+`parse_one_param`) |
 | `args_of` | transition args (no-split) | TargetAware ✓ | Dyck1 ✓ | policy (no-split) | OK (deliberate) |
-| `read_name_params_brace` | header skip-to-`{` | None **✗** TargetAware | n/a | policy | **OPEN B5 (#249)** |
+| `read_name_params_brace` | header skip-to-`{` | TargetAware ✓ | n/a | policy | **OK** (#249 B5 fixed: opaque-aware seek) |
 | `paren_balance` | header `()` balance | DoubleQuote **✗** TargetAware | Dyck1 ✓ | none | **CARRIED #219** |
-| `decl_read` | decl `name:type=init` | None **✗?** TargetAware | Dyck1 ✓ | none | **REVIEW** (needs a repro) |
+| `decl_read` | decl `name:type=init` | DoubleQuote **✗** TargetAware | Dyck1 ✓ | none | **CARRIED #219 B9** (type/init `=` via `top_level_eq`) |
 | `body_walk` | statement extents | TargetAware ✓ | Dyck1 ✓ | none | OK (B7 = within-class) |
 | `opaque_scan` | per-target string/comment | TargetAware ✓ | Dyck1 ✓ | none | OK (form gaps below) |
 | `string_scan` / `string_counter` | `"`-string | DoubleQuote ✓ | — | none | OK (scoped primitive) |
@@ -47,20 +48,31 @@ native code both **demand** `TargetAware` opacity + `Dyck1` nesting.
 | `segmenter` | top-level `@@`-item boundaries | TargetAware ✓ | — | none | OK (form gaps below) |
 | `ref_scan` / `inst_scan` / `embed_scan` | Frame-syntax recognizers | (caller opacity) | — | — | OK (opacity handled by `native_parts`) |
 
-## What the matrix derived — the class-deficiency bugs
+## What the matrix derived — the class-deficiency bugs (now RESOLVED, #249)
 
-Read straight off the `✗` cells, **without being told them**:
+These fell straight off the `✗` cells. All are now fixed by **unifying the split sites onto the
+correct-class machine** — one new shared primitive `top_level_eq` (a `@@[scan(u8)]` counter
+automaton: Dyck-1 + digraph-guarded angle counter, `"`-opaque) plus routing through the shipped
+`param_scan` / `skip_opaque`. The class-deficiency (the actual javac-rejecting nesting-blindness) is
+gone; the residual `DoubleQuote < TargetAware` opacity gap is folded into the accepted **#219**
+char/lifetime carry (void condition: a scan-time `Vec<Param>` carry, or a target-aware
+char-vs-lifetime leaf).
 
-- **B1** — `params_split` / `param_names` are `None`/`None`: a naive `.split(',')` with no nesting
-  guard at all (worse than the legacy `parse_type`, which at least counted `<>`). `$B(m: Map<K,V>)`
-  → phantom params, javac-rejected. **Fix: route through the `Dyck1 ∘ TargetAware` machine** — the
-  same `param_scan`/`arg_scan` the F5 work built (#249 "unify the split sites").
-- **B2** — `parse_one_param` is `None`/`None`: `split_once('=')` then `split_once(':')`, so a `=`
-  inside `<Item = u8>` truncates the type. Same fix class.
-- **B5** — `read_name_params_brace`'s skip-to-`{` is `None` opacity: a `{` in a header comment/string
-  mis-bounds the system. **Fix: compose OpaqueScan.**
+- **B1** — `params_split` / `param_names` were `None`/`None` (naive `.split(',')`; `$B(m: Map<K,V>)`
+  → phantom params, javac-rejected). **FIXED → CARRIED #219:** routed through `param_scan::parse_decl`
+  (Dyck-1 + angle fork, `"`-opaque, target-free) + `parse_one_param`. Also fixes the scan-time
+  state-param split at `machine.rs:81` for free.
+- **B2** — `parse_one_param` was `None`/`None` (`split_once('=')` truncated `<Item = u8>`).
+  **FIXED → CARRIED #219:** the `=` separator is now `top_level_eq::find` (first top-level `=`).
+- **B5** — `read_name_params_brace`'s skip-to-`{` was `None` opacity (a `{` in a header comment/string
+  mis-bounded the system). **FIXED → OK:** the seek composes `machine::skip_opaque` (OpaqueScan),
+  target threaded from `read_pragma`.
+- **B9** — `decl_read`'s `eq_or_end` type/init `=` find was byte-blind (the `Review` item, CONFIRMED
+  by repro: `x: impl Iterator<Item = u8> = 0` truncated to `impl Iterator<Item` / `u8> = 0`).
+  **FIXED → CARRIED #219:** the leaf routes through `top_level_eq::find` (`decl_read.frs` unchanged).
 - **#219** — `param_scan` + `paren_balance` are `DoubleQuote` where the construct demands
-  `TargetAware`: a `)`/`,` in a `'…'` char default miscounts (carried, accepted).
+  `TargetAware`: a `)`/`,` in a `'…'` char default miscounts (carried, accepted) — now the shared
+  residual for the whole declaration-site family.
 
 ## What the matrix does NOT catch — and where those bugs live
 
@@ -82,9 +94,13 @@ set. Add a byte-blind splitter and it **fails** ("undocumented class-deficiency"
 updating the matrix and it **fails** ("stale documented deficiency"). It is the guard that catches
 the *next* B1 the day it is written.
 
-## Open review item
+## Resolved review item (was: decl_read)
 
-`decl_read` reports `None` opacity while its construct (`name: type = init`, where type/init are
-native) plausibly demands `TargetAware`. It is flagged `Review` pending a concrete repro (a string
-or comment carrying a `:`/`=`/newline inside a decl type/init). Confirm → open a #249-class bug and
-move it to `Open`; refute → move it to `Ok` with the reason.
+`decl_read` was flagged `Review` (`None` opacity, construct `name: type = init`). **CONFIRMED
+deficient** by repro through `segment()`: a domain var `x: impl Iterator<Item = u8> = 0` truncated
+the type to `impl Iterator<Item` and fabricated the init `u8> = 0` — the byte-blind `eq_or_end`
+(`while != b'='`) found the `=` inside the angle pair. This is nesting-blind (worse than the
+opacity-only concern the review named), the same class as B2. Opened as **B9** and fixed: the
+`eq_or_end` leaf now routes through `top_level_eq::find` (Dyck-1 + digraph-guarded angle, `"`-opaque).
+Row moved `Review → Carried(#219 B9)`; pinned by `t12_eq_inside_type_now_protected` (decl_read.rs)
+and `fixed_b9_decl_read_eq_in_angle_type` (parser_bug_corpus.rs).

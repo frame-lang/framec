@@ -37,7 +37,7 @@ use frame_compiler::text::scan::{
     SegmentError,
 };
 use frame_compiler::tree::body::{LiteralPart, NativePart, ParamGroup, RefKind};
-use frame_compiler::tree::{Item, SystemParams};
+use frame_compiler::tree::{Decl, Item, MachineMember, Section, SystemParams};
 use frame_compiler::Source;
 
 // ============================================================================
@@ -125,40 +125,30 @@ fn count_holes(parts: &[NativePart]) -> usize {
 
 #[test]
 fn open_b1_params_split_comma_blind_current() {
-    // The exact root splitter, direct. `Map<K, V>` is torn at the interior comma.
+    // #249 (B1) FIXED: params_split/param_names route through ParamScan (Dyck-1 + angle fork,
+    // `"`-opaque) + parse_one_param, so a generic's interior `,` is protected — one whole param,
+    // no phantom `V>`. (Inverted from the pre-fix pin, which asserted the torn `Map<K` / `V>`.)
     assert_eq!(
         driver::params_split("m: Map<K, V>"),
-        vec![
-            ("m".to_string(), Some("Map<K".to_string())),
-            ("V>".to_string(), None),
-        ],
-        "params_split is comma-blind: the generic's interior `,` fabricates a phantom `V>` param"
+        vec![("m".to_string(), Some("Map<K, V>".to_string()))],
+        "#249 (B1) fixed: the generic's interior `,` is protected — one param `m: Map<K, V>`"
     );
-    // param_names shares the mechanism: the phantom `V>` leaks into the call-arg name list.
-    assert_eq!(driver::param_names("m: Map<K, V>"), "m, V>");
+    // param_names shares the mechanism: no phantom name leaks into the call-arg list.
+    assert_eq!(driver::param_names("m: Map<K, V>"), "m");
 
-    // A closure/fn type and a comma-bearing default fail the same way.
+    // A closure/fn type keeps its interior `,` (bracket-protected); a comma-bearing default is
+    // separated off by parse_one_param (params_split returns only name+type).
     assert_eq!(
         driver::params_split("cb: fn(int, str)"),
-        vec![
-            ("cb".to_string(), Some("fn(int".to_string())),
-            ("str)".to_string(), None),
-        ]
+        vec![("cb".to_string(), Some("fn(int, str)".to_string()))]
     );
     assert_eq!(
         driver::params_split("m: int = f(1, 2)"),
-        vec![
-            ("m".to_string(), Some("int = f(1".to_string())),
-            ("2)".to_string(), None),
-        ]
+        vec![("m".to_string(), Some("int".to_string()))]
     );
 }
 
 #[test]
-#[ignore = "KNOWN BUG #249 (B1): params_split/param_names split state & handler params on a \
-            bracket/angle-blind `.split(',')`, so any param type or default carrying a top-level \
-            `,` is mis-split into a phantom param with a truncated type (javac-rejected). This \
-            asserts the IDEAL nesting-aware single param — un-ignore when #249 (B1) is fixed."]
 fn open_b1_params_split_comma_blind_ideal() {
     assert_eq!(
         driver::params_split("m: Map<K, V>"),
@@ -166,6 +156,55 @@ fn open_b1_params_split_comma_blind_ideal() {
         "#249 (B1): the generic's interior `,` must be protected -> one param `m: Map<K, V>`"
     );
     assert_eq!(driver::param_names("m: Map<K, V>"), "m");
+}
+
+// ---------------------------------------------------------------------------
+// FIXED B1 (scan-time state params) — `params_split` ALSO drives the STATE-param capture at
+// scan/machine.rs:81 (`StateNode.params`/`param_types`). Routing `params_split` through ParamScan
+// fixes that site for free: a state `$B(m: Map<K, V>)` no longer fabricates a phantom `V>` state
+// param with a truncated type. This is the machine.rs:81 fix confirmation, made durable.
+// ---------------------------------------------------------------------------
+
+/// Segment `@@system S { machine: $B(<params>) { } }` and return state B's
+/// (declared param names, the declared type of the first param).
+fn state_params(params: &str) -> (Vec<String>, Option<String>) {
+    let text = format!(
+        "@@system S {{\n\
+         \x20   machine:\n\
+         \x20       $B({params}) {{ }}\n\
+         }}\n"
+    );
+    let src = Source::new("s.frm", text.into_bytes()).unwrap();
+    let ast = segment(&src, Target::Rust).unwrap();
+    ast.items
+        .iter()
+        .find_map(|it| match it {
+            Item::System(s) => s.sections.iter().find_map(|sec| match sec {
+                Section::Machine(m) => m.members.iter().find_map(|mm| match mm {
+                    MachineMember::State(st) => {
+                        let ty = st.params.first().and_then(|n| st.param_types.get(n).cloned());
+                        Some((st.params.clone(), ty))
+                    }
+                    _ => None,
+                }),
+                _ => None,
+            }),
+            _ => None,
+        })
+        .expect("expected state B")
+}
+
+#[test]
+fn fixed_b1_state_param_generic_not_shattered() {
+    // #249 (B1) at scan/machine.rs:81: the state-param split is the SAME `params_split`, so the
+    // generic's interior `,` is protected — ONE param `m` with the whole type, no phantom `V>`.
+    let (names, ty) = state_params("m: Map<K, V>");
+    assert_eq!(names, vec!["m".to_string()], "one state param, no phantom from the interior `,`");
+    assert_eq!(ty.as_deref(), Some("Map<K, V>"), "the whole generic is the type");
+
+    // Multiple params still split at the top-level commas.
+    let (names2, _) = state_params("n: int, m: Map<K, V>");
+    assert_eq!(names2, vec!["n".to_string(), "m".to_string()]);
 }
 
 // ---------------------------------------------------------------------------
@@ -178,40 +217,36 @@ fn open_b1_params_split_comma_blind_ideal() {
 
 #[test]
 fn open_b2_parse_one_param_eq_in_angle_current() {
-    // ParamScan itself is CORRECT — it keeps the whole body as one balanced param. This proves
-    // the defect is purely the DOWNSTREAM native `parse_one_param` fold.
+    // ParamScan itself is CORRECT — it keeps the whole body as one balanced param.
     assert_eq!(
         param_scan::parse_decl(b"x: impl Iterator<Item = u8>"),
         vec![(ParamGroup::Domain, "x: impl Iterator<Item = u8>".to_string())],
-        "ParamScan keeps the associated-type-binding body whole (the split bug is downstream)"
+        "ParamScan keeps the associated-type-binding body whole"
     );
 
-    // segment() -> parse_one_param mis-splits at the angle-interior `=`.
+    // #249 (B2) FIXED: segment() -> parse_one_param now finds the FIRST TOP-LEVEL `=` via
+    // TopLevelEq, so the `=` inside `<Item = u8>` is NOT the separator — the type is kept whole and
+    // no spurious default is invented. (Inverted from the pre-fix pin, which asserted the truncation.)
     let p = sysparams("x: impl Iterator<Item = u8>");
     assert_eq!(p.domain.len(), 1);
     assert_eq!(p.domain[0].name, "x");
     assert_eq!(
         p.domain[0].ty.as_deref(),
-        Some("impl Iterator<Item"),
-        "type is truncated at the nested `=`"
+        Some("impl Iterator<Item = u8>"),
+        "#249 (B2) fixed: the whole associated-type binding is the type"
     );
     assert_eq!(
-        p.domain[0].default.as_deref(),
-        Some("u8>"),
-        "a spurious default is invented from the type tail"
+        p.domain[0].default, None,
+        "#249 (B2) fixed: no spurious default is invented from the type tail"
     );
 
-    // The `Box<dyn Iterator<Item = u8>>` form fails identically.
+    // The `Box<dyn Iterator<Item = u8>>` form is kept whole too.
     let q = sysparams("x: Box<dyn Iterator<Item = u8>>");
-    assert_eq!(q.domain[0].ty.as_deref(), Some("Box<dyn Iterator<Item"));
-    assert_eq!(q.domain[0].default.as_deref(), Some("u8>>"));
+    assert_eq!(q.domain[0].ty.as_deref(), Some("Box<dyn Iterator<Item = u8>>"));
+    assert_eq!(q.domain[0].default, None);
 }
 
 #[test]
-#[ignore = "KNOWN BUG #249 (B2): parse_one_param splits a param body on the FIRST `=` with no \
-            nesting guard, so a `=` inside a generic type (associated-type binding) truncates \
-            the type and invents a bogus default. This asserts the IDEAL whole-type parse — \
-            un-ignore when #249 (B2) is fixed."]
 fn open_b2_parse_one_param_eq_in_angle_ideal() {
     let p = sysparams("x: impl Iterator<Item = u8>");
     assert_eq!(p.domain.len(), 1);
@@ -222,6 +257,77 @@ fn open_b2_parse_one_param_eq_in_angle_ideal() {
         "#249 (B2): the whole associated-type binding is the type"
     );
     assert_eq!(p.domain[0].default, None, "#249 (B2): there is no default");
+}
+
+// ---------------------------------------------------------------------------
+// FIXED B9 — decl_read's type/init split (`eq_or_end`) is no longer byte-blind: it routes through
+// the TopLevelEq counter automaton, so a `=` inside a domain/state-var type (an associated-type
+// binding, a `(...)`/`[...]`/`{...}`, a `"…"`-string) is NOT the type/init separator. Before the
+// fix the type truncated to `impl Iterator<Item` and a bogus init `u8> = 0` was invented — the same
+// class as B2, in the DeclRead machine. KNOWN BUG #249 (B9), fixed via the shared primitive.
+// ---------------------------------------------------------------------------
+
+/// Segment `@@system D { domain: <decl> ... }` and return the first domain member's
+/// `(name, type_text, init_text)` — the production path (decl_walk -> decl_read::read ->
+/// member_decl_of). (`MemberDecl` is not `Clone`, so the owned fields are lifted out here.)
+fn domain_member(decl: &str) -> (String, Option<String>, Option<String>) {
+    let text = format!(
+        "@@system D {{\n\
+         \x20   domain:\n\
+         \x20       {decl}\n\
+         \x20   interface:\n\
+         \x20       go()\n\
+         \x20   machine:\n\
+         \x20       $A {{ go() {{ }} }}\n\
+         }}\n"
+    );
+    let src = Source::new("d.frm", text.into_bytes()).unwrap();
+    let ast = segment(&src, Target::Rust).unwrap();
+    ast.items
+        .iter()
+        .find_map(|it| match it {
+            Item::System(s) => s.sections.iter().find_map(|sec| match sec {
+                Section::Domain(d) => d.members.iter().find_map(|m| match m {
+                    Decl::Member(md) => {
+                        Some((md.name.clone(), md.type_text.clone(), md.init_text.clone()))
+                    }
+                    _ => None,
+                }),
+                _ => None,
+            }),
+            _ => None,
+        })
+        .expect("expected one domain member")
+}
+
+#[test]
+fn fixed_b9_decl_read_eq_in_angle_type() {
+    // #249 (B9) FIXED: the `=` inside `<Item = u8>` is NOT the type/init separator, so the whole
+    // associated-type binding is the type and `0` is the init (pre-fix: type=`impl Iterator<Item`,
+    // init=`u8> = 0`).
+    let (name, ty, init) = domain_member("x: impl Iterator<Item = u8> = 0");
+    assert_eq!(name, "x");
+    assert_eq!(
+        ty.as_deref(),
+        Some("impl Iterator<Item = u8>"),
+        "#249 (B9) fixed: the whole binding is the type, not truncated at the angle-interior `=`"
+    );
+    assert_eq!(
+        init.as_deref(),
+        Some("0"),
+        "#249 (B9) fixed: the init is the top-level `= 0`, not the fabricated `u8> = 0`"
+    );
+
+    // A plain typed init still splits at the real `=` (no regression).
+    let (n_name, n_ty, n_init) = domain_member("count: int = 5");
+    assert_eq!(n_name, "count");
+    assert_eq!(n_ty.as_deref(), Some("int"));
+    assert_eq!(n_init.as_deref(), Some("5"));
+
+    // No init: the whole generic binding is the type, no init invented.
+    let (_p_name, p_ty, p_init) = domain_member("items: Map<K, V>");
+    assert_eq!(p_ty.as_deref(), Some("Map<K, V>"));
+    assert_eq!(p_init, None);
 }
 
 // ---------------------------------------------------------------------------
@@ -616,30 +722,30 @@ fn fixed_cli_target_comment_recognition_correct() {
 
 #[test]
 fn open_b5_header_skip_to_brace_opaque_blind_current() {
-    // SILENT wrong extent: the `{` inside the header comment `/* {} */` is taken as the body
-    // opener, so the item ends past the comment's `}` (offset 18) and the real body is orphaned.
-    let a = b"@@system Foo /* {} */ {\n    machine:\n        $A { }\n}\n";
+    // #249 (B5) FIXED: the header skip-to-`{` is now OPAQUE-AWARE (composes OpaqueScan), so a `{`
+    // inside a header comment is SKIPPED and the body opener is the REAL `{` past it. Both the
+    // balanced (`/* {} */`) and the unbalanced (`/* { */`) comment-brace forms parse as ONE
+    // well-formed System. (Inverted from the pre-fix pins: the truncated extent 18 / the EOF swallow.)
+    let a = "@@system Foo /* {} */ {\n    machine:\n        $A { }\n}\n";
+    let ka = item_kinds(a, Target::Java);
+    assert_eq!(count_systems(&ka), 1, "the header comment's brace is skipped; one well-formed System");
     assert_eq!(
-        item_end_at(a, 0, Target::Java),
-        18,
-        "B5 silent: the header comment's brace is taken as the body opener (ends at 18, not 53)"
+        item_end_at(a.as_bytes(), 0, Target::Java),
+        53,
+        "#249 (B5) fixed: the item spans past the REAL closer (53), not the comment's brace (18)"
     );
-    // LOUD false-error variant: an unbalanced `{` inside the header comment makes close_brace
-    // fail -> read_pragma Err -> item_end_at swallows to EOF (surfaces as UnclosedBody).
-    let b = b"@@system Foo /* { */ {\n    machine:\n        $A { }\n}\n";
+
+    // The unbalanced-comment-brace form no longer forces a false UnclosedBody.
+    let b = "@@system Foo /* { */ {\n    machine:\n        $A { }\n}\n";
+    let kb = item_kinds(b, Target::Rust);
     assert_eq!(
-        item_end_at(b, 0, Target::Rust),
-        b.len(),
-        "B5 loud: an unbalanced header-comment brace makes the item swallow to EOF (false UnclosedBody)"
+        count_systems(&kb),
+        1,
+        "#249 (B5) fixed: an unbalanced header-comment brace no longer forces a false UnclosedBody"
     );
 }
 
 #[test]
-#[ignore = "KNOWN BUG #249 (B5): the header skip-to-`{` (read_name_params_brace) is \
-            string/comment-blind, so a `{` inside a header comment or string is mistaken for the \
-            body opener (silent wrong extent or loud false UnclosedBody). This asserts the IDEAL \
-            extent (the whole construct, past the REAL closing brace) — un-ignore when #249 (B5) \
-            is fixed."]
 fn open_b5_header_skip_to_brace_opaque_blind_ideal() {
     let a = b"@@system Foo /* {} */ {\n    machine:\n        $A { }\n}\n";
     assert_eq!(

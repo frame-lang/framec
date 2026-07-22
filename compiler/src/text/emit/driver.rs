@@ -34,6 +34,7 @@
 use super::atom::Atom;
 use super::Sink;
 use crate::resolve::{SymbolTable, SystemSym};
+use crate::text::scan::{param_scan, parse_one_param};
 use crate::text::Source;
 use crate::tree::body::{Body, EmbedCall, FrameRef, InstArg, Instantiation, ParamGroup, Stmt};
 use crate::tree::{Decl, FileAst, Item, MachineMember, Section, StateMember};
@@ -779,10 +780,9 @@ pub fn has_lifecycle(sym: &SystemSym, state: &str, event: &str) -> bool {
 /// (The DECLARATION is a different matter, and is a per-target spelling — see
 /// [`Backend::param_list`].)
 pub fn param_names(params: &str) -> String {
-    params
-        .split(',')
-        .filter_map(|p| p.split(':').next())
-        .map(str::trim)
+    param_scan::parse_decl(params.as_bytes())
+        .into_iter()
+        .map(|(_group, body)| parse_one_param(&body).name)
         .filter(|s| !s.is_empty())
         .collect::<Vec<_>>()
         .join(", ")
@@ -792,14 +792,20 @@ pub fn param_names(params: &str) -> String {
 ///
 /// **Frame's syntax, so framec may split it** (RULE 1). The type on the right is the
 /// user's text and is returned untouched — a backend reorders it, never reads it.
+///
+/// Routed through the SAME machines the system-header path uses (#249 B1): the top-level comma
+/// split is the dogfooded `ParamScan` counter automaton (Dyck-1 over `()[]{}` + angle fork,
+/// `"`-opaque), and each body's `name: type` split is `parse_one_param` (top-level `=`/`:` via
+/// `TopLevelEq`). So a param whose type carries a top-level `,` (`Map<K, V>`, `fn(int, str)`) or a
+/// nested `=` is no longer torn into a phantom param — the naive `.split(',')` is GONE. `ParamScan`
+/// is target-free (`"`-only), so the emitter needs no `Target` (the residual char/lifetime opacity
+/// gap is the same #219 carry the declaration-site family accepts).
 pub fn params_split(params_text: &str) -> Vec<(String, Option<String>)> {
-    params_text
-        .split(',')
-        .map(str::trim)
-        .filter(|p| !p.is_empty())
-        .map(|p| match p.split_once(':') {
-            Some((n, t)) => (n.trim().to_string(), Some(t.trim().to_string())),
-            None => (p.to_string(), None),
+    param_scan::parse_decl(params_text.as_bytes())
+        .into_iter()
+        .map(|(_group, body)| {
+            let p = parse_one_param(&body);
+            (p.name, p.ty)
         })
         .collect()
 }

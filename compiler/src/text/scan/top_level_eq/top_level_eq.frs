@@ -1,0 +1,98 @@
+@@[target("rust")]
+@@[scan(u8)]
+
+// TOP-LEVEL `=` FINDER, dogfooded as an `@@[scan(u8)]` counter automaton — the offset of the
+// FIRST `=` that is the default/init SEPARATOR of a `name: type = default` (or `name: type = init`)
+// body: a `=` at bracket-depth 0 (Dyck-1 over `()[]{}`) AND angle-depth 0 (digraph-guarded `<>`),
+// outside `"…"`-strings, excluding the `== <= >= != =>` digraphs. Reports via the `found` + `eq_at`
+// registers (the wrapper maps `!found` -> `to`).
+//
+// It is the shared correct-class primitive that RETIRES three byte-blind hand splits (#249):
+//   * `parse_one_param` (scan/mod.rs) — `split_once('=')`, so a `=` inside `<Item = u8>` truncated
+//     the type and invented a bogus default (B2);
+//   * `decl_read`'s `eq_or_end` leaf — a byte-blind `while != b'='`, the same truncation on a
+//     domain/state-var type (B9);
+//   * and, by composition through ParamScan, the emit-side `params_split`/`param_names` (B1).
+//
+// It HALTS at the first top-level `=`, which is ALWAYS in TYPE position — where `<` is
+// unambiguously a generic opener, never a `less-than` operator. So, unlike ParamScan (which must
+// FORK the angle reading because a DEFAULT can carry `a < b`), a single angle counter is EXACT
+// here: no fork, no `g_viable`, no adjudicator. `adepth` never goes negative (a stray `>` at
+// adepth 0 is a guarded operator or content, clamped) — the separator we seek precedes any
+// operator `>`.
+//
+// String-blindness is killed by COMPOSITION, not reimplementation: `"`-only StringScan via the
+// `skip_string` leaf (matching ParamScan — it AGREES with ParenBalance's interior boundary and
+// dodges the Rust `'a`-lifetime hazard, so the residual char/lifetime gap is the SAME #219 carry).
+// `angle_guard` (shared with ArgScan) excludes `<= >= -> =>` from the angle count; `eq_is_sep`
+// excludes `== <= >= != =>` at the candidate `=`. framec owns the WALK (dispatch + the two
+// counters); the leaves answer only O(1) facts or run StringScan — no walk lives in a leaf (D3).
+//
+// Regen: framec-ng -l rust --emit top_level_eq.frs | grep -v '^#!\[allow' > top_level_eq.gen.rs
+
+@@system TopLevelEq(from: usize, to: usize) {
+    interface:
+        step()
+    machine:
+        $Scan {
+            step() {
+                if self.cursor >= self.to {
+                    -> $Accept
+                }
+                // Opacity FIRST — a `=`/bracket/angle inside a `"…"`-string never takes part.
+                // `"`-only (StringScan): declines on `'` and on an unterminated `"` (returns
+                // `cursor` unchanged), matching ParamScan/ParenBalance — the #219 carry.
+                let sk = skip_string(self.src, self.cursor);
+                if sk > self.cursor {
+                    self.cursor = sk;
+                    -> $Scan
+                }
+                let b = self.src.fsm_get(self.cursor);
+                // Angle nesting at bracket depth 0, digraph-guarded. In type position `<` is
+                // always a generic opener, so a bare counter (no fork) is exact.
+                if (b == 60 || b == 62) && self.depth == 0 {
+                    if angle_guard(self.src, self.cursor, self.from, self.to) == false {
+                        if b == 60 {
+                            self.adepth = self.adepth + 1;
+                        }
+                        if b == 62 {
+                            if self.adepth > 0 {
+                                self.adepth = self.adepth - 1;
+                            }
+                        }
+                    }
+                    self.cursor = self.cursor + 1;
+                    -> $Scan
+                }
+                if b == 40 || b == 91 || b == 123 {  // ( [ {  — merged Dyck-1 counter
+                    self.depth = self.depth + 1;
+                    self.cursor = self.cursor + 1;
+                    -> $Scan
+                }
+                if b == 41 || b == 93 || b == 125 {  // ) ] }
+                    if self.depth > 0 {
+                        self.depth = self.depth - 1;
+                    }
+                    self.cursor = self.cursor + 1;
+                    -> $Scan
+                }
+                if b == 61 && self.depth == 0 && self.adepth == 0 {  // `=` at top level
+                    if eq_is_sep(self.src, self.cursor, self.from, self.to) {
+                        self.found = true;
+                        self.eq_at = self.cursor;
+                        -> $Accept
+                    }
+                }
+                self.cursor = self.cursor + 1;
+                -> $Scan
+            }
+        }
+        $Accept { }
+    domain:
+        from: usize = from
+        to: usize = to
+        depth: i32 = 0
+        adepth: i32 = 0
+        found: bool = false
+        eq_at: usize = 0
+}

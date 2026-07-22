@@ -52,15 +52,15 @@ const M: &[Row] = &[
     // ---- native-typed comma/delimiter splitters: demand target-aware opacity + Dyck-1 nesting ----
     Row{scanner:"param_scan",        construct:"system-header params",   op_cap:Opacity::DoubleQuote, nest_cap:Nesting::Dyck1, op_demand:Opacity::TargetAware, nest_demand:Nesting::Dyck1, status:Carried("#219 char/lifetime: \"-only, not target-aware")},
     Row{scanner:"arg_scan",          construct:"instantiation args",     op_cap:Opacity::TargetAware, nest_cap:Nesting::Dyck1, op_demand:Opacity::TargetAware, nest_demand:Nesting::Dyck1, status:Ok},
-    Row{scanner:"parse_one_param",   construct:"name:type=default split",op_cap:Opacity::None,        nest_cap:Nesting::None,  op_demand:Opacity::TargetAware, nest_demand:Nesting::Dyck1, status:Open("#249 B2: split_once('=') bracket/string-blind")},
-    Row{scanner:"params_split",      construct:"state/handler params",   op_cap:Opacity::None,        nest_cap:Nesting::None,  op_demand:Opacity::TargetAware, nest_demand:Nesting::Dyck1, status:Open("#249 B1: naive .split(',') no nesting guard")},
-    Row{scanner:"param_names",       construct:"state/handler param names",op_cap:Opacity::None,      nest_cap:Nesting::None,  op_demand:Opacity::TargetAware, nest_demand:Nesting::Dyck1, status:Open("#249 B1: naive .split(',') no nesting guard")},
+    Row{scanner:"parse_one_param",   construct:"name:type=default split",op_cap:Opacity::DoubleQuote, nest_cap:Nesting::Dyck1, op_demand:Opacity::TargetAware, nest_demand:Nesting::Dyck1, status:Carried("#219 B2: `=` split via TopLevelEq (Dyck1 + digraph-guarded angle, \"-only); char/lifetime carried")},
+    Row{scanner:"params_split",      construct:"state/handler params",   op_cap:Opacity::DoubleQuote, nest_cap:Nesting::Dyck1, op_demand:Opacity::TargetAware, nest_demand:Nesting::Dyck1, status:Carried("#219 B1: routed through ParamScan (Dyck1 + angle fork, \"-only) + parse_one_param; char/lifetime carried")},
+    Row{scanner:"param_names",       construct:"state/handler param names",op_cap:Opacity::DoubleQuote,nest_cap:Nesting::Dyck1, op_demand:Opacity::TargetAware, nest_demand:Nesting::Dyck1, status:Carried("#219 B1: routed through ParamScan (Dyck1 + angle fork, \"-only) + parse_one_param; char/lifetime carried")},
     Row{scanner:"args_of",           construct:"transition args (no-split)",op_cap:Opacity::TargetAware,nest_cap:Nesting::Dyck1,op_demand:Opacity::TargetAware, nest_demand:Nesting::Dyck1, status:Ok}, // policy=no-split, hand to target
 
     // ---- structural-delimiter seekers over native code: demand target-aware + Dyck-1 ----
-    Row{scanner:"read_name_params_brace",construct:"header skip-to-`{`", op_cap:Opacity::None,        nest_cap:Nesting::NA,    op_demand:Opacity::TargetAware, nest_demand:Nesting::NA,    status:Open("#249 B5: skip-to-brace is opacity-blind")},
+    Row{scanner:"read_name_params_brace",construct:"header skip-to-`{`", op_cap:Opacity::TargetAware, nest_cap:Nesting::NA,    op_demand:Opacity::TargetAware, nest_demand:Nesting::NA,    status:Ok}, // #249 B5 fixed: opaque-aware seek (machine::skip_opaque)
     Row{scanner:"body_walk",         construct:"statement extents",      op_cap:Opacity::TargetAware, nest_cap:Nesting::Dyck1, op_demand:Opacity::TargetAware, nest_demand:Nesting::Dyck1, status:Ok}, // B7 is within-class logic
-    Row{scanner:"decl_read",         construct:"decl member name:type=init",op_cap:Opacity::None,     nest_cap:Nesting::Dyck1, op_demand:Opacity::TargetAware, nest_demand:Nesting::Dyck1, status:Review("decl_read opacity=none — a string/comment in a type/init not opaque; needs a repro")},
+    Row{scanner:"decl_read",         construct:"decl member name:type=init",op_cap:Opacity::DoubleQuote, nest_cap:Nesting::Dyck1, op_demand:Opacity::TargetAware, nest_demand:Nesting::Dyck1, status:Carried("#219 B9: type/init `=` via TopLevelEq (Dyck1 + digraph-guarded angle, \"-only); char/lifetime carried")},
     Row{scanner:"decl_walk",         construct:"decl-section member boundaries",op_cap:Opacity::TargetAware,nest_cap:Nesting::Dyck1,op_demand:Opacity::TargetAware,nest_demand:Nesting::Dyck1,status:Ok},
     Row{scanner:"machine_walk",      construct:"machine-section boundaries",op_cap:Opacity::TargetAware,nest_cap:Nesting::Dyck1,op_demand:Opacity::TargetAware,nest_demand:Nesting::Dyck1,status:Ok},
     Row{scanner:"state_walk",        construct:"state-member boundaries",op_cap:Opacity::TargetAware, nest_cap:Nesting::Dyck1, op_demand:Opacity::TargetAware, nest_demand:Nesting::Dyck1, status:Ok},
@@ -117,9 +117,10 @@ fn matrix_reproduces_known_class_bugs() {
     open.sort();
     assert_eq!(
         open,
-        vec!["param_names", "params_split", "parse_one_param", "read_name_params_brace"],
-        "the OPEN class-deficiencies the matrix derives (B1 ×2, B2, B5) changed — reconcile with #249"
+        Vec::<&str>::new(),
+        "the OPEN class-deficiency set is now EMPTY (#249 B1/B2/B5 + B9 all resolved to Carried/Ok) — \
+         if a NEW Open appears, reconcile with the tracking issue"
     );
     let carried = M.iter().filter(|r| matches!(r.status, Status::Carried(_))).count();
-    assert_eq!(carried, 2, "the CARRIED opacity deficiencies (#219: param_scan + paren_balance) changed");
+    assert_eq!(carried, 6, "the CARRIED opacity deficiencies (#219: param_scan + paren_balance + parse_one_param/B2 + decl_read/B9 + params_split/param_names/B1) changed");
 }

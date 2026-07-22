@@ -50,14 +50,17 @@ fn async_modifier_at(src: &[u8], i: usize) -> bool {
         && (src[i + 5] == b' ' || src[i + 5] == b'\t')
 }
 
-/// The offset of the first `=` at or after `i`, else the window end — the hand type scan's
-/// byte-blind `=` find (ledger T12, carried: a `=` inside type text truncates it; documented,
-/// revisit in the grammar phase).
-fn eq_or_end(src: &[u8], mut i: usize) -> usize {
-    while i < src.len() && src[i] != b'=' {
-        i += 1;
-    }
-    i
+/// The offset of the first TOP-LEVEL `=` at or after `i` (the type/init separator), else the
+/// window end — **now the dogfooded `TopLevelEq` counter automaton** (`top_level_eq::find`): a `=`
+/// at bracket-depth 0 (Dyck-1 over `()[]{}`) AND angle-depth 0 (digraph-guarded `<>`), outside
+/// `"…"`-strings. This RETIRES the byte-blind `while != b'='` scan (ledger T12 / #249 B9): a `=`
+/// inside a generic type (`impl Iterator<Item = u8>`), a `(...)`/`[...]`/`{...}`, or a `"…"`-string
+/// no longer truncates the type and fabricates a bogus init. The window is already sliced to `to`
+/// (`over(&bytes[..to])`), so `src.len()` IS the window end — the same absent sentinel the hand had.
+/// Opacity is `"`-only (matching ParamScan; dodging the Rust `'a`-lifetime hazard — the residual
+/// char/lifetime gap is the same #219 carry). The `decl_read.frs` call site is unchanged.
+fn eq_or_end(src: &[u8], i: usize) -> usize {
+    super::top_level_eq::find(src, i, src.len())
 }
 
 /// The `@@Sys` / `@@!Sys` initializer probe: from `i`, skip `' '`/`'\t'`; if `@@` opens here

@@ -57,6 +57,8 @@ pub mod stmt_scan;
 pub mod arg_scan;
 /// The declaration-site header param parser (dual-counter angle fork, `"`-only), dogfooded as a Frame @@[scan(u8)] system.
 pub mod param_scan;
+/// The top-level `=` finder (Dyck-1 + digraph-guarded angle counter, `"`-only), dogfooded as a Frame @@[scan(u8)] system.
+pub mod top_level_eq;
 /// HSM parent-chain cycle detector, dogfooded as a plain @@system graph walker.
 pub mod hsm_cycle;
 pub mod reachability;
@@ -177,7 +179,7 @@ fn read_pragma(target: Target, bytes: &[u8], at: usize) -> Result<Item, SegmentE
     match word_text {
         "system" => {
             let (name, private, public_keyword, params, brace) =
-                read_name_params_brace(bytes, word)?;
+                read_name_params_brace(bytes, word, target)?;
             let end = close_brace(bytes, brace, &name, target)?;
             let span = Span::new(at, end);
             Ok(Item::System(SystemItem {
@@ -190,7 +192,8 @@ fn read_pragma(target: Target, bytes: &[u8], at: usize) -> Result<Item, SegmentE
             }))
         }
         "fsm" => {
-            let (name, _private, _public, _params, brace) = read_name_params_brace(bytes, word)?;
+            let (name, _private, _public, _params, brace) =
+                read_name_params_brace(bytes, word, target)?;
             let end = close_brace(bytes, brace, &name, target)?;
             Ok(Item::Efsm(EfsmItem {
                 span: Span::new(at, end),
@@ -245,6 +248,7 @@ fn read_word(bytes: &[u8], mut i: usize) -> usize {
 fn read_name_params_brace(
     bytes: &[u8],
     mut i: usize,
+    target: Target,
 ) -> Result<(String, bool, bool, SystemParams, usize), SegmentError> {
     let read_word = |bytes: &[u8], mut i: usize| -> (usize, usize, usize) {
         while i < bytes.len() && (bytes[i] == b' ' || bytes[i] == b'\t') {
@@ -301,9 +305,20 @@ fn read_name_params_brace(
         params = split_system_params(&inner);
         i = after_close;
     }
-    // Skip an optional `: Base, Base` and anything up to `{`.
+    // Skip an optional `: Base, Base` and anything up to `{` — **OPAQUE-AWARE** (#249 B5). A `{`
+    // inside a header comment or string (`@@system Foo /* {} */ {`) is no longer mistaken for the
+    // body opener: `machine::skip_opaque` (the dogfooded OpaqueScan, the SAME recognizer
+    // `close_brace`/`body_open_at` use) jumps each comment/literal whole, so only a REAL `{` stops
+    // the seek. Unbalanced/absent → runs to end-of-input → UnclosedBody, exactly as before.
     let mut j = i;
-    while j < bytes.len() && bytes[j] != b'{' {
+    while j < bytes.len() {
+        if let Some(after) = machine::skip_opaque(bytes, j, bytes.len(), target) {
+            j = after;
+            continue;
+        }
+        if bytes[j] == b'{' {
+            break;
+        }
         j += 1;
     }
     if j >= bytes.len() {
@@ -337,11 +352,22 @@ fn split_system_params(inner: &str) -> SystemParams {
     out
 }
 
-fn parse_one_param(body: &str) -> Param {
-    // `name : type = default`
-    let (lhs, default) = match body.split_once('=') {
-        Some((l, d)) => (l.trim(), Some(d.trim().to_string())),
-        None => (body.trim(), None),
+/// Split one param body `name : type = default` into `(name, type, default)`.
+///
+/// The default separator is the FIRST TOP-LEVEL `=` — found by the dogfooded `TopLevelEq` counter
+/// automaton (Dyck-1 over `()[]{}` + a digraph-guarded angle counter, `"`-opaque). So a `=` nested
+/// inside a generic type (`<Item = u8>`), a `(...)`/`[...]`/`{...}`, or a `"…"`-string no longer
+/// truncates the type and fabricates a bogus default (#249 B2). The first `:` is then the
+/// name/type separator — provably safe on the correctly-bounded lhs, because a param name is a
+/// bare identifier and so cannot contain a `:` before the annotation. (`pub(crate)` so the
+/// emit-side `params_split`/`param_names` route through the SAME body reader — #249 B1.)
+pub(crate) fn parse_one_param(body: &str) -> Param {
+    let b = body.as_bytes();
+    let eq = top_level_eq::find(b, 0, b.len());
+    let (lhs, default) = if eq < b.len() {
+        (body[..eq].trim(), Some(body[eq + 1..].trim().to_string()))
+    } else {
+        (body.trim(), None)
     };
     let (name, ty) = match lhs.split_once(':') {
         Some((n, t)) => (n.trim().to_string(), Some(t.trim().to_string())),

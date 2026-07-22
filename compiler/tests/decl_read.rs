@@ -11,7 +11,7 @@
 //! window, for all four cleanroom targets, over realistic AND adversarial decl windows AND a
 //! deterministic fuzz corpus (a debug-build panic-freedom witness with every `Span`/slice assert
 //! live). The EXACT `MemberDecl` fields for each ledger row are pinned self-contained by the
-//! directed T* tests below (T9's opaque-aware paren scan, T12's byte-blind `=` carry, etc.).
+//! directed T* tests below (T9's opaque-aware paren scan, T12's top-level `=` split, etc.).
 //!
 //! LEDGER ROSTER (design §6 — one test per reader-side Phase-1 row):
 //!   T7  Empty-name malformed decl -> `t7_empty_name_register_fires_on_each_reaching_class`
@@ -24,8 +24,9 @@
 //!       string default no longer mis-closes/mis-deepens — the real close is found).
 //!   T10 Async-modifier fork       -> `t10_async_modifier_fork` (modifier vs name, all shapes).
 //!   T11 Empty-type-after-`:`      -> `t11_type_annotation_and_empty_type`.
-//!   T12 Byte-blind `=` in type    -> `t12_eq_inside_type_truncates_pinned` (carried,
-//!       documented — the pin makes the carry a decision, not an oversight).
+//!   T12 Top-level `=` in type     -> `t12_eq_inside_type_now_protected` (FIXED #249 B9:
+//!       `eq_or_end` routes through `TopLevelEq`, so a `=` inside `<…>`/`(…)`/`"…"` is not the
+//!       type/init separator; residual char/lifetime opacity is the #219 carry).
 //!   (T13/T14/T15 are walk-level rows — pinned in tests/decl_walk.rs; T14's read-side
 //!   consequence — the empty-named `{` decl — is class 4 of the T7 test here.)
 
@@ -125,7 +126,7 @@ const ADVERSARIAL: &[&str] = &[
     "= 5",
     // the async modifier followed by nothing (modifier + empty name)
     "async  ",
-    // `=` inside the type text (T12, carried)
+    // `=` inside the type text (T12, now protected by TopLevelEq — #249 B9)
     "m: Map<k=v> = 0",
     // empty type after `:` (T11)
     "x:",
@@ -213,7 +214,7 @@ fn corpus_fires_every_register() {
 // One directed, self-contained test per reader-side ledger row (design §6).
 // KNOWN values for hand-verified windows — these survive the oracle's eventual
 // retirement (they assert facts directly, not by comparison). SCAFFOLDING
-// (T9/T12 pin carried Phase-A behavior).
+// (T9 pins the Phase-B opaque-aware paren fix; T12 pins the #249 B9 top-level `=` fix).
 // ===========================================================================
 
 /// T7: the `empty_name` register fires on EACH reaching class, and the output reproduces the
@@ -370,18 +371,22 @@ fn t11_type_annotation_and_empty_type() {
     }
 }
 
-/// T12 (carried, documented): the type scan's `=` find is byte-blind — a `=` INSIDE type text
-/// truncates the type there and everything after it becomes the initializer. Outside Frame's
-/// decl grammar; the pin makes the carry a decision, not an oversight (revisit in the grammar
-/// phase).
+/// T12 (FIXED, #249 B9): the type/init `=` find is no longer byte-blind — `eq_or_end` routes
+/// through the `TopLevelEq` counter automaton, so a `=` INSIDE the type (here inside the angle
+/// pair `<k=v>`) is NOT the separator. The whole generic is the type and the top-level `= 0` is
+/// the init. (Inverted from the pre-fix pin, which asserted the truncation to `Map<k` / `v> = 0`.)
 #[test]
-fn t12_eq_inside_type_truncates_pinned() {
+fn t12_eq_inside_type_now_protected() {
     let src = b"m: Map<k=v> = 0";
     for t in TARGETS {
         let m = member_decl_of(src, &read(src, 0, src.len(), t), src.len(), 0);
         assert_eq!(m.name, "m");
-        assert_eq!(m.type_text.as_deref(), Some("Map<k"), "truncated at the inner `=` for {t:?}");
-        assert_eq!(m.init_text.as_deref(), Some("v> = 0"), "the rest is init for {t:?}");
+        assert_eq!(
+            m.type_text.as_deref(),
+            Some("Map<k=v>"),
+            "#249 (B9) fixed: the angle-interior `=` is not the separator for {t:?}"
+        );
+        assert_eq!(m.init_text.as_deref(), Some("0"), "the top-level `= 0` is the init for {t:?}");
         assert_eq!(m.init_system, None);
     }
 }
