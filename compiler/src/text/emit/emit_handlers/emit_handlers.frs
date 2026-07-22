@@ -1,0 +1,108 @@
+@@[target("rust")]
+
+// The driver's HANDLER-EMISSION walk, dogfooded as a plain `@@system` — the emit-side sequencer
+// that reifies `emit`'s `(section, state, handler)` nested pass (the private per-handler methods).
+// It rides the same READ-ONLY BORROWED DOMAIN as StmtWalk/BaseColumn: the section slice, the
+// source, the symbol table, the system symbol, and the `&dyn Backend` are SHARED BORROWS threaded
+// through one lifetime `'a`; the OWNED domain is the accumulating output `out`, the three walk
+// cursors (`si`/`sti`/`hi`), and their bounds (`nsec`/`nst`/`nh`).
+//
+// THE 3-LEVEL NESTING, EXPRESSED WITHOUT push$/pop$. The pass is a FIXED depth-3 walk — sections,
+// then that section's states, then that state's handlers — so a stack is unnecessary (a stack buys
+// UNBOUNDED depth; this depth is 3 and known). It is expressed instead as three NESTED CYCLE
+// STATES with explicit up/down edges, one owned cursor per level:
+//   $Section  cycles over `sections` (fork: only `Section::Machine` descends); on a machine
+//             section it sets the state bound `nst`, resets `sti`, and descends `-> $State`; at
+//             `si >= nsec` it halts `-> $Done`.
+//   $State    cycles over the current section's `members` (fork: only `MachineMember::State`
+//             descends); on a state it sets the handler bound `nh`, resets `hi`, and descends
+//             `-> $Handler`; at `sti >= nst` it ASCENDS (`si += 1`, `-> $Section`).
+//   $Handler  cycles over the current state's `members` (fork: only `StateMember::Handler`
+//             emits); on a handler it emits one private method; at `hi >= nh` it ASCENDS
+//             (`sti += 1`, `-> $State`).
+// The "mode" is the walk DEPTH (which of the three cycle states is live); the cursors advance it.
+// This is the §3 degenerate pole — a program-counter walk over ALREADY-PARSED tree data, whose
+// forks are structural type-dispatch (`Section::Machine`? `MachineMember::State`? …), not input
+// recognition. It carries no recognition register; nothing is glossed. Its reify payoff is not a
+// hidden mode but DOGFOOD UNIFORMITY (the maximal-rebuild campaign: the cleanroom emits its own
+// driver as an @@system, differential-gated byte-for-byte vs the preserved `emit_handlers_hand`).
+//
+// framec owns the WALK (the three cursors, the bounds, the descents/ascents, the halt). The
+// un-Frame-able work is per-item NATIVE LEAVES: the structural forks/bounds (`is_machine_section`,
+// `member_count`, `is_state_member`, `state_member_count`, `is_handler_member` — Frame cannot match
+// a Rust enum), the two per-handler forks the pass computes (`handler_is_async`, `handler_ret` —
+// the is_async disjunction and the return-type-inheritance `or_else`), and `emit_handler`, which
+// spells ONE private method: `be.open_handler(...)`, then the StmtWalk body walk (`emit_body`,
+// unchanged, called as a leaf — NOT reinlined), then `be.close_handler(...)`. Every materialization
+// spelling stays native and byte-identical; the machine only sequences the walk.
+//
+// Regen: framec-ng -l rust --emit emit_handlers.frs | grep -v '^#!\[allow' > emit_handlers.gen.rs
+
+@@system EmitHandlers(src: &Source, syms: &SymbolTable, sym: &SystemSym, sections: &[Section], be: &dyn Backend, nsec: usize, out: Sink) {
+    interface:
+        step()
+    machine:
+        $Section {
+            step() {
+                if self.si >= self.nsec {
+                    -> $Done
+                }
+                let ism = is_machine_section(self.sections, self.si);
+                if ism == false {
+                    self.si = self.si + 1;
+                    -> $Section
+                }
+                self.nst = member_count(self.sections, self.si);
+                self.sti = 0;
+                -> $State
+            }
+        }
+        $State {
+            step() {
+                if self.sti >= self.nst {
+                    self.si = self.si + 1;
+                    -> $Section
+                }
+                let iss = is_state_member(self.sections, self.si, self.sti);
+                if iss == false {
+                    self.sti = self.sti + 1;
+                    -> $State
+                }
+                self.nh = state_member_count(self.sections, self.si, self.sti);
+                self.hi = 0;
+                -> $Handler
+            }
+        }
+        $Handler {
+            step() {
+                if self.hi >= self.nh {
+                    self.sti = self.sti + 1;
+                    -> $State
+                }
+                let ish = is_handler_member(self.sections, self.si, self.sti, self.hi);
+                if ish == false {
+                    self.hi = self.hi + 1;
+                    -> $Handler
+                }
+                let is_async = handler_is_async(self.sym, self.sections, self.si, self.sti, self.hi);
+                let ret = handler_ret(self.sym, self.sections, self.si, self.sti, self.hi);
+                emit_handler(self.src, self.syms, self.sym, self.be, self.sections, self.si, self.sti, self.hi, is_async, ret, &mut self.out);
+                self.hi = self.hi + 1;
+                -> $Handler
+            }
+        }
+        $Done { }
+    domain:
+        src: &Source = src
+        syms: &SymbolTable = syms
+        sym: &SystemSym = sym
+        sections: &[Section] = sections
+        be: &dyn Backend = be
+        nsec: usize = nsec
+        out: Sink = out
+        nst: usize = 0
+        nh: usize = 0
+        si: usize = 0
+        sti: usize = 0
+        hi: usize = 0
+}

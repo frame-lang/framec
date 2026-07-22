@@ -399,46 +399,12 @@ pub fn emit(src: &Source, ast: &FileAst, syms: &SymbolTable, be: &dyn Backend) -
             );
         }
 
-        // One private method per (state, handler).
-        for sec in &sys.sections {
-            let Section::Machine(mach) = sec else { continue };
-            for mm in &mach.members {
-                let MachineMember::State(st) = mm else { continue };
-                for member in &st.members {
-                    let StateMember::Handler(h) = member else {
-                        continue;
-                    };
-                    let is_async = sym.is_async
-                        || sym
-                            .interface
-                            .iter()
-                            .any(|m| m.name == h.event && m.is_async);
-                    // A handler inherits the interface method's return TYPE when it does not
-                    // declare one itself. The router returns the interface type, so the handler
-                    // method must produce it — otherwise a value-returning event typed only on
-                    // the interface (`getmag(): f64` + `getmag() { @@:(...) }`) mismatches: a
-                    // `-> ()` handler returning a value (E0308 on Rust, a void method on Java/C).
-                    let ret = h.return_text.as_deref().or_else(|| {
-                        sym.interface
-                            .iter()
-                            .find(|m| m.name == h.event)
-                            .and_then(|m| m.return_text.as_deref())
-                    });
-                    be.open_handler(
-                        sym,
-                        &st.name,
-                        &h.event,
-                        &h.params_text,
-                        ret,
-                        is_async,
-                        &mut out,
-                    );
-                    let end =
-                        emit_body(src, syms, sym, &st.name, &h.event, is_async, &h.body, be, &mut out);
-                    be.close_handler(ret, is_async, end.terminated(), &mut out);
-                }
-            }
-        }
+        // One private method per (state, handler) — the driver's `(section, state, handler)`
+        // nested pass, reified as the `EmitHandlers` @@system (`emit_handlers.frs`): three nested
+        // cycle states carrying the three walk cursors, one private method emitted per handler. The
+        // byte-for-byte oracle it replaced is preserved as [`emit_handlers_hand`], gated in
+        // `tests/emit_handlers.rs` (GATE-A, via [`handlers_parity_report`]).
+        super::emit_handlers::walk(src, syms, sym, &sys.sections, be, &mut out);
 
         // `actions:` / `operations:` — methods with NATIVE bodies. The signature is
         // Frame's; the body is the user's, decomposed like any other native code.
@@ -477,7 +443,7 @@ pub fn emit(src: &Source, ast: &FileAst, syms: &SymbolTable, be: &dyn Backend) -
 /// wrong elsewhere). The old compiler recovered this fact with a post-emission text pass
 /// (`strip_java_unreachable`); here the tree knows the order, so the emitter simply stops.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BodyEnd {
+pub(super) enum BodyEnd {
     /// A base-nesting terminal fired: the walk halted; any trailing statements were dead and
     /// never spelled. The handler needs no fallback return.
     Terminated,
@@ -489,7 +455,7 @@ enum BodyEnd {
 impl BodyEnd {
     /// Did the body terminate at base nesting? (The single bit `close_handler` consults to
     /// decide whether a fallback return is needed.)
-    fn terminated(self) -> bool {
+    pub(super) fn terminated(self) -> bool {
         matches!(self, BodyEnd::Terminated)
     }
 }
@@ -504,7 +470,7 @@ impl BodyEnd {
 /// the `terminated` latch as a [`BodyEnd`]. The byte-for-byte ORACLE it replaced is preserved as
 /// [`emit_body_hand`], gated at every statement in `tests/stmt_walk.rs`.
 #[allow(clippy::too_many_arguments)]
-fn emit_body(
+pub(super) fn emit_body(
     src: &Source,
     syms: &SymbolTable,
     sym: &SystemSym,
@@ -698,6 +664,129 @@ fn emit_body_hand(
     } else {
         BodyEnd::Fell
     }
+}
+
+/// The preserved byte-for-byte **oracle** for the driver's HANDLER-EMISSION pass — the original
+/// `(section, state, handler)` nested loops [`emit`] ran before they were reified as the
+/// [`super::emit_handlers`] `@@system` (`EmitHandlers`). Kept as the differential check that machine
+/// is proven against (GATE-A, `tests/emit_handlers.rs`, via [`handlers_parity_report`]). It calls
+/// the SAME production [`emit_body`] the machine's `emit_handler` leaf calls — the two paths differ
+/// only in how the three-level walk is SEQUENCED (hand loops vs cycle states), which is exactly what
+/// the gate isolates. Doc-hidden and **not on the production path**. Do not edit it to add behavior:
+/// it exists only to reproduce the pre-conversion sequencing exactly, so any divergence is the
+/// machine's bug, not the oracle's.
+#[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
+fn emit_handlers_hand(
+    src: &Source,
+    syms: &SymbolTable,
+    sym: &SystemSym,
+    sections: &[Section],
+    be: &dyn Backend,
+    out: &mut Sink,
+) {
+    for sec in sections {
+        let Section::Machine(mach) = sec else { continue };
+        for mm in &mach.members {
+            let MachineMember::State(st) = mm else { continue };
+            for member in &st.members {
+                let StateMember::Handler(h) = member else {
+                    continue;
+                };
+                let is_async = sym.is_async
+                    || sym
+                        .interface
+                        .iter()
+                        .any(|m| m.name == h.event && m.is_async);
+                // A handler inherits the interface method's return TYPE when it does not
+                // declare one itself. The router returns the interface type, so the handler
+                // method must produce it — otherwise a value-returning event typed only on
+                // the interface (`getmag(): f64` + `getmag() { @@:(...) }`) mismatches: a
+                // `-> ()` handler returning a value (E0308 on Rust, a void method on Java/C).
+                let ret = h.return_text.as_deref().or_else(|| {
+                    sym.interface
+                        .iter()
+                        .find(|m| m.name == h.event)
+                        .and_then(|m| m.return_text.as_deref())
+                });
+                be.open_handler(sym, &st.name, &h.event, &h.params_text, ret, is_async, out);
+                let end =
+                    emit_body(src, syms, sym, &st.name, &h.event, is_async, &h.body, be, out);
+                be.close_handler(ret, is_async, end.terminated(), out);
+            }
+        }
+    }
+}
+
+/// TEST-ONLY (GATE-A) — one system's dual handler-emission (machine path vs hand oracle), for
+/// `tests/emit_handlers.rs`. Doc-hidden.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct HandlersParity {
+    /// The system name, for a failing assertion message.
+    pub label: String,
+    /// Text the `EmitHandlers` machine path ([`super::emit_handlers::walk`]) emits for ALL of this
+    /// system's private `(state, handler)` methods.
+    pub machine_text: String,
+    /// Text the preserved hand oracle ([`emit_handlers_hand`]) emits for the same.
+    pub hand_text: String,
+    /// How many `(state, handler)` methods this system emits — so the test can prove the corpus
+    /// actually exercised multi-handler / multi-state / multi-section shapes (a system that emits
+    /// zero handlers is a vacuous pass).
+    pub handler_count: usize,
+}
+
+/// TEST-ONLY (GATE-A). Emit **every** system's private `(state, handler)` methods through BOTH the
+/// `EmitHandlers` machine ([`super::emit_handlers::walk`]) and the preserved hand oracle
+/// ([`emit_handlers_hand`]) — over the SAME real parsed systems and the SAME backend — and return,
+/// per system, the two emitted Strings. `tests/emit_handlers.rs` asserts, for every entry,
+/// `machine_text == hand_text` byte-for-byte. The library owns the `.finish()` and the real emit
+/// traversal.
+#[doc(hidden)]
+pub fn handlers_parity_report(
+    src: &Source,
+    ast: &FileAst,
+    syms: &SymbolTable,
+    be: &dyn Backend,
+) -> Vec<HandlersParity> {
+    let mut report = Vec::new();
+    for item in &ast.items {
+        let Item::System(sys) = item else { continue };
+        let Some(sym) = syms.systems.iter().find(|s| s.name == sys.name) else {
+            continue;
+        };
+        let mut mo = super::Sink::default();
+        super::emit_handlers::walk(src, syms, sym, &sys.sections, be, &mut mo);
+        let mut ho = super::Sink::default();
+        emit_handlers_hand(src, syms, sym, &sys.sections, be, &mut ho);
+        report.push(HandlersParity {
+            label: sym.name.clone(),
+            machine_text: mo.finish(),
+            hand_text: ho.finish(),
+            handler_count: count_handlers(&sys.sections),
+        });
+    }
+    report
+}
+
+/// TEST-ONLY (GATE-A) — the number of `(state, handler)` methods `sections` emits, the coverage
+/// tally [`handlers_parity_report`] reports so a vacuous (zero-handler) system cannot pass as
+/// covered. Same three-level structural walk the machine and the oracle share.
+#[doc(hidden)]
+fn count_handlers(sections: &[Section]) -> usize {
+    let mut n = 0;
+    for sec in sections {
+        let Section::Machine(mach) = sec else { continue };
+        for mm in &mach.members {
+            let MachineMember::State(st) = mm else { continue };
+            for member in &st.members {
+                if let StateMember::Handler(_) = member {
+                    n += 1;
+                }
+            }
+        }
+    }
+    n
 }
 
 /// The preserved byte-for-byte **oracle** for the body BASE-column min-fold — the original inline

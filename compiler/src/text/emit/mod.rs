@@ -24,6 +24,7 @@ pub mod atom;
 mod base_column;
 pub mod c;
 pub mod driver;
+mod emit_handlers;
 pub mod java;
 pub mod persist;
 pub mod python;
