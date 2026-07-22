@@ -260,6 +260,24 @@ Reflective dynamic targets reach it via
 [reflection-driven typed restore](#reflection-driven-typed-restore); statically
 typed targets via their schema deserializer. See [RFC-0053](rfcs/rfc-0053.md).
 
+### fork-and-adjudicate
+
+A three-organ factoring of a recognizer that must split native code the host
+language's types would disambiguate but framec cannot — e.g. whether a `<` opens
+a generic parameter list or means *less-than*. A single **recognition machine**
+walks the bytes once carrying *every* hypothesis at the same time, stamping which
+readings stay viable at each boundary; a **materialization fold** assembles each
+candidate reading from those stamps; an **adjudication point-law** selects the
+surviving reading by knowledge the bytes never carried (a declared arity, a symbol
+table, a well-formedness rule), and refuses on a tie or a miss. Only the first
+organ is a state machine — the fold is a value, the adjudicator a
+[predicate](#latent-machine). The factoring **detects** the ambiguity *by
+construction*: when the readings diverge and both stay viable, that divergence is
+itself the detected ambiguity, with no second pass and no guess. Named in
+[*Shadows on the Wall* §6.4](articles/Shadows_on_the_Wall.md); realized by the
+argument- and parameter-list scanners of the rebuilt framec ([RFC-0057](rfcs/rfc-0057.md))
+and diagnosed by [RFC-0060](rfcs/rfc-0060.md).
+
 ### forward
 
 *(Also: event forwarding.)* A [handler](#event-handler) that re-dispatches the
@@ -538,6 +556,21 @@ method that returns a blob containing the [system](#system)'s [domain](#domain)
 fields, [compartment](#compartment), and [state stack](#state-stack) (and any
 nested `@@system` domain fields). Named with `@@[save(<name>)]`. See
 [language reference § Persistence](frame_language.md#persistence).
+
+### scan-time diagnostic
+
+A diagnostic whose *trigger* is discovered while framec scans the **boundaries**
+of a [native region](#oceans-model) — an ambiguous `<`/`>` split, an unterminated
+string or comment, a stray delimiter — rather than while walking the tree.
+Because framec *delimits* native code without parsing it, only boundary-affecting
+conditions produce one: lexical forms (strings, comments, chars, lifetimes,
+heredocs, interpolation) and the generics-vs-comparison `<>` split of a
+parameter/argument list. The boundary scanners are pure and carry no
+span-bearing diagnostic channel of their own, so a scan-time diagnostic reaches
+the user by **riding the tree**: the scanner records the condition as data on the
+node it produces (as an argument-list fork rides an instantiation node), and the
+validation pass mints the user-facing diagnostic with a span. See
+[RFC-0060](rfcs/rfc-0060.md).
 
 ### snapshot
 

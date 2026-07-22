@@ -77,6 +77,7 @@ numbers are not re-used.
 | [0057](rfc-0057.md) | The Compiler — architecture of the rebuilt framec | Draft | implements [0056](rfc-0056.md), [0056.1](rfc-0056-1.md) |
 | [0058](rfc-0058.md) | The Agent Architecture — domain-focused agent family, finder→designer pipeline | Draft (living) | number retired 2026-07-17 with an unpublished draft in the same subject area; revived 2026-07-18; supersedes in part [0059](rfc-0059.md) § 9 |
 | [0059](rfc-0059.md) | Discovery: the latent machine — findings, evidence, and process adoption | Draft (Discovery) | canonical companion: [*Shadows on the Wall*](../articles/Shadows_on_the_Wall.md); first of the discovery genre |
+| [0060](rfc-0060.md) | Scan-time diagnostics for ambiguous & malformed native regions — `W417` ambiguous-param-angle | Draft | builds on [0056](rfc-0056.md), [0056.1](rfc-0056-1.md), [0057](rfc-0057.md), [0039](rfc-0039.md); detection vs. resolution at the native boundary |
 
 ## Other documents in this directory
 
