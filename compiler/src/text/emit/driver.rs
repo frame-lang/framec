@@ -515,20 +515,10 @@ fn emit_body(
     be: &dyn Backend,
     out: &mut Sink,
 ) -> BodyEnd {
-    let base = body
-        .stmts
-        .iter()
-        .filter_map(|s| match s {
-            Stmt::Native(n) => Some(n.logical_indent),
-            Stmt::Transition(t) | Stmt::StackPush(t) => Some(t.col),
-            Stmt::StackPop(x) | Stmt::StackPopBare(x) | Stmt::Forward(x) => Some(x.col),
-            Stmt::Assign(a) => Some(a.col),
-            Stmt::ReturnCall(r) => Some(r.col),
-            Stmt::SelfCall(c) => Some(c.col),
-            Stmt::Trivia(_) => None,
-        })
-        .min()
-        .unwrap_or(0);
+    // The body's BASE column — the shallowest statement, everything else measured relative to it —
+    // reified as the `BaseColumn` min-fold `@@system` (`base_column.frs`). The byte-for-byte oracle
+    // it replaced is preserved as [`base_column_hand`], gated per body in `tests/base_column.rs`.
+    let base = super::base_column::compute(&body.stmts);
     let seed = std::mem::take(out);
     let (grown, terminated) = super::stmt_walk::walk(
         src, syms, sym, &body.stmts, state, event, is_async, base, be, seed,
@@ -579,21 +569,10 @@ fn emit_body_hand(
 
     // The body's BASE column: the shallowest statement in it. Everything else is
     // measured relative to that, so the user's nesting is reproduced without framec ever
-    // having to know what an `if` is.
-    let base = body
-        .stmts
-        .iter()
-        .filter_map(|s| match s {
-            Stmt::Native(n) => Some(n.logical_indent),
-            Stmt::Transition(t) | Stmt::StackPush(t) => Some(t.col),
-            Stmt::StackPop(x) | Stmt::StackPopBare(x) | Stmt::Forward(x) => Some(x.col),
-            Stmt::Assign(a) => Some(a.col),
-            Stmt::ReturnCall(r) => Some(r.col),
-            Stmt::SelfCall(c) => Some(c.col),
-            Stmt::Trivia(_) => None,
-        })
-        .min()
-        .unwrap_or(0);
+    // having to know what an `if` is. The oracle reads it from the preserved [`base_column_hand`]
+    // fold (the same one the `BaseColumn` machine is gated against), so this hand walk stays a
+    // single-source byte-for-byte reference for both conversions at once.
+    let base = base_column_hand(&body.stmts);
     let rel = |c: u32| c.saturating_sub(base);
 
     for stmt in &body.stmts {
@@ -719,6 +698,93 @@ fn emit_body_hand(
     } else {
         BodyEnd::Fell
     }
+}
+
+/// The preserved byte-for-byte **oracle** for the body BASE-column min-fold — the original inline
+/// `.filter_map(...).min().unwrap_or(0)` `emit_body` computed before it was reified as the
+/// [`super::base_column`] `@@system`. Kept as the differential check that machine is proven against
+/// (GATE-A, `tests/base_column.rs`, via [`base_parity_report`]), and read by the preserved
+/// [`emit_body_hand`] so a single fold anchors both conversions. Doc-hidden and **not on the
+/// production path**. Do not edit it to add behavior: it exists only to reproduce the
+/// pre-conversion value exactly, so any divergence is the machine's bug, not the oracle's.
+#[doc(hidden)]
+pub fn base_column_hand(stmts: &[Stmt]) -> u32 {
+    stmts
+        .iter()
+        .filter_map(|s| match s {
+            Stmt::Native(n) => Some(n.logical_indent),
+            Stmt::Transition(t) | Stmt::StackPush(t) => Some(t.col),
+            Stmt::StackPop(x) | Stmt::StackPopBare(x) | Stmt::Forward(x) => Some(x.col),
+            Stmt::Assign(a) => Some(a.col),
+            Stmt::ReturnCall(r) => Some(r.col),
+            Stmt::SelfCall(c) => Some(c.col),
+            Stmt::Trivia(_) => None,
+        })
+        .min()
+        .unwrap_or(0)
+}
+
+/// TEST-ONLY (GATE-A) — one body's dual BASE-column (machine min-fold vs hand oracle), for
+/// `tests/base_column.rs`. Doc-hidden.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct BaseParity {
+    /// A `system/state/event` (or `system/action`) label for a failing assertion message.
+    pub label: String,
+    /// The base column the `BaseColumn` machine path ([`super::base_column::compute`]) reports.
+    pub machine_base: u32,
+    /// The base column the preserved hand oracle ([`base_column_hand`]) reports.
+    pub hand_base: u32,
+    /// The kind discriminants (0..9) of the statements in this body — so the test can prove the
+    /// corpus exercised every column-bearing (and the skipped Trivia) variant.
+    pub kinds: Vec<i32>,
+}
+
+/// TEST-ONLY (GATE-A). Compute the BASE column of **every** handler and action body in `ast`
+/// through BOTH the `BaseColumn` machine ([`super::base_column::compute`]) and the preserved hand
+/// oracle ([`base_column_hand`]) — over the SAME real parsed bodies. `tests/base_column.rs`
+/// asserts, for every entry, `machine_base == hand_base`. The BASE column is target-free (it comes
+/// from the tree's source columns, not any backend), so this takes no `Backend`.
+#[doc(hidden)]
+pub fn base_parity_report(ast: &FileAst, syms: &SymbolTable) -> Vec<BaseParity> {
+    let mut report = Vec::new();
+    for item in &ast.items {
+        let Item::System(sys) = item else { continue };
+        let Some(sym) = syms.systems.iter().find(|s| s.name == sys.name) else {
+            continue;
+        };
+        for sec in &sys.sections {
+            match sec {
+                Section::Machine(mach) => {
+                    for mm in &mach.members {
+                        let MachineMember::State(st) = mm else { continue };
+                        for member in &st.members {
+                            let StateMember::Handler(h) = member else { continue };
+                            report.push(BaseParity {
+                                label: format!("{}/{}/{}", sym.name, st.name, h.event),
+                                machine_base: super::base_column::compute(&h.body.stmts),
+                                hand_base: base_column_hand(&h.body.stmts),
+                                kinds: h.body.stmts.iter().map(super::stmt_walk::kind_of).collect(),
+                            });
+                        }
+                    }
+                }
+                Section::Actions(d) | Section::Operations(d) => {
+                    for m in &d.members {
+                        let Decl::WithBody(b) = m else { continue };
+                        report.push(BaseParity {
+                            label: format!("{}/action:{}", sym.name, b.name),
+                            machine_base: super::base_column::compute(&b.body.stmts),
+                            hand_base: base_column_hand(&b.body.stmts),
+                            kinds: b.body.stmts.iter().map(super::stmt_walk::kind_of).collect(),
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    report
 }
 
 /// TEST-ONLY (GATE-A) — one body's dual emission (machine path vs hand oracle), for

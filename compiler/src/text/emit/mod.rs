@@ -21,6 +21,7 @@
 //!   reviewer at the end of a long day.
 
 pub mod atom;
+mod base_column;
 pub mod c;
 pub mod driver;
 pub mod java;

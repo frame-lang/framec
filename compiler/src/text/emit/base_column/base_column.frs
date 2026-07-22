@@ -1,0 +1,55 @@
+@@[target("rust")]
+
+// The handler/action body BASE-COLUMN min-fold, dogfooded as a plain `@@system` — the emit-side
+// twin of StmtWalk (same READ-ONLY BORROWED DOMAIN: the statement slice is a shared borrow
+// threaded through one lifetime `'a`; the cursor, the running minimum, and the seen bit are the
+// OWNED domain). It reifies the `base` computation `emit_body` fed to StmtWalk: the SHALLOWEST
+// logical column across the body's statements — the reindent baseline everything else is measured
+// against, so the user's nesting is reproduced without framec knowing what an `if` is.
+//
+// framec owns the WALK (the cursor `i`, the `min`/`seen` registers, the halt at `len`); the 8-way
+// per-Stmt column extraction is a per-item function surfaced as the leaf `col_at`, which returns
+// the statement's column or -1 for a Trivia (or an out-of-bounds index) — exactly the arms of the
+// original `.filter_map(...)`. `$Scan` cycles: at end-of-slice (`i >= len`) it halts to `$Done`; a
+// -1 column is skipped (the `filter_map` None); the first real column seeds `min`+`seen`; a later
+// column shrinks `min` when smaller. The wrapper reads `min` (or 0 when nothing was recorded — the
+// original `.unwrap_or(0)`).
+//
+// Regen: framec-ng -l rust --emit base_column.frs | grep -v '^#!\[allow' > base_column.gen.rs
+
+@@system BaseColumn(stmts: &[Stmt], len: usize) {
+    interface:
+        step()
+    machine:
+        $Scan {
+            step() {
+                if self.i >= self.len {
+                    -> $Done
+                }
+                let c = col_at(self.stmts, self.i);
+                if c < 0 {
+                    self.i = self.i + 1;
+                    -> $Scan
+                }
+                let cu = c as u32;
+                if self.seen == false {
+                    self.min = cu;
+                    self.seen = true;
+                    self.i = self.i + 1;
+                    -> $Scan
+                }
+                if cu < self.min {
+                    self.min = cu;
+                }
+                self.i = self.i + 1;
+                -> $Scan
+            }
+        }
+        $Done { }
+    domain:
+        stmts: &[Stmt] = stmts
+        len: usize = len
+        min: u32 = 0
+        seen: bool = false
+        i: usize = 0
+}
