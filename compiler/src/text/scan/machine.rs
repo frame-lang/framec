@@ -112,6 +112,16 @@ fn state(target: Target, bytes: &[u8], at: usize, limit: usize) -> StateNode {
         if bytes[start] == b'$' && bytes.get(start + 1) == Some(&b'.') {
             // `$.name: T = init` — a state variable (Frame's own declaration), read through
             // the dogfooded `DeclRead` system (the SAME reader `decl_section` uses).
+            //
+            // #249 B3 TWIN (deferred): a state-var with a multi-line bracketed initializer
+            // (`$.cfg = compute(\n …\n)`) truncates here at end-of-line, the same class as the
+            // decl-section B3 fixed above via `line_extent`. It is NOT a one-line swap here: this
+            // is the state-member NODE-builder, and the member `starts` it iterates come from the
+            // dogfooded `state_walk` system whose `member_end` leaf is ALSO eol-based (state_walk.rs
+            // contract: "a `$.` state var, extent to end-of-line"). Extending only this builder
+            // would drift it from the walk that finds the starts. The correct fix is a COORDINATED
+            // change to `state_walk`'s `member_end` (a `.frs` regen) + this builder, gated on the
+            // state_walk adversarial sweeps — a separate, currently-unpinned follow-up.
             let e = to_end_of_line(bytes, start, close);
             let shape = super::decl_read::read(bytes, start + 2, e, target);
             members.push(StateMember::StateVar(super::decl_read::member_decl_of(
@@ -651,6 +661,40 @@ fn body_open_at(bytes: &[u8], i: usize, eol: usize, target: Target) -> Option<us
     None
 }
 
+/// The end of a LINE decl: the first newline that lies OUTSIDE every initializer bracket group
+/// (legacy #185's *bracketed* continuation). A single-line decl is unaffected — its brackets
+/// balance on the line, so the walk stops at the same newline `to_end_of_line` would. A decl whose
+/// initializer spans lines inside a balanced `(...)`/`[...]` (a multi-line `compute(\n …\n)` call or
+/// array literal) is kept WHOLE instead of shattering into bogus members from its continuation
+/// lines (#249 B3). Reuses the proven `skip_opaque` (OpaqueScan — a `\n` inside a string/comment is
+/// content, not a boundary) and `delim_balance` (which consumes a balanced multi-line group whole)
+/// — no new hand counter (D3). An UNCLOSED bracket degrades to first-line-eol (`unwrap_or(k + 1)`,
+/// matching `body_open_at`), so malformed input never swallows the rest of the section.
+///
+/// **Only `(` and `[` are balanced — deliberately NOT `{`.** A `{` is ambiguous in line-decl mode:
+/// it can open an initializer literal (`= Foo { … }`, a multi-line dict) OR a native body — and in
+/// `with_bodies` sections a body `{` is meant to fork a Body decl (`body_open_at`), not extend a
+/// Line. Balancing `{` here would collapse the line/body distinction (it would swallow an
+/// actions-style body fed in line mode). B3's pinned construct is paren-bracketed; the multi-line
+/// `{`-initializer case (correct only under a `with_bodies`-aware rule) is a separate, unpinned
+/// follow-up. Legacy #185's trailing/leading *operator* continuation (`+`, `.`) is also NOT ported
+/// — it is the exact change that regressed GDScript and every HSM-with-transition fixture.
+fn line_extent(bytes: &[u8], i: usize, limit: usize, target: Target) -> usize {
+    let mut k = i;
+    while k < limit && bytes[k] != b'\n' {
+        if let Some(after) = skip_opaque(bytes, k, limit, target) {
+            k = after;
+            continue;
+        }
+        k = match bytes[k] {
+            b'(' => super::delim_balance::balanced(bytes, k, limit, b'(', b')', target).unwrap_or(k + 1),
+            b'[' => super::delim_balance::balanced(bytes, k, limit, b'[', b']', target).unwrap_or(k + 1),
+            _ => k + 1,
+        };
+    }
+    k
+}
+
 pub(crate) fn decl_extent(
     bytes: &[u8],
     i: usize,
@@ -658,6 +702,8 @@ pub(crate) fn decl_extent(
     with_bodies: bool,
     target: Target,
 ) -> DeclExtent {
+    // First-line eol — the body-fork check needs it: a body `{` always opens on line 1, so a
+    // multi-line initializer's inner `{` (a later line) is never mistaken for a body opener.
     let eol = to_end_of_line(bytes, i, limit);
     if with_bodies {
         if let Some(open) = body_open_at(bytes, i, eol, target) {
@@ -675,7 +721,11 @@ pub(crate) fn decl_extent(
             };
         }
     }
-    DeclExtent::Line { eol }
+    // A Line decl's extent, in contrast, runs to the first newline OUTSIDE any balanced
+    // initializer group (#249 B3) — not the naive first newline.
+    DeclExtent::Line {
+        eol: line_extent(bytes, i, limit, target),
+    }
 }
 
 /// `interface:` / `domain:` — declarations, one per line. **Now a native driver over the

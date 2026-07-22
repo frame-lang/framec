@@ -34,7 +34,6 @@ use frame_compiler::text::scan::parts::native_parts;
 use frame_compiler::text::scan::{
     arg_scan, body_walk, decl_walk, delim_balance, item_end_at, opaque_scan, param_scan,
     paren_balance, ref_scan, section_scan, segment, segmenter, state_head_scan, string_scan,
-    SegmentError,
 };
 use frame_compiler::tree::body::{LiteralPart, NativePart, ParamGroup, RefKind};
 use frame_compiler::tree::{Decl, Item, MachineMember, Section, SystemParams};
@@ -338,25 +337,40 @@ fn fixed_b9_decl_read_eq_in_angle_type() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn open_b4_empty_group_phantom_param_current() {
+fn fixed_b4_empty_group_no_phantom_param() {
+    // FIXED #249 (B4): an empty `$()` group records ZERO params — the `$AfterGroup` record sites now
+    // guard on `has_val`, which an empty group never sets (symmetric with the dropped empty bare
+    // segment). (Inverted from the pre-fix pin, which asserted one phantom empty-named State param.)
     assert_eq!(
         param_scan::parse_decl(b"$()"),
-        vec![(ParamGroup::State, "".to_string())],
-        "an empty `$()` group records one phantom empty-named State param"
+        Vec::<(ParamGroup, String)>::new(),
+        "B4: an empty `$()` group records zero params, not a phantom"
     );
-    // End-to-end: SystemParams.state carries the phantom.
+    // End-to-end: SystemParams carries no phantom state arg.
     let p = sysparams("$()");
-    assert_eq!(p.state.len(), 1);
-    assert_eq!(p.state[0].name, "");
+    assert!(p.state.is_empty(), "B4: `$()` seeds no state args");
     assert!(p.enter.is_empty());
     assert!(p.domain.is_empty());
+    // The empty ENTER group `$>()` is the same path — also zero.
+    assert_eq!(
+        param_scan::parse_decl(b"$>()"),
+        Vec::<(ParamGroup, String)>::new(),
+        "B4: an empty `$>()` enter group records zero params too"
+    );
+    // A NON-empty group is unaffected — it still records.
+    assert_eq!(
+        param_scan::parse_decl(b"$(g: int)"),
+        vec![(ParamGroup::State, "g: int".to_string())],
+        "B4: a non-empty group still records its content"
+    );
+    // A dropped empty group followed by a real domain param: `$(), k: int` -> just `k`.
+    let q = sysparams("$(), k: int");
+    assert!(q.state.is_empty(), "B4: the empty group drops");
+    assert_eq!(q.domain.len(), 1);
+    assert_eq!(q.domain[0].name, "k");
 }
 
 #[test]
-#[ignore = "KNOWN BUG #249 (B4): an empty `$()` (or `$>()`) group records one phantom \
-            empty-named param instead of zero (the group close-path records unconditionally, \
-            unlike the dropped empty bare segment). This asserts the IDEAL zero params — \
-            un-ignore when #249 (B4) is fixed."]
 fn open_b4_empty_group_phantom_param_ideal() {
     assert_eq!(
         param_scan::parse_decl(b"$()"),
@@ -596,24 +610,35 @@ fn fixed_fstring_hole_nested_char_brace() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn open_b8_c_line_comment_backslash_splice_current() {
-    // `// comment\<newline>@@system Foo {` — the `\` should splice, but the comment ends at the
-    // first `\n`, so the `@@system` is (wrongly) parsed as a real System.
+fn fixed_b8_c_line_comment_backslash_splice() {
+    // FIXED #249 (B8): the `//` comment's trailing `\` splices the `@@system Foo {` line into the
+    // comment (C phase-2 line splicing), so NO spurious System is produced. `$LineBody` now crosses
+    // a backslash-preceded `\n` for C/Cpp via `line_splice_at`. (Inverted from the pre-fix pin,
+    // which asserted one spurious System.)
     let kinds = item_kinds("// comment\\\n@@system Foo {\n}\nint x;\n", Target::C);
     assert_eq!(
-        kinds,
-        vec![("Native", 0, 12), ("System", 12, 28), ("Native", 28, 36)],
-        "B8: the `//`+`\\` splice is ignored, so the `@@system Foo` line becomes a spurious System"
+        count_systems(&kinds),
+        0,
+        "B8: the backslash splices the `@@system` line into the `//` comment — no System"
     );
-    assert_eq!(count_systems(&kinds), 1, "one spurious System from the un-spliced comment");
+    assert!(
+        !kinds.iter().any(|(k, ..)| *k == "System"),
+        "B8: no item is classified as a System"
+    );
+    // Cpp splices identically.
+    let cpp = item_kinds("// comment\\\n@@system Foo {\n}\nint x;\n", Target::Cpp);
+    assert_eq!(count_systems(&cpp), 0, "B8: Cpp `//`+`\\` splices too");
+    // A NON-C target does NOT splice `//` (Rust `//` has no line continuation): the `@@system` on
+    // the next line IS a real System — the per-target fact `line_splice_at` gates correctly.
+    let rust = item_kinds("// comment\\\n@@system Foo {\n}\nlet x = 0;\n", Target::Rust);
+    assert_eq!(
+        count_systems(&rust),
+        1,
+        "B8: Rust does not splice `//`, so the `@@system` is a real System (per-target gate)"
+    );
 }
 
 #[test]
-#[ignore = "KNOWN BUG #249 (B8): a C/C++ `//` line comment ending in `\\` splices with the next \
-            physical line, but opaque_scan's $LineBody stops at the first newline with no \
-            backslash-newline splice, so a following `@@system` is parsed as a real item. This \
-            asserts the IDEAL (no System — the line is spliced into the comment) — un-ignore \
-            when #249 (B8) is fixed."]
 fn open_b8_c_line_comment_backslash_splice_ideal() {
     let kinds = item_kinds("// comment\\\n@@system Foo {\n}\nint x;\n", Target::C);
     assert_eq!(
@@ -764,27 +789,24 @@ fn open_b5_header_skip_to_brace_opaque_blind_ideal() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn open_b6_python_unmatched_brace_false_reject_current() {
-    // The 3-byte string literal `"{"` is reported Unterminated (the hole overruns its quote).
+fn fixed_b6_python_unmatched_brace_now_parses() {
+    // FIXED #249 (B6): the 3-byte string literal `"{"` is a valid Literal ending at 4 — the hole
+    // balancer's FAIL policy (`balanced_strict`) declines the hole once the walk hits the string's
+    // own (now-unterminated) closer, so the `{` stays literal content and the string closes.
     assert_eq!(
         opaque_scan::opaque_at(b"{\"{\": 1}", 1, Target::Python3),
-        OpaqueAt::Unterminated,
-        "B6: a string with more opens than closes mis-scans past its own closing quote"
+        OpaqueAt::Literal(4),
+        "B6: a string with an unmatched `{{` closes at its own quote, not past it"
     );
-    // End-to-end: a valid Python @@system with `x = \"{\"` is falsely rejected.
+    // End-to-end: a valid Python @@system with `x = \"{\"` now parses (no false UnclosedBody).
     let src = Source::new("p.frm", "@@system Q {\n    x = \"{\"\n}\n".as_bytes().to_vec()).unwrap();
-    match segment(&src, Target::Python3) {
-        Err(SegmentError::UnclosedBody { name, .. }) => assert_eq!(name, "Q"),
-        other => panic!("B6: expected a false UnclosedBody for Q, got {other:?}"),
-    }
+    assert!(
+        segment(&src, Target::Python3).is_ok(),
+        "B6: the system Q must parse (its quoted-brace string is valid)"
+    );
 }
 
 #[test]
-#[ignore = "KNOWN BUG #249 (B6): a Python string with an unmatched `{` mis-scans past its own \
-            closing quote (the opaque-aware hole balancer treats the string's own closing quote \
-            as a new nested-string opener), and the FAIL-policy close_brace turns the overrun \
-            into a false UnclosedBody. This asserts the IDEAL (the `\"{\"` literal is valid; the \
-            system parses) — un-ignore when #249 (B6) is fixed."]
 fn open_b6_python_unmatched_brace_false_reject_ideal() {
     assert_eq!(
         opaque_scan::opaque_at(b"{\"{\": 1}", 1, Target::Python3),
@@ -810,25 +832,22 @@ fn open_b6_python_unmatched_brace_false_reject_ideal() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn open_b3_decl_multiline_init_shatters_current() {
-    // `x: int = compute(\n a,\n b\n)` — the balanced initializer is shattered into 4 decls: the
-    // truncated `x: int = compute(` plus three bogus members from the continuation lines.
+fn fixed_b3_decl_multiline_init_kept_whole() {
+    // FIXED #249 (B3): `x: int = compute(\n a,\n b\n)` is ONE decl — `decl_extent`'s Line branch now
+    // runs `line_extent`, whose end is the first newline OUTSIDE the balanced `(...)` initializer
+    // (via `delim_balance`), so the continuation lines are no longer read as bogus members.
+    // (Inverted from the pre-fix pin, which asserted the 4-way shatter.)
     let body = b"    x: int = compute(\n        a,\n        b\n    )\n";
     let (starts, unterm) = decl_walk::decl_starts(body, 0, body.len(), false, Target::Rust);
     assert_eq!(
         starts,
-        vec![4, 30, 41, 47],
-        "B3: the multi-line initializer shatters into 4 decl starts (one true + three bogus)"
+        vec![4],
+        "B3: the balanced multi-line initializer is ONE decl (`x`), not four"
     );
-    assert!(!unterm, "B3: the eol-bounded walk does not report an unterminated body");
+    assert!(!unterm, "B3: the walk reports no unterminated body");
 }
 
 #[test]
-#[ignore = "KNOWN BUG #249 (B3): a multi-line initializer in a decl-section member is truncated \
-            at end-of-line (decl_extent's Line branch has no unbalanced-continuation logic, \
-            unlike legacy #185), so the continuation lines become bogus members. This asserts \
-            the IDEAL single decl covering the whole balanced initializer — un-ignore when #249 \
-            (B3) is fixed."]
 fn open_b3_decl_multiline_init_shatters_ideal() {
     let body = b"    x: int = compute(\n        a,\n        b\n    )\n";
     let (starts, _unterm) = decl_walk::decl_starts(body, 0, body.len(), false, Target::Rust);
@@ -848,29 +867,57 @@ fn open_b3_decl_multiline_init_shatters_ideal() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn open_b7_body_walk_brace_undercount_current() {
-    // Frame-assignment RHS opens a block: the inner `@@:self.foo()` is recorded at depth 0.
+fn fixed_b7_body_walk_brace_counted() {
+    // FIXED #249 (B7): the frame-assign RHS's block-opening `{` is now counted — `$Scan` records the
+    // statement start, sets a `barrier` to its extent end, and KEEPS WALKING through the extent
+    // counting braces (instead of jumping past them), so the inner `@@:self.foo()` is recorded at
+    // depth 1. (Inverted from the pre-fix pin, which recorded the inner statement at depth 0.)
     let fa = b"$.config = {\n@@:self.foo()\n}\n";
     assert_eq!(
         body_walk::stmt_starts(fa, 0, fa.len(), Target::Python3).0,
-        vec![(0, 0), (13, 0)],
-        "B7: the frame-assign RHS's brace is not counted; the inner stmt is recorded at depth 0"
+        vec![(0, 0), (13, 1)],
+        "B7: the frame-assign RHS's brace is counted; the inner stmt is depth 1"
     );
-    // The byte-identical NATIVE opener records the same inner statement at depth 1 (correct).
+    // The byte-identical NATIVE opener records the same inner statement at depth 1 (unchanged —
+    // a native `x = {` was never a statement, so its `{` was always counted by the byte-walk).
     let nv = b"x = {\n@@:self.foo()\n}\n";
     assert_eq!(
         body_walk::stmt_starts(nv, 0, nv.len(), Target::Python3).0,
         vec![(6, 1)],
-        "B7: the native RHS's brace IS counted; the inner stmt is depth 1 (the correct contrast)"
+        "B7: the native RHS's brace is still counted; the inner stmt is depth 1"
+    );
+    // A balanced statement is behavior-preserving: `@@:self.foo({x})` has net brace delta 0 whether
+    // jumped (old) or walked (new), so the following statement's depth is unchanged.
+    let bal = b"@@:self.foo({x})\n@@:self.bar()\n";
+    let starts = body_walk::stmt_starts(bal, 0, bal.len(), Target::Python3).0;
+    assert_eq!(
+        starts,
+        vec![(0, 0), (17, 0)],
+        "B7: a balanced brace inside a statement nets to 0 — the next stmt stays depth 0"
     );
 }
 
 #[test]
-#[ignore = "KNOWN BUG #249 (B7): body_walk's brace-depth undercounts when a frame-assignment \
-            line ends in an unbalanced block-opening `{` (the `{` is absorbed into the \
-            eol-bounded RHS extent and never counted), so statements inside the block are \
-            sampled one depth too low. This asserts the IDEAL depth 1 for the inner statement — \
-            un-ignore when #249 (B7) is fixed."]
+fn b7_instring_brace_in_frame_assign_rhs_not_counted() {
+    // B7 COUPLING GUARD (adversarial-review follow-up): the barrier-walk now counts braces THROUGH a
+    // frame-assign RHS, so it RELIES on opaque_scan to skip in-STRING braces — a dependency that was
+    // latent when the old walk jumped the extent. For the depth-CONSUMING targets (Python/GdScript
+    // reindent, Java unreachable-suppression), whose string forms opaque_scan models, an unbalanced
+    // brace inside a string-literal RHS must NOT be counted: the following statement stays depth 0.
+    // (If a depth-consuming target ever gains a single-line string form opaque_scan under-models,
+    // THIS is where it would surface — the concern's void condition. It holds green today.)
+    for t in [Target::Python3, Target::GdScript, Target::Java] {
+        let s = b"$.x = \"{{{\"\n@@:self.foo()\n";
+        let starts = body_walk::stmt_starts(s, 0, s.len(), t).0;
+        assert!(
+            starts.iter().all(|(_, d)| *d == 0),
+            "B7: in-string braces in a frame-assign RHS are opaque-skipped, not counted \
+             (depth stays 0) for {t:?}: {starts:?}"
+        );
+    }
+}
+
+#[test]
 fn open_b7_body_walk_brace_undercount_ideal() {
     let fa = b"$.config = {\n@@:self.foo()\n}\n";
     let starts = body_walk::stmt_starts(fa, 0, fa.len(), Target::Python3).0;

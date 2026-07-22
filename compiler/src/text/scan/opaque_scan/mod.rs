@@ -179,7 +179,14 @@ fn hole_skip(src: &[u8], i: usize, target: Target) -> usize {
     }
     // A `{{` escape is consumed upstream by `double_brace_skip` (Δ2), so a `{` reaching here is
     // a real hole opener.
-    super::delim_balance::balanced(src, i, src.len(), b'{', b'}', target).unwrap_or(i)
+    //
+    // **Δ3 (#249 B6):** FAIL policy (`balanced_strict`), not TOLERATE. If the balance walk hits an
+    // *unterminated* opaque region, the hole walk has run PAST the enclosing string's own closing
+    // quote — the `{` was literal string content, not an interpolation opener — so there is no hole
+    // here (`unwrap_or(i)`). Under the prior TOLERATE `balanced`, that overrun matched the `{`
+    // against a `}` beyond the string terminator, the `$StrBody` cursor jumped past its own closer,
+    // and a valid literal like `"{"` false-reported `Unterminated` (a false `UnclosedBody`).
+    super::delim_balance::balanced_strict(src, i, src.len(), b'{', b'}', target).unwrap_or(i)
 }
 
 /// Δ2 (T-N8): a `{{` escaped-brace pair at `i` — return the offset past BOTH braces (`i + 2`),
@@ -207,6 +214,23 @@ fn record_hole(holes: &mut Vec<(usize, usize)>, start: usize, end: usize) {
     holes.push((start, end));
 }
 
+/// #249 B8 — C/C++ translation phase 2: a `//` line whose physical end is `\` (optionally before a
+/// `\r`) splices onto the next physical line, so the comment continues past that newline. `i` is
+/// the `\n` under inspection; the leaf answers only the O(1) per-target fact "does this newline
+/// splice?" — the `$LineBody` machine owns the walk (D3). Among the CLI targets ONLY C and Cpp
+/// splice `//` comments; Python `#`, Java/Rust/JS/… `//`, and the block-comment forms do not, so
+/// the leaf is `false` for every other target and the splice edge is inert there.
+fn line_splice_at(src: &[u8], i: usize, target: Target) -> bool {
+    if !matches!(target, Target::C | Target::Cpp) {
+        return false;
+    }
+    let mut j = i;
+    if j > 0 && src[j - 1] == b'\r' {
+        j -= 1;
+    }
+    j > 0 && src[j - 1] == b'\\'
+}
+
 mod fsm {
     #![allow(
         dead_code,
@@ -218,8 +242,8 @@ mod fsm {
     )]
     use super::{
         block_close_len, block_nests, block_open_len, double_brace_skip, hole_skip,
-        line_comment_len, raw_scan, raw_unterminated, record_hole, string_delim, string_multiline,
-        triple_close, triple_delim, Target,
+        line_comment_len, line_splice_at, raw_scan, raw_unterminated, record_hole, string_delim,
+        string_multiline, triple_close, triple_delim, Target,
     };
     include!("opaque_scan.gen.rs");
 }

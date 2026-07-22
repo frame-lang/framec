@@ -323,7 +323,12 @@ impl<'a> ParamScan<'a> {
             if self.adepth != 0 {
                 self.g_viable = false;
             }
-            record_part(&mut self.parts, self.group, self.has_val, self.vs, self.ve, self.cursor, true);
+            // #249 B4: an EMPTY group (`$()`/`$>()`) reaches here with `has_val == false`;
+            // guard the record so it emits ZERO state args, not a phantom empty-named one.
+            // A non-empty group (`$(g: int)`) sets `has_val` in `$GroupValue` and records.
+            if self.has_val {
+                record_part(&mut self.parts, self.group, self.has_val, self.vs, self.ve, self.cursor, true);
+            }
             let mut __next = ParamScanComp { state: "Accept".to_string(), vars: ParamScanVars::Accept {  }, args: ParamScanArgs::Accept { } };
             self.compartment = __next;
             return Default::default();
@@ -336,7 +341,11 @@ impl<'a> ParamScan<'a> {
             return Default::default();
         }
         if b == 44 {
-            record_part(&mut self.parts, self.group, self.has_val, self.vs, self.ve, self.cursor, self.adepth == 0);
+            // #249 B4: an empty group before a comma (`$(), k`) records nothing; a
+            // non-empty group still records. Either way, continue with the next segment.
+            if self.has_val {
+                record_part(&mut self.parts, self.group, self.has_val, self.vs, self.ve, self.cursor, self.adepth == 0);
+            }
             self.group = 0;
             self.has_val = false;
             self.cursor = self.cursor + 1;

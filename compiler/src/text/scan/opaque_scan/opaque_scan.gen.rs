@@ -191,6 +191,16 @@ impl<'a> OpaqueScan<'a> {
             return Default::default();
         }
         if self.src.fsm_get(self.cursor) == 10 {
+            // #249 B8: in C/C++ a `//` line ending in `\` (phase-2 line splicing) continues
+            // the comment onto the next physical line — so cross this `\n` and keep going.
+            // `line_splice_at` is the per-target fact (false for every non-C/Cpp target,
+            // so this edge is inert elsewhere and the rust bootstrap never takes it).
+            if line_splice_at(self.src, self.cursor, self.target) {
+                self.cursor = self.cursor + 1;
+                let mut __next = OpaqueScanComp { state: "LineBody".to_string(), vars: OpaqueScanVars::LineBody {  }, args: OpaqueScanArgs::LineBody { } };
+                self.compartment = __next;
+                return Default::default();
+            }
             let mut __next = OpaqueScanComp { state: "Accept".to_string(), vars: OpaqueScanVars::Accept {  }, args: OpaqueScanArgs::Accept { } };
             self.compartment = __next;
             return Default::default();

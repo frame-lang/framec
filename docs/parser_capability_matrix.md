@@ -39,7 +39,7 @@ native code both **demand** `TargetAware` opacity + `Dyck1` nesting.
 | `read_name_params_brace` | header skip-to-`{` | TargetAware ✓ | n/a | policy | **OK** (#249 B5 fixed: opaque-aware seek) |
 | `paren_balance` | header `()` balance | DoubleQuote **✗** TargetAware | Dyck1 ✓ | none | **CARRIED #219** |
 | `decl_read` | decl `name:type=init` | DoubleQuote **✗** TargetAware | Dyck1 ✓ | none | **CARRIED #219 B9** (type/init `=` via `top_level_eq`) |
-| `body_walk` | statement extents | TargetAware ✓ | Dyck1 ✓ | none | OK (B7 = within-class) |
+| `body_walk` | statement extents | TargetAware ✓ | Dyck1 ✓ | none | OK (B7 within-class, FIXED #249) |
 | `opaque_scan` | per-target string/comment | TargetAware ✓ | Dyck1 ✓ | none | OK (form gaps below) |
 | `string_scan` / `string_counter` | `"`-string | DoubleQuote ✓ | — | none | OK (scoped primitive) |
 | `delim_balance` | kind-checked balance | TargetAware ✓ | Dyck1 ✓ | policy | OK |
@@ -80,12 +80,16 @@ The matrix is *only* the class check. Two categories are out of its scope by con
 are covered in [`parser_bug_corpus.rs`](../compiler/tests/parser_bug_corpus.rs):
 
 - **Within-class logic bugs** — the machine is the right class, one transition/guard is wrong:
-  **B4** (empty `$()` emits a phantom param), **B6** (Python `"{"` false-reject), **B7** (`body_walk`
-  loses a `{` to the eol extent), **B3** (multi-line init truncated at eol). These need the
+  **B4** (empty `$()` emitted a phantom param), **B6** (Python `"{"` false-reject), **B7** (`body_walk`
+  lost a `{` to the eol extent), **B3** (multi-line init truncated at eol). **All four are now FIXED**
+  (#249) and pinned in [`parser_bug_corpus.rs`](../compiler/tests/parser_bug_corpus.rs) — each a
+  minimal within-class repair (a `has_val` guard; the FAIL-policy hole balancer; a barrier-walk brace
+  count; a `(`/`[`-balanced `line_extent`). Finding *future* within-class bugs still needs the
   *differential oracle* (the target's real lexer) and the *axis-keyed adversarial generator*.
-- **Per-target form completeness** — `TargetAware`, but a form is missing/wrong: **B8** (C `//` has
-  no `\`-newline splice), Lua `--[[ ]]`, Ruby `=begin` column-0. These are `opaque_scan`'s per-target
-  form table, not a class deficiency.
+- **Per-target form completeness** — `TargetAware`, but a form is missing/wrong: **B8** (C `//`
+  `\`-newline splice) is now **FIXED** (#249, `line_splice_at` + a `$LineBody` edge, C/Cpp-gated).
+  Residual per-target forms — Lua `--[[ ]]`, Ruby `=begin` column-0 — remain in `opaque_scan`'s
+  per-target form table; they are completeness gaps, not class deficiencies.
 
 ## How to use it
 

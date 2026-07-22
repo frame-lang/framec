@@ -140,24 +140,20 @@ fn b2_unterminated_literal_interior_is_one_text_run() {
         check_partition(&parts, 0, src.len(), src);
     }
 
-    // The hole-interior variant (python): the unterminated `'` INSIDE a hole is likewise text-run
-    // by the recursion (the interior has no islands either way).
+    // The hole-interior variant (python): a `{…}` field whose interior carries an UNTERMINATED `'`
+    // is NOT recognized as a hole (#249 B6 FAIL policy — a balance walk that must pass through an
+    // unterminated opaque region cannot trust its `}`, so the `{` stays literal content). The
+    // malformed field is thus all literal CONTENT — a strictly MORE conservative recovery than the
+    // pre-B6 hole-with-text-interior, and one that still upholds the invariant this test protects:
+    // its `$.y` is NOT scanned as a ref (a malformed literal interior is never island-scanned).
     let py = "f\"{ 'x } $.y \"";
     let parts = machine(py.as_bytes(), 0, py.len(), Target::Python3);
     let lit = first_literal(&parts).expect("the f-string is a literal");
-    let hole = lit
-        .parts
-        .iter()
-        .find_map(|lp| match lp {
-            LiteralPart::Hole(h) => Some(h),
-            _ => None,
-        })
-        .expect("the hole exists");
     assert!(
-        hole.parts.iter().all(|p| matches!(p, NativePart::Text(_))),
-        "the hole's unterminated `'x ` interior is one Text run"
+        !lit.parts.iter().any(|lp| matches!(lp, LiteralPart::Hole(_))),
+        "the field with an unterminated `'` interior is content, not a recognized hole (B6)"
     );
-    // `$.y` sits in the literal's CONTENT (after the hole) — not a ref (content is not code).
+    // `$.y` sits in the literal's CONTENT — not a ref (content is not code).
     assert!(ref_texts(&parts, py).is_empty());
     check_partition(&parts, 0, py.len(), py);
 }

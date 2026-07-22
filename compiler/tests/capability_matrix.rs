@@ -18,12 +18,15 @@
 //!     matrix + `docs/parser_capability_matrix.md` to stay in sync with reality.
 //!
 //! What this matrix does NOT catch (by construction — the class is already right): *within-class
-//! logic bugs* (B4 empty-group emission, B6 Python hole, B7 brace undercount) and *per-target form
-//! completeness* gaps (B8 C `//` splice, Lua/Ruby comment forms). Those need the axis-keyed
-//! adversarial generator + differential oracle; they live in `parser_bug_corpus.rs`.
+//! logic bugs* and *per-target form completeness* gaps. The within-class B3/B4/B6/B7 and the
+//! per-target B8 (`//` backslash splice) are now FIXED and pinned in `parser_bug_corpus.rs`; the
+//! remaining per-target gaps (Lua `--[[ ]]`, Ruby `=begin` column-0) still need the axis-keyed
+//! adversarial generator + differential oracle. Both categories are outside the class check by
+//! construction — the machine was already the right class; only a transition/guard or a form was.
 //!
 //! Sources: capability audit (wf journal, 2026-07-21) + `parser_bug_corpus.rs` repros. Issues:
-//! #249 (open B1–B8), #248 (angle straddle), #219 (char/lifetime opacity).
+//! #249 (B1–B9 all fixed; residual per-target Lua/Ruby forms), #248 (angle straddle), #219
+//! (char/lifetime opacity).
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 enum Opacity { None, DoubleQuote, TargetAware, NA }
@@ -61,7 +64,7 @@ const M: &[Row] = &[
 
     // ---- structural-delimiter seekers over native code: demand target-aware + Dyck-1 ----
     Row{scanner:"read_name_params_brace",construct:"header skip-to-`{`", op_cap:Opacity::TargetAware, nest_cap:Nesting::NA,    op_demand:Opacity::TargetAware, nest_demand:Nesting::NA,    status:Ok}, // #249 B5 fixed: opaque-aware seek (machine::skip_opaque)
-    Row{scanner:"body_walk",         construct:"statement extents",      op_cap:Opacity::TargetAware, nest_cap:Nesting::Dyck1, op_demand:Opacity::TargetAware, nest_demand:Nesting::Dyck1, status:Ok}, // B7 is within-class logic
+    Row{scanner:"body_walk",         construct:"statement extents",      op_cap:Opacity::TargetAware, nest_cap:Nesting::Dyck1, op_demand:Opacity::TargetAware, nest_demand:Nesting::Dyck1, status:Ok}, // B7 (within-class) FIXED #249
     Row{scanner:"decl_read",         construct:"decl member name:type=init",op_cap:Opacity::DoubleQuote, nest_cap:Nesting::Dyck1, op_demand:Opacity::TargetAware, nest_demand:Nesting::Dyck1, status:Carried("#219 B9: type/init `=` via TopLevelEq (Dyck1 + digraph-guarded angle, \"-only); char/lifetime carried")},
     Row{scanner:"decl_walk",         construct:"decl-section member boundaries",op_cap:Opacity::TargetAware,nest_cap:Nesting::Dyck1,op_demand:Opacity::TargetAware,nest_demand:Nesting::Dyck1,status:Ok},
     Row{scanner:"machine_walk",      construct:"machine-section boundaries",op_cap:Opacity::TargetAware,nest_cap:Nesting::Dyck1,op_demand:Opacity::TargetAware,nest_demand:Nesting::Dyck1,status:Ok},
@@ -69,11 +72,11 @@ const M: &[Row] = &[
     Row{scanner:"section_scan",      construct:"section keyword boundaries",op_cap:Opacity::TargetAware,nest_cap:Nesting::Dyck1,op_demand:Opacity::TargetAware,nest_demand:Nesting::Dyck1,status:Ok},
     Row{scanner:"state_head_scan",   construct:"state head+params",      op_cap:Opacity::TargetAware, nest_cap:Nesting::Dyck1, op_demand:Opacity::TargetAware, nest_demand:Nesting::Dyck1, status:Ok},
     Row{scanner:"handler_head_scan", construct:"handler head+params",    op_cap:Opacity::TargetAware, nest_cap:Nesting::Dyck1, op_demand:Opacity::TargetAware, nest_demand:Nesting::Dyck1, status:Ok},
-    Row{scanner:"segmenter",         construct:"top-level @@-item boundaries",op_cap:Opacity::TargetAware,nest_cap:Nesting::NA,op_demand:Opacity::TargetAware,nest_demand:Nesting::NA,   status:Ok}, // B8/Lua/Ruby are opaque_scan form gaps
+    Row{scanner:"segmenter",         construct:"top-level @@-item boundaries",op_cap:Opacity::TargetAware,nest_cap:Nesting::NA,op_demand:Opacity::TargetAware,nest_demand:Nesting::NA,   status:Ok}, // B8 FIXED; Lua/Ruby remain opaque_scan form gaps
 
     // ---- opacity/balance primitives: demand = their own scope ----
     Row{scanner:"string_scan",       construct:"\"-string extent",        op_cap:Opacity::DoubleQuote, nest_cap:Nesting::None,  op_demand:Opacity::DoubleQuote, nest_demand:Nesting::None,  status:Ok},
-    Row{scanner:"opaque_scan",       construct:"per-target string/comment",op_cap:Opacity::TargetAware,nest_cap:Nesting::Dyck1,op_demand:Opacity::TargetAware, nest_demand:Nesting::Dyck1, status:Ok}, // per-target FORM gaps (B8/Lua/Ruby) are completeness, not class — see corpus
+    Row{scanner:"opaque_scan",       construct:"per-target string/comment",op_cap:Opacity::TargetAware,nest_cap:Nesting::Dyck1,op_demand:Opacity::TargetAware, nest_demand:Nesting::Dyck1, status:Ok}, // per-target FORM gaps: B8 FIXED; Lua/Ruby remain (completeness, not class) — see corpus
     Row{scanner:"paren_balance",     construct:"header `()` balance",     op_cap:Opacity::DoubleQuote, nest_cap:Nesting::Dyck1, op_demand:Opacity::TargetAware, nest_demand:Nesting::Dyck1, status:Carried("#219: \"-only, a `)` in a char default miscounts")},
     Row{scanner:"delim_balance",     construct:"kind-checked balance",    op_cap:Opacity::TargetAware, nest_cap:Nesting::Dyck1, op_demand:Opacity::TargetAware, nest_demand:Nesting::Dyck1, status:Ok},
     Row{scanner:"raw_string",        construct:"raw-string extent",       op_cap:Opacity::None,        nest_cap:Nesting::None,  op_demand:Opacity::None,        nest_demand:Nesting::None,  status:Ok}, // scoped primitive
