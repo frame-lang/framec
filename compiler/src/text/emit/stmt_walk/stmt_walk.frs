@@ -1,0 +1,119 @@
+@@[target("rust")]
+
+// The handler/action BODY statement walk, dogfooded as a plain `@@system` TRANSDUCER — the
+// emit-side analogue of the back-half graph walkers (Reachability, HsmCycle), and the first
+// machine to ride the READ-ONLY BORROWED DOMAIN (the plain-`@@system` twin of a scanner's
+// `&'a [u8]`): its input — the statement slice, the source, the symbol table, the current
+// system/state, and the `&dyn Backend` — are all SHARED BORROWS threaded through one lifetime
+// `'a`; its OWNED domain is the accumulating output `out`, the cursor `i`, and the one-bit
+// `terminated` latch. It reifies `emit_body`.
+//
+// This is a genuine Mealy transducer: it consumes the statements in order, emits target text for
+// each (through the backend's SPELLINGS, unchanged, in native leaves), and carries ONE bit of
+// state — `terminated` — set when a BASE-NESTING terminal (`depth == 0 && rel == 0`
+// transition / stack-push / pop / `@@:return`) fires. That bit is read back two ways, exactly as
+// the hand walk read it: it HALTS the walk (`-> $Done`, so nothing after a base-nesting terminal
+// is spelled — the dead code the old compiler stripped from text it had already emitted), and it
+// selects the body's terminal (`Terminated` vs `Fell`) for the wrapper.
+//
+// framec owns the WALK (the cursor, the terminated latch, the halt); the 10-way Stmt DISPATCH is
+// a per-item function surfaced here as a `kind`-keyed branch, and each arm's leaf holds the EXACT
+// byte-for-byte spelling sequence of its `emit_body` match arm (Transition's exit->build->enter->
+// return lifecycle via `has_lifecycle` guards, StackPush/StackPop/StackPopBare/Forward, the
+// Lowering-backed Native/Assign/ReturnCall). `kind_at` returns -1 at end-of-slice (the loop
+// bound), 0=Trivia, 1=Native, 2=Transition, 3=StackPush, 4=StackPopBare, 5=StackPop, 6=Assign,
+// 7=ReturnCall, 8=SelfCall, 9=Forward — the hand match order. The wrapper drives `step()` a
+// bounded number of times and reads `out` + `terminated`.
+//
+// Regen: framec-ng -l rust --emit stmt_walk.frs | grep -v '^#!\[allow' > stmt_walk.gen.rs
+
+@@system StmtWalk(src: &Source, syms: &SymbolTable, sym: &SystemSym, stmts: &[Stmt], state: &str, event: &str, is_async: bool, base: u32, be: &dyn Backend, out: Sink) {
+    interface:
+        step()
+    machine:
+        $Walk {
+            step() {
+                let k = kind_at(self.stmts, self.i);
+                if k < 0 {
+                    -> $Done
+                }
+                if k == 1 {
+                    emit_native(self.src, self.syms, self.sym, self.state, self.be, self.base, self.stmts, self.i, &mut self.out);
+                    self.i = self.i + 1;
+                    -> $Walk
+                }
+                if k == 2 {
+                    let term = emit_transition(self.sym, self.state, self.be, self.base, self.stmts, self.i, &mut self.out);
+                    if term {
+                        self.terminated = true;
+                        -> $Done
+                    }
+                    self.i = self.i + 1;
+                    -> $Walk
+                }
+                if k == 3 {
+                    let term = emit_stack_push(self.sym, self.state, self.be, self.base, self.stmts, self.i, &mut self.out);
+                    if term {
+                        self.terminated = true;
+                        -> $Done
+                    }
+                    self.i = self.i + 1;
+                    -> $Walk
+                }
+                if k == 4 {
+                    emit_stack_pop_bare(self.be, self.base, self.stmts, self.i, &mut self.out);
+                    self.i = self.i + 1;
+                    -> $Walk
+                }
+                if k == 5 {
+                    let term = emit_stack_pop(self.sym, self.state, self.be, self.base, self.stmts, self.i, &mut self.out);
+                    if term {
+                        self.terminated = true;
+                        -> $Done
+                    }
+                    self.i = self.i + 1;
+                    -> $Walk
+                }
+                if k == 6 {
+                    emit_assign(self.src, self.syms, self.sym, self.state, self.be, self.base, self.stmts, self.i, &mut self.out);
+                    self.i = self.i + 1;
+                    -> $Walk
+                }
+                if k == 7 {
+                    let term = emit_return_call(self.src, self.syms, self.sym, self.state, self.be, self.base, self.is_async, self.stmts, self.i, &mut self.out);
+                    if term {
+                        self.terminated = true;
+                        -> $Done
+                    }
+                    self.i = self.i + 1;
+                    -> $Walk
+                }
+                if k == 8 {
+                    emit_self_call(self.be, self.base, self.is_async, self.stmts, self.i, &mut self.out);
+                    self.i = self.i + 1;
+                    -> $Walk
+                }
+                if k == 9 {
+                    emit_forward(self.sym, self.state, self.event, self.be, self.base, self.stmts, self.i, &mut self.out);
+                    self.i = self.i + 1;
+                    -> $Walk
+                }
+                self.i = self.i + 1;
+                -> $Walk
+            }
+        }
+        $Done { }
+    domain:
+        src: &Source = src
+        syms: &SymbolTable = syms
+        sym: &SystemSym = sym
+        stmts: &[Stmt] = stmts
+        state: &str = state
+        event: &str = event
+        is_async: bool = is_async
+        base: u32 = base
+        be: &dyn Backend = be
+        out: Sink = out
+        terminated: bool = false
+        i: usize = 0
+}

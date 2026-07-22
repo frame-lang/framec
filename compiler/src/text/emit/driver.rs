@@ -467,10 +467,6 @@ pub fn emit(src: &Source, ast: &FileAst, syms: &SymbolTable, be: &dyn Backend) -
     out.finish()
 }
 
-/// Walk a handler body. **The control flow lives here, once, for every language.**
-/// Returns TRUE if the body ended in a terminal statement (a transition, a pop, or a
-/// `@@:return`) — so nothing after it would be reachable.
-#[allow(clippy::too_many_arguments)]
 /// How a handler or action body ended — the two distinct terminals the statement walk
 /// reaches, named so they stay distinct at the call site instead of collapsing into a
 /// bare `bool`.
@@ -498,7 +494,61 @@ impl BodyEnd {
     }
 }
 
+/// Walk a handler/action body — **the emit-side transducer**, reified as the
+/// [`super::stmt_walk`] `@@system` (`StmtWalk`). The control flow lives in that machine, once,
+/// for every language; this is the thin driver that (1) computes the body's BASE column (the
+/// shallowest statement, everything else measured relative to it, so the user's nesting is
+/// reproduced without framec knowing what an `if` is), (2) seeds the machine's owned output with
+/// the caller's `Sink` (the handler prologue already emitted, so body text appends exactly where
+/// the hand walk appended it), (3) drives it to fixpoint, and (4) reads back the grown `Sink` and
+/// the `terminated` latch as a [`BodyEnd`]. The byte-for-byte ORACLE it replaced is preserved as
+/// [`emit_body_hand`], gated at every statement in `tests/stmt_walk.rs`.
+#[allow(clippy::too_many_arguments)]
 fn emit_body(
+    src: &Source,
+    syms: &SymbolTable,
+    sym: &SystemSym,
+    state: &str,
+    event: &str,
+    is_async: bool,
+    body: &Body,
+    be: &dyn Backend,
+    out: &mut Sink,
+) -> BodyEnd {
+    let base = body
+        .stmts
+        .iter()
+        .filter_map(|s| match s {
+            Stmt::Native(n) => Some(n.logical_indent),
+            Stmt::Transition(t) | Stmt::StackPush(t) => Some(t.col),
+            Stmt::StackPop(x) | Stmt::StackPopBare(x) | Stmt::Forward(x) => Some(x.col),
+            Stmt::Assign(a) => Some(a.col),
+            Stmt::ReturnCall(r) => Some(r.col),
+            Stmt::SelfCall(c) => Some(c.col),
+            Stmt::Trivia(_) => None,
+        })
+        .min()
+        .unwrap_or(0);
+    let seed = std::mem::take(out);
+    let (grown, terminated) = super::stmt_walk::walk(
+        src, syms, sym, &body.stmts, state, event, is_async, base, be, seed,
+    );
+    *out = grown;
+    if terminated {
+        BodyEnd::Terminated
+    } else {
+        BodyEnd::Fell
+    }
+}
+
+/// The preserved byte-for-byte **oracle** for [`emit_body`] — the original hand statement walk,
+/// kept as the differential check the [`super::stmt_walk`] machine is proven against (GATE-A,
+/// `tests/stmt_walk.rs`, via [`body_parity_report`]). Doc-hidden and **not on the production
+/// path**. Do not edit it to add behavior: it exists only to reproduce the pre-conversion output
+/// exactly, so any divergence is the machine's bug, not the oracle's.
+#[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
+fn emit_body_hand(
     src: &Source,
     syms: &SymbolTable,
     sym: &SystemSym,
@@ -671,6 +721,99 @@ fn emit_body(
     }
 }
 
+/// TEST-ONLY (GATE-A) — one body's dual emission (machine path vs hand oracle), for
+/// `tests/stmt_walk.rs`. Doc-hidden.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct BodyParity {
+    /// A `system/state/event` (or `system/action`) label for a failing assertion message.
+    pub label: String,
+    /// Text emitted by the `StmtWalk` machine path (production [`emit_body`]).
+    pub machine_text: String,
+    /// Whether the machine path reported a base-nesting terminal.
+    pub machine_terminated: bool,
+    /// Text emitted by the preserved hand oracle ([`emit_body_hand`]).
+    pub hand_text: String,
+    /// Whether the hand oracle reported a base-nesting terminal.
+    pub hand_terminated: bool,
+    /// The kind discriminants (0..9) of the statements in this body — so the test can prove the
+    /// corpus exercised every Stmt variant, using the SAME classifier the machine dispatches on.
+    pub kinds: Vec<i32>,
+}
+
+/// TEST-ONLY (GATE-A). Emit **every** handler and action body in `ast` through BOTH the
+/// `StmtWalk` machine ([`emit_body`]) and the preserved hand oracle ([`emit_body_hand`]) — over
+/// the SAME real parsed bodies and the SAME backend — and return, per body, the two emitted
+/// Strings and their `terminated` bits. `tests/stmt_walk.rs` asserts, for every entry,
+/// `machine_text == hand_text` byte-for-byte AND `machine_terminated == hand_terminated`. The
+/// library owns the `.finish()` (a test crate cannot obtain a `String` from a `Sink`) and the real
+/// emit traversal (so the bodies, spans, and refs are exactly production's).
+#[doc(hidden)]
+pub fn body_parity_report(
+    src: &Source,
+    ast: &FileAst,
+    syms: &SymbolTable,
+    be: &dyn Backend,
+) -> Vec<BodyParity> {
+    let mut report = Vec::new();
+    for item in &ast.items {
+        let Item::System(sys) = item else { continue };
+        let Some(sym) = syms.systems.iter().find(|s| s.name == sys.name) else {
+            continue;
+        };
+        for sec in &sys.sections {
+            match sec {
+                Section::Machine(mach) => {
+                    for mm in &mach.members {
+                        let MachineMember::State(st) = mm else { continue };
+                        for member in &st.members {
+                            let StateMember::Handler(h) = member else { continue };
+                            let is_async = sym.is_async
+                                || sym.interface.iter().any(|m| m.name == h.event && m.is_async);
+                            let label = format!("{}/{}/{}", sym.name, st.name, h.event);
+                            let mut mo = super::Sink::default();
+                            let me =
+                                emit_body(src, syms, sym, &st.name, &h.event, is_async, &h.body, be, &mut mo);
+                            let mut ho = super::Sink::default();
+                            let he = emit_body_hand(
+                                src, syms, sym, &st.name, &h.event, is_async, &h.body, be, &mut ho,
+                            );
+                            report.push(BodyParity {
+                                label,
+                                machine_text: mo.finish(),
+                                machine_terminated: me.terminated(),
+                                hand_text: ho.finish(),
+                                hand_terminated: he.terminated(),
+                                kinds: h.body.stmts.iter().map(super::stmt_walk::kind_of).collect(),
+                            });
+                        }
+                    }
+                }
+                Section::Actions(d) | Section::Operations(d) => {
+                    for m in &d.members {
+                        let Decl::WithBody(b) = m else { continue };
+                        let label = format!("{}/action:{}", sym.name, b.name);
+                        let mut mo = super::Sink::default();
+                        let me = emit_body(src, syms, sym, "", "", false, &b.body, be, &mut mo);
+                        let mut ho = super::Sink::default();
+                        let he = emit_body_hand(src, syms, sym, "", "", false, &b.body, be, &mut ho);
+                        report.push(BodyParity {
+                            label,
+                            machine_text: mo.finish(),
+                            machine_terminated: me.terminated(),
+                            hand_text: ho.finish(),
+                            hand_terminated: he.terminated(),
+                            kinds: b.body.stmts.iter().map(super::stmt_walk::kind_of).collect(),
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    report
+}
+
 /// Lower `@@SystemName(args)` (spec §1103) to the target constructor call. **The call-site
 /// arg routing lives here, once, for every target.**
 ///
@@ -679,7 +822,7 @@ fn emit_body(
 /// value from the matching call arg — by name in the named form, by group-position in the
 /// positional form — falling back to the declared default. The backend only spells the
 /// final call; it never sees the matching.
-fn lower_instantiation(syms: &SymbolTable, be: &dyn Backend, inst: &Instantiation) -> Atom {
+pub(super) fn lower_instantiation(syms: &SymbolTable, be: &dyn Backend, inst: &Instantiation) -> Atom {
     let Some(sys) = syms.systems.iter().find(|s| s.name == inst.name) else {
         // Unknown system: emit a best-effort call so the TARGET compiler reports it
         // (the closed-world validation layer, §1167, is deferred). `inst.args` is the

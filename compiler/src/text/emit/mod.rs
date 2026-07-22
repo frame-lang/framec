@@ -28,6 +28,7 @@ pub mod persist;
 pub mod python;
 pub mod rust;
 pub mod reindent;
+mod stmt_walk;
 
 use super::NativeText;
 

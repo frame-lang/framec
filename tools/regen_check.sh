@@ -20,7 +20,7 @@ while IFS= read -r frs; do
     else echo "STALE    $gen"; fi
     stale=$((stale+1))
   fi
-done < <(find compiler/src/text/scan -name "*.frs" | sort)
+done < <(find compiler/src/text/scan compiler/src/text/emit -name "*.frs" | sort)
 echo "----"
 echo "checked $total systems; $stale $( [ "$mode" = "--bless" ] && echo blessed || echo stale )"
 [ "$mode" = "--bless" ] || [ "$stale" -eq 0 ]
