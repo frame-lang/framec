@@ -371,33 +371,17 @@ pub fn emit(src: &Source, ast: &FileAst, syms: &SymbolTable, be: &dyn Backend) -
 
         be.open_system(sym, &mut out);
 
-        // The interface: one public method per event.
+        // The interface: one public method per event — the driver's `(method, arm)` router pass,
+        // reified as the `EmitInterface` @@system (`emit_interface.frs`): two nested cycle states
+        // (`$Method` → `$Arm`) carrying the two walk cursors, one public method emitted per event.
         //
-        // HIERARCHICAL DISPATCH, resolved here, once, from the symbol table: for every
-        // state the machine may be in, which state's handler actually runs? Under HSM
-        // that is the nearest ancestor that declares the handler — possibly not the
-        // state itself.
-        for m in &sym.interface {
-            let arms: Vec<(String, String)> = sym
-                .states
-                .iter()
-                .filter_map(|st| {
-                    sym.resolve_handler(&st.name, &m.name)
-                        .map(|owner| (st.name.clone(), owner.name.clone()))
-                })
-                .collect();
-            // A method is async if IT says so, or if the SYSTEM does (`@@[async]`).
-            let is_async = m.is_async || sym.is_async;
-            be.route(
-                sym,
-                &m.name,
-                m.params_text.as_deref().unwrap_or(""),
-                m.return_text.as_deref(),
-                is_async,
-                &arms,
-                &mut out,
-            );
-        }
+        // HIERARCHICAL DISPATCH, resolved there, once, from the symbol table: for every state the
+        // machine may be in, which state's handler actually runs? Under HSM that is the nearest
+        // ancestor that declares the handler — possibly not the state itself (the `$Arm` cycle's
+        // `resolve_handler` stamp). The byte-for-byte oracle it replaced is preserved as
+        // [`emit_interface_hand`], gated in `tests/emit_interface.rs` (GATE-A, via
+        // [`interface_parity_report`]).
+        super::emit_interface::walk(sym, be, &mut out);
 
         // One private method per (state, handler) — the driver's `(section, state, handler)`
         // nested pass, reified as the `EmitHandlers` @@system (`emit_handlers.frs`): three nested
@@ -406,19 +390,13 @@ pub fn emit(src: &Source, ast: &FileAst, syms: &SymbolTable, be: &dyn Backend) -
         // `tests/emit_handlers.rs` (GATE-A, via [`handlers_parity_report`]).
         super::emit_handlers::walk(src, syms, sym, &sys.sections, be, &mut out);
 
-        // `actions:` / `operations:` — methods with NATIVE bodies. The signature is
-        // Frame's; the body is the user's, decomposed like any other native code.
-        for sec in &sys.sections {
-            let (Section::Actions(d) | Section::Operations(d)) = sec else {
-                continue;
-            };
-            for m in &d.members {
-                let Decl::WithBody(b) = m else { continue };
-                be.open_action(&b.name, &b.params_text, b.return_text.as_deref(), &mut out);
-                emit_body(src, syms, sym, "", "", false, &b.body, be, &mut out);
-                be.close_action(&mut out);
-            }
-        }
+        // `actions:` / `operations:` — methods with NATIVE bodies. The signature is Frame's; the
+        // body is the user's, decomposed like any other native code. Reified as the `EmitActions`
+        // @@system (`emit_actions.frs`): two nested cycle states (`$Section` → `$Member`) carrying
+        // the two walk cursors, one method emitted per bodied member. The byte-for-byte oracle it
+        // replaced is preserved as [`emit_actions_hand`], gated in `tests/emit_actions.rs` (GATE-A,
+        // via [`actions_parity_report`]).
+        super::emit_actions::walk(src, syms, sym, &sys.sections, be, &mut out);
 
         // `@@[persist]` — save/restore. Derived ONCE from the symbol table (RFC-0054),
         // then spelled per target. The disambiguation (out-of-band framing) is fixed in
@@ -783,6 +761,191 @@ fn count_handlers(sections: &[Section]) -> usize {
                 if let StateMember::Handler(_) = member {
                     n += 1;
                 }
+            }
+        }
+    }
+    n
+}
+
+/// The preserved byte-for-byte **oracle** for the driver's INTERFACE/ROUTER pass — the original
+/// `(method, arm)` nested loops [`emit`] ran before they were reified as the
+/// [`super::emit_interface`] `@@system` (`EmitInterface`). Kept as the differential check that
+/// machine is proven against (GATE-A, `tests/emit_interface.rs`, via [`interface_parity_report`]).
+/// It calls the SAME `be.route` the machine's `route_method` leaf calls — the two paths differ only
+/// in how the two-level walk is SEQUENCED (hand loops vs cycle states), which is exactly what the
+/// gate isolates. Doc-hidden and **not on the production path**. Do not edit it to add behavior: it
+/// exists only to reproduce the pre-conversion sequencing exactly, so any divergence is the
+/// machine's bug, not the oracle's.
+#[doc(hidden)]
+fn emit_interface_hand(sym: &SystemSym, be: &dyn Backend, out: &mut Sink) {
+    for m in &sym.interface {
+        let arms: Vec<(String, String)> = sym
+            .states
+            .iter()
+            .filter_map(|st| {
+                sym.resolve_handler(&st.name, &m.name)
+                    .map(|owner| (st.name.clone(), owner.name.clone()))
+            })
+            .collect();
+        // A method is async if IT says so, or if the SYSTEM does (`@@[async]`).
+        let is_async = m.is_async || sym.is_async;
+        be.route(
+            sym,
+            &m.name,
+            m.params_text.as_deref().unwrap_or(""),
+            m.return_text.as_deref(),
+            is_async,
+            &arms,
+            out,
+        );
+    }
+}
+
+/// TEST-ONLY (GATE-A) — one system's dual interface-emission (machine path vs hand oracle), for
+/// `tests/emit_interface.rs`. Doc-hidden.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct InterfaceParity {
+    /// The system name, for a failing assertion message.
+    pub label: String,
+    /// Text the `EmitInterface` machine path ([`super::emit_interface::walk`]) emits for ALL of this
+    /// system's public router methods.
+    pub machine_text: String,
+    /// Text the preserved hand oracle ([`emit_interface_hand`]) emits for the same.
+    pub hand_text: String,
+    /// How many public router methods this system emits (one per interface event) — so the test can
+    /// prove the corpus actually exercised multi-method / multi-state / HSM shapes (a system that
+    /// emits zero routers is a vacuous pass).
+    pub route_count: usize,
+}
+
+/// TEST-ONLY (GATE-A). Emit **every** system's public router methods through BOTH the
+/// `EmitInterface` machine ([`super::emit_interface::walk`]) and the preserved hand oracle
+/// ([`emit_interface_hand`]) — over the SAME real parsed systems and the SAME backend — and return,
+/// per system, the two emitted Strings. `tests/emit_interface.rs` asserts, for every entry,
+/// `machine_text == hand_text` byte-for-byte. The library owns the `.finish()` and the real emit
+/// traversal.
+#[doc(hidden)]
+pub fn interface_parity_report(
+    ast: &FileAst,
+    syms: &SymbolTable,
+    be: &dyn Backend,
+) -> Vec<InterfaceParity> {
+    let mut report = Vec::new();
+    for item in &ast.items {
+        let Item::System(sys) = item else { continue };
+        let Some(sym) = syms.systems.iter().find(|s| s.name == sys.name) else {
+            continue;
+        };
+        let mut mo = super::Sink::default();
+        super::emit_interface::walk(sym, be, &mut mo);
+        let mut ho = super::Sink::default();
+        emit_interface_hand(sym, be, &mut ho);
+        report.push(InterfaceParity {
+            label: sym.name.clone(),
+            machine_text: mo.finish(),
+            hand_text: ho.finish(),
+            route_count: sym.interface.len(),
+        });
+    }
+    report
+}
+
+/// The preserved byte-for-byte **oracle** for the driver's ACTIONS/OPERATIONS pass — the original
+/// `(section, member)` nested loops [`emit`] ran before they were reified as the
+/// [`super::emit_actions`] `@@system` (`EmitActions`). Kept as the differential check that machine
+/// is proven against (GATE-A, `tests/emit_actions.rs`, via [`actions_parity_report`]). It calls the
+/// SAME production [`emit_body`] the machine's `emit_action` leaf calls — the two paths differ only
+/// in how the two-level walk is SEQUENCED (hand loops vs cycle states), which is exactly what the
+/// gate isolates. Doc-hidden and **not on the production path**. Do not edit it to add behavior: it
+/// exists only to reproduce the pre-conversion sequencing exactly, so any divergence is the
+/// machine's bug, not the oracle's.
+#[doc(hidden)]
+fn emit_actions_hand(
+    src: &Source,
+    syms: &SymbolTable,
+    sym: &SystemSym,
+    sections: &[Section],
+    be: &dyn Backend,
+    out: &mut Sink,
+) {
+    for sec in sections {
+        let (Section::Actions(d) | Section::Operations(d)) = sec else {
+            continue;
+        };
+        for m in &d.members {
+            let Decl::WithBody(b) = m else { continue };
+            be.open_action(&b.name, &b.params_text, b.return_text.as_deref(), out);
+            emit_body(src, syms, sym, "", "", false, &b.body, be, out);
+            be.close_action(out);
+        }
+    }
+}
+
+/// TEST-ONLY (GATE-A) — one system's dual actions-emission (machine path vs hand oracle), for
+/// `tests/emit_actions.rs`. Doc-hidden.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct ActionsParity {
+    /// The system name, for a failing assertion message.
+    pub label: String,
+    /// Text the `EmitActions` machine path ([`super::emit_actions::walk`]) emits for ALL of this
+    /// system's `actions:`/`operations:` methods.
+    pub machine_text: String,
+    /// Text the preserved hand oracle ([`emit_actions_hand`]) emits for the same.
+    pub hand_text: String,
+    /// How many `actions:`/`operations:` methods this system emits — so the test can prove the
+    /// corpus actually exercised multi-member / actions-plus-operations shapes (a system that emits
+    /// zero actions is a vacuous pass).
+    pub action_count: usize,
+}
+
+/// TEST-ONLY (GATE-A). Emit **every** system's `actions:`/`operations:` methods through BOTH the
+/// `EmitActions` machine ([`super::emit_actions::walk`]) and the preserved hand oracle
+/// ([`emit_actions_hand`]) — over the SAME real parsed systems and the SAME backend — and return,
+/// per system, the two emitted Strings. `tests/emit_actions.rs` asserts, for every entry,
+/// `machine_text == hand_text` byte-for-byte. The library owns the `.finish()` and the real emit
+/// traversal.
+#[doc(hidden)]
+pub fn actions_parity_report(
+    src: &Source,
+    ast: &FileAst,
+    syms: &SymbolTable,
+    be: &dyn Backend,
+) -> Vec<ActionsParity> {
+    let mut report = Vec::new();
+    for item in &ast.items {
+        let Item::System(sys) = item else { continue };
+        let Some(sym) = syms.systems.iter().find(|s| s.name == sys.name) else {
+            continue;
+        };
+        let mut mo = super::Sink::default();
+        super::emit_actions::walk(src, syms, sym, &sys.sections, be, &mut mo);
+        let mut ho = super::Sink::default();
+        emit_actions_hand(src, syms, sym, &sys.sections, be, &mut ho);
+        report.push(ActionsParity {
+            label: sym.name.clone(),
+            machine_text: mo.finish(),
+            hand_text: ho.finish(),
+            action_count: count_actions(&sys.sections),
+        });
+    }
+    report
+}
+
+/// TEST-ONLY (GATE-A) — the number of `actions:`/`operations:` methods `sections` emits, the
+/// coverage tally [`actions_parity_report`] reports so a vacuous (zero-action) system cannot pass as
+/// covered. Same two-level structural walk the machine and the oracle share.
+#[doc(hidden)]
+fn count_actions(sections: &[Section]) -> usize {
+    let mut n = 0;
+    for sec in sections {
+        let (Section::Actions(d) | Section::Operations(d)) = sec else {
+            continue;
+        };
+        for m in &d.members {
+            if let Decl::WithBody(_) = m {
+                n += 1;
             }
         }
     }
