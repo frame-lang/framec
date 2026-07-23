@@ -251,7 +251,8 @@ impl Backend for Java {
         out.frame("    }\n\n");
     }
 
-    fn return_call(&self, rel: u32, is_async: bool, expr: NativeText, out: &mut Sink) {
+    fn return_call(&self, rel: u32, is_async: bool, _multiline: bool, expr: NativeText, out: &mut Sink) {
+        // `multiline` is ignored: a `;`-terminated statement spans newlines freely.
         let p = self.pad(rel);
         if is_async {
             // `CompletableFuture.completedFuture(v)` — a CALL, so an ATOM. There is no

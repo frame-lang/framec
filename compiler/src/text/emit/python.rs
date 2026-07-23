@@ -111,11 +111,24 @@ impl Backend for Python {
         String::new()
     }
 
-    fn return_call(&self, rel: u32, _is_async: bool, expr: NativeText, out: &mut Sink) {
+    fn return_call(&self, rel: u32, _is_async: bool, multiline: bool, expr: NativeText, out: &mut Sink) {
         let p = self.pad(rel);
-        out.frame(&format!("{p}return "));
-        out.native(expr);
-        out.frame("\n");
+        if multiline {
+            // *** bug R2. ***
+            //
+            // A multi-line native expression needs Python's implicit line-continuation
+            // parens: without them the second line is `IndentationError: unexpected
+            // indent`. The user wrote `@@:(a\n and b)` — those parens are exactly what
+            // the `@@:(` … `)` syntax already implied, and what a native `x = (a\n and b)`
+            // would have carried. framec supplies the same parens back.
+            out.frame(&format!("{p}return ("));
+            out.native(expr);
+            out.frame(")\n");
+        } else {
+            out.frame(&format!("{p}return "));
+            out.native(expr);
+            out.frame("\n");
+        }
     }
 
     fn self_call(&self, rel: u32, is_async: bool, method: &str, args: &str, out: &mut Sink) {

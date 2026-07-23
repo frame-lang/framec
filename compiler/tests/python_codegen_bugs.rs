@@ -178,3 +178,64 @@ fn r4c_return_getter_in_arg_position() {
         "R4c: `@@:return` getter must not lower to the `return` keyword:\n{py}"
     );
 }
+
+/// R2: a MULTI-LINE `@@:(<expr>)` return must be wrapped in parens so Python's implicit
+/// line continuation makes the continuation lines legal — without them the second line is
+/// `IndentationError: unexpected indent`. The `@@:(` … `)` source syntax already implied
+/// the parens; framec supplies them back. Detected where the SOURCE + span live
+/// (`Source::span_is_multiline`), never by inspecting the opaque native text.
+/// Cleared test-env primary/92_return_expr_multiline.
+#[test]
+fn r2_multiline_return_is_wrapped_in_parens() {
+    let frm = "@@[target(\"python_3\")]\n\
+               @@system T {\n\
+               \x20   interface:\n\
+               \x20       ready(): bool\n\
+               \x20   machine:\n\
+               \x20       $Active {\n\
+               \x20           ready(): bool {\n\
+               \x20               @@:(a\n\
+               \x20                   and b)\n\
+               \x20           }\n\
+               \x20       }\n\
+               }\n";
+    let py = emit_py(frm);
+    // The multi-line expr is wrapped: `return (a\n … and b)`.
+    assert!(
+        py.contains("return (a"),
+        "R2: a multi-line return must open with `return (`:\n{py}"
+    );
+    assert!(
+        py.contains("and b)\n"),
+        "R2: a multi-line return must close the wrapping paren after the expr:\n{py}"
+    );
+}
+
+/// R2 (no-churn guard): a SINGLE-line `@@:(<expr>)` must stay `return <expr>` — NO wrapping
+/// parens. The multiline detector must not fire on one-liners, or every existing single-line
+/// return snapshot would churn.
+#[test]
+fn r2_single_line_return_is_not_wrapped() {
+    let frm = "@@[target(\"python_3\")]\n\
+               @@system T {\n\
+               \x20   interface:\n\
+               \x20       ready(): bool\n\
+               \x20   machine:\n\
+               \x20       $Active {\n\
+               \x20           ready(): bool {\n\
+               \x20               @@:(self.flag)\n\
+               \x20           }\n\
+               \x20       }\n\
+               \x20   domain:\n\
+               \x20       flag: bool = True\n\
+               }\n";
+    let py = emit_py(frm);
+    assert!(
+        py.contains("return self.flag\n"),
+        "R2: a single-line return must stay bare `return <expr>`:\n{py}"
+    );
+    assert!(
+        !py.contains("return (self.flag"),
+        "R2: a single-line return must NOT be wrapped in parens:\n{py}"
+    );
+}

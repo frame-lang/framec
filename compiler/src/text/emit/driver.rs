@@ -179,7 +179,12 @@ pub trait Backend {
     fn terminate(&self, rel: u32, out: &mut Sink);
 
     /// **`@@:return(<expr>)`** — set the return value and exit. Terminal.
-    fn return_call(&self, rel: u32, is_async: bool, expr: crate::NativeText, out: &mut Sink);
+    ///
+    /// `multiline` is a POSITION fact about the SOURCE expression: it spans more than
+    /// one line. Indent-continuation targets (Python) must wrap the RHS in parens so
+    /// the continuation lines are legal; brace/`;` targets ignore it. The decision is
+    /// made where the source + span live (never by inspecting the opaque native text).
+    fn return_call(&self, rel: u32, is_async: bool, multiline: bool, expr: crate::NativeText, out: &mut Sink);
 
     /// **`@@:self.method(<args>)`** — a reentrant interface call. framec authored it, so
     /// framec terminates it.
@@ -652,7 +657,8 @@ fn emit_body_hand(
             }
             Stmt::ReturnCall(r) => {
                 let e = super::reindent::render_parts(src, &r.expr, r.expr_span, &lower);
-                be.return_call(rel(r.col), is_async, e, out);
+                let multiline = src.span_is_multiline(r.expr_span);
+                be.return_call(rel(r.col), is_async, multiline, e, out);
                 // Terminal — but only for the BODY if it is at the base nesting.
                 terminated = r.depth == 0 && rel(r.col) == 0;
             }

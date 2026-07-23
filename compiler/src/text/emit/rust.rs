@@ -305,7 +305,9 @@ impl Backend for Rust {
         out.frame(&format!("{}return Default::default();\n", self.pad(rel)));
     }
 
-    fn return_call(&self, rel: u32, _is_async: bool, expr: NativeText, out: &mut Sink) {
+    fn return_call(&self, rel: u32, _is_async: bool, _multiline: bool, expr: NativeText, out: &mut Sink) {
+        // `multiline` is ignored: a `;`-terminated statement carries its own continuation
+        // across newlines — no wrapping parens are needed (or wanted).
         out.frame(&self.pad(rel));
         out.frame("return ");
         out.native(expr);

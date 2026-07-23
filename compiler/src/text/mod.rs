@@ -267,6 +267,26 @@ impl Source {
         let col = 1 + upto.iter().rev().take_while(|&&b| b != b'\n').count();
         (line, col)
     }
+
+    /// Does `span` cross a newline — i.e. is the spanned source more than one logical
+    /// line? A trailing newline (only whitespace past the last content byte) does NOT
+    /// count: `(True\n)` is one line; `(True\n and False)` is two.
+    ///
+    /// A POSITION question, answered from the bytes here at the boundary. The emit
+    /// passes ask *whether the source expression spans lines* — Python needs wrapping
+    /// parens for implicit line continuation (bug R2) — without ever seeing the bytes
+    /// or the opaque native content.
+    pub(in crate::text) fn span_is_multiline(&self, span: Span) -> bool {
+        let end = span.end.min(self.bytes.len());
+        let start = span.start.min(end);
+        let slice = &self.bytes[start..end];
+        // Trailing whitespace/newlines are layout, not a second line.
+        let content_end = slice
+            .iter()
+            .rposition(|&b| !b.is_ascii_whitespace())
+            .map_or(0, |p| p + 1);
+        slice[..content_end].contains(&b'\n')
+    }
 }
 
 /// `Source` prints its path and size — never its content. Same reasoning as

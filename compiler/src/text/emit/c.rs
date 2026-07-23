@@ -329,7 +329,8 @@ impl Backend for C {
         out.frame(&format!("{}return{};\n", self.pad(rel), void_ret()));
     }
 
-    fn return_call(&self, rel: u32, _is_async: bool, expr: NativeText, out: &mut Sink) {
+    fn return_call(&self, rel: u32, _is_async: bool, _multiline: bool, expr: NativeText, out: &mut Sink) {
+        // `multiline` is ignored: a `;`-terminated statement spans newlines freely.
         out.frame(&self.pad(rel));
         out.frame("return ");
         out.native(expr);

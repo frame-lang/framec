@@ -239,7 +239,8 @@ fn emit_return_call(
     if let Stmt::ReturnCall(r) = &stmts[i] {
         lowering!(syms, sym, state, be, lower);
         let e = reindent::render_parts(src, &r.expr, r.expr_span, &lower);
-        be.return_call(r.col.saturating_sub(base), is_async, e, out);
+        let multiline = src.span_is_multiline(r.expr_span);
+        be.return_call(r.col.saturating_sub(base), is_async, multiline, e, out);
         return r.depth == 0 && r.col.saturating_sub(base) == 0;
     }
     false
