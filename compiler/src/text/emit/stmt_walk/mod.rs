@@ -92,7 +92,10 @@ fn emit_native(
 
 /// `Stmt::Transition` — the exit->build->enter->return lifecycle. Returns whether a base-nesting
 /// terminal fired (`depth == 0 && rel == 0`). (driver.rs Transition arm.)
+#[allow(clippy::too_many_arguments)]
 fn emit_transition(
+    src: &Source,
+    syms: &SymbolTable,
     sym: &SystemSym,
     state: &str,
     be: &dyn Backend,
@@ -103,13 +106,17 @@ fn emit_transition(
 ) -> bool {
     if let Stmt::Transition(t) = &stmts[i] {
         if let Some(target) = &t.target {
+            lowering!(syms, sym, state, be, lower);
             let r = t.col.saturating_sub(base);
             if has_lifecycle(sym, state, "<$") {
-                be.lifecycle_call(r, sym, state, "<$", t.exit_args.as_deref(), out);
+                let ea = reindent::render_args(src, t.exit_args.as_ref(), &lower);
+                be.lifecycle_call(r, sym, state, "<$", ea.as_deref(), out);
             }
-            be.transition(r, sym, target, t.args_text.as_deref(), out);
+            let sa = reindent::render_args(src, t.args_text.as_ref(), &lower);
+            be.transition(r, sym, target, sa.as_deref(), out);
             if has_lifecycle(sym, target, "$>") {
-                be.lifecycle_call(r, sym, target, "$>", t.enter_args.as_deref(), out);
+                let na = reindent::render_args(src, t.enter_args.as_ref(), &lower);
+                be.lifecycle_call(r, sym, target, "$>", na.as_deref(), out);
             }
             be.terminate(r, out);
             return t.depth == 0 && r == 0;
@@ -120,7 +127,10 @@ fn emit_transition(
 
 /// `Stmt::StackPush` — `push$ -> $T(args)` (transition, terminates) or bare `push$` (copy, stay).
 /// Returns whether a base-nesting terminal fired. (driver.rs StackPush arm.)
+#[allow(clippy::too_many_arguments)]
 fn emit_stack_push(
+    src: &Source,
+    syms: &SymbolTable,
     sym: &SystemSym,
     state: &str,
     be: &dyn Backend,
@@ -131,13 +141,17 @@ fn emit_stack_push(
 ) -> bool {
     if let Stmt::StackPush(t) = &stmts[i] {
         if let Some(target) = &t.target {
+            lowering!(syms, sym, state, be, lower);
             let r = t.col.saturating_sub(base);
             if has_lifecycle(sym, state, "<$") {
-                be.lifecycle_call(r, sym, state, "<$", t.exit_args.as_deref(), out);
+                let ea = reindent::render_args(src, t.exit_args.as_ref(), &lower);
+                be.lifecycle_call(r, sym, state, "<$", ea.as_deref(), out);
             }
-            be.push(r, sym, target, t.args_text.as_deref(), out);
+            let sa = reindent::render_args(src, t.args_text.as_ref(), &lower);
+            be.push(r, sym, target, sa.as_deref(), out);
             if has_lifecycle(sym, target, "$>") {
-                be.lifecycle_call(r, sym, target, "$>", t.enter_args.as_deref(), out);
+                let na = reindent::render_args(src, t.enter_args.as_ref(), &lower);
+                be.lifecycle_call(r, sym, target, "$>", na.as_deref(), out);
             }
             be.terminate(r, out);
             return t.depth == 0 && r == 0;
@@ -157,7 +171,10 @@ fn emit_stack_pop_bare(be: &dyn Backend, base: u32, stmts: &[Stmt], i: usize, ou
 
 /// `-> pop$` — pop and RESTORE (a transition). Returns whether a base-nesting terminal fired.
 /// (driver.rs StackPop arm.)
+#[allow(clippy::too_many_arguments)]
 fn emit_stack_pop(
+    src: &Source,
+    syms: &SymbolTable,
     sym: &SystemSym,
     state: &str,
     be: &dyn Backend,
@@ -167,13 +184,16 @@ fn emit_stack_pop(
     out: &mut Sink,
 ) -> bool {
     if let Stmt::StackPop(st) = &stmts[i] {
+        lowering!(syms, sym, state, be, lower);
         let r = st.col.saturating_sub(base);
         if has_lifecycle(sym, state, "<$") {
-            be.lifecycle_call(r, sym, state, "<$", st.exit_args.as_deref(), out);
+            let ea = reindent::render_args(src, st.exit_args.as_ref(), &lower);
+            be.lifecycle_call(r, sym, state, "<$", ea.as_deref(), out);
         }
         be.pop(r, out);
         if st.enter_args.is_some() {
-            be.pop_enter(r, sym, st.enter_args.as_deref(), out);
+            let na = reindent::render_args(src, st.enter_args.as_ref(), &lower);
+            be.pop_enter(r, sym, na.as_deref(), out);
         }
         be.terminate(r, out);
         return st.depth == 0 && r == 0;
@@ -226,9 +246,23 @@ fn emit_return_call(
 }
 
 /// `@@:self.method(<args>)` — a reentrant interface call. (driver.rs SelfCall arm.)
-fn emit_self_call(be: &dyn Backend, base: u32, is_async: bool, stmts: &[Stmt], i: usize, out: &mut Sink) {
+#[allow(clippy::too_many_arguments)]
+fn emit_self_call(
+    src: &Source,
+    syms: &SymbolTable,
+    sym: &SystemSym,
+    state: &str,
+    be: &dyn Backend,
+    base: u32,
+    is_async: bool,
+    stmts: &[Stmt],
+    i: usize,
+    out: &mut Sink,
+) {
     if let Stmt::SelfCall(c) = &stmts[i] {
-        be.self_call(c.col.saturating_sub(base), is_async, &c.method, &c.args_text, out);
+        lowering!(syms, sym, state, be, lower);
+        let a = reindent::render_args(src, Some(&c.args), &lower);
+        be.self_call(c.col.saturating_sub(base), is_async, &c.method, a.as_deref().unwrap_or(""), out);
     }
 }
 

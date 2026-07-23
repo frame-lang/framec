@@ -91,7 +91,7 @@ impl<'a> StmtWalk<'a> {
             return Default::default();
         }
         if k == 2 {
-            let term = emit_transition(self.sym, self.state, self.be, self.base, self.stmts, self.i, &mut self.out);
+            let term = emit_transition(self.src, self.syms, self.sym, self.state, self.be, self.base, self.stmts, self.i, &mut self.out);
             if term {
                 self.terminated = true;
                 let mut __next = StmtWalkComp { state: "Done".to_string(), vars: StmtWalkVars::Done {  }, args: StmtWalkArgs::Done { } };
@@ -104,7 +104,7 @@ impl<'a> StmtWalk<'a> {
             return Default::default();
         }
         if k == 3 {
-            let term = emit_stack_push(self.sym, self.state, self.be, self.base, self.stmts, self.i, &mut self.out);
+            let term = emit_stack_push(self.src, self.syms, self.sym, self.state, self.be, self.base, self.stmts, self.i, &mut self.out);
             if term {
                 self.terminated = true;
                 let mut __next = StmtWalkComp { state: "Done".to_string(), vars: StmtWalkVars::Done {  }, args: StmtWalkArgs::Done { } };
@@ -124,7 +124,7 @@ impl<'a> StmtWalk<'a> {
             return Default::default();
         }
         if k == 5 {
-            let term = emit_stack_pop(self.sym, self.state, self.be, self.base, self.stmts, self.i, &mut self.out);
+            let term = emit_stack_pop(self.src, self.syms, self.sym, self.state, self.be, self.base, self.stmts, self.i, &mut self.out);
             if term {
                 self.terminated = true;
                 let mut __next = StmtWalkComp { state: "Done".to_string(), vars: StmtWalkVars::Done {  }, args: StmtWalkArgs::Done { } };
@@ -157,7 +157,7 @@ impl<'a> StmtWalk<'a> {
             return Default::default();
         }
         if k == 8 {
-            emit_self_call(self.be, self.base, self.is_async, self.stmts, self.i, &mut self.out);
+            emit_self_call(self.src, self.syms, self.sym, self.state, self.be, self.base, self.is_async, self.stmts, self.i, &mut self.out);
             self.i = self.i + 1;
             let mut __next = StmtWalkComp { state: "Walk".to_string(), vars: StmtWalkVars::Walk {  }, args: StmtWalkArgs::Walk { } };
             self.compartment = __next;

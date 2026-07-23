@@ -358,6 +358,12 @@ impl Backend for Python {
     }
 
     fn embed_call(&self, _sym: &SystemSym, ec: &EmbedCall) -> Atom {
+        // An EMPTY field is a bare self-call `@@:self.method(...)` embedded in an expression
+        // (bug R3): the receiver is `self`, not `self.<field>`. `self.<field>` would spell
+        // `self..method(...)`.
+        if ec.field.is_empty() {
+            return Atom::call(format!("self.{}", ec.method), &ec.args);
+        }
         Atom::method(Atom::field(Atom::ident("self"), &ec.field), &ec.method, &ec.args)
     }
 

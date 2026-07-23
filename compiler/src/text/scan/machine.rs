@@ -11,8 +11,8 @@
 use super::literals::Target;
 use super::parts::native_parts;
 use crate::tree::body::{
-    AssignStmt, Body, FrameRef, NativeStmt, ReturnCallStmt, SelfCallStmt, SimpleStmt, Stmt,
-    TransitionStmt,
+    ArgExpr, AssignStmt, Body, FrameRef, NativeStmt, ReturnCallStmt, SelfCallStmt, SimpleStmt,
+    Stmt, TransitionStmt,
 };
 use crate::tree::{
     BodyDecl, Decl, DeclSection, FrameSpan, HandlerNode, MachineMember, MachineSection,
@@ -277,7 +277,7 @@ pub fn body(target: Target, bytes: &[u8], span: Span) -> Body {
         // gap before the statement and the statement node's own `depth` field.
         let st = frame_call(target, bytes, start, span.end, depth, col)
             .or_else(|| frame_assign(target, bytes, start, span.end, col))
-            .or_else(|| frame_stmt(bytes, start, span.end, depth, col));
+            .or_else(|| frame_stmt(target, bytes, start, span.end, depth, col));
         if let Some(st) = st {
             let sp = stmt_span(&st);
             push_native(target, bytes, &mut stmts, cursor, sp.start, span.start, depth);
@@ -399,7 +399,7 @@ pub fn arrow_has_target(bytes: &[u8], from: usize, to: usize) -> bool {
 /// (docs/JOURNAL.md), then extracts the fields (parse the arrow tail, the exit args). The
 /// hand classifier survives as `frame_stmt_hand`, the StmtScan differential oracle. The
 /// extraction (arg text, targets) is transformation and stays native.
-fn frame_stmt(bytes: &[u8], i: usize, limit: usize, depth: u32, col: u32) -> Option<Stmt> {
+fn frame_stmt(target: Target, bytes: &[u8], i: usize, limit: usize, depth: u32, col: u32) -> Option<Stmt> {
     let (kind, e) = super::stmt_scan::classify(bytes, i, limit);
     if kind == 0 {
         return None;
@@ -409,55 +409,55 @@ fn frame_stmt(bytes: &[u8], i: usize, limit: usize, depth: u32, col: u32) -> Opt
         // `push$ -> (enter) $S(state)`
         2 => {
             let arrow = find(bytes, i, e, b"->");
-            let (enter_args, target, args_text) =
+            let (enter_span, to_state, args_span) =
                 parse_after_arrow(bytes, arrow.map(|a| a + 2).unwrap_or(i), e);
             Some(Stmt::StackPush(TransitionStmt {
                 span,
                 col,
                 depth,
-                target,
+                target: to_state,
                 args: None,
-                args_text,
+                args_text: arg_expr(target, bytes, args_span),
                 exit_args: None,
-                enter_args,
+                enter_args: arg_expr(target, bytes, enter_span),
             }))
         }
         // Transition (1) or StackPop (3) — may carry `(exit)` args before the arrow.
         1 | 3 => {
-            let (exit_args, arrow_at) = if bytes.get(i) == Some(&b'(') {
+            let (exit_span, arrow_at) = if bytes.get(i) == Some(&b'(') {
                 match balanced(Target::Python3, bytes, i, limit, b'(', b')') {
                     Some(close) => {
-                        let ea = trimmed(&bytes[i + 1..close.saturating_sub(1)]);
+                        let es = Span::new(i + 1, close.saturating_sub(1));
                         let mut j = close;
                         while j < limit && (bytes[j] == b' ' || bytes[j] == b'\t') {
                             j += 1;
                         }
-                        (ea, j)
+                        (Some(es), j)
                     }
                     None => (None, i),
                 }
             } else {
                 (None, i)
             };
-            let (enter_args, target, args_text) = parse_after_arrow(bytes, arrow_at + 2, e);
+            let (enter_span, to_state, args_span) = parse_after_arrow(bytes, arrow_at + 2, e);
             if kind == 3 {
                 Some(Stmt::StackPop(SimpleStmt {
                     span,
                     col,
                     depth,
-                    exit_args,
-                    enter_args,
+                    exit_args: arg_expr(target, bytes, exit_span),
+                    enter_args: arg_expr(target, bytes, enter_span),
                 }))
             } else {
                 Some(Stmt::Transition(TransitionStmt {
                     span,
                     col,
                     depth,
-                    target,
+                    target: to_state,
                     args: None,
-                    args_text,
-                    exit_args,
-                    enter_args,
+                    args_text: arg_expr(target, bytes, args_span),
+                    exit_args: arg_expr(target, bytes, exit_span),
+                    enter_args: arg_expr(target, bytes, enter_span),
                 }))
             }
         }
@@ -481,22 +481,40 @@ fn frame_stmt(bytes: &[u8], i: usize, limit: usize, depth: u32, col: u32) -> Opt
     }
 }
 
-/// Parse the part of a transition after `->`: an optional `(enter_args)`, then
-/// `$Target(state_args)`. Returns `(enter_args, target, state_args)`.
-fn parse_after_arrow(bytes: &[u8], from: usize, to: usize) -> (Option<String>, Option<String>, Option<String>) {
+/// Parse the part of a transition after `->`: an optional `(enter)` group, then
+/// `$Target(state)`. Returns `(enter_span, target_name, state_args_span)` — the arg SPANS, not
+/// their text, so the caller can TOKENIZE them (lower their Frame refs) rather than ship the
+/// blob verbatim (bug R4b).
+fn parse_after_arrow(bytes: &[u8], from: usize, to: usize) -> (Option<Span>, Option<String>, Option<Span>) {
     let mut i = from;
     while i < to && (bytes[i] == b' ' || bytes[i] == b'\t') {
         i += 1;
     }
     // Optional enter args, only if the `(` comes BEFORE the `$Target`.
-    let mut enter_args = None;
+    let mut enter_span = None;
     if i < to && bytes[i] == b'(' {
         if let Some(close) = balanced(Target::Python3, bytes, i, to, b'(', b')') {
-            enter_args = trimmed(&bytes[i + 1..close.saturating_sub(1)]);
+            enter_span = Some(Span::new(i + 1, close.saturating_sub(1)));
             i = close;
         }
     }
-    (enter_args, target_of(bytes, i, to), args_of(bytes, i, to))
+    (enter_span, target_of(bytes, i, to), args_of(bytes, i, to))
+}
+
+/// Build a tokenized [`ArgExpr`] from an optional arg span, or `None` when the span is empty or
+/// whitespace-only — preserving the old `trimmed`-returns-`None` contract that gates
+/// lifecycle-arg emission (`enter_args.is_some()`, the Python `_seed_args` guard). The parts are
+/// produced by the SAME `native_parts` the assignment RHS uses, so a `$.x` in a transition arg
+/// lowers exactly as it would in `$.y = $.x`.
+fn arg_expr(target: Target, bytes: &[u8], span: Option<Span>) -> Option<ArgExpr> {
+    let s = span?;
+    if s.start >= s.end || bytes[s.start..s.end].iter().all(|b| b.is_ascii_whitespace()) {
+        return None;
+    }
+    Some(ArgExpr {
+        parts: native_parts(bytes, s.start, s.end, target),
+        span: s,
+    })
 }
 
 fn find(bytes: &[u8], from: usize, to: usize, pat: &[u8]) -> Option<usize> {
@@ -508,15 +526,6 @@ fn find(bytes: &[u8], from: usize, to: usize, pat: &[u8]) -> Option<usize> {
         i += 1;
     }
     None
-}
-
-fn trimmed(b: &[u8]) -> Option<String> {
-    let s = String::from_utf8_lossy(b).trim().to_string();
-    if s.is_empty() {
-        None
-    } else {
-        Some(s)
-    }
 }
 
 fn stmt_span(s: &Stmt) -> Span {
@@ -823,7 +832,7 @@ fn column_of(bytes: &[u8], at: usize, _body_start: usize) -> u32 {
 /// a lexer cannot do and which C++'s own grammar cannot do either. So framec hands the
 /// blob to the target compiler, which splits it correctly, and hands the arity error
 /// back for free.
-fn args_of(bytes: &[u8], from: usize, to: usize) -> Option<String> {
+fn args_of(bytes: &[u8], from: usize, to: usize) -> Option<Span> {
     let mut i = from;
     // Find the `$Name(` — the paren that belongs to the transition target.
     while i < to {
@@ -838,9 +847,8 @@ fn args_of(bytes: &[u8], from: usize, to: usize) -> Option<String> {
                 // scan (`parse_after_arrow`) already uses; retires the duplicate `(`/`)` depth
                 // counter. `Target::Python3` is a fixed, irrelevant target (a transition head has no strings).
                 let close = balanced(Target::Python3, bytes, open, to, b'(', b')')?;
-                let inner =
-                    String::from_utf8_lossy(&bytes[open + 1..close.saturating_sub(1)]).into_owned();
-                return if inner.trim().is_empty() { None } else { Some(inner) };
+                // The interior SPAN — `arg_expr` tokenizes it and drops empty/whitespace-only.
+                return Some(Span::new(open + 1, close.saturating_sub(1)));
             }
             return None;
         }
@@ -977,6 +985,25 @@ struct CallHead {
     end: usize,
 }
 
+/// Is `i` a STATEMENT position — i.e. the token there stands alone rather than sitting inside a
+/// native expression? True iff, scanning back over spaces/tabs, the first byte is a newline, a
+/// block brace, a `;`, or the buffer start. A `=` / `(` / `,` / operator / identifier before it
+/// means the token is an OPERAND (embedded). This is what tells a standalone `@@:self.g()`
+/// statement from an embedded `x = @@:self.g()` (bug R3): the first is frame-terminated, the
+/// second is a native part.
+fn at_stmt_boundary(bytes: &[u8], i: usize) -> bool {
+    let mut j = i;
+    while j > 0 {
+        let b = bytes[j - 1];
+        if b == b' ' || b == b'\t' {
+            j -= 1;
+            continue;
+        }
+        return b == b'\n' || b == b'\r' || b == b'{' || b == b'}' || b == b';';
+    }
+    true
+}
+
 fn frame_call_parse(bytes: &[u8], i: usize, limit: usize, target: Target) -> Option<CallHead> {
     if !starts(bytes, i, b"@@:", limit) {
         return None;
@@ -1001,8 +1028,13 @@ fn frame_call_parse(bytes: &[u8], i: usize, limit: usize, target: Target) -> Opt
             end,
         });
     }
-    // `@@:self.method(`
-    if starts(bytes, i, b"@@:self.", limit) {
+    // `@@:self.method(` — a self-call STATEMENT, but only when it stands ALONE. Embedded in a
+    // native expression (`x = @@:self.g()`, `foo(@@:self.g())`) it is an OPERAND, not a
+    // statement; recognizing it as one here splits the line into `x =` + `self.g()` (bug R3).
+    // So a self-call is a statement only at a statement boundary; an embedded one falls through
+    // to `None` here, stays inside the native water, and is lowered by `native_parts` (via the
+    // no-field `embed_scan` arm) to the target's self-call spelling.
+    if starts(bytes, i, b"@@:self.", limit) && at_stmt_boundary(bytes, i) {
         let ns = i + b"@@:self.".len();
         let mut j = ns;
         while j < limit && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') {
@@ -1054,8 +1086,12 @@ fn frame_call(target: Target, bytes: &[u8], i: usize, limit: usize, depth: u32, 
             span: Span::new(i, h.end),
             col,
             method: String::from_utf8_lossy(&bytes[name_start..name_end]).into_owned(),
-            args_text: String::from_utf8_lossy(&bytes[name_end + 1..close.saturating_sub(1)])
-                .into_owned(),
+            // The args are TOKENIZED (their Frame refs become nodes), so `@@:self.echo($.val)`
+            // lowers `$.val` per target instead of leaking it verbatim (bug R4a).
+            args: ArgExpr {
+                parts: native_parts(bytes, name_end + 1, close.saturating_sub(1), target),
+                span: Span::new(name_end + 1, close.saturating_sub(1)),
+            },
         })),
     }
 }

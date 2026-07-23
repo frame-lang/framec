@@ -403,6 +403,18 @@ impl Backend for C {
     }
 
     fn embed_call(&self, sym: &SystemSym, ec: &EmbedCall) -> Atom {
+        // An EMPTY field is a bare self-call `@@:self.method(...)` embedded in an expression
+        // (bug R3): C has no methods, so it is the free-function form on `self` — the SAME
+        // spelling the self-call STATEMENT uses (`Sys_method(self, args)`), keyed on the
+        // current system name.
+        if ec.field.is_empty() {
+            let args = if ec.args.trim().is_empty() {
+                "self".to_string()
+            } else {
+                format!("self, {}", ec.args)
+            };
+            return Atom::call(format!("{}_{}", sym.name, ec.method), args);
+        }
         // If `field` is a system-typed domain field, this is a cross-system call and C uses
         // the free-function form `Sys_method(self->field, args)` (RFC-0046). Otherwise it is
         // a native method call on a scalar field's value.

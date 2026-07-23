@@ -53,9 +53,24 @@ fn args_with_nesting_and_strings() {
 #[test]
 fn the_reject_cases() {
     check("@@:self.a.b", &[]); // field read, no parens -> not a call
-    check("@@:self.x", &[]); // no method segment
+    check("@@:self.x", &[]); // no method segment, no parens -> field read
     check("@@:self.x = 1", &[]); // assignment, not a call
     check("@@:data.k.m()", &[]); // not self.
     check("plain words @@ here", &[]);
     check("", &[]);
+}
+
+/// A bare `@@:self.<method>(...)` — no field — is a SELF-CALL, recognized with an EMPTY field
+/// (bug R3). This is how an embedded self-call in expression position becomes a native part
+/// instead of splitting the line. `@@:self.g` WITHOUT parens stays a field read (rejected).
+#[test]
+fn no_field_self_calls() {
+    check("@@:self.g()", &[(0, "", "g", "", 11)]);
+    check("x = @@:self.reading()", &[(4, "", "reading", "", 21)]);
+    check("@@:self.echo($.val)", &[(0, "", "echo", "$.val", 19)]);
+    // `)` inside a string arg must not close early — the ParenBalance leaf is string-aware.
+    check("@@:self.log(\"a)b\")", &[(0, "", "log", "\"a)b\"", 18)]);
+    // A field read (no parens) is still NOT a self-call.
+    check("@@:self.g", &[]);
+    check("@@:self.g + 1", &[]);
 }

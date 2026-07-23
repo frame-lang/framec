@@ -165,9 +165,10 @@ pub struct SelfCallStmt {
     /// not care. So this is a fact on the node, and what to DO with it is a spelling.
     pub col: u32,
     pub method: String,
-    /// The args, verbatim, **as one blob**. framec does not split them; the target
-    /// compiler does, correctly and for free.
-    pub args_text: String,
+    /// The call arguments, **tokenized** (their Frame refs are nodes) and never split. A
+    /// `$.x` / `@@:params.k` here is LOWERED per target — the old node shipped the arg blob
+    /// verbatim, so `@@:self.echo($.val)` leaked `$.val` to the target (bug R4a).
+    pub args: ArgExpr,
 }
 
 /// `<frame-ref> = <native expr>`
@@ -244,6 +245,21 @@ pub enum NativePart {
     /// args)`); otherwise it is a native method call on a scalar field's value. Which one is
     /// decided at emit from the field's declared type, so the scanner just captures shape.
     EmbedCall(EmbedCall),
+}
+
+/// A Frame-authored **argument blob** — the interior of a self-call's `(...)`, or a transition's
+/// `(enter)` / `(exit)` / `$T(state)` group. It is native code the user wrote, but framec captures
+/// its **structure** (its Frame refs, literals, instantiations are NODES) so that a `$.x` /
+/// `@@:params.k` sitting in argument position is LOWERED per target, not shipped verbatim (bug R4).
+///
+/// The args are **never split** — the whole blob rides as one, exactly as the RHS of a Frame
+/// assignment does. The tokenization happens at scan time, where the source and span live; emit
+/// only folds the parts through the backend's lowering (`reindent::render_args`).
+#[derive(Debug)]
+pub struct ArgExpr {
+    /// The parts. **They partition `span`** — text, refs, literals, …
+    pub parts: Vec<NativePart>,
+    pub span: Span,
 }
 
 /// A `@@:self.<field>.<method>(args)` call site (RFC-0046).
@@ -413,24 +429,25 @@ pub struct TransitionStmt {
     ///
     /// The cheapest number of times to compute a fact is sometimes **zero**.
     pub args: Option<Span>,
-    /// The state args, verbatim, **as one blob**. Never split. `-> $T(these)`.
-    pub args_text: Option<String>,
+    /// The state args, **tokenized** and never split. `-> $T(these)`. A `$.x` here is lowered
+    /// per target, not shipped verbatim (bug R4b).
+    pub args_text: Option<ArgExpr>,
     /// Exit args — `(these) -> $T` — delivered to the SOURCE state's `<$` exit handler.
-    pub exit_args: Option<String>,
+    pub exit_args: Option<ArgExpr>,
     /// Enter args — `-> (these) $T` — delivered to the TARGET state's `$>` enter handler.
-    pub enter_args: Option<String>,
+    pub enter_args: Option<ArgExpr>,
 }
 
 #[derive(Debug)]
 pub struct SimpleStmt {
     pub span: Span,
     /// Exit args on `(reason) -> pop$` — delivered to the current state's `<$` handler
-    /// before the pop. (Forward ignores this.)
-    pub exit_args: Option<String>,
+    /// before the pop. **Tokenized** (a `$.x` here is lowered, bug R4b). (Forward ignores this.)
+    pub exit_args: Option<ArgExpr>,
     /// Enter args on `-> (enter) pop$` — delivered to the RESTORED state's `$>` handler
-    /// after the pop, via a runtime state dispatch (the popped state is dynamic). (Forward
-    /// ignores this.)
-    pub enter_args: Option<String>,
+    /// after the pop, via a runtime state dispatch (the popped state is dynamic). **Tokenized**
+    /// (a `$.x` here is lowered, bug R4b). (Forward ignores this.)
+    pub enter_args: Option<ArgExpr>,
     /// The statement's COLUMN in the source.
     ///
     /// An indent-delimited target (Python, GDScript) must reproduce the user's nesting:

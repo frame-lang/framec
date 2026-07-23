@@ -112,6 +112,31 @@ impl<'a> EmbedScan<'a> {
                 self.compartment = __next;
                 return Default::default();
             }
+            // No `.` after the identifier: this is a bare `@@:self.<method>(...)`
+            // self-call (no field). The identifier just read IS the method; the field
+            // is EMPTY (field_start == field_end). This lets an embedded self-call in
+            // expression position — `x = @@:self.g()`, `foo(@@:self.g())` — be a native
+            // PART, lowered per target to the self-call spelling, instead of being split
+            // out as its own statement (bug R3). A STANDALONE `@@:self.g()` remains a
+            // SelfCall statement (frame-terminated); the two are told apart at the
+            // statement layer by position, not here.
+            let p = skip_ws_at(self.src, self.cursor);
+            if is_open_paren_at(self.src, p) {
+                self.field_end = self.field_start;
+                self.method_start = self.field_start;
+                self.method_end = self.cursor;
+                self.paren_open = p;
+                let e = paren_end(self.src, p);
+                if e > p {
+                    self.cursor = e;
+                    let mut __next = EmbedScanComp { state: "Accept".to_string(), vars: EmbedScanVars::Accept {  }, args: EmbedScanArgs::Accept { } };
+                    self.compartment = __next;
+                    return Default::default();
+                }
+                let mut __next = EmbedScanComp { state: "Reject".to_string(), vars: EmbedScanVars::Reject {  }, args: EmbedScanArgs::Reject { } };
+                self.compartment = __next;
+                return Default::default();
+            }
             let mut __next = EmbedScanComp { state: "Reject".to_string(), vars: EmbedScanVars::Reject {  }, args: EmbedScanArgs::Reject { } };
             self.compartment = __next;
             return Default::default();

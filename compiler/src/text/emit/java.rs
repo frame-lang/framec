@@ -426,6 +426,11 @@ impl Backend for Java {
     }
 
     fn embed_call(&self, _sym: &SystemSym, ec: &EmbedCall) -> Atom {
+        // An EMPTY field is a bare self-call `@@:self.method(...)` embedded in an expression
+        // (bug R3): the receiver is `this`, not `this.<field>`.
+        if ec.field.is_empty() {
+            return Atom::call(format!("this.{}", ec.method), &ec.args);
+        }
         // Java spells the system and scalar cases identically: `this.field.method(args)`.
         Atom::method(Atom::field(Atom::ident("this"), &ec.field), &ec.method, &ec.args)
     }

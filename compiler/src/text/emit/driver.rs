@@ -589,11 +589,14 @@ fn emit_body_hand(
                 if let Some(target) = &t.target {
                     let r = rel(t.col);
                     if has_lifecycle(sym, state, "<$") {
-                        be.lifecycle_call(r, sym, state, "<$", t.exit_args.as_deref(), out);
+                        let ea = super::reindent::render_args(src, t.exit_args.as_ref(), &lower);
+                        be.lifecycle_call(r, sym, state, "<$", ea.as_deref(), out);
                     }
-                    be.transition(r, sym, target, t.args_text.as_deref(), out);
+                    let sa = super::reindent::render_args(src, t.args_text.as_ref(), &lower);
+                    be.transition(r, sym, target, sa.as_deref(), out);
                     if has_lifecycle(sym, target, "$>") {
-                        be.lifecycle_call(r, sym, target, "$>", t.enter_args.as_deref(), out);
+                        let na = super::reindent::render_args(src, t.enter_args.as_ref(), &lower);
+                        be.lifecycle_call(r, sym, target, "$>", na.as_deref(), out);
                     }
                     be.terminate(r, out);
                     terminated = t.depth == 0 && r == 0;
@@ -603,11 +606,14 @@ fn emit_body_hand(
                 if let Some(target) = &t.target {
                     let r = rel(t.col);
                     if has_lifecycle(sym, state, "<$") {
-                        be.lifecycle_call(r, sym, state, "<$", t.exit_args.as_deref(), out);
+                        let ea = super::reindent::render_args(src, t.exit_args.as_ref(), &lower);
+                        be.lifecycle_call(r, sym, state, "<$", ea.as_deref(), out);
                     }
-                    be.push(r, sym, target, t.args_text.as_deref(), out);
+                    let sa = super::reindent::render_args(src, t.args_text.as_ref(), &lower);
+                    be.push(r, sym, target, sa.as_deref(), out);
                     if has_lifecycle(sym, target, "$>") {
-                        be.lifecycle_call(r, sym, target, "$>", t.enter_args.as_deref(), out);
+                        let na = super::reindent::render_args(src, t.enter_args.as_ref(), &lower);
+                        be.lifecycle_call(r, sym, target, "$>", na.as_deref(), out);
                     }
                     be.terminate(r, out);
                     terminated = t.depth == 0 && r == 0;
@@ -624,13 +630,15 @@ fn emit_body_hand(
             Stmt::StackPop(st) => {
                 let r = rel(st.col);
                 if has_lifecycle(sym, state, "<$") {
-                    be.lifecycle_call(r, sym, state, "<$", st.exit_args.as_deref(), out);
+                    let ea = super::reindent::render_args(src, st.exit_args.as_ref(), &lower);
+                    be.lifecycle_call(r, sym, state, "<$", ea.as_deref(), out);
                 }
                 be.pop(r, out);
                 // `-> (enter) pop$` — deliver the enter args to the RESTORED state's `$>`,
                 // dispatched at runtime (the popped state is dynamic).
                 if st.enter_args.is_some() {
-                    be.pop_enter(r, sym, st.enter_args.as_deref(), out);
+                    let na = super::reindent::render_args(src, st.enter_args.as_ref(), &lower);
+                    be.pop_enter(r, sym, na.as_deref(), out);
                 }
                 be.terminate(r, out);
                 terminated = st.depth == 0 && r == 0;
@@ -648,7 +656,10 @@ fn emit_body_hand(
                 // Terminal — but only for the BODY if it is at the base nesting.
                 terminated = r.depth == 0 && rel(r.col) == 0;
             }
-            Stmt::SelfCall(c) => be.self_call(rel(c.col), is_async, &c.method, &c.args_text, out),
+            Stmt::SelfCall(c) => {
+                let a = super::reindent::render_args(src, Some(&c.args), &lower);
+                be.self_call(rel(c.col), is_async, &c.method, a.as_deref().unwrap_or(""), out);
+            }
             // `=> $^` — forward this event to the PARENT's handler. The driver knows
             // which state that is, because the symbol table knows the parent chain.
             Stmt::Forward(fwd) => {

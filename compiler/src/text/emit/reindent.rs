@@ -37,7 +37,7 @@
 
 use super::atom::Atom;
 use super::super::Source;
-use crate::tree::body::{EmbedCall, FrameRef, Instantiation, LiteralPart, NativePart, NativeStmt};
+use crate::tree::body::{ArgExpr, EmbedCall, FrameRef, Instantiation, LiteralPart, NativePart, NativeStmt};
 use crate::NativeText;
 
 /// How a backend turns a Frame reference into target code.
@@ -82,6 +82,27 @@ pub fn render_parts(
         emit_part(bytes, p, 0, lower, &mut out);
     }
     NativeText::new(out.trim().to_string(), span)
+}
+
+/// Render a Frame-authored **argument blob** — a self-call's or a transition's `(...)` group —
+/// to a lowered string: its Frame refs (`$.x`, `@@:params.k`) expanded to target code, its
+/// literals verbatim. `None` when there is no arg. NOT re-indented (an arg is one expression,
+/// never a block). The transition/self-call emit paths splice the result into the backend's call
+/// spelling — the SAME `&str` arg channel those backends already had, now carrying LOWERED code
+/// instead of the leaked verbatim blob (bug R4).
+pub fn render_args(src: &Source, args: Option<&ArgExpr>, lower: &Lowering) -> Option<String> {
+    let a = args?;
+    let bytes = src.open();
+    let mut out = String::new();
+    for p in &a.parts {
+        emit_part(bytes, p, 0, lower, &mut out);
+    }
+    let out = out.trim().to_string();
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
 }
 
 /// Render top-level native **water** — the user's code outside any system. Like
