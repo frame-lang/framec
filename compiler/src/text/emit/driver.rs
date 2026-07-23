@@ -332,83 +332,120 @@ pub fn target_diagnostics(
     out
 }
 
-/// Emit every system in the file. **This function has no `Target`.**
+/// Emit every item in the file. **This function has no `Target`.**
+///
+/// The whole-file walk — the `file_header` preamble, then per item either the "water" (top-level
+/// native code, verbatim) or a system's phase spine — is reified as the outermost
+/// [`super::emit_file`] `@@system` (`EmitFile`), whose `walk` is this function's body. With it
+/// landed, the entire emit driver from the file down through each system's phases, handlers, and
+/// statements runs through `@@system`s. The byte-for-byte oracle it replaced is preserved as
+/// [`emit_file_hand`], gated in `tests/emit_file.rs` (GATE-A, via [`file_parity_report`]).
 pub fn emit(src: &Source, ast: &FileAst, syms: &SymbolTable, be: &dyn Backend) -> String {
+    super::emit_file::walk(src, ast, syms, be)
+}
+
+/// Render ONE top-level native item — **the water** — into `out`.
+///
+/// Native code outside a system is the USER'S code and passes through VERBATIM (the Oceans model;
+/// leaving it out meant every type the user defined alongside their system silently vanished). The
+/// one exception is `@@SystemName(...)` islands (spec §1103), Frame's own syntax even out here, which
+/// lower to the target constructor. There is no compartment at top level, so a plain ref/embed cannot
+/// legally occur; either renders as its original text.
+///
+/// Shared by the [`super::emit_file`] machine's `emit_native_item` leaf AND the preserved
+/// [`emit_file_hand`] oracle, so the two whole-file paths differ ONLY in how the item loop is
+/// sequenced (the exact SPELLING of a water item is one function, gated once).
+pub(super) fn render_native_item(
+    src: &Source,
+    syms: &SymbolTable,
+    be: &dyn Backend,
+    n: &crate::tree::NativeItem,
+    out: &mut Sink,
+) {
+    let bytes = src.open();
+    let reference = |r: &FrameRef| -> Atom {
+        Atom::ident(String::from_utf8_lossy(&bytes[r.span.start..r.span.end]).into_owned())
+    };
+    let instantiate = |inst: &Instantiation| -> Atom { lower_instantiation(syms, be, inst) };
+    // No `@@:self` at top level — an embed call cannot occur here; render verbatim.
+    let embed = |ec: &EmbedCall| -> Atom {
+        Atom::ident(String::from_utf8_lossy(&bytes[ec.span.start..ec.span.end]).into_owned())
+    };
+    let lower = super::reindent::Lowering {
+        reference: &reference,
+        instantiate: &instantiate,
+        embed: &embed,
+    };
+    out.native(super::reindent::render_water(src, &n.parts, n.span, &lower));
+}
+
+/// The preserved byte-for-byte **oracle** for the driver's TOP-LEVEL ITEM WALK — the original
+/// `file_header` + item loop [`emit`] ran before it was reified as the [`super::emit_file`]
+/// `@@system` (`EmitFile`). Kept as the differential check that machine is proven against (GATE-A,
+/// `tests/emit_file.rs`, via [`file_parity_report`]). It calls the SAME shared [`render_native_item`]
+/// and the SAME landed [`super::emit_system::walk`] the machine's leaves call — the two paths differ
+/// only in how the item loop is SEQUENCED (hand loop vs `$Item` cycle), which is exactly what the
+/// gate isolates. Doc-hidden and **not on the production path**. Do not edit it to add behavior: it
+/// exists only to reproduce the pre-conversion sequencing exactly, so any divergence is the machine's
+/// bug, not the oracle's.
+#[doc(hidden)]
+fn emit_file_hand(src: &Source, ast: &FileAst, syms: &SymbolTable, be: &dyn Backend) -> String {
     let mut out = Sink::new();
     be.file_header(&mut out);
     for item in &ast.items {
-        // *** THE WATER. ***
-        //
-        // Native code outside a system is the USER'S code and passes through VERBATIM.
-        // That is the Oceans model, and leaving it out meant every type the user defined
-        // alongside their system silently vanished from the output.
         if let Item::Native(n) = item {
-            // Water — verbatim, EXCEPT `@@SystemName(...)` islands (spec §1103), which are
-            // Frame's own syntax even out here and lower to the target constructor. There
-            // is no compartment at top level, so a plain ref cannot legally occur here; if
-            // one did it renders as its original text.
-            let bytes = src.open();
-            let reference = |r: &FrameRef| -> Atom {
-                Atom::ident(String::from_utf8_lossy(&bytes[r.span.start..r.span.end]).into_owned())
-            };
-            let instantiate = |inst: &Instantiation| -> Atom { lower_instantiation(syms, be, inst) };
-            // No `@@:self` at top level — an embed call cannot occur here; render verbatim.
-            let embed = |ec: &EmbedCall| -> Atom {
-                Atom::ident(String::from_utf8_lossy(&bytes[ec.span.start..ec.span.end]).into_owned())
-            };
-            let lower = super::reindent::Lowering {
-                reference: &reference,
-                instantiate: &instantiate,
-                embed: &embed,
-            };
-            out.native(super::reindent::render_water(src, &n.parts, n.span, &lower));
+            render_native_item(src, syms, be, n, &mut out);
             continue;
         }
         let Item::System(sys) = item else { continue };
         let Some(sym) = syms.systems.iter().find(|s| s.name == sys.name) else {
             continue;
         };
-
-        be.open_system(sym, &mut out);
-
-        // The interface: one public method per event — the driver's `(method, arm)` router pass,
-        // reified as the `EmitInterface` @@system (`emit_interface.frs`): two nested cycle states
-        // (`$Method` → `$Arm`) carrying the two walk cursors, one public method emitted per event.
-        //
-        // HIERARCHICAL DISPATCH, resolved there, once, from the symbol table: for every state the
-        // machine may be in, which state's handler actually runs? Under HSM that is the nearest
-        // ancestor that declares the handler — possibly not the state itself (the `$Arm` cycle's
-        // `resolve_handler` stamp). The byte-for-byte oracle it replaced is preserved as
-        // [`emit_interface_hand`], gated in `tests/emit_interface.rs` (GATE-A, via
-        // [`interface_parity_report`]).
-        super::emit_interface::walk(sym, be, &mut out);
-
-        // One private method per (state, handler) — the driver's `(section, state, handler)`
-        // nested pass, reified as the `EmitHandlers` @@system (`emit_handlers.frs`): three nested
-        // cycle states carrying the three walk cursors, one private method emitted per handler. The
-        // byte-for-byte oracle it replaced is preserved as [`emit_handlers_hand`], gated in
-        // `tests/emit_handlers.rs` (GATE-A, via [`handlers_parity_report`]).
-        super::emit_handlers::walk(src, syms, sym, &sys.sections, be, &mut out);
-
-        // `actions:` / `operations:` — methods with NATIVE bodies. The signature is Frame's; the
-        // body is the user's, decomposed like any other native code. Reified as the `EmitActions`
-        // @@system (`emit_actions.frs`): two nested cycle states (`$Section` → `$Member`) carrying
-        // the two walk cursors, one method emitted per bodied member. The byte-for-byte oracle it
-        // replaced is preserved as [`emit_actions_hand`], gated in `tests/emit_actions.rs` (GATE-A,
-        // via [`actions_parity_report`]).
-        super::emit_actions::walk(src, syms, sym, &sys.sections, be, &mut out);
-
-        // `@@[persist]` — save/restore. Derived ONCE from the symbol table (RFC-0054),
-        // then spelled per target. The disambiguation (out-of-band framing) is fixed in
-        // each backend; the manifest just says WHAT to persist.
-        let manifest = super::persist::PersistManifest::derive(sym, syms);
-        if manifest.enabled {
-            be.persist(&manifest, &mut out);
-        }
-
-        be.close_system(sym, &mut out);
+        super::emit_system::walk(src, syms, sym, &sys.sections, be, &mut out);
     }
     out.finish()
+}
+
+/// TEST-ONLY (GATE-A) — the whole file's dual emission (machine top walk vs hand oracle), for
+/// `tests/emit_file.rs`. Doc-hidden.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct FileParity {
+    /// Text the `EmitFile` machine path ([`super::emit_file::walk`], = the production [`emit`]) emits
+    /// for the WHOLE file.
+    pub machine_text: String,
+    /// Text the preserved hand oracle ([`emit_file_hand`]) emits for the same.
+    pub hand_text: String,
+    /// How many items the file walked — so the test can prove the corpus exercised multi-item files
+    /// (systems, water, and skippable items interleaved), not a single trivial system.
+    pub item_count: usize,
+    /// How many of those items were top-level native "water" — so the test can prove the water arm of
+    /// the `$Item` fork was actually taken (a corpus of bare systems would leave it unproven).
+    pub native_count: usize,
+}
+
+/// TEST-ONLY (GATE-A). Emit the WHOLE file through BOTH the `EmitFile` machine
+/// ([`super::emit_file::walk`], the production path) and the preserved hand oracle
+/// ([`emit_file_hand`]) — over the SAME parsed file and the SAME backend. `tests/emit_file.rs`
+/// asserts `machine_text == hand_text` byte-for-byte. The library owns the emission and `.finish()`.
+#[doc(hidden)]
+pub fn file_parity_report(
+    src: &Source,
+    ast: &FileAst,
+    syms: &SymbolTable,
+    be: &dyn Backend,
+) -> FileParity {
+    let native_count = ast
+        .items
+        .iter()
+        .filter(|it| matches!(it, Item::Native(_)))
+        .count();
+    FileParity {
+        machine_text: super::emit_file::walk(src, ast, syms, be),
+        hand_text: emit_file_hand(src, ast, syms, be),
+        item_count: ast.items.len(),
+        native_count,
+    }
 }
 
 /// How a handler or action body ended — the two distinct terminals the statement walk
@@ -950,6 +987,87 @@ fn count_actions(sections: &[Section]) -> usize {
         }
     }
     n
+}
+
+/// The preserved byte-for-byte **oracle** for the driver's PER-SYSTEM PHASE RUN — the original
+/// `open_system` → interface → handlers → actions → persist-guard → `close_system` sequence [`emit`]
+/// ran inline before it was reified as the [`super::emit_system`] `@@system` (`EmitSystem`). Kept as
+/// the differential check that machine is proven against (GATE-A, `tests/emit_system.rs`, via
+/// [`system_parity_report`]). It calls the SAME already-landed sub-system machines
+/// ([`super::emit_interface::walk`], [`super::emit_handlers::walk`], [`super::emit_actions::walk`])
+/// and the SAME `be.persist` the machine's phase leaves call — the two paths differ only in how the
+/// four phases are SEQUENCED (inline calls vs spine states), which is exactly what the gate
+/// isolates. Doc-hidden and **not on the production path**. Do not edit it to add behavior: it
+/// exists only to reproduce the pre-conversion sequencing exactly, so any divergence is the
+/// machine's bug, not the oracle's.
+#[doc(hidden)]
+fn emit_system_hand(
+    src: &Source,
+    syms: &SymbolTable,
+    sym: &SystemSym,
+    sections: &[Section],
+    be: &dyn Backend,
+    out: &mut Sink,
+) {
+    be.open_system(sym, out);
+    super::emit_interface::walk(sym, be, out);
+    super::emit_handlers::walk(src, syms, sym, sections, be, out);
+    super::emit_actions::walk(src, syms, sym, sections, be, out);
+    let manifest = super::persist::PersistManifest::derive(sym, syms);
+    if manifest.enabled {
+        be.persist(&manifest, out);
+    }
+    be.close_system(sym, out);
+}
+
+/// TEST-ONLY (GATE-A) — one system's dual whole-system emission (machine phase spine vs hand
+/// oracle), for `tests/emit_system.rs`. Doc-hidden.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct SystemParity {
+    /// The system name, for a failing assertion message.
+    pub label: String,
+    /// Text the `EmitSystem` machine path ([`super::emit_system::walk`]) emits for the WHOLE system
+    /// (open → interface → handlers → actions → persist → close).
+    pub machine_text: String,
+    /// Text the preserved hand oracle ([`emit_system_hand`]) emits for the same.
+    pub hand_text: String,
+    /// Whether `@@[persist]` was in force for this system — so the test can prove the corpus
+    /// exercised BOTH the persist-enabled `$Persist` arm and the guarded skip (a corpus that never
+    /// enabled persist would leave the guarded arm unproven).
+    pub persist_enabled: bool,
+}
+
+/// TEST-ONLY (GATE-A). Emit **every** system through BOTH the `EmitSystem` phase spine
+/// ([`super::emit_system::walk`]) and the preserved hand oracle ([`emit_system_hand`]) — over the
+/// SAME real parsed systems and the SAME backend — and return, per system, the two emitted Strings.
+/// `tests/emit_system.rs` asserts, for every entry, `machine_text == hand_text` byte-for-byte. The
+/// library owns the `.finish()` and the real emit traversal.
+#[doc(hidden)]
+pub fn system_parity_report(
+    src: &Source,
+    ast: &FileAst,
+    syms: &SymbolTable,
+    be: &dyn Backend,
+) -> Vec<SystemParity> {
+    let mut report = Vec::new();
+    for item in &ast.items {
+        let Item::System(sys) = item else { continue };
+        let Some(sym) = syms.systems.iter().find(|s| s.name == sys.name) else {
+            continue;
+        };
+        let mut mo = super::Sink::default();
+        super::emit_system::walk(src, syms, sym, &sys.sections, be, &mut mo);
+        let mut ho = super::Sink::default();
+        emit_system_hand(src, syms, sym, &sys.sections, be, &mut ho);
+        report.push(SystemParity {
+            label: sym.name.clone(),
+            machine_text: mo.finish(),
+            hand_text: ho.finish(),
+            persist_enabled: super::persist::PersistManifest::derive(sym, syms).enabled,
+        });
+    }
+    report
 }
 
 /// The preserved byte-for-byte **oracle** for the body BASE-column min-fold — the original inline
