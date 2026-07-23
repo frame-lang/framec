@@ -322,8 +322,11 @@ impl Backend for Python {
                 out.frame("\n");
             }
             RefKind::StateVar => {
+                // #bug-R1: honor the statement's re-indent `p` (pad(rel)) like ContextSelf and
+                // the `_` fallback — a hardcoded 8-space method-base prefix put a `$.x = …` nested
+                // in a native block at the wrong column (IndentationError in Python).
                 out.frame(&format!(
-                    "        compartment.state_vars[\"{}\"] = ",
+                    "{p}compartment.state_vars[\"{}\"] = ",
                     lhs.name
                 ));
                 out.native(rhs);
@@ -331,14 +334,14 @@ impl Backend for Python {
             }
             RefKind::ContextData => {
                 out.frame(&format!(
-                    "        compartment.state_args[\"{}\"] = ",
+                    "{p}compartment.state_args[\"{}\"] = ",
                     lhs.name
                 ));
                 out.native(rhs);
                 out.frame("\n");
             }
             RefKind::ContextReturn => {
-                out.frame("        return ");
+                out.frame(&format!("{p}return "));
                 out.native(rhs);
                 out.frame("\n");
             }
