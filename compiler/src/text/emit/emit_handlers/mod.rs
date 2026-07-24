@@ -19,7 +19,7 @@
 //! `.gen.rs` regen: `framec-ng -l rust --emit emit_handlers.frs | grep -v '^#!\[allow' >
 //! emit_handlers.gen.rs`.
 
-use super::driver::{emit_body, Backend};
+use super::driver::{body_is_empty, emit_body, Backend};
 use super::Sink;
 use crate::resolve::{SymbolTable, SystemSym};
 use crate::text::Source;
@@ -138,6 +138,13 @@ fn emit_handler(
     if let Some((st, h)) = handler_at(sections, si, sti, hi) {
         be.open_handler(sym, &st.name, &h.event, &h.params_text, ret, is_async, out);
         let end = emit_body(src, syms, sym, &st.name, &h.event, is_async, &h.body, be, out);
+        // A body that emits NOTHING (all-`Trivia`, or empty) still owes the target a statement on
+        // an indent-delimited language. The fact is read from the TREE ([`body_is_empty`]), never
+        // from the text just written, and the spelling is the backend's `noop` (nothing at all on a
+        // brace target).
+        if body_is_empty(&h.body) {
+            be.noop(0, out);
+        }
         be.close_handler(ret, is_async, end.terminated(), out);
     }
 }

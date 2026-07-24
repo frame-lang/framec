@@ -8,10 +8,11 @@
 // lifetime `'a`; the OWNED domain is the accumulating output `out` and the derived `manifest` (the
 // persist decision, computed once by the wrapper and carried in for the `$Persist` guard).
 //
-// A LINEAR 4-STATE SPINE (the decl_read mode-spine shape), NOT a cycle. Each phase is one state
+// A LINEAR 5-STATE SPINE (the decl_read mode-spine shape), NOT a cycle. Each phase is one state
 // that calls the ALREADY-LANDED sub-system as a leaf and then advances UNCONDITIONALLY to the next
 // phase — there is no cursor, no bound, no loop-back:
-//   $Interface -> emit_interface::walk (the `(method, arm)` router pass)   -> $Handlers
+//   $Interface -> emit_interface::walk (the `(method, arm)` router pass)   -> $Dispatch
+//   $Dispatch  -> state_dispatch_walk::walk (the per-state message dispatchers) -> $Handlers
 //   $Handlers  -> emit_handlers::walk  (the `(section, state, handler)` pass) -> $Actions
 //   $Actions   -> emit_actions::walk   (the `actions:` / `operations:` pass)  -> $Persist
 //   $Persist   -> GUARDED: `manifest.enabled` ? `be.persist(&manifest, out)` : nothing  -> $Done
@@ -29,10 +30,17 @@
 // `emit_system_hand`). Calling it a machine is honest only in the Shadows sense that a straight-line
 // chain is the trivial machine; the payoff is composition, not compression.
 //
-// framec owns the SPINE (the four unconditional advances + the persist guard). The un-Frame-able
-// work is per-phase NATIVE LEAVES: `emit_iface_phase` / `emit_handlers_phase` / `emit_actions_phase`
-// each call ONE already-landed sub-system's `walk` (unchanged, NOT reinlined); `manifest_enabled`
-// reads the persist flag; and `emit_persist` spells the one `be.persist(...)` the hand pass ran.
+// framec owns the SPINE (the five unconditional advances + the persist guard). The un-Frame-able
+// work is per-phase NATIVE LEAVES: `emit_iface_phase` / `emit_dispatch_phase` /
+// `emit_handlers_phase` / `emit_actions_phase` each call ONE already-landed sub-system's `walk`
+// (unchanged, NOT reinlined); `manifest_enabled` reads the persist flag; and `emit_persist` spells
+// the one `be.persist(...)` the hand pass ran.
+//
+// $Dispatch sits BETWEEN $Interface and $Handlers because that is where its output belongs in the
+// file: the public wrappers, then the per-state message dispatchers they route through, then the
+// private handler methods those dispatchers call. It is unconditional like its neighbours — a
+// target whose router calls `(state, event)` methods directly overrides no spelling, so the phase
+// runs and emits nothing, and that target's bytes are unchanged.
 //
 // Regen: framec-ng -l rust --emit emit_system.frs | grep -v '^#!\[allow' > emit_system.gen.rs
 
@@ -43,6 +51,12 @@
         $Interface {
             step() {
                 emit_iface_phase(self.sym, self.be, &mut self.out);
+                -> $Dispatch
+            }
+        }
+        $Dispatch {
+            step() {
+                emit_dispatch_phase(self.sym, self.be, &mut self.out);
                 -> $Handlers
             }
         }

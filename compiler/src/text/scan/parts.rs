@@ -56,6 +56,7 @@ pub fn native_parts(bytes: &[u8], from: usize, to: usize, target: Target) -> Vec
                 NativePart::Literal(LiteralNode {
                     span: Span::new(s, e),
                     delim: p.delim,
+                    is_comment: true,
                     parts: vec![LiteralPart::Content(TriviaNode {
                         span: Span::new(s, e),
                     })],
@@ -146,6 +147,8 @@ fn literal_node(
     LiteralNode {
         span: Span::new(start, end),
         delim,
+        // A string/char/raw literal, not a comment — this constructor is the `kind == 1` arm.
+        is_comment: false,
         parts,
     }
 }

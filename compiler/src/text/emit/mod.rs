@@ -23,17 +23,21 @@
 pub mod atom;
 mod base_column;
 pub mod c;
+mod domain_init_walk;
 pub mod driver;
 mod emit_actions;
 mod emit_file;
 mod emit_handlers;
 mod emit_interface;
 mod emit_system;
+mod hsm_chain_walk;
 pub mod java;
 pub mod persist;
 pub mod python;
+mod router_walk;
 pub mod rust;
 pub mod reindent;
+mod state_dispatch_walk;
 mod stmt_walk;
 
 use super::NativeText;

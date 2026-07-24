@@ -5,12 +5,13 @@
 //! [`super::emit_handlers`], [`super::emit_interface`], and [`super::emit_actions`], and riding the
 //! same read-only borrowed domain (`&'a SystemSym`, `&'a [Section]`, `&'a dyn Backend`, …).
 //!
-//! It is a LINEAR 4-STATE SPINE (`$Interface` → `$Handlers` → `$Actions` → `$Persist`), each phase
-//! an unconditional advance that calls one already-landed sub-system's `walk` as a leaf; `$Persist`
-//! is the one guarded state (`manifest.enabled`). No cursor, no cycle. The `open_system` /
-//! `close_system` bookends are native here in [`walk`] — backend spellings, not sub-systems. framec
-//! owns the spine; the un-Frame-able work is the native LEAVES: [`emit_iface_phase`],
-//! [`emit_handlers_phase`], [`emit_actions_phase`] (each calls one landed sub-system, unchanged),
+//! It is a LINEAR 5-STATE SPINE (`$Interface` → `$Dispatch` → `$Handlers` → `$Actions` →
+//! `$Persist`), each phase an unconditional advance that calls one already-landed sub-system's
+//! `walk` as a leaf; `$Persist` is the one guarded state (`manifest.enabled`). No cursor, no cycle.
+//! The `open_system` / `close_system` bookends are native here in [`walk`] — backend spellings, not
+//! sub-systems. framec owns the spine; the un-Frame-able work is the native LEAVES:
+//! [`emit_iface_phase`], [`emit_dispatch_phase`], [`emit_handlers_phase`], [`emit_actions_phase`]
+//! (each calls one landed sub-system, unchanged),
 //! [`manifest_enabled`] (the persist flag), and [`emit_persist`] (the one `be.persist(...)`).
 //!
 //! The byte-for-byte ORACLE it replaced is preserved as [`super::driver::emit_system_hand`] and
@@ -30,6 +31,15 @@ use crate::tree::Section;
 /// private handlers. Calls the landed [`emit_interface::walk`] `@@system`, unchanged (NOT reinlined).
 fn emit_iface_phase(sym: &SystemSym, be: &dyn Backend, out: &mut Sink) {
     emit_interface::walk(sym, be, out);
+}
+
+/// Phase `$Dispatch`: the per-state message-dispatch pass — one private `_state_X`-style method per
+/// state, matching an event's message against the handlers that state declares. Calls the landed
+/// [`super::state_dispatch_walk::walk`] `@@system`, unchanged (NOT reinlined). A target whose router
+/// dispatches straight to `(state, event)` methods overrides no spelling, so this emits nothing for
+/// it and its bytes are unchanged.
+fn emit_dispatch_phase(sym: &SystemSym, be: &dyn Backend, out: &mut Sink) {
+    super::state_dispatch_walk::walk(sym, be, out);
 }
 
 /// Phase `$Handlers`: the private-handler pass — one private method per `(state, handler)`. Calls
@@ -83,8 +93,9 @@ mod fsm {
         unused_imports
     )]
     use super::{
-        emit_actions_phase, emit_handlers_phase, emit_iface_phase, emit_persist, manifest_enabled,
-        Backend, PersistManifest, Section, Sink, Source, SymbolTable, SystemSym,
+        emit_actions_phase, emit_dispatch_phase, emit_handlers_phase, emit_iface_phase,
+        emit_persist, manifest_enabled, Backend, PersistManifest, Section, Sink, Source,
+        SymbolTable, SystemSym,
     };
     include!("emit_system.gen.rs");
 }
@@ -109,9 +120,10 @@ pub(super) fn walk(
     let manifest = PersistManifest::derive(sym, syms);
     let seed = std::mem::take(out);
     let mut m = fsm::EmitSystem::new(src, syms, sym, sections, be, manifest, seed);
-    // A safe over-bound: the spine is exactly four unconditional advances (`$Interface` →
-    // `$Handlers` → `$Actions` → `$Persist` → `$Done`); any further step is a no-op at `$Done`.
-    for _ in 0..6 {
+    // A safe over-bound: the spine is exactly five unconditional advances (`$Interface` →
+    // `$Dispatch` → `$Handlers` → `$Actions` → `$Persist` → `$Done`); any further step is a no-op
+    // at `$Done`.
+    for _ in 0..8 {
         m.step();
     }
     *out = m.out;

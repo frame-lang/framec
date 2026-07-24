@@ -340,6 +340,18 @@ pub struct LiteralNode {
     /// the old compiler that re-derivation got the wrong answer on 8 targets, because
     /// `'x'` is a **char** in C#/Java/Kotlin/Swift/C/C++/Go/Rust, not a string (#221).
     pub delim: u8,
+    /// Is this opaque extent a COMMENT rather than a string/raw literal?
+    ///
+    /// The scanner already distinguishes the two — it has to, because a `;` must not be spliced
+    /// into a comment and a `"` inside one must not open a string. It just used to throw the
+    /// distinction away at the tree boundary, leaving every later pass to re-derive it from the
+    /// bytes. Carried here instead, as a fact framec put on the node.
+    ///
+    /// Its first consumer: an indent-delimited target must know whether a statement contributes
+    /// any EXECUTABLE code, because `def f(self):` followed only by a comment is an
+    /// `IndentationError`, not an empty function. That question is "are all of this statement's
+    /// parts comments?" — answerable from the tree, and answerable ONLY from the tree.
+    pub is_comment: bool,
     /// The parts. **They partition `span`** — content, holes, content, …
     pub parts: Vec<LiteralPart>,
 }

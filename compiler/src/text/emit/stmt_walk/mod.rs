@@ -113,9 +113,14 @@ fn emit_transition(
                 be.lifecycle_call(r, sym, state, "<$", ea.as_deref(), out);
             }
             let sa = reindent::render_args(src, t.args_text.as_ref(), &lower);
-            be.transition(r, sym, target, sa.as_deref(), out);
+            // The enter args are rendered UNCONDITIONALLY now (rendering emits nothing; it only
+            // builds the arg text), because two different runtime shapes need them in two
+            // different places: a compartment-factory target takes them WITH the transition
+            // (`transition_with_enter`), a call-the-enter-handler target takes them after it
+            // (`lifecycle_call`). Backends that do the latter see byte-identical output.
+            let na = reindent::render_args(src, t.enter_args.as_ref(), &lower);
+            be.transition_with_enter(r, sym, target, sa.as_deref(), na.as_deref(), out);
             if has_lifecycle(sym, target, "$>") {
-                let na = reindent::render_args(src, t.enter_args.as_ref(), &lower);
                 be.lifecycle_call(r, sym, target, "$>", na.as_deref(), out);
             }
             be.terminate(r, out);
@@ -148,9 +153,9 @@ fn emit_stack_push(
                 be.lifecycle_call(r, sym, state, "<$", ea.as_deref(), out);
             }
             let sa = reindent::render_args(src, t.args_text.as_ref(), &lower);
-            be.push(r, sym, target, sa.as_deref(), out);
+            let na = reindent::render_args(src, t.enter_args.as_ref(), &lower);
+            be.push_with_enter(r, sym, target, sa.as_deref(), na.as_deref(), out);
             if has_lifecycle(sym, target, "$>") {
-                let na = reindent::render_args(src, t.enter_args.as_ref(), &lower);
                 be.lifecycle_call(r, sym, target, "$>", na.as_deref(), out);
             }
             be.terminate(r, out);

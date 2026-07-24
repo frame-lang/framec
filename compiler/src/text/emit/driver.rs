@@ -65,6 +65,48 @@ pub trait Backend {
     /// Close the class.
     fn close_system(&self, sym: &SystemSym, out: &mut Sink);
 
+    /// Spell ONE domain field's **constructor initializer** — `sym.domain[idx]`, seeded into the
+    /// generated constructor body.
+    ///
+    /// Split out of [`Self::open_system`] so the `for f in &sym.domain` loop could become the
+    /// [`super::domain_init_walk`] `@@system`: the WALK is framec's (one cursor, one bound, one
+    /// halt), the SPELLING is the target's. Default: nothing — a target that seeds its domain some
+    /// other way, or not at all, is byte-unchanged by the walk's existence.
+    fn domain_init(&self, sym: &SystemSym, idx: usize, out: &mut Sink) {
+        let _ = (sym, idx, out);
+    }
+
+    /// Spell ONE `_HSM_CHAIN`-style entry: the ROOT..LEAF state path for leaf state `leaf`.
+    ///
+    /// `chain` is root-first and inclusive of the leaf — a flat state is `[leaf]`, a nested
+    /// `$Child => $Parent` is `[.., "Parent", "Child"]`. The ancestor climb is framec's
+    /// ([`super::hsm_chain_walk`]); the table's spelling is the target's. Default: nothing.
+    fn hsm_chain_entry(&self, leaf: &str, chain: &[String], out: &mut Sink) {
+        let _ = (leaf, chain, out);
+    }
+
+    /// Spell ONE arm of the runtime state ROUTER — "if the live compartment is in `state`, hand the
+    /// event to that state's dispatcher". `first` is `true` for the leading arm (the `if` rather
+    /// than the `elif`/`else if`), a fact the WALK carries so the spelling never has to re-derive
+    /// it from what it already wrote. `sym` comes along because whether the call it spells must be
+    /// awaited is a property of the SYSTEM, not of the arm. Default: nothing.
+    fn router_arm(&self, sym: &SystemSym, state: &str, first: bool, out: &mut Sink) {
+        let _ = (sym, state, first, out);
+    }
+
+    /// Spell ONE state's **message dispatcher** — the private method the router hands an event to,
+    /// which matches the event's message against the handlers this state declares and calls the
+    /// matching `(state, handler)` method.
+    ///
+    /// `arms` are the state's handled event messages, in declaration order, resolved from the
+    /// symbol table by the [`super::state_dispatch_walk`] `@@system`. As with [`Self::route`], the
+    /// backend only spells the switch; it never walks the table. Default: nothing — a target whose
+    /// router dispatches directly to `(state, event)` methods (Java, Rust, C) needs no such layer
+    /// and is byte-unchanged.
+    fn dispatch(&self, sym: &SystemSym, state: &str, arms: &[String], out: &mut Sink) {
+        let _ = (sym, state, arms, out);
+    }
+
     /// How this language spells a **parameter list declaration**.
     ///
     /// Frame writes `amount: int`. Java wants `int amount`; Go wants `amount int`; Rust
@@ -155,6 +197,49 @@ pub trait Backend {
     fn push(&self, rel: u32, sym: &SystemSym, target: &str, args: Option<&str>, out: &mut Sink);
     /// `-> pop$` — restore the caller's compartment. **No return** (the driver adds it).
     fn pop(&self, rel: u32, out: &mut Sink);
+
+    /// `-> (enter_args) $Target(state_args)` — the ENTER-ARG-AWARE form of [`Self::transition`].
+    ///
+    /// Two arg lists reach a transition and they belong to different things: the STATE args
+    /// parameterise the destination compartment, the ENTER args are the payload of the `$>` event
+    /// the destination receives. A target that delivers that payload as a separate call on the
+    /// enter handler ([`Self::lifecycle_call`]) needs only the first, and takes the default below —
+    /// byte-unchanged. A target whose runtime builds the destination compartment through ONE
+    /// factory (Python's `__prepareEnter(leaf, state_args, enter_args)`, where the kernel later
+    /// synthesises the `$>` from the compartment) must receive both at once, and overrides this.
+    ///
+    /// Additive on purpose: the driver calls THIS, the default forwards to [`Self::transition`],
+    /// and the enter args still flow to `lifecycle_call` exactly as before. No existing backend's
+    /// bytes move.
+    #[allow(clippy::too_many_arguments)]
+    fn transition_with_enter(
+        &self,
+        rel: u32,
+        sym: &SystemSym,
+        target: &str,
+        args: Option<&str>,
+        enter_args: Option<&str>,
+        out: &mut Sink,
+    ) {
+        let _ = enter_args;
+        self.transition(rel, sym, target, args, out);
+    }
+
+    /// `push$ -> (enter_args) $Target(state_args)` — the enter-arg-aware form of [`Self::push`].
+    /// Same contract as [`Self::transition_with_enter`], same default.
+    #[allow(clippy::too_many_arguments)]
+    fn push_with_enter(
+        &self,
+        rel: u32,
+        sym: &SystemSym,
+        target: &str,
+        args: Option<&str>,
+        enter_args: Option<&str>,
+        out: &mut Sink,
+    ) {
+        let _ = enter_args;
+        self.push(rel, sym, target, args, out);
+    }
     /// Bare `push$` — push a COPY of the current compartment onto the stack; stay in the
     /// current state. No transition, no return. (Default no-op; every real backend overrides.)
     fn push_bare(&self, rel: u32, out: &mut Sink) {
@@ -598,9 +683,9 @@ fn emit_body_hand(
                         be.lifecycle_call(r, sym, state, "<$", ea.as_deref(), out);
                     }
                     let sa = super::reindent::render_args(src, t.args_text.as_ref(), &lower);
-                    be.transition(r, sym, target, sa.as_deref(), out);
+                    let na = super::reindent::render_args(src, t.enter_args.as_ref(), &lower);
+                    be.transition_with_enter(r, sym, target, sa.as_deref(), na.as_deref(), out);
                     if has_lifecycle(sym, target, "$>") {
-                        let na = super::reindent::render_args(src, t.enter_args.as_ref(), &lower);
                         be.lifecycle_call(r, sym, target, "$>", na.as_deref(), out);
                     }
                     be.terminate(r, out);
@@ -615,9 +700,9 @@ fn emit_body_hand(
                         be.lifecycle_call(r, sym, state, "<$", ea.as_deref(), out);
                     }
                     let sa = super::reindent::render_args(src, t.args_text.as_ref(), &lower);
-                    be.push(r, sym, target, sa.as_deref(), out);
+                    let na = super::reindent::render_args(src, t.enter_args.as_ref(), &lower);
+                    be.push_with_enter(r, sym, target, sa.as_deref(), na.as_deref(), out);
                     if has_lifecycle(sym, target, "$>") {
-                        let na = super::reindent::render_args(src, t.enter_args.as_ref(), &lower);
                         be.lifecycle_call(r, sym, target, "$>", na.as_deref(), out);
                     }
                     be.terminate(r, out);
@@ -744,6 +829,9 @@ fn emit_handlers_hand(
                 be.open_handler(sym, &st.name, &h.event, &h.params_text, ret, is_async, out);
                 let end =
                     emit_body(src, syms, sym, &st.name, &h.event, is_async, &h.body, be, out);
+                if body_is_empty(&h.body) {
+                    be.noop(0, out);
+                }
                 be.close_handler(ret, is_async, end.terminated(), out);
             }
         }
@@ -1007,13 +1095,14 @@ fn count_actions(sections: &[Section]) -> usize {
 }
 
 /// The preserved byte-for-byte **oracle** for the driver's PER-SYSTEM PHASE RUN — the original
-/// `open_system` → interface → handlers → actions → persist-guard → `close_system` sequence [`emit`]
+/// `open_system` → interface → dispatch → handlers → actions → persist-guard → `close_system` sequence [`emit`]
 /// ran inline before it was reified as the [`super::emit_system`] `@@system` (`EmitSystem`). Kept as
 /// the differential check that machine is proven against (GATE-A, `tests/emit_system.rs`, via
 /// [`system_parity_report`]). It calls the SAME already-landed sub-system machines
-/// ([`super::emit_interface::walk`], [`super::emit_handlers::walk`], [`super::emit_actions::walk`])
-/// and the SAME `be.persist` the machine's phase leaves call — the two paths differ only in how the
-/// four phases are SEQUENCED (inline calls vs spine states), which is exactly what the gate
+/// ([`super::emit_interface::walk`], [`super::state_dispatch_walk::walk`],
+/// [`super::emit_handlers::walk`], [`super::emit_actions::walk`]) and the SAME `be.persist` the
+/// machine's phase leaves call — the two paths differ only in how the five phases are SEQUENCED
+/// (inline calls vs spine states), which is exactly what the gate
 /// isolates. Doc-hidden and **not on the production path**. Do not edit it to add behavior: it
 /// exists only to reproduce the pre-conversion sequencing exactly, so any divergence is the
 /// machine's bug, not the oracle's.
@@ -1028,6 +1117,7 @@ fn emit_system_hand(
 ) {
     be.open_system(sym, out);
     super::emit_interface::walk(sym, be, out);
+    super::state_dispatch_walk::walk(sym, be, out);
     super::emit_handlers::walk(src, syms, sym, sections, be, out);
     super::emit_actions::walk(src, syms, sym, sections, be, out);
     let manifest = super::persist::PersistManifest::derive(sym, syms);
@@ -1045,7 +1135,7 @@ pub struct SystemParity {
     /// The system name, for a failing assertion message.
     pub label: String,
     /// Text the `EmitSystem` machine path ([`super::emit_system::walk`]) emits for the WHOLE system
-    /// (open → interface → handlers → actions → persist → close).
+    /// (open → interface → dispatch → handlers → actions → persist → close).
     pub machine_text: String,
     /// Text the preserved hand oracle ([`emit_system_hand`]) emits for the same.
     pub hand_text: String,
@@ -1082,6 +1172,301 @@ pub fn system_parity_report(
             machine_text: mo.finish(),
             hand_text: ho.finish(),
             persist_enabled: super::persist::PersistManifest::derive(sym, syms).enabled,
+        });
+    }
+    report
+}
+
+/// The preserved byte-for-byte **oracle** for the constructor's DOMAIN-INIT walk — the original
+/// `for f in &sym.domain { … }` loop `open_system` ran inline before it was reified as the
+/// [`super::domain_init_walk`] `@@system` (`DomainInitWalk`). Kept as the differential check that
+/// machine is proven against (GATE-A, `tests/domain_init_walk.rs`, via
+/// [`domain_init_parity_report`]). It calls the SAME [`Backend::domain_init`] spelling the machine's
+/// `stamp_domain_init` leaf calls — the two paths differ only in how the field loop is SEQUENCED
+/// (hand loop vs `$Field` cycle), which is exactly what the gate isolates. Doc-hidden and **not on
+/// the production path**.
+#[doc(hidden)]
+fn domain_init_hand(sym: &SystemSym, be: &dyn Backend) -> String {
+    let mut out = Sink::new();
+    for idx in 0..sym.domain.len() {
+        be.domain_init(sym, idx, &mut out);
+    }
+    out.finish()
+}
+
+/// TEST-ONLY (GATE-A) — one system's dual domain-init emission (machine walk vs hand oracle), for
+/// `tests/domain_init_walk.rs`. Doc-hidden.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct DomainInitParity {
+    /// The system name, for a failing assertion message.
+    pub label: String,
+    /// Text the `DomainInitWalk` machine path ([`super::domain_init_walk::walk`], = the production
+    /// path) emits for ALL of this system's constructor domain seeds.
+    pub machine_text: String,
+    /// Text the preserved hand oracle ([`domain_init_hand`]) emits for the same.
+    pub hand_text: String,
+    /// How many domain fields this system declares — so the test can prove the corpus exercised
+    /// multi-field systems (a system with zero domain fields is a vacuous pass).
+    pub field_count: usize,
+}
+
+/// TEST-ONLY (GATE-A). Emit **every** system's constructor domain seeds through BOTH the
+/// `DomainInitWalk` machine ([`super::domain_init_walk::walk`]) and the preserved hand oracle
+/// ([`domain_init_hand`]) — over the SAME real parsed systems and the SAME backend.
+/// `tests/domain_init_walk.rs` asserts, for every entry, `machine_text == hand_text` byte-for-byte.
+#[doc(hidden)]
+pub fn domain_init_parity_report(
+    ast: &FileAst,
+    syms: &SymbolTable,
+    be: &dyn Backend,
+) -> Vec<DomainInitParity> {
+    let mut report = Vec::new();
+    for item in &ast.items {
+        let Item::System(sys) = item else { continue };
+        let Some(sym) = syms.systems.iter().find(|s| s.name == sys.name) else {
+            continue;
+        };
+        report.push(DomainInitParity {
+            label: sym.name.clone(),
+            machine_text: super::domain_init_walk::walk(sym, be),
+            hand_text: domain_init_hand(sym, be),
+            field_count: sym.domain.len(),
+        });
+    }
+    report
+}
+
+/// The preserved byte-for-byte **oracle** for the STATE-CHAIN table walk — the hand `for st in
+/// &sym.states { … climb … }` loop that produced the generated runtime's root..leaf path table
+/// before it was reified as the [`super::hsm_chain_walk`] `@@system` (`HsmChainWalk`). Kept as the
+/// differential check that machine is proven against (GATE-A, `tests/emit_scaffold_walks.rs`, via
+/// [`hsm_chain_parity_report`]). It calls the SAME leaves the machine's cycle states call
+/// ([`super::hsm_chain_walk::push_state_name`], [`super::hsm_chain_walk::parent_index`],
+/// [`super::hsm_chain_walk::stamp_chain`]) — the two paths differ only in how the outer cursor and
+/// the inner climb are SEQUENCED, which is exactly what the gate isolates. Doc-hidden and **not on
+/// the production path**.
+#[doc(hidden)]
+fn hsm_chain_hand(sym: &SystemSym, be: &dyn Backend) -> String {
+    use super::hsm_chain_walk::{clear_chain, parent_index, push_state_name, stamp_chain};
+    let n = sym.states.len();
+    let mut chain: Vec<String> = Vec::new();
+    let mut out = Sink::new();
+    for si in 0..n {
+        clear_chain(&mut chain);
+        let mut ci = si;
+        let mut depth = 0usize;
+        loop {
+            if depth > n {
+                break;
+            }
+            push_state_name(sym, ci, &mut chain);
+            depth += 1;
+            let p = parent_index(sym, ci);
+            if p < 0 {
+                break;
+            }
+            ci = p as usize;
+        }
+        stamp_chain(sym, be, si, &mut chain, &mut out);
+    }
+    out.finish()
+}
+
+/// TEST-ONLY (GATE-A) — one system's dual state-chain table (machine walk vs hand oracle), for
+/// `tests/emit_scaffold_walks.rs`. Doc-hidden.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct HsmChainParity {
+    /// The system name, for a failing assertion message.
+    pub label: String,
+    /// Text the `HsmChainWalk` machine path ([`super::hsm_chain_walk::walk`], = the production path)
+    /// emits for the whole table.
+    pub machine_text: String,
+    /// Text the preserved hand oracle ([`hsm_chain_hand`]) emits for the same.
+    pub hand_text: String,
+    /// How many states this system declares.
+    pub state_count: usize,
+    /// The DEEPEST ancestor chain the walk produced — so the test can prove the corpus exercised a
+    /// genuine climb (`> 1`) and not only flat one-element paths.
+    pub max_depth: usize,
+}
+
+/// TEST-ONLY (GATE-A). Build **every** system's state-chain table through BOTH the `HsmChainWalk`
+/// machine ([`super::hsm_chain_walk::walk`]) and the preserved hand oracle ([`hsm_chain_hand`]) —
+/// over the SAME real parsed systems and the SAME backend. `tests/emit_scaffold_walks.rs` asserts,
+/// for every entry, `machine_text == hand_text` byte-for-byte.
+#[doc(hidden)]
+pub fn hsm_chain_parity_report(
+    ast: &FileAst,
+    syms: &SymbolTable,
+    be: &dyn Backend,
+) -> Vec<HsmChainParity> {
+    let mut report = Vec::new();
+    for item in &ast.items {
+        let Item::System(sys) = item else { continue };
+        let Some(sym) = syms.systems.iter().find(|s| s.name == sys.name) else {
+            continue;
+        };
+        // The corpus-coverage tally: the longest root..leaf path, computed from the same frozen
+        // `parent` links both paths read.
+        let max_depth = (0..sym.states.len())
+            .map(|si| {
+                let mut ci = si;
+                let mut d = 0usize;
+                while d <= sym.states.len() {
+                    d += 1;
+                    let p = super::hsm_chain_walk::parent_index(sym, ci);
+                    if p < 0 {
+                        break;
+                    }
+                    ci = p as usize;
+                }
+                d
+            })
+            .max()
+            .unwrap_or(0);
+        report.push(HsmChainParity {
+            label: sym.name.clone(),
+            machine_text: super::hsm_chain_walk::walk(sym, be),
+            hand_text: hsm_chain_hand(sym, be),
+            state_count: sym.states.len(),
+            max_depth,
+        });
+    }
+    report
+}
+
+/// The preserved byte-for-byte **oracle** for the STATE-ROUTER walk — the hand `for st in
+/// &sym.states { … }` loop (with its `first` flag) that produced the generated runtime's dispatch
+/// chain before it was reified as the [`super::router_walk`] `@@system` (`RouterWalk`). Kept as the
+/// differential check that machine is proven against (GATE-A, `tests/emit_scaffold_walks.rs`, via
+/// [`router_parity_report`]). It calls the SAME [`super::router_walk::stamp_router_arm`] leaf the
+/// machine's `$Arm` cycle calls — the two paths differ only in how the arm loop is SEQUENCED, which
+/// is exactly what the gate isolates. Doc-hidden and **not on the production path**.
+#[doc(hidden)]
+fn router_hand(sym: &SystemSym, be: &dyn Backend) -> String {
+    let mut out = Sink::new();
+    let mut first = true;
+    for si in 0..sym.states.len() {
+        super::router_walk::stamp_router_arm(sym, be, si, first, &mut out);
+        first = false;
+    }
+    out.finish()
+}
+
+/// TEST-ONLY (GATE-A) — one system's dual router chain (machine walk vs hand oracle), for
+/// `tests/emit_scaffold_walks.rs`. Doc-hidden.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct RouterParity {
+    /// The system name, for a failing assertion message.
+    pub label: String,
+    /// Text the `RouterWalk` machine path ([`super::router_walk::walk`], = the production path)
+    /// emits for the whole arm chain.
+    pub machine_text: String,
+    /// Text the preserved hand oracle ([`router_hand`]) emits for the same.
+    pub hand_text: String,
+    /// How many states (= arms) this system routes — so the test can prove the corpus exercised
+    /// MULTIPLE arms, which is the only way the `first` latch is observable at all.
+    pub state_count: usize,
+}
+
+/// TEST-ONLY (GATE-A). Build **every** system's router chain through BOTH the `RouterWalk` machine
+/// ([`super::router_walk::walk`]) and the preserved hand oracle ([`router_hand`]) — over the SAME
+/// real parsed systems and the SAME backend. `tests/emit_scaffold_walks.rs` asserts, for every
+/// entry, `machine_text == hand_text` byte-for-byte.
+#[doc(hidden)]
+pub fn router_parity_report(
+    ast: &FileAst,
+    syms: &SymbolTable,
+    be: &dyn Backend,
+) -> Vec<RouterParity> {
+    let mut report = Vec::new();
+    for item in &ast.items {
+        let Item::System(sys) = item else { continue };
+        let Some(sym) = syms.systems.iter().find(|s| s.name == sys.name) else {
+            continue;
+        };
+        report.push(RouterParity {
+            label: sym.name.clone(),
+            machine_text: super::router_walk::walk(sym, be),
+            hand_text: router_hand(sym, be),
+            state_count: sym.states.len(),
+        });
+    }
+    report
+}
+
+/// The preserved byte-for-byte **oracle** for the PER-STATE DISPATCH walk — the hand
+/// `for st in &sym.states { for h in &st.handlers { … } }` loops that produced the generated
+/// runtime's message dispatchers before they were reified as the [`super::state_dispatch_walk`]
+/// `@@system` (`StateDispatchWalk`). Kept as the differential check that machine is proven against
+/// (GATE-A, `tests/emit_scaffold_walks.rs`, via [`state_dispatch_parity_report`]). It calls the SAME
+/// leaves the machine's cycle states call — the two paths differ only in how the two-level walk is
+/// SEQUENCED, which is exactly what the gate isolates. Doc-hidden and **not on the production
+/// path**.
+#[doc(hidden)]
+fn state_dispatch_hand(sym: &SystemSym, be: &dyn Backend, out: &mut Sink) {
+    use super::state_dispatch_walk::{clear_arms, dispatch_state, handler_count, stamp_handler};
+    let mut arms: Vec<String> = Vec::new();
+    for si in 0..sym.states.len() {
+        let nh = handler_count(sym, si);
+        clear_arms(&mut arms);
+        for hi in 0..nh {
+            stamp_handler(sym, si, hi, &mut arms);
+        }
+        dispatch_state(sym, be, si, &arms, out);
+    }
+}
+
+/// TEST-ONLY (GATE-A) — one system's dual state-dispatch emission (machine walk vs hand oracle),
+/// for `tests/emit_scaffold_walks.rs`. Doc-hidden.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct StateDispatchParity {
+    /// The system name, for a failing assertion message.
+    pub label: String,
+    /// Text the `StateDispatchWalk` machine path ([`super::state_dispatch_walk::walk`], = the
+    /// production `$Dispatch` phase) emits for ALL of this system's per-state dispatchers.
+    pub machine_text: String,
+    /// Text the preserved hand oracle ([`state_dispatch_hand`]) emits for the same.
+    pub hand_text: String,
+    /// How many `(state, handler)` arms this system stamps in total — so the test can prove the
+    /// corpus exercised multi-handler states (a corpus of empty states is a vacuous pass).
+    pub arm_count: usize,
+    /// How many states declare NO handler — so the test can prove the empty-dispatcher arm (a bare
+    /// `pass` on python) was actually taken.
+    pub empty_states: usize,
+}
+
+/// TEST-ONLY (GATE-A). Emit **every** system's per-state dispatchers through BOTH the
+/// `StateDispatchWalk` machine ([`super::state_dispatch_walk::walk`]) and the preserved hand oracle
+/// ([`state_dispatch_hand`]) — over the SAME real parsed systems and the SAME backend.
+/// `tests/emit_scaffold_walks.rs` asserts, for every entry, `machine_text == hand_text`
+/// byte-for-byte. The library owns the `.finish()`.
+#[doc(hidden)]
+pub fn state_dispatch_parity_report(
+    ast: &FileAst,
+    syms: &SymbolTable,
+    be: &dyn Backend,
+) -> Vec<StateDispatchParity> {
+    let mut report = Vec::new();
+    for item in &ast.items {
+        let Item::System(sys) = item else { continue };
+        let Some(sym) = syms.systems.iter().find(|s| s.name == sys.name) else {
+            continue;
+        };
+        let mut mo = super::Sink::default();
+        super::state_dispatch_walk::walk(sym, be, &mut mo);
+        let mut ho = super::Sink::default();
+        state_dispatch_hand(sym, be, &mut ho);
+        report.push(StateDispatchParity {
+            label: sym.name.clone(),
+            machine_text: mo.finish(),
+            hand_text: ho.finish(),
+            arm_count: sym.states.iter().map(|s| s.handlers.len()).sum(),
+            empty_states: sym.states.iter().filter(|s| s.handlers.is_empty()).count(),
         });
     }
     report
@@ -1359,6 +1744,33 @@ pub fn ctor_params_text(p: &crate::tree::SystemParams) -> String {
         })
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// Did this body have **nothing to emit**? True when every statement is `Stmt::Trivia` (a comment
+/// or blank run between statements, which lowers to no target text) — or when there are none.
+///
+/// An AST predicate, computed BEFORE emission and never by inspecting what was emitted. It exists
+/// because an indent-delimited target cannot leave a method body empty: `def f(self):` with nothing
+/// under it is a SyntaxError, not a no-op. The slot still needs a statement, which is exactly what
+/// [`Backend::noop`] spells (`pass` on python, nothing on a brace target — so no brace target's
+/// bytes move).
+///
+/// Shared by the `EmitHandlers` machine's `emit_handler` leaf and by the preserved
+/// [`emit_handlers_hand`] oracle, so the two paths cannot drift on it (GATE-A would catch it if
+/// they did).
+pub(super) fn body_is_empty(body: &Body) -> bool {
+    body.stmts.iter().all(|s| match s {
+        Stmt::Trivia(_) => true,
+        // A native statement made only of COMMENTS contributes no executable code. framec is not
+        // reading the user's text to decide that — the SCANNER already distinguished a comment
+        // from a string (it must, or a `;` gets spliced into one), and the tree now carries the
+        // distinction as `LiteralNode::is_comment`. This is the difference between asking the node
+        // a question framec answered and re-deriving it from bytes framec does not understand.
+        Stmt::Native(n) => n.parts.iter().all(
+            |p| matches!(p, crate::tree::body::NativePart::Literal(l) if l.is_comment),
+        ),
+        _ => false,
+    })
 }
 
 /// Does `state` declare a lifecycle handler for `event` (`$>` / `<$`)?

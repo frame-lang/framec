@@ -26,6 +26,14 @@
 //! as a real user would. (This test once used `str` in the Java fixture and only passed
 //! because a `str->String` alias masked it; that alias was a contract violation and is
 //! gone.)
+//!
+//! FIXTURE MIGRATED (M1, faithful emit). `$Paid`'s handler used to reach into the compartment by
+//! hand — `compartment.state_args["item"]` — which was native code written against the OLD
+//! cleanroom compartment, where `state_args` was a name-keyed dict. In the faithful runtime a
+//! state's params are POSITIONAL (`state_args` is a list) and are bound as locals for the handler,
+//! so the fixture now says `show(item, amount)` — which is exactly what the JAVA half of this same
+//! test already said (`"item=" + item + " amount=" + amount`). The two halves are symmetric again,
+//! and the assertion — the four lines of runtime output — is unchanged.
 
 use frame_compiler::resolve::resolve;
 use frame_compiler::scan::{literals::Target, segment};
@@ -73,7 +81,7 @@ fn the_same_machine_runs_on_both_targets() {
         }
         $Paid(item: str, amount: int) {
             pick() {
-                show(compartment.state_args["item"], compartment.state_args["amount"])
+                show(item, amount)
                 -> pop$
             }
         }
