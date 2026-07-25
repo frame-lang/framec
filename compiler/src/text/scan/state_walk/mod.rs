@@ -13,7 +13,7 @@
 //! state_walk.gen.rs`.
 
 use super::literals::Target;
-use super::machine::{handler_end, skip_opaque, to_end_of_line};
+use super::machine::{default_forward_end, handler_end, skip_opaque, to_end_of_line};
 
 /// Opaque-skip leaf: the offset past a comment/literal at `i`, or `i` unchanged. No walk (D3).
 fn skip(src: &[u8], i: usize, limit: usize, target: Target) -> usize {
@@ -26,12 +26,22 @@ fn is_statevar(src: &[u8], i: usize) -> bool {
 }
 
 /// The offset one past the member that opens at `i` — a state var to end-of-line, a handler past
-/// its body — or `i` unchanged if nothing opens here. Both extents come from shared `machine`
-/// helpers (`to_end_of_line` / `handler_end` → `handler_head`), the same sources the driver
-/// builds the nodes from, so the boundary and the extent cannot drift. No walk here (D3).
+/// its body, a state-level `=> $^` past its `^` — or `i` unchanged if nothing opens here. Every
+/// extent comes from a shared `machine` helper (`to_end_of_line` / `handler_end` → `handler_head`
+/// / `default_forward_end`), the same sources the driver builds the nodes from, so the boundary
+/// and the extent cannot drift. No walk here (D3).
 fn member_end(src: &[u8], i: usize, limit: usize, target: Target) -> usize {
     if is_statevar(src, i) {
         return to_end_of_line(src, i, limit);
+    }
+    // `=> $^` written as a STATE MEMBER is the state's DEFAULT FORWARD — a declaration, not the
+    // statement the same three bytes spell inside a handler body. It had no member form, so it
+    // fell into the undifferentiated trivia run between members and no later pass could see it;
+    // the emitted 3-deep HSM chain silently stopped at the middle state. Recognizing it here
+    // SUBDIVIDES that trivia span — the walk still visits every byte, and the state body's
+    // partition is unchanged as a partition.
+    if let Some(e) = default_forward_end(src, i, limit) {
+        return e;
     }
     if let Some(e) = handler_end(src, i, limit, target) {
         return e;

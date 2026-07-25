@@ -16,6 +16,13 @@
 // is spelled — the dead code the old compiler stripped from text it had already emitted), and it
 // selects the body's terminal (`Terminated` vs `Fell`) for the wrapper.
 //
+// WHICH KIND OF BODY this is rides the domain as `role: BodyRole` — Handler or Action. It is a
+// TAG framec put on the tree (the body came out of a state's HandlerNode or out of an
+// `actions:`/`operations:` Decl), not a sentinel decoded from `state == ""`, and it reaches
+// exactly one arm: `@@:(expr)` parks its value on the live FrameContext in a HANDLER and spells
+// the target's own `return` in an ACTION, which has no context because the user may call it
+// directly.
+//
 // WHAT COUNTS AS TERMINAL is the backend's answer, not the walk's: a statement only ends the body
 // if that target's SPELLING of it actually returns. `@@:(expr)` returns on Java/Rust/C and does
 // NOT on Python (where it assigns the context's return slot and execution continues), so
@@ -33,7 +40,7 @@
 //
 // Regen: framec-ng -l rust --emit stmt_walk.frs | grep -v '^#!\[allow' > stmt_walk.gen.rs
 
-@@system StmtWalk(src: &Source, syms: &SymbolTable, sym: &SystemSym, stmts: &[Stmt], state: &str, event: &str, is_async: bool, base: u32, be: &dyn Backend, out: Sink) {
+@@system StmtWalk(src: &Source, syms: &SymbolTable, sym: &SystemSym, role: BodyRole, stmts: &[Stmt], state: &str, event: &str, is_async: bool, base: u32, be: &dyn Backend, out: Sink) {
     interface:
         step()
     machine:
@@ -86,7 +93,7 @@
                     -> $Walk
                 }
                 if k == 7 {
-                    let term = emit_return_call(self.src, self.syms, self.sym, self.state, self.be, self.base, self.is_async, self.stmts, self.i, &mut self.out);
+                    let term = emit_return_call(self.src, self.syms, self.sym, self.role, self.state, self.be, self.base, self.is_async, self.stmts, self.i, &mut self.out);
                     if term {
                         self.terminated = true;
                         -> $Done
@@ -113,6 +120,7 @@
         src: &Source = src
         syms: &SymbolTable = syms
         sym: &SystemSym = sym
+        role: BodyRole = role
         stmts: &[Stmt] = stmts
         state: &str = state
         event: &str = event

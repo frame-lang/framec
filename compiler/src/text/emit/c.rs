@@ -15,7 +15,7 @@
 //! child systems belongs with the coverage layer and is deferred.
 
 use super::atom::Atom;
-use super::driver::{params_split, Backend};
+use super::driver::{params_split, Backend, BodyRole};
 use super::Sink;
 use crate::resolve::{SystemSym, TypeRef};
 use crate::tree::body::{EmbedCall, FrameRef, RefKind};
@@ -329,7 +329,9 @@ impl Backend for C {
         out.frame(&format!("{}return{};\n", self.pad(rel), void_ret()));
     }
 
-    fn return_call(&self, rel: u32, _is_async: bool, _multiline: bool, expr: NativeText, out: &mut Sink) {
+    fn return_call(&self, _role: BodyRole, rel: u32, _is_async: bool, _multiline: bool, expr: NativeText, out: &mut Sink) {
+        // `_role` is ignored: C already spells `@@:(expr)` as a real `return`, correct in both a
+        // handler and an `actions:`/`operations:` method.
         // `multiline` is ignored: a `;`-terminated statement spans newlines freely.
         out.frame(&self.pad(rel));
         out.frame("return ");

@@ -330,6 +330,22 @@ pub enum StateMember {
     Handler(HandlerNode),
     /// A state variable: `$.n: int = 0`
     StateVar(MemberDecl),
+    /// **`=> $^` written as a STATE MEMBER** — the state's *default forward*: an event this
+    /// state does not handle falls through to the parent's dispatcher.
+    ///
+    /// The same three bytes inside a handler BODY are a [`body::Stmt::Forward`], a statement.
+    /// Here they are a state-level DECLARATION, and the difference is not cosmetic: it emits the
+    /// fall-through at the END of the state's dispatcher, after every arm, so it fires for any
+    /// message that matched none of them.
+    ///
+    /// It had no node, so it fell into the undifferentiated `Trivia` span between members and
+    /// nothing downstream could see it — which is exactly why a 3-deep HSM chain stopped at the
+    /// middle state (see [`crate::resolve::SymbolTable::declared_parent`]). Totality is preserved
+    /// by SUBDIVIDING that trivia span, never by moving a byte out of the partition.
+    ///
+    /// It is a FLAG, not a position: a state that writes it twice forwards once, and where it
+    /// sits among the handlers does not matter (verified against the 4.6.1 oracle).
+    DefaultForward(FrameSpan),
 }
 
 /// `event(params) { …body… }` — or `$>()` / `<$()` for enter/exit.
@@ -684,6 +700,7 @@ impl Node for StateMember {
             StateMember::Trivia(t) => t.span,
             StateMember::Handler(h) => h.span,
             StateMember::StateVar(v) => v.span,
+            StateMember::DefaultForward(f) => f.span,
         }
     }
     fn children(&self) -> Vec<&dyn Node> {
@@ -697,11 +714,16 @@ impl Node for StateMember {
             StateMember::Trivia(_) => "Trivia",
             StateMember::Handler(_) => "Handler",
             StateMember::StateVar(_) => "StateVar",
+            StateMember::DefaultForward(_) => "DefaultForward",
         }
     }
     fn is_leaf_on_purpose(&self) -> bool {
         match self {
-            StateMember::Trivia(_) | StateMember::StateVar(_) => true,
+            StateMember::Trivia(_)
+            | StateMember::StateVar(_)
+            // `=> $^` is Frame's own syntax and has no interior: three tokens, nothing to
+            // partition further.
+            | StateMember::DefaultForward(_) => true,
             // *** A handler is NEVER a leaf. ***
             // This is the exact node the old compiler kept as a String. Every one of
             // the 25 bugs lives inside it.

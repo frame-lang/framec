@@ -19,7 +19,7 @@
 //! `.gen.rs` regen: `framec-ng -l rust --emit emit_handlers.frs | grep -v '^#!\[allow' >
 //! emit_handlers.gen.rs`.
 
-use super::driver::{body_is_empty, emit_body, Backend};
+use super::driver::{body_is_empty, emit_body, Backend, BodyRole};
 use super::Sink;
 use crate::resolve::{SymbolTable, SystemSym};
 use crate::text::Source;
@@ -196,12 +196,33 @@ fn emit_handler(
 ) {
     if let Some((st, h)) = handler_at(sections, si, sti, hi, be) {
         be.open_handler(sym, &st.name, &h.event, &h.params_text, ret, is_async, out);
-        let end = emit_body(src, syms, sym, &st.name, &h.event, is_async, &h.body, be, out);
-        // A body that emits NOTHING (all-`Trivia`, or empty) still owes the target a statement on
-        // an indent-delimited language. The fact is read from the TREE ([`body_is_empty`]), never
-        // from the text just written, and the spelling is the backend's `noop` (nothing at all on a
-        // brace target).
-        if body_is_empty(&h.body) {
+        // A body that emits NOTHING (all-`Trivia`, all-comment, or empty) still owes the target a
+        // statement on an indent-delimited language. The fact is read from the TREE
+        // ([`body_is_empty`]), never from the text just written, and the spelling is the backend's
+        // `noop` (nothing at all on a brace target).
+        //
+        // [`Backend::empty_body_keeps_text`] decides whether the body's own text is emitted first:
+        // the shipped compiler drops a comment-only body's comments and emits the bare `pass`
+        // (a comment was never a segment in its body model). Python reproduces that; every other
+        // target keeps its bytes.
+        let empty = body_is_empty(&h.body);
+        let end = if !empty || be.empty_body_keeps_text() {
+            emit_body(
+                src,
+                syms,
+                sym,
+                BodyRole::Handler,
+                &st.name,
+                &h.event,
+                is_async,
+                &h.body,
+                be,
+                out,
+            )
+        } else {
+            super::driver::BodyEnd::Fell
+        };
+        if empty {
             be.noop(0, out);
         }
         be.close_handler(ret, is_async, end.terminated(), out);

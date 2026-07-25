@@ -14,12 +14,25 @@ use std::any::Any;
 // then, for each `actions:`/`operations:` section, its member decls — so a stack is unnecessary (a
 // stack buys UNBOUNDED depth; this depth is 2 and known). It is expressed instead as two NESTED
 // CYCLE STATES with explicit up/down edges, one owned cursor per level:
-//   $Section  cycles over `sections` (fork: only `Section::Actions | Section::Operations` descend);
-//             on such a section it sets the member bound `nm`, resets `mi`, and descends
-//             `-> $Member`; at `si >= nsec` it halts `-> $Done`.
+//   $Section  cycles over `sections` (fork: only the sections ADMITTED IN THIS PASS descend); on
+//             such a section it sets the member bound `nm`, resets `mi`, and descends
+//             `-> $Member`; at `si >= nsec` it advances the PASS (below) or halts `-> $Done`.
 //   $Member   cycles over the current section's `members` (fork: only `Decl::WithBody` emits); on a
 //             bodied member it opens one action, walks its body via the StmtWalk leaf, and closes
 //             it; at `mi >= nm` it ASCENDS (`si += 1`, `-> $Section`).
+// THE PASS CURSOR. Some targets emit `actions:` members BEFORE `operations:` members whatever
+// order the two sections were declared in (the shipped compiler holds them in two collections and
+// runs two passes; Frame's canonical block order actually puts `operations:` FIRST, so source order
+// is not it). That is expressed as a third cursor, `phase`, over a FIXED, KNOWN pass count `nphase`
+// (1 = one pass admitting both kinds in source order; 2 = actions pass, then operations pass): when
+// `si` runs off the end and another pass remains, `phase` advances and `si` resets.
+//
+// `phase` is a CURSOR, not a mode worth naming as a state (Shadows §3 degenerate pole): like `si`
+// and `mi` it is a program counter over ALREADY-PARSED tree data, it gates no recognition, and
+// deleting it would change output only by reordering. It becomes a state to reify the day a pass
+// carries something forward INTO the next one — a name table, a dedup set, an emitted-count read
+// back to gate the second pass. Nothing does today.
+//
 // The "mode" is the walk DEPTH (which of the two cycle states is live); the cursors advance it.
 // This is the §3 degenerate pole — a program-counter walk over ALREADY-PARSED tree data, whose
 // forks are structural type-dispatch (`Section::Actions`? `Decl::WithBody`? — Frame cannot match a
@@ -66,16 +79,18 @@ pub struct EmitActions<'a> {
     pub sections: &'a [Section],
     pub be: &'a dyn Backend,
     pub nsec: usize,
+    pub nphase: usize,
     pub out: Sink,
     pub nm: usize,
     pub si: usize,
+    pub phase: usize,
     pub mi: usize,
 }
 
 impl<'a> EmitActions<'a> {
-    pub fn new(src: &'a Source, syms: &'a SymbolTable, sym: &'a SystemSym, sections: &'a [Section], be: &'a dyn Backend, nsec: usize, out: Sink) -> EmitActions<'a> {
+    pub fn new(src: &'a Source, syms: &'a SymbolTable, sym: &'a SystemSym, sections: &'a [Section], be: &'a dyn Backend, nsec: usize, nphase: usize, out: Sink) -> EmitActions<'a> {
         let compartment = EmitActionsComp { state: "Section".to_string(), vars: EmitActionsVars::Section {  }, args: EmitActionsArgs::Section {  } };
-        EmitActions { compartment, stack: Vec::new(), src: src, syms: syms, sym: sym, sections: sections, be: be, nsec: nsec, out: out, nm: 0, si: 0, mi: 0 }
+        EmitActions { compartment, stack: Vec::new(), src: src, syms: syms, sym: sym, sections: sections, be: be, nsec: nsec, nphase: nphase, out: out, nm: 0, si: 0, phase: 0, mi: 0 }
     }
 
     pub fn step(&mut self) {
@@ -88,18 +103,25 @@ impl<'a> EmitActions<'a> {
 
     fn Section_step(&mut self) {
         if self.si >= self.nsec {
-            let mut __next = EmitActionsComp { state: "Done".to_string(), vars: EmitActionsVars::Done {  }, args: EmitActionsArgs::Done { } };
+            if self.phase + 1 >= self.nphase {
+                let mut __next = EmitActionsComp { state: "Done".to_string(), vars: EmitActionsVars::Done {  }, args: EmitActionsArgs::Done { } };
+                self.compartment = __next;
+                return Default::default();
+            }
+            self.phase = self.phase + 1;
+            self.si = 0;
+            let mut __next = EmitActionsComp { state: "Section".to_string(), vars: EmitActionsVars::Section {  }, args: EmitActionsArgs::Section { } };
             self.compartment = __next;
             return Default::default();
         }
-        let isa = is_action_section(self.sections, self.si);
+        let isa = is_action_section(self.sections, self.si, self.phase, self.nphase);
         if isa == false {
             self.si = self.si + 1;
             let mut __next = EmitActionsComp { state: "Section".to_string(), vars: EmitActionsVars::Section {  }, args: EmitActionsArgs::Section { } };
             self.compartment = __next;
             return Default::default();
         }
-        self.nm = action_member_count(self.sections, self.si);
+        self.nm = action_member_count(self.sections, self.si, self.phase, self.nphase);
         self.mi = 0;
         let mut __next = EmitActionsComp { state: "Member".to_string(), vars: EmitActionsVars::Member {  }, args: EmitActionsArgs::Member { } };
         self.compartment = __next;
@@ -113,14 +135,14 @@ impl<'a> EmitActions<'a> {
             self.compartment = __next;
             return Default::default();
         }
-        let iswb = is_withbody_member(self.sections, self.si, self.mi);
+        let iswb = is_withbody_member(self.sections, self.si, self.mi, self.phase, self.nphase);
         if iswb == false {
             self.mi = self.mi + 1;
             let mut __next = EmitActionsComp { state: "Member".to_string(), vars: EmitActionsVars::Member {  }, args: EmitActionsArgs::Member { } };
             self.compartment = __next;
             return Default::default();
         }
-        emit_action(self.src, self.syms, self.sym, self.be, self.sections, self.si, self.mi, &mut self.out);
+        emit_action(self.src, self.syms, self.sym, self.be, self.sections, self.si, self.mi, self.phase, self.nphase, &mut self.out);
         self.mi = self.mi + 1;
         let mut __next = EmitActionsComp { state: "Member".to_string(), vars: EmitActionsVars::Member {  }, args: EmitActionsArgs::Member { } };
         self.compartment = __next;

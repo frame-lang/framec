@@ -18,6 +18,13 @@ use std::any::Any;
 // is spelled — the dead code the old compiler stripped from text it had already emitted), and it
 // selects the body's terminal (`Terminated` vs `Fell`) for the wrapper.
 //
+// WHICH KIND OF BODY this is rides the domain as `role: BodyRole` — Handler or Action. It is a
+// TAG framec put on the tree (the body came out of a state's HandlerNode or out of an
+// `actions:`/`operations:` Decl), not a sentinel decoded from `state == ""`, and it reaches
+// exactly one arm: `@@:(expr)` parks its value on the live FrameContext in a HANDLER and spells
+// the target's own `return` in an ACTION, which has no context because the user may call it
+// directly.
+//
 // WHAT COUNTS AS TERMINAL is the backend's answer, not the walk's: a statement only ends the body
 // if that target's SPELLING of it actually returns. `@@:(expr)` returns on Java/Rust/C and does
 // NOT on Python (where it assigns the context's return slot and execution continues), so
@@ -58,6 +65,7 @@ pub struct StmtWalk<'a> {
     pub src: &'a Source,
     pub syms: &'a SymbolTable,
     pub sym: &'a SystemSym,
+    pub role: BodyRole,
     pub stmts: &'a [Stmt],
     pub state: &'a str,
     pub event: &'a str,
@@ -70,9 +78,9 @@ pub struct StmtWalk<'a> {
 }
 
 impl<'a> StmtWalk<'a> {
-    pub fn new(src: &'a Source, syms: &'a SymbolTable, sym: &'a SystemSym, stmts: &'a [Stmt], state: &'a str, event: &'a str, is_async: bool, base: u32, be: &'a dyn Backend, out: Sink) -> StmtWalk<'a> {
+    pub fn new(src: &'a Source, syms: &'a SymbolTable, sym: &'a SystemSym, role: BodyRole, stmts: &'a [Stmt], state: &'a str, event: &'a str, is_async: bool, base: u32, be: &'a dyn Backend, out: Sink) -> StmtWalk<'a> {
         let compartment = StmtWalkComp { state: "Walk".to_string(), vars: StmtWalkVars::Walk {  }, args: StmtWalkArgs::Walk {  } };
-        StmtWalk { compartment, stack: Vec::new(), src: src, syms: syms, sym: sym, stmts: stmts, state: state, event: event, is_async: is_async, base: base, be: be, out: out, terminated: false, i: 0 }
+        StmtWalk { compartment, stack: Vec::new(), src: src, syms: syms, sym: sym, role: role, stmts: stmts, state: state, event: event, is_async: is_async, base: base, be: be, out: out, terminated: false, i: 0 }
     }
 
     pub fn step(&mut self) {
@@ -150,7 +158,7 @@ impl<'a> StmtWalk<'a> {
             return Default::default();
         }
         if k == 7 {
-            let term = emit_return_call(self.src, self.syms, self.sym, self.state, self.be, self.base, self.is_async, self.stmts, self.i, &mut self.out);
+            let term = emit_return_call(self.src, self.syms, self.sym, self.role, self.state, self.be, self.base, self.is_async, self.stmts, self.i, &mut self.out);
             if term {
                 self.terminated = true;
                 let mut __next = StmtWalkComp { state: "Done".to_string(), vars: StmtWalkVars::Done {  }, args: StmtWalkArgs::Done { } };

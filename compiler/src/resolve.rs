@@ -144,6 +144,15 @@ pub struct StateSym {
     pub parent: Option<String>,
     pub handlers: Vec<HandlerSym>,
     pub state_vars: Vec<FieldSym>,
+    /// Does this state declare a state-level **`=> $^`** — the DEFAULT FORWARD?
+    ///
+    /// A FLAG, deliberately, not a list of positions: the construct emits ONE fall-through at the
+    /// end of the state's dispatcher, a state that writes it twice forwards once, and where it
+    /// sits among the handlers does not matter. All three verified against the 4.6.1 oracle.
+    ///
+    /// It is meaningful only together with [`Self::parent`]: `=> $^` in a root state forwards
+    /// nowhere and emits nothing.
+    pub default_forward: bool,
 }
 
 #[derive(Debug)]
@@ -389,6 +398,7 @@ pub fn resolve(ast: &FileAst) -> (SymbolTable, Vec<Diagnostic>) {
                             parent: st.parent.clone(),
                             handlers: Vec::new(),
                             state_vars: Vec::new(),
+                            default_forward: false,
                         };
                         for member in &st.members {
                             match member {
@@ -411,6 +421,7 @@ pub fn resolve(ast: &FileAst) -> (SymbolTable, Vec<Diagnostic>) {
                                         &mut diags,
                                     ),
                                 }),
+                                StateMember::DefaultForward(_) => ss.default_forward = true,
                                 StateMember::Trivia(_) => {}
                             }
                         }
@@ -649,9 +660,16 @@ impl SystemSym {
     /// forwards again, each hop shifting the compartment by exactly one. A parent that does NOT
     /// declare one is the author saying the event stops there.
     ///
-    /// KNOWN GAP (reported, not fixed here): ng does not yet emit the state-level `=> $^`
-    /// fall-through, so a 3-deep chain whose middle state declares one still stops at the
-    /// middle. That is the missing `StateMember::DefaultForward` node, not this function.
+    /// The gap this doc used to record — "ng does not yet emit the state-level `=> $^`
+    /// fall-through, so a 3-deep chain whose middle state declares one still stops at the middle"
+    /// — is CLOSED. `=> $^` at state level is now [`crate::tree::StateMember::DefaultForward`],
+    /// carried here as [`StateSym::default_forward`], and the dispatcher emits the hop. A 3-deep
+    /// chain works because each hop is one level: `$Leaf`'s dispatcher calls `$Mid`'s with
+    /// `compartment.parent_compartment`, and `$Mid`'s — if it declares its own `=> $^` — calls
+    /// `$Root`'s with ITS parent compartment. The climb is in the generated code, one dispatcher
+    /// at a time, which is why the one-level answer here is the correct one and
+    /// [`Self::resolve_forward`]'s multi-level answer would hand a state someone else's scope.
+    /// Guarded at RUNTIME by `tests/legacy_bug_fixes.rs::ng_bug_three_deep_default_forward`.
     pub fn declared_parent(&self, state: &str) -> Option<&StateSym> {
         let s = self.states.iter().find(|s| s.name == state)?;
         let parent = s.parent.as_ref()?;

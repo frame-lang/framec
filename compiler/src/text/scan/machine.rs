@@ -128,6 +128,15 @@ fn state(target: Target, bytes: &[u8], at: usize, limit: usize) -> StateNode {
                 bytes, &shape, e, start,
             )));
             cursor = e;
+        } else if let Some(e) = default_forward_end(bytes, start, close) {
+            // `=> $^` at STATE level — the state's default forward. Its extent comes from the
+            // SAME `default_forward_end` the `StateWalk` leaf used to find this start, so the
+            // node's span and the walk's jump are one fact, not two.
+            members.push(StateMember::DefaultForward(FrameSpan {
+                span: Span::new(start, e),
+                kind: "DefaultForward",
+            }));
+            cursor = e;
         } else if let Some(h) = handler_at(target, bytes, start, close) {
             // A handler: `name(...) {` / `$>() {` / `<$() {`.
             cursor = h.span.end;
@@ -603,6 +612,33 @@ pub fn state_extent(bytes: &[u8], at: usize, limit: usize, target: Target) -> (u
     );
     let h = super::state_head_scan::scan(bytes, at, limit, target);
     (h.name_end, h.open, h.end)
+}
+
+/// The offset one past a **state-level `=> $^`** (the state's default forward) starting at `i`, or
+/// `None` if that is not what is here.
+///
+/// SINGLE SOURCE for the construct's extent: the `StateWalk` system's `member_end` leaf uses it to
+/// find the member boundary, and `state()` uses it again to build the
+/// [`crate::tree::StateMember::DefaultForward`] node's span. If the two ever disagreed the state
+/// body's partition would develop a hole or an overlap — which is exactly what the totality gate
+/// pins — so there is one function and both call it.
+///
+/// The extent is the CONSTRUCT, not the line: `=`, `>`, horizontal whitespace, `$`, `^`. A trailing
+/// comment stays in the trivia that follows, where it already was. Only spaces and tabs are
+/// admitted between `=>` and `$^`; a newline is not, so this can never reach across a line to weld
+/// two unrelated things together.
+pub(crate) fn default_forward_end(bytes: &[u8], i: usize, limit: usize) -> Option<usize> {
+    if !starts(bytes, i, b"=>", limit) {
+        return None;
+    }
+    let mut j = i + 2;
+    while j < limit && (bytes[j] == b' ' || bytes[j] == b'\t') {
+        j += 1;
+    }
+    if !starts(bytes, j, b"$^", limit) {
+        return None;
+    }
+    Some(j + 2)
 }
 
 pub(crate) fn to_end_of_line(bytes: &[u8], mut i: usize, limit: usize) -> usize {

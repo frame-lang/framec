@@ -600,6 +600,7 @@ fn state_decomposes_into_the_right_members() {
                 }
                 kinds.push(format!("handler:{}", h.event));
             }
+            StateMember::DefaultForward(_) => kinds.push("forward".to_string()),
             StateMember::Trivia(_) => {}
         }
     }

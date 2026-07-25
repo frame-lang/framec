@@ -408,6 +408,13 @@ const WELL_FORMED_STATES: &[&str] = &[
     "        $A {\n            $.x: int = 0\n            go() {\n                if p { q } else { r }\n            }\n            tick(): bool { return true }\n        }",
     // a string decoy inside a handler body carrying member-looking tokens — must not spawn members
     "        $A {\n            $.real: int = 0\n            go() {\n                s = \"$.fake go() { } <$() { }\"\n            }\n            $>() { }\n        }\n        $B {\n            done() { }\n        }",
+    // a STATE-LEVEL `=> $^` (the default forward) between members — the member form added for
+    // the 3-deep HSM chain. Totality is the point: it SUBDIVIDES the trivia run it used to hide
+    // in, so the state body's partition must still cover every byte with no gap and no overlap.
+    "        $A => $B {\n            $.n: int = 0\n            go() { }\n            => $^\n        }\n        $B {\n            go() { }\n        }",
+    // `=> $^` FIRST, `=> $^` with a trailing comment after it, and a tab between the tokens —
+    // the extent is the CONSTRUCT, so what follows on the line stays trivia.
+    "        $A => $B {\n            =>\t$^\n            go() { }\n        }\n        $B {\n            go() { }\n        }",
 ];
 
 #[test]
@@ -446,6 +453,96 @@ fn real_pipeline_partition_covers_every_byte() {
     assert!(
         checked >= WELL_FORMED_STATES.len() * 3,
         "expected every body x target to be checked"
+    );
+}
+
+/// **The state-level `=> $^` is a MEMBER, not trivia.**
+///
+/// Three bytes that used to vanish into the undifferentiated trivia run between members, which is
+/// why nothing downstream could emit the dispatcher fall-through and a 3-deep HSM chain stopped at
+/// the middle state. This pins the member form directly: WHERE it sits does not matter, writing it
+/// TWICE still yields two nodes (the resolver folds them to one flag), and the same three bytes
+/// inside a handler BODY are a statement and must NOT spawn a member.
+#[test]
+fn state_level_default_forward_is_its_own_member() {
+    use frame_compiler::scan::segment;
+    use frame_compiler::tree::{Item, MachineMember, Section, StateMember};
+    use frame_compiler::Source;
+
+    let text = wrap_system(
+        "        $Child => $Parent {\n            => $^\n            $.n: int = 0\n            go() {\n                => $^\n            }\n            => $^\n        }\n        $Parent {\n            go() { }\n        }",
+    );
+    let src = Source::new("state_walk_forward.frm", text.as_bytes().to_vec()).unwrap();
+    let ast = segment(&src, Target::Rust).unwrap();
+
+    let sys = ast
+        .items
+        .iter()
+        .find_map(|i| match i {
+            Item::System(s) => Some(s),
+            _ => None,
+        })
+        .expect("a system");
+    let machine = sys
+        .sections
+        .iter()
+        .find_map(|sec| match sec {
+            Section::Machine(m) => Some(m),
+            _ => None,
+        })
+        .expect("a machine section");
+    let child = machine
+        .members
+        .iter()
+        .find_map(|m| match m {
+            MachineMember::State(s) if s.name == "Child" => Some(s),
+            _ => None,
+        })
+        .expect("$Child");
+
+    let kinds: Vec<&str> = child
+        .members
+        .iter()
+        .filter_map(|m| match m {
+            StateMember::StateVar(_) => Some("var"),
+            StateMember::Handler(_) => Some("handler"),
+            StateMember::DefaultForward(_) => Some("forward"),
+            StateMember::Trivia(_) => None,
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        vec!["forward", "var", "handler", "forward"],
+        "`=> $^` is a member wherever it sits; the one INSIDE `go()`'s body is a statement, not a          member"
+    );
+
+    // The node's span is the CONSTRUCT, exactly — `=` through `^`.
+    let spans: Vec<&str> = child
+        .members
+        .iter()
+        .filter_map(|m| match m {
+            StateMember::DefaultForward(f) => Some(&text[f.span.start..f.span.end]),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(spans, vec!["=> $^", "=> $^"], "span is the construct, not the line");
+
+    // And the resolver folds the two occurrences into ONE flag.
+    let (syms, _) = frame_compiler::resolve::resolve(&ast);
+    let cs = syms.systems[0]
+        .states
+        .iter()
+        .find(|s| s.name == "Child")
+        .unwrap();
+    assert!(cs.default_forward, "`=> $^` sets the state's default-forward flag");
+    let ps = syms.systems[0]
+        .states
+        .iter()
+        .find(|s| s.name == "Parent")
+        .unwrap();
+    assert!(
+        !ps.default_forward,
+        "a state that does NOT declare one must not get the flag"
     );
 }
 
@@ -500,6 +597,7 @@ fn state_decomposes_into_the_right_members() {
         match m {
             StateMember::StateVar(d) => kinds.push(format!("var:{}", d.name)),
             StateMember::Handler(h) => kinds.push(format!("handler:{}", h.event)),
+            StateMember::DefaultForward(_) => kinds.push("forward".to_string()),
             StateMember::Trivia(_) => {}
         }
     }

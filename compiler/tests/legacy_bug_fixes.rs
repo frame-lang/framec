@@ -233,3 +233,207 @@ fn ng_bug_statements_after_frame_return_still_run() {
         "a statement after `@@:(expr)` is REACHABLE on Python and must be emitted AND run"
     );
 }
+
+/// **NG BUG, FIXED — an `actions:` / `operations:` member is a PLAIN METHOD and must return
+/// normally, even when nothing is dispatching.**
+///
+/// This is ng's own defect; the shipped compiler gets it right, so the fix is also the
+/// faithfulness fix for the 73-fixture actions class (Milestone 3, class A).
+///
+/// THE BUG: `@@:(expr)` had ONE spelling per target. On Python that spelling is
+/// `self._context_stack[-1]._return = expr` — correct inside a `machine:` handler, which the
+/// kernel invoked with a live `FrameContext` pushed. An action is not invoked by the kernel: the
+/// user calls it directly (`vm.check_stock("cola")`), the context stack is EMPTY, and the `[-1]`
+/// raises `IndexError: list index out of range`. ng also prefixed every action with an unused
+/// `compartment = self.__compartment` and appended a synthesized bare `return` that discarded the
+/// value even when the slot write had worked.
+///
+/// The shape is exactly the census's `MethodRole` gap: the emitter knew which section the body
+/// came from and threw the fact away, then had no way to ask. THE FIX is a tag, not a name —
+/// `driver::BodyRole::{Handler, Action}` rides the `StmtWalk` domain and reaches
+/// `Backend::return_call`, which spells Python's own `return` for an action. Java/Rust/C already
+/// spelled a real `return` in both roles and ignore the tag; their bytes do not move.
+///
+/// The test CALLS THE ACTION FROM OUTSIDE ANY DISPATCH, which is the only way to see it: called
+/// from inside a handler there happens to be a context on the stack and the broken spelling
+/// "works".
+#[test]
+fn ng_bug_action_return_outside_dispatch() {
+    if !have_python() {
+        eprintln!("SKIPPED python3");
+        return;
+    }
+    let frm = r#"@@system A {
+    operations:
+        double(n: int): int {
+            @@:(n * 2)
+        }
+    interface:
+        via_handler(n: int): int
+    machine:
+        $A {
+            via_handler(n: int): int {
+                @@:(self.double(n))
+            }
+        }
+    domain:
+        seen: int = 0
+}
+"#;
+    let (out, err, ok) = run_py(
+        "action_return",
+        frm,
+        "\na = A()\nprint('direct:', a.double(21))\nprint('handler:', a.via_handler(3))\n",
+    );
+    assert!(
+        ok,
+        "an action called with NO dispatch in flight must not touch the context stack: {err}"
+    );
+    assert_eq!(
+        out.lines().collect::<Vec<_>>(),
+        ["direct: 42", "handler: 6"],
+        "`@@:(expr)` in an action must be the target's own `return`, usable outside a dispatch"
+    );
+}
+
+/// **NG BUG, FIXED — a body with no executable statement still owes Python a `pass`.**
+///
+/// An `actions:` member whose body is empty, or contains only comments, emitted
+/// `def f(self):` followed by nothing (a `SyntaxError`) or by only a `#` line (an
+/// `IndentationError`) once the synthesized trailing `return` was removed. Neither module
+/// imports, so nothing downstream runs at all.
+///
+/// THE FIX: `driver::body_is_empty` — an AST predicate that asks `LiteralNode::is_comment`, a
+/// fact the SCANNER put on the node (it must distinguish a comment from a string, or a `;` gets
+/// spliced into one). framec is not reading the user's text to decide this; it is asking the tree
+/// a question it already answered.
+#[test]
+fn ng_bug_empty_action_body_is_still_a_valid_method() {
+    if !have_python() {
+        eprintln!("SKIPPED python3");
+        return;
+    }
+    let frm = r#"@@system E {
+    actions:
+        nothing() {
+        }
+        only_a_comment() {
+            # deliberately no statements
+        }
+    interface:
+        go(): int
+    machine:
+        $A {
+            go(): int { @@:(1) }
+        }
+}
+"#;
+    let (out, err, ok) = run_py(
+        "empty_action",
+        frm,
+        "\ne = E()\ne.nothing()\ne.only_a_comment()\nprint('ok:', e.go())\n",
+    );
+    assert!(ok, "the emitted module must import and run: {err}");
+    assert_eq!(out, "ok: 1");
+}
+
+/// **NG BUG, FIXED — a state-level `=> $^` forwards, and a 3-DEEP chain climbs all the way.**
+///
+/// ng's own defect; the shipped compiler gets it right, so this is also the faithfulness fix for
+/// the 37-fixture default-forward class (Milestone 3, class B).
+///
+/// THE BUG: `=> $^` written as a STATE MEMBER — not inside a handler body — was not a member form
+/// at all. `state_walk::member_end` recognized a `$.x` state var and a handler head and nothing
+/// else, so the three bytes fell into the undifferentiated `StateMember::Trivia` run between
+/// members and *no later pass could see them*. The state's dispatcher was emitted with its arms
+/// and no fall-through, so an event the state did not handle was silently DROPPED. Nothing
+/// crashed; the machine just did less than the source said — which is why it survived a green
+/// suite.
+///
+/// THE FIX is a node: `StateMember::DefaultForward`, recognized by the same `state_walk` that
+/// finds every other member, carried to the resolver as `StateSym::default_forward`, and spelled
+/// by `Python::dispatch` as the trailing
+/// `self._state_<Parent>(__e, compartment.parent_compartment)`. Totality is preserved because the
+/// trivia span is SUBDIVIDED — no byte leaves the partition.
+///
+/// THE 3-DEEP CASE is the one that proves the design. `$Leaf`'s dispatcher forwards to `$Mid`'s
+/// with `compartment.parent_compartment`; `$Mid` declares its own `=> $^`, so ITS dispatcher
+/// forwards to `$Root`'s with ITS parent compartment. Each hop shifts the compartment by exactly
+/// one level, which is why `SymbolTable::declared_parent` (one level) is the correct resolution
+/// and a multi-level climb in the symbol table would hand a state someone else's scope. `deep()`
+/// below is declared ONLY on `$Root` and sent while the machine is in `$Leaf`: it must arrive.
+#[test]
+fn ng_bug_three_deep_default_forward() {
+    if !have_python() {
+        eprintln!("SKIPPED python3");
+        return;
+    }
+    let frm = r#"@@system D {
+    interface:
+        deep()
+        mid_only()
+        start()
+    machine:
+        $Leaf => $Mid {
+            start() {
+                self.log.append("Leaf:start")
+            }
+            => $^
+        }
+        $Mid => $Root {
+            mid_only() {
+                self.log.append("Mid:mid_only")
+            }
+            => $^
+        }
+        $Root {
+            deep() {
+                self.log.append("Root:deep")
+            }
+        }
+    domain:
+        log: list = []
+}
+"#;
+    let (out, err, ok) = run_py(
+        "three_deep_forward",
+        frm,
+        "\nd = D()\nd.start()\nd.mid_only()\nd.deep()\nprint(d.log)\n",
+    );
+    assert!(ok, "the emitted program must run: {err}");
+    assert_eq!(
+        out, "['Leaf:start', 'Mid:mid_only', 'Root:deep']",
+        "an event handled two levels up must reach it: $Leaf -> $Mid -> $Root, one compartment \
+         hop per dispatcher"
+    );
+}
+
+/// **`=> $^` in a ROOT state forwards nowhere** — and must not emit a call to a parent that does
+/// not exist, nor leave the dispatcher block empty (a Python `SyntaxError`).
+///
+/// The oracle spells `pass` there. This pins that ng agrees, and that the emitted module still
+/// imports and runs — the failure mode being a `_state_None(...)` call or an empty `def`.
+#[test]
+fn default_forward_in_a_root_state_is_a_no_op() {
+    if !have_python() {
+        eprintln!("SKIPPED python3");
+        return;
+    }
+    let frm = r#"@@system RF {
+    interface:
+        ping()
+    machine:
+        $Only {
+            => $^
+        }
+}
+"#;
+    let code = emit_py(frm);
+    assert!(
+        code.contains("    def _state_Only(self, __e, compartment):\n        pass\n"),
+        "a root state's `=> $^` forwards nowhere; the block still needs its `pass`:\n{code}"
+    );
+    let (out, err, ok) = run_py("root_forward", frm, "\nRF().ping()\nprint('ok')\n");
+    assert!(ok, "the emitted program must run: {err}");
+    assert_eq!(out, "ok");
+}

@@ -10,7 +10,7 @@
 //! which does not have the target language and therefore cannot branch on it.
 
 use super::atom::{Atom, Place};
-use super::driver::{param_names, params_split, Backend};
+use super::driver::{param_names, params_split, Backend, BodyRole};
 use super::Sink;
 use crate::resolve::{SystemSym, TypeRef};
 use crate::tree::body::{EmbedCall, FrameRef, RefKind};
@@ -251,7 +251,9 @@ impl Backend for Java {
         out.frame("    }\n\n");
     }
 
-    fn return_call(&self, rel: u32, is_async: bool, _multiline: bool, expr: NativeText, out: &mut Sink) {
+    fn return_call(&self, _role: BodyRole, rel: u32, is_async: bool, _multiline: bool, expr: NativeText, out: &mut Sink) {
+        // `_role` is ignored: Java already spells `@@:(expr)` as a real `return`, which is the
+        // correct statement in a handler AND in an `actions:`/`operations:` method.
         // `multiline` is ignored: a `;`-terminated statement spans newlines freely.
         let p = self.pad(rel);
         if is_async {

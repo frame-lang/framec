@@ -20,7 +20,7 @@
 //! `.gen.rs` regen: `framec-ng -l rust --emit emit_actions.frs | grep -v '^#!\[allow' >
 //! emit_actions.gen.rs`.
 
-use super::driver::{emit_body, Backend};
+use super::driver::{action_section_in_phase, body_is_empty, emit_body, Backend, BodyRole};
 use super::Sink;
 use crate::resolve::{SymbolTable, SystemSym};
 use crate::text::Source;
@@ -30,33 +30,39 @@ use crate::tree::{Decl, Section};
 /// a section descends into members (the hand pass's `let (Section::Actions(d) | Section::Operations(d))
 /// = sec else { continue }`). Out of bounds is `false` (the `$Section` bound `si >= nsec` halts
 /// first, but this stays total).
-fn is_action_section(sections: &[Section], si: usize) -> bool {
-    matches!(
-        sections.get(si),
-        Some(Section::Actions(_)) | Some(Section::Operations(_))
-    )
+fn is_action_section(sections: &[Section], si: usize, phase: usize, nphase: usize) -> bool {
+    sections
+        .get(si)
+        .and_then(|s| action_section_in_phase(s, phase, nphase))
+        .is_some()
 }
 
 /// The number of `Decl` members in the actions/operations section at `si` — the `$Member` bound
 /// `nm`, set on descent. `0` for any other section kind or an out-of-bounds index (never descended
 /// into).
-fn action_member_count(sections: &[Section], si: usize) -> usize {
-    match sections.get(si) {
-        Some(Section::Actions(d)) | Some(Section::Operations(d)) => d.members.len(),
-        _ => 0,
-    }
+fn action_member_count(sections: &[Section], si: usize, phase: usize, nphase: usize) -> usize {
+    sections
+        .get(si)
+        .and_then(|s| action_section_in_phase(s, phase, nphase))
+        .map(|d| d.members.len())
+        .unwrap_or(0)
 }
 
 /// Is `sections[si].members[mi]` a `Decl::WithBody`? The `$Member` fork — only a bodied member is
 /// emitted (the hand pass's `let Decl::WithBody(b) = m else { continue }`); a bare signature or
 /// trivia decl is skipped.
-fn is_withbody_member(sections: &[Section], si: usize, mi: usize) -> bool {
-    match sections.get(si) {
-        Some(Section::Actions(d)) | Some(Section::Operations(d)) => {
-            matches!(d.members.get(mi), Some(Decl::WithBody(_)))
-        }
-        _ => false,
-    }
+fn is_withbody_member(
+    sections: &[Section],
+    si: usize,
+    mi: usize,
+    phase: usize,
+    nphase: usize,
+) -> bool {
+    sections
+        .get(si)
+        .and_then(|s| action_section_in_phase(s, phase, nphase))
+        .map(|d| matches!(d.members.get(mi), Some(Decl::WithBody(_))))
+        .unwrap_or(false)
 }
 
 /// Emit ONE `actions:`/`operations:` method at `(si, mi)`: `open_action` (Frame's signature), the
@@ -72,16 +78,38 @@ fn emit_action(
     sections: &[Section],
     si: usize,
     mi: usize,
+    phase: usize,
+    nphase: usize,
     out: &mut Sink,
 ) {
-    let (Some(Section::Actions(d)) | Some(Section::Operations(d))) = sections.get(si) else {
+    let Some(d) = sections
+        .get(si)
+        .and_then(|s| action_section_in_phase(s, phase, nphase))
+    else {
         return;
     };
     let Some(Decl::WithBody(b)) = d.members.get(mi) else {
         return;
     };
     be.open_action(&b.name, &b.params_text, b.return_text.as_deref(), out);
-    emit_body(src, syms, sym, "", "", false, &b.body, be, out);
+    // A body with NO executable statement (empty, or only comments) still owes an
+    // indent-delimited target a statement — `def f(self):` with nothing under it is a
+    // SyntaxError, and `def f(self):` followed only by a comment is an IndentationError. The
+    // fact is read from the TREE ([`body_is_empty`], which asks `LiteralNode::is_comment` — a
+    // fact the SCANNER put there), never from the text just written, and the spelling is the
+    // backend's `noop` (nothing at all on a brace target, so no brace target's bytes move).
+    //
+    // Same shape as [`super::emit_handlers::emit_handler`]. The one extra move is
+    // [`Backend::empty_body_keeps_text`]: the shipped compiler DROPS a comment-only body's
+    // comments and emits the bare `pass`, because its body model held statement segments and a
+    // comment was never one. Python reproduces that; every other target keeps its bytes.
+    let empty = body_is_empty(&b.body);
+    if !empty || be.empty_body_keeps_text() {
+        emit_body(src, syms, sym, BodyRole::Action, "", "", false, &b.body, be, out);
+    }
+    if empty {
+        be.noop(0, out);
+    }
     be.close_action(out);
 }
 
@@ -114,15 +142,23 @@ pub(super) fn walk(
     out: &mut Sink,
 ) {
     let seed = std::mem::take(out);
-    let mut m = fsm::EmitActions::new(src, syms, sym, sections, be, sections.len(), seed);
+    // Two PASSES when the target orders actions before operations, one otherwise — see
+    // [`Backend::orders_actions_before_operations`]. The count is FIXED and known before the walk,
+    // which is why the machine carries it as a bound (`nphase`) and a cursor (`phase`) rather than
+    // as states.
+    let nphase = if be.orders_actions_before_operations() { 2 } else { 1 };
+    let mut m = fsm::EmitActions::new(src, syms, sym, sections, be, sections.len(), nphase, seed);
     // A safe over-bound on the number of steps: each `step()` advances one cursor by one (or
     // descends/ascends/halts), so the walk visits each section once plus, per actions/operations
     // section, each member once and one descent. Computing it is a cheap structural sum (no
     // emission).
-    let mut bound = sections.len() + 8;
-    for sec in sections {
-        if let Section::Actions(d) | Section::Operations(d) = sec {
-            bound += d.members.len() + 1;
+    let mut bound = 8;
+    for _ in 0..nphase {
+        bound += sections.len() + 1;
+        for sec in sections {
+            if let Section::Actions(d) | Section::Operations(d) = sec {
+                bound += d.members.len() + 1;
+            }
         }
     }
     for _ in 0..bound {

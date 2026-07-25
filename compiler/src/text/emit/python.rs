@@ -19,7 +19,7 @@
 //! type, not in sixteen authors' memories.
 
 use super::atom::{Atom, Place};
-use super::driver::{param_names, Backend};
+use super::driver::{param_names, Backend, BodyRole};
 use super::Sink;
 use crate::resolve::SystemSym;
 use crate::tree::body::{EmbedCall, FrameRef, RefKind};
@@ -39,13 +39,27 @@ impl Backend for Python {
     /// It is not "names only" any more, and that is not a preference: the shipped compiler emits
     /// `def msg(self, a: str, b: int) -> int:`, and this backend's job in Milestone 1 is to emit
     /// what the shipped compiler emits.
+    ///
+    /// **An UNTYPED param is annotated `Any`** — `e1(u)` becomes `def e1(self, u: Any):`. This is
+    /// the shipped compiler's rule and it is why its file preamble hard-codes
+    /// `from typing import Any, …` ([`Self::file_header`]): `Any` is Python's explicit spelling of
+    /// "no constraint", so an unannotated Frame param becomes an annotated Python one rather than
+    /// a bare name, and every declaration in the emitted class is uniformly annotated.
+    ///
+    /// framec still reads nothing: `Any` is framec's own text supplied where the user wrote NO
+    /// type, and a type the user DID write passes through verbatim, untrimmed of meaning. Verified
+    /// against the 4.6.1 oracle at all three declaration sites this feeds — the interface wrapper
+    /// ([`Self::route`]), the `_create` factory ([`Self::open_system`]), and an
+    /// `actions:`/`operations:` member ([`Self::open_action`]) — which are exactly the three the
+    /// oracle annotates. A private `(state, handler)` method takes `(self, __e, compartment)` and
+    /// has no user params at all, so it is untouched.
     fn param_list(&self, params_text: &str) -> String {
         super::driver::params_split(params_text)
             .into_iter()
             .filter(|(n, _)| !n.is_empty())
             .map(|(n, t)| match t {
                 Some(t) if !t.trim().is_empty() => format!("{n}: {}", t.trim()),
-                _ => n,
+                _ => format!("{n}: Any"),
             })
             .collect::<Vec<_>>()
             .join(", ")
@@ -272,7 +286,21 @@ impl Backend for Python {
                 "        {p} = self.__compartment.state_args[{i}]\n"
             ));
         }
-        if arms.is_empty() && params.is_empty() {
+        // The state's DEFAULT FORWARD — `=> $^` written as a state MEMBER — is a fall-through at
+        // the very END of the dispatcher: an event that matched no arm above goes to the parent's
+        // dispatcher, one level up, with the parent's compartment. Two facts, both read from the
+        // symbol table (`StateSym::default_forward`, set by the resolver from the
+        // `StateMember::DefaultForward` node, and `declared_parent`); nothing is derived from
+        // text. `=> $^` in a ROOT state forwards nowhere and emits nothing — matching the oracle,
+        // which spells `pass` there because the block would otherwise be empty.
+        let forward_to = sym
+            .states
+            .iter()
+            .find(|s| s.name == state)
+            .filter(|s| s.default_forward)
+            .and_then(|_| sym.declared_parent(state))
+            .map(|p| p.name.clone());
+        if arms.is_empty() && params.is_empty() && forward_to.is_none() {
             out.frame("        pass\n");
             return;
         }
@@ -289,6 +317,11 @@ impl Backend for Python {
                  \x20           {aw}self.{}(__e, compartment)\n\
                  \x20           return\n",
                 py_handler_method(state, msg)
+            ));
+        }
+        if let Some(parent) = forward_to {
+            out.frame(&format!(
+                "        {aw}self._state_{parent}(__e, compartment.parent_compartment)\n"
             ));
         }
     }
@@ -350,8 +383,36 @@ impl Backend for Python {
     /// transition drain to run after it. The value is parked on the live context, and the public
     /// wrapper reads it back after the kernel returns (`return __frame_ctx._return`). This is also
     /// what makes `@@:return` READABLE in expression position — see [`Self::lower_ref`], and R4c.
-    fn return_call(&self, rel: u32, _is_async: bool, multiline: bool, expr: NativeText, out: &mut Sink) {
+    fn return_call(&self, role: BodyRole, rel: u32, _is_async: bool, multiline: bool, expr: NativeText, out: &mut Sink) {
         let p = self.pad(rel);
+        // An `actions:` / `operations:` member is an ORDINARY METHOD. The user may call it
+        // directly — `vm.check_stock("cola")` — with no dispatch in flight, so
+        // `self._context_stack` is EMPTY and the handler spelling would raise `IndexError` at the
+        // `[-1]`. There is nothing to park a value on and nobody to read it back; the only correct
+        // statement is Python's own `return`. This is also exactly what the shipped compiler emits
+        // (`def check_stock(self, product: str) -> int: return …`), so it is a faithfulness fix and
+        // a correctness fix at once. Guarded by
+        // `tests/legacy_bug_fixes.rs::ng_bug_action_return_outside_dispatch`, which CALLS an action
+        // from outside any dispatch and asserts the value comes back.
+        if role == BodyRole::Action {
+            out.frame(&format!("{p}return "));
+            if multiline {
+                // DELIBERATE DIVERGENCE from the shipped compiler, on the same ground as bug R2
+                // above: legacy emits a bare `return a\n    + b` here, which is an
+                // `IndentationError` — the emitted module does not even import. framec supplies
+                // the implicit-continuation parens the `@@:( … )` syntax already implied. No
+                // corpus fixture writes a multi-line `@@:()` inside an action, so this moves no
+                // measured byte; it is the rule that keeps the emitted program valid when one
+                // does.
+                out.frame("(");
+                out.native(expr);
+                out.frame(")\n");
+            } else {
+                out.native(expr);
+                out.frame("\n");
+            }
+            return;
+        }
         if multiline {
             // *** bug R2. ***
             //
@@ -426,6 +487,21 @@ impl Backend for Python {
     /// [`super::driver::Backend::forward_to_declared_parent`].
     fn forward_to_declared_parent(&self) -> bool {
         true
+    }
+
+    /// `actions:` members come out BEFORE `operations:` members, whatever order the two sections
+    /// were declared in — the shipped compiler's two-pass emission. Verified against the 4.6.1
+    /// oracle on `demos/23_vending_machine` (operations declared first, action emitted first).
+    fn orders_actions_before_operations(&self) -> bool {
+        true
+    }
+
+    /// A body with no executable statement emits ONLY the `pass`. The shipped compiler's body was
+    /// a list of statement segments and a comment was never one, so a comment-only body reached
+    /// its emitter as nothing at all. ng's tree carries the comment; Python drops it to stay
+    /// byte-identical (both spellings are valid Python — this is faithfulness, not a fix).
+    fn empty_body_keeps_text(&self) -> bool {
+        false
     }
 
     /// `=> $^` from a state with no parent. Legacy's exact spelling, comment and all (two spaces
@@ -512,6 +588,13 @@ impl Backend for Python {
     /// declared type is the user's target-language text and the only correct thing to do with it
     /// is carry it. [`Self::route`] already did this for interface methods; actions were the one
     /// place that did not, so the same `name: type` reassembly is used here.
+    ///
+    /// **An action is a PLAIN METHOD, and nothing else.** No `compartment = self.__compartment`
+    /// preamble: an action has no state, is not dispatched, and may be called by the user directly
+    /// — binding a compartment there is both unused and a lie about where the method runs (worse,
+    /// it would raise if the system were not yet constructed). The leading `\n` is the separator
+    /// BEFORE the method, matching [`Self::open_handler`], so the blank line belongs to the member
+    /// that follows rather than trailing off the last one.
     fn open_action(&self, name: &str, params: &str, ret: Option<&str>, out: &mut Sink) {
         let decl = self.param_list(params);
         let sig = if decl.is_empty() { String::new() } else { format!(", {decl}") };
@@ -520,13 +603,14 @@ impl Backend for Python {
             .filter(|t| !t.is_empty())
             .map(|t| format!(" -> {t}"))
             .unwrap_or_default();
-        out.frame(&format!("    def {name}(self{sig}){ann}:\n"));
-        out.frame("        compartment = self.__compartment\n");
+        out.frame(&format!("\n    def {name}(self{sig}){ann}:\n"));
     }
 
-    fn close_action(&self, out: &mut Sink) {
-        out.frame("        return\n\n");
-    }
+    /// Nothing. An action's body ends where the user's last statement ends: there is no return
+    /// slot to flush and no kernel to hand control back to, so a synthesized trailing `return`
+    /// would be pure noise (and, after a user `return`, dead). The separator before the NEXT
+    /// member is emitted by [`Self::open_action`].
+    fn close_action(&self, _out: &mut Sink) {}
 
     /// One private `(state, handler)` method — Layer E.
     ///

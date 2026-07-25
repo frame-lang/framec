@@ -15,7 +15,7 @@
 //! stmt_walk.gen.rs`.
 
 use super::atom::Atom;
-use super::driver::{has_lifecycle, lower_instantiation, Backend};
+use super::driver::{has_lifecycle, lower_instantiation, Backend, BodyRole};
 use super::reindent::{self, Lowering};
 use super::Sink;
 use crate::resolve::{SymbolTable, SystemSym};
@@ -233,6 +233,7 @@ fn emit_return_call(
     src: &Source,
     syms: &SymbolTable,
     sym: &SystemSym,
+    role: BodyRole,
     state: &str,
     be: &dyn Backend,
     base: u32,
@@ -245,7 +246,7 @@ fn emit_return_call(
         lowering!(syms, sym, state, be, lower);
         let e = reindent::render_parts(src, &r.expr, r.expr_span, &lower);
         let multiline = src.span_is_multiline(r.expr_span);
-        be.return_call(r.col.saturating_sub(base), is_async, multiline, e, out);
+        be.return_call(role, r.col.saturating_sub(base), is_async, multiline, e, out);
         // Terminal only if THIS TARGET'S `@@:(expr)` actually returns — see
         // [`Backend::return_call_terminates`]. It does not on Python, where the spelling is a
         // return-SLOT assignment and execution continues; halting there would delete statements
@@ -324,8 +325,8 @@ mod fsm {
     )]
     use super::{
         emit_assign, emit_forward, emit_native, emit_return_call, emit_self_call, emit_stack_pop,
-        emit_stack_pop_bare, emit_stack_push, emit_transition, kind_at, Backend, Sink, Source, Stmt,
-        SymbolTable, SystemSym,
+        emit_stack_pop_bare, emit_stack_push, emit_transition, kind_at, Backend, BodyRole, Sink,
+        Source, Stmt, SymbolTable, SystemSym,
     };
     include!("stmt_walk.gen.rs");
 }
@@ -340,6 +341,7 @@ pub(super) fn walk(
     src: &Source,
     syms: &SymbolTable,
     sym: &SystemSym,
+    role: BodyRole,
     stmts: &[Stmt],
     state: &str,
     event: &str,
@@ -349,7 +351,7 @@ pub(super) fn walk(
     seed_out: Sink,
 ) -> (Sink, bool) {
     let mut m = fsm::StmtWalk::new(
-        src, syms, sym, stmts, state, event, is_async, base, be, seed_out,
+        src, syms, sym, role, stmts, state, event, is_async, base, be, seed_out,
     );
     // Each $Walk step advances the cursor by one or halts, so the machine reaches $Done in at
     // most stmts.len()+1 steps; the slack covers the terminal step and any $Done no-ops.

@@ -39,6 +39,29 @@ use crate::text::Source;
 use crate::tree::body::{Body, EmbedCall, FrameRef, InstArg, Instantiation, ParamGroup, Stmt};
 use crate::tree::{Decl, FileAst, HandlerNode, Item, MachineMember, Section, StateMember};
 
+/// **Which kind of method's body is being walked.**
+///
+/// A `machine:` handler and an `actions:`/`operations:` member are both "a body of statements",
+/// but they are not the same *thing*, and one Frame construct — `@@:(expr)` — has to be spelled
+/// differently in each (see [`Backend::return_call`]). The distinction is a fact **framec** put
+/// on the tree: the body came out of a [`Section::Actions`]/[`Section::Operations`] decl or out
+/// of a state's [`HandlerNode`]. So it travels as a TAG.
+///
+/// It deliberately does **not** travel as `state == "" && event == ""`, which is what the sentinel
+/// arguments at the action call site would otherwise mean. That is the shipped compiler's
+/// `MethodRole` mistake in miniature — a generated *name* used as the ad-hoc wire format of a
+/// missing field, decoded independently by every consumer. Names are for humans; tags are for
+/// compilers.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BodyRole {
+    /// A `machine:` state handler. It runs UNDER the kernel, with a live `FrameContext` on
+    /// `self._context_stack`, and it returns its value through that context's slot.
+    Handler,
+    /// An `actions:` / `operations:` member. It is an ORDINARY METHOD: the user may call it
+    /// directly, from outside any dispatch, so there is no context to park a return value on.
+    Action,
+}
+
 /// What a target language must be able to spell.
 ///
 /// Every method here is a **spelling**, never a decision. The decisions live in
@@ -201,6 +224,37 @@ pub trait Backend {
         true
     }
 
+    /// Are `actions:` members emitted **before** `operations:` members, regardless of the order
+    /// the two sections appear in the source?
+    ///
+    /// Frame's canonical block order is `operations:, interface:, machine:, actions:, domain:`
+    /// (E113), so `operations:` comes FIRST in every well-formed source — and yet the shipped
+    /// compiler emits actions first. It holds the two in separate arcanum collections and runs two
+    /// passes; source order never reaches the emitter. Verified against the 4.6.1 oracle on
+    /// `demos/23_vending_machine` (operations `stock`/`check_stock` declared first, action
+    /// `get_price` emitted first) and on a hand probe.
+    ///
+    /// ng's walk is over the TREE, which is in declaration order. Default `false` keeps that (and
+    /// every not-yet-faithful target's bytes); Python opts in.
+    fn orders_actions_before_operations(&self) -> bool {
+        false
+    }
+
+    /// When a body has **no executable statement** (empty, or only comments — [`body_is_empty`]),
+    /// is the body's text still emitted before the [`Self::noop`]?
+    ///
+    /// The shipped compiler says NO: its body model was a list of statement SEGMENTS, and a
+    /// comment was never a segment, so a comment-only body reached the emitter as nothing at all
+    /// and came out as a bare `pass`. ng's tree carries the comment (it is a `NativePart::Literal`
+    /// with `is_comment`), so it would emit `# …` *and* the `pass`. Both are valid Python; only one
+    /// is byte-identical to legacy.
+    ///
+    /// Default `true` — every target that has not yet been driven to byte-faithfulness keeps its
+    /// current bytes. Python opts out.
+    fn empty_body_keeps_text(&self) -> bool {
+        true
+    }
+
     /// `=> $^` in a state with **no parent at all**. Legacy spells this a comment-tagged bare
     /// `return`; ng's default is [`Self::noop`], which is what every not-yet-faithful backend
     /// keeps.
@@ -327,11 +381,18 @@ pub trait Backend {
 
     /// **`@@:return(<expr>)`** — set the return value and exit. Terminal.
     ///
+    /// `role` says WHICH method this body belongs to ([`BodyRole`]), because the construct does
+    /// not mean the same thing in both. In a `machine:` handler the value is parked on the live
+    /// `FrameContext` (dynamic targets) and read back by the public wrapper; in an
+    /// `actions:`/`operations:` member there IS no live context — the user may call the method
+    /// directly — so the only correct spelling is the target's own `return`. Targets that already
+    /// spell `@@:(expr)` as a real `return` (Java, Rust, C) ignore the tag.
+    ///
     /// `multiline` is a POSITION fact about the SOURCE expression: it spans more than
     /// one line. Indent-continuation targets (Python) must wrap the RHS in parens so
     /// the continuation lines are legal; brace/`;` targets ignore it. The decision is
     /// made where the source + span live (never by inspecting the opaque native text).
-    fn return_call(&self, rel: u32, is_async: bool, multiline: bool, expr: crate::NativeText, out: &mut Sink);
+    fn return_call(&self, role: BodyRole, rel: u32, is_async: bool, multiline: bool, expr: crate::NativeText, out: &mut Sink);
 
     /// **`@@:self.method(<args>)`** — a reentrant interface call. framec authored it, so
     /// framec terminates it.
@@ -683,6 +744,7 @@ pub(super) fn emit_body(
     src: &Source,
     syms: &SymbolTable,
     sym: &SystemSym,
+    role: BodyRole,
     state: &str,
     event: &str,
     is_async: bool,
@@ -696,7 +758,7 @@ pub(super) fn emit_body(
     let base = super::base_column::compute(&body.stmts);
     let seed = std::mem::take(out);
     let (grown, terminated) = super::stmt_walk::walk(
-        src, syms, sym, &body.stmts, state, event, is_async, base, be, seed,
+        src, syms, sym, role, &body.stmts, state, event, is_async, base, be, seed,
     );
     *out = grown;
     if terminated {
@@ -717,6 +779,7 @@ fn emit_body_hand(
     src: &Source,
     syms: &SymbolTable,
     sym: &SystemSym,
+    role: BodyRole,
     state: &str,
     event: &str,
     is_async: bool,
@@ -848,7 +911,7 @@ fn emit_body_hand(
             Stmt::ReturnCall(r) => {
                 let e = super::reindent::render_parts(src, &r.expr, r.expr_span, &lower);
                 let multiline = src.span_is_multiline(r.expr_span);
-                be.return_call(rel(r.col), is_async, multiline, e, out);
+                be.return_call(role, rel(r.col), is_async, multiline, e, out);
                 // Terminal — but only if this target's spelling RETURNS, and only for the BODY
                 // if it is at the base nesting.
                 terminated =
@@ -953,9 +1016,13 @@ fn emit_handlers_hand(
                         .and_then(|m| m.return_text.as_deref())
                 });
                 be.open_handler(sym, &st.name, &h.event, &h.params_text, ret, is_async, out);
-                let end =
-                    emit_body(src, syms, sym, &st.name, &h.event, is_async, &h.body, be, out);
-                if body_is_empty(&h.body) {
+                let empty = body_is_empty(&h.body);
+                let end = if !empty || be.empty_body_keeps_text() {
+                    emit_body(src, syms, sym, BodyRole::Handler, &st.name, &h.event, is_async, &h.body, be, out)
+                } else {
+                    BodyEnd::Fell
+                };
+                if empty {
                     be.noop(0, out);
                 }
                 be.close_handler(ret, is_async, end.terminated(), out);
@@ -1137,16 +1204,52 @@ fn emit_actions_hand(
     be: &dyn Backend,
     out: &mut Sink,
 ) {
+    // Two PASSES when the target orders actions before operations
+    // ([`Backend::orders_actions_before_operations`]), one otherwise. `nphase == 1` admits both
+    // kinds in source order — the pre-change behavior, and what every target that has not opted in
+    // still gets.
+    let nphase = if be.orders_actions_before_operations() { 2 } else { 1 };
+    for phase in 0..nphase {
     for sec in sections {
-        let (Section::Actions(d) | Section::Operations(d)) = sec else {
+        let Some(d) = action_section_in_phase(sec, phase, nphase) else {
             continue;
         };
         for m in &d.members {
             let Decl::WithBody(b) = m else { continue };
             be.open_action(&b.name, &b.params_text, b.return_text.as_deref(), out);
-            emit_body(src, syms, sym, "", "", false, &b.body, be, out);
+            let empty = body_is_empty(&b.body);
+            if !empty || be.empty_body_keeps_text() {
+                emit_body(src, syms, sym, BodyRole::Action, "", "", false, &b.body, be, out);
+            }
+            if empty {
+                be.noop(0, out);
+            }
             be.close_action(out);
         }
+    }
+    }
+}
+
+/// Which `Decl` group does `sec` contribute in pass `phase` of `nphase`?
+///
+/// `nphase == 1` — one pass, both kinds admitted in SOURCE order (the pre-change behavior; every
+/// target that has not opted into [`Backend::orders_actions_before_operations`]).
+/// `nphase == 2` — pass 0 admits only `actions:`, pass 1 only `operations:`, so actions come out
+/// first whatever order the two sections were declared in.
+///
+/// Shared by the [`emit_actions_hand`] oracle and by the `EmitActions` machine's fork leaf, so the
+/// two sequencings cannot drift on WHICH sections they admit (GATE-A isolates only HOW they are
+/// walked).
+pub(super) fn action_section_in_phase(
+    sec: &Section,
+    phase: usize,
+    nphase: usize,
+) -> Option<&crate::tree::DeclSection> {
+    match (sec, nphase, phase) {
+        (Section::Actions(d), 1, _) | (Section::Operations(d), 1, _) => Some(d),
+        (Section::Actions(d), _, 0) => Some(d),
+        (Section::Operations(d), _, 1) => Some(d),
+        _ => None,
     }
 }
 
@@ -1737,10 +1840,19 @@ pub fn body_parity_report(
                             let label = format!("{}/{}/{}", sym.name, st.name, h.event);
                             let mut mo = super::Sink::default();
                             let me =
-                                emit_body(src, syms, sym, &st.name, &h.event, is_async, &h.body, be, &mut mo);
+                                emit_body(src, syms, sym, BodyRole::Handler, &st.name, &h.event, is_async, &h.body, be, &mut mo);
                             let mut ho = super::Sink::default();
                             let he = emit_body_hand(
-                                src, syms, sym, &st.name, &h.event, is_async, &h.body, be, &mut ho,
+                                src,
+                                syms,
+                                sym,
+                                BodyRole::Handler,
+                                &st.name,
+                                &h.event,
+                                is_async,
+                                &h.body,
+                                be,
+                                &mut ho,
                             );
                             report.push(BodyParity {
                                 label,
@@ -1758,9 +1870,9 @@ pub fn body_parity_report(
                         let Decl::WithBody(b) = m else { continue };
                         let label = format!("{}/action:{}", sym.name, b.name);
                         let mut mo = super::Sink::default();
-                        let me = emit_body(src, syms, sym, "", "", false, &b.body, be, &mut mo);
+                        let me = emit_body(src, syms, sym, BodyRole::Action, "", "", false, &b.body, be, &mut mo);
                         let mut ho = super::Sink::default();
-                        let he = emit_body_hand(src, syms, sym, "", "", false, &b.body, be, &mut ho);
+                        let he = emit_body_hand(src, syms, sym, BodyRole::Action, "", "", false, &b.body, be, &mut ho);
                         report.push(BodyParity {
                             label,
                             machine_text: mo.finish(),
