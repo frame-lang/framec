@@ -150,4 +150,3 @@ impl<'a> EmitActions<'a> {
     }
 
 }
-

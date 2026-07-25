@@ -304,13 +304,12 @@ impl Backend for Python {
             out.frame("        pass\n");
             return;
         }
-        // The shipped compiler emits the arms in HANDLER-KEY order, not declaration order —
-        // see [`super::driver::handler_sort_key`]. The private handler METHODS are ordered the
-        // same way (the `EmitHandlers` walk asks the same question), so the two lists agree.
-        let mut arms: Vec<&String> = arms.iter().collect();
-        arms.sort_by(|a, b| {
-            super::driver::handler_sort_key(a).cmp(super::driver::handler_sort_key(b))
-        });
+        // `arms` ARRIVE in the shipped compiler's handler-KEY order — the `StateDispatchWalk`
+        // machine's `handler_slot` projection put them there, the same order the `EmitHandlers`
+        // walk's `member_slot` gives the private handler METHODS, so the two lists agree by
+        // construction. This spelling does not re-sort them: the order is a decision, and the
+        // decision is not a backend's to make (it used to be made here, in one backend, for a
+        // behavior legacy applies to all four).
         for msg in arms {
             out.frame(&format!(
                 "        if __e._message == \"{msg}\":\n\
@@ -459,47 +458,56 @@ impl Backend for Python {
         out.frame(&format!("{p}self._state_{owner}(__e, compartment.parent_compartment)\n"));
     }
 
-    /// Python emits handlers in the shipped compiler's HANDLER-KEY order — see
-    /// [`super::driver::handler_sort_key`]. Both consumers ask: the dispatch arms
-    /// ([`Self::dispatch`]) and the private handler methods (the `EmitHandlers` walk).
-    fn orders_handlers_by_key(&self) -> bool {
-        true
-    }
-
-    /// The `\n` after a system's closing `}` is the SYSTEM's, as in the shipped compiler — see
-    /// [`super::driver::Backend::consumes_close_brace_newline`]. (This is a target-independent
-    /// boundary rule in legacy; it is opt-in here only so the not-yet-faithful targets keep their
-    /// bytes and their `.gen.rs` fixpoint.)
-    fn consumes_close_brace_newline(&self) -> bool {
-        true
-    }
-
-    /// **`@@:(expr)` DOES NOT RETURN on Python.** [`Self::return_call`] spells it as a
-    /// return-SLOT assignment; the handler runs on and the caller reads the slot back after the
-    /// kernel finishes. So it does not end the body, and the statements after it must still be
-    /// emitted — they RUN. See [`super::driver::Backend::return_call_terminates`].
-    fn return_call_terminates(&self) -> bool {
-        false
-    }
-
     /// `=> $^` goes to the DECLARED parent, because [`Self::forward`] shifts the compartment by
-    /// exactly one level and the callee has to match. See
-    /// [`super::driver::Backend::forward_to_declared_parent`].
+    /// exactly one level and the callee has to match.
+    ///
+    /// **The decision is universal — see [`super::driver::Backend::forward_to_declared_parent`] for
+    /// the four-target oracle evidence.** It is still opted into HERE only because Python is the one
+    /// backend whose [`Self::forward`] already spells the legacy dispatcher call; java/rust/c spell
+    /// the parent's handler method, so flipping the shared default regresses their ratchet by
+    /// +44/+42/+61 lines without recovering a single legacy line. That doc comment carries the void
+    /// condition; when it is met, delete this override rather than copying it three more times.
     fn forward_to_declared_parent(&self) -> bool {
         true
     }
 
-    /// `actions:` members come out BEFORE `operations:` members, whatever order the two sections
-    /// were declared in — the shipped compiler's two-pass emission. Verified against the 4.6.1
-    /// oracle on `demos/23_vending_machine` (operations declared first, action emitted first).
-    fn orders_actions_before_operations(&self) -> bool {
-        true
+    /// **`@@:(expr)` DOES NOT END THE BODY.** [`Self::return_call`] spells it as a return-SLOT
+    /// assignment; the handler runs on and the caller reads the slot back after the kernel finishes.
+    /// The statements after it must still be emitted — they RUN.
+    ///
+    /// **This is universal too — legacy emits the trailing statements on all four targets, in both
+    /// body roles; see [`super::driver::Backend::return_call_terminates`] for the measurements.** It
+    /// is opted into here only because java/rust/c do not yet spell the recovered statements the
+    /// legacy way, so the shared flip costs them +1525/+1430/+1570 unmatched lines. Same void
+    /// condition, same instruction: when it is met, delete this override.
+    fn return_call_terminates(&self) -> bool {
+        false
     }
 
-    /// A body with no executable statement emits ONLY the `pass`. The shipped compiler's body was
-    /// a list of statement segments and a comment was never one, so a comment-only body reached
-    /// its emitter as nothing at all. ng's tree carries the comment; Python drops it to stay
-    /// byte-identical (both spellings are valid Python — this is faithfulness, not a fix).
+    /// A body whose only content is a RECOGNIZED PYTHON COMMENT emits only the [`Self::noop`]
+    /// (`pass`) — the comment itself is dropped.
+    ///
+    /// **This one is genuinely per-language, and the cross-target probes say so.** The shipped
+    /// compiler's body was a list of statement SEGMENTS, and what counts as a segment is decided by
+    /// that target's own lexer, so the same construct is a comment in one target and a statement in
+    /// another. Measured against the 4.6.1 oracle on ONE system whose only handler body and only
+    /// action body are a single comment line, compiled to all four targets, so the comment SPELLING
+    /// is the only variable:
+    ///
+    /// | body text | python_3 | java | rust | c |
+    /// |---|---|---|---|---|
+    /// | `# only a comment` | **DROPPED**, bare `pass` | kept, `# only a comment;` | kept | kept |
+    /// | `// only a comment` | kept, and NO `pass` | kept, `// only a comment;` | kept, `;` spliced | kept |
+    ///
+    /// Read the diagonal: legacy drops the text only when the TARGET's own lexer calls it a
+    /// comment. Python's `#` is a comment there and reaches the emitter as nothing; java/rust/c
+    /// treat `//` as an ordinary statement segment and emit it — provably, because they splice a
+    /// `;` onto it (`// only a comment;`), which no comment-aware path would do. Give python a
+    /// `//` body and it is kept verbatim; give java a `#` body and it is kept verbatim with a `;`.
+    ///
+    /// So the DEFAULT (`true`, keep the text) is right for java/rust/c and this override is right
+    /// for python. Note also that comments in a NON-empty body survive on all four (probe
+    /// `# c1` / `real_stmt()` / `# c2`) — the drop is specific to a body with ZERO statement segments.
     fn empty_body_keeps_text(&self) -> bool {
         false
     }

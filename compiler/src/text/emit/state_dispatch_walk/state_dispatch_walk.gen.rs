@@ -35,6 +35,14 @@ use std::any::Any;
 // target's, so a target whose router calls `(state, event)` methods directly (Java, Rust, C)
 // overrides nothing and this walk emits nothing for it.
 //
+// THE ARM ORDER IS THE WALK'S, NOT A BACKEND'S. The shipped compiler emits dispatch arms in
+// handler-KEY order (exit, enter, then user events alphabetically) in EVERY target — measured
+// against the 4.6.1 oracle for python_3, java, rust and c on one source. That is a decision, so it
+// rides `stamp_handler`'s slot projection (`handler_slot`, the twin of EmitHandlers' `member_slot`)
+// and `be` is threaded in for it. It used to live inside Python's `dispatch` spelling, where a
+// backend re-sorted a list the walk had already built — the wrong layer, and three more copies
+// waiting to be written.
+//
 // Regen: framec-ng -l rust --emit state_dispatch_walk.frs | grep -v '^#!\[allow' > state_dispatch_walk.gen.rs
 
 #[derive(Clone)]
@@ -105,7 +113,7 @@ impl<'a> StateDispatchWalk<'a> {
             self.compartment = __next;
             return Default::default();
         }
-        stamp_handler(self.sym, self.si, self.hi, &mut self.arms);
+        stamp_handler(self.sym, self.be, self.si, self.hi, &mut self.arms);
         self.hi = self.hi + 1;
         let mut __next = StateDispatchWalkComp { state: "Handler".to_string(), vars: StateDispatchWalkVars::Handler {  }, args: StateDispatchWalkArgs::Handler { } };
         self.compartment = __next;
@@ -113,4 +121,3 @@ impl<'a> StateDispatchWalk<'a> {
     }
 
 }
-

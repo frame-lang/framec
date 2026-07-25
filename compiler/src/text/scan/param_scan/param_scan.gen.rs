@@ -383,4 +383,3 @@ impl<'a> ParamScan<'a> {
     }
 
 }
-

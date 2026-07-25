@@ -467,4 +467,3 @@ impl<'a> ArgScan<'a> {
     }
 
 }
-

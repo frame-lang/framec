@@ -94,4 +94,3 @@ impl<'a> ParenBalance<'a> {
     }
 
 }
-

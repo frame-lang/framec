@@ -101,4 +101,3 @@ impl<'a> StateWalk<'a> {
     }
 
 }
-

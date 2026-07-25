@@ -180,4 +180,3 @@ impl<'a> RawString<'a> {
     }
 
 }
-

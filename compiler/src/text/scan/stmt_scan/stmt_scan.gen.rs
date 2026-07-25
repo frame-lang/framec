@@ -164,4 +164,3 @@ impl<'a> StmtScan<'a> {
     }
 
 }
-

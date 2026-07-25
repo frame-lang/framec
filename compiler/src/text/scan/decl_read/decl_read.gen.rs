@@ -205,4 +205,3 @@ impl<'a> DeclRead<'a> {
     }
 
 }
-

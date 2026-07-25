@@ -130,4 +130,3 @@ impl<'a> HsmChainWalk<'a> {
     }
 
 }
-

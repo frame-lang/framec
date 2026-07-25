@@ -172,11 +172,57 @@ pub trait Backend {
     /// Where does `=> $^` go — the state's DECLARED parent, or the nearest ancestor that
     /// actually handles the event?
     ///
-    /// A target whose forward passes a COMPARTMENT must take the declared parent
-    /// ([`crate::resolve::SymbolTable::declared_parent`]): it shifts the compartment by exactly
-    /// one level, so the callee must be exactly one level up. A target whose forward calls the
-    /// handler METHOD directly can climb ([`crate::resolve::SymbolTable::resolve_forward`]).
-    /// Default `false` — no backend's bytes move until it opts in.
+    /// # The behavior is UNIVERSAL. The default is `false` anyway, and this is why.
+    ///
+    /// **Classification (measured, not assumed): the DECLARED parent, in every target.** `=> $^`
+    /// shifts the live compartment by exactly ONE level and hands the event to that state's
+    /// *dispatcher*, so the callee is always exactly one level up. It does NOT climb to the nearest
+    /// ancestor that handles the event. Measured against the 4.6.1 oracle on
+    /// `$Child => $Mid => $Root` where `$Mid` declares NO handler for `ev` and `$Root` does:
+    ///
+    /// ```text
+    /// python  self._state_Mid(__e, compartment.parent_compartment)
+    /// java    _state_Mid(__e, compartment.parent_compartment);
+    /// rust    self._state_Mid(__e);
+    /// c       Fwd3_state_Mid(self, __e, compartment->parent_compartment);
+    /// ```
+    ///
+    /// `$Mid`'s dispatcher has no arm for `ev`, so the event stops there — legacy never reaches
+    /// `$Root`. Resolving the ancestor instead ([`crate::resolve::SymbolTable::resolve_forward`])
+    /// reroutes a 3-deep HSM to a state legacy never calls.
+    ///
+    /// # Why it is nevertheless still opt-in
+    ///
+    /// The DECISION is universal; the SPELLING is not yet. Legacy calls the parent's DISPATCHER
+    /// with the shifted compartment — which is exactly what [`super::python::Python::forward`]
+    /// spells. ng's java, rust and c [`Self::forward`] spell the parent's HANDLER METHOD
+    /// (`{owner}_{event}`), because those backends have no dispatcher layer yet
+    /// ([`Self::dispatch`] is the no-op default there).
+    ///
+    /// So flipping the default on those three emits the RIGHT construct in the WRONG spelling, and
+    /// the faithfulness ratchet counts that as a regression. Measured over the full positive corpus
+    /// (rust 342 / java 327 / c 346 divergent fixtures), flipping this alone moves total differing
+    /// lines by **+44 rust, +42 java, +61 c** — and, decisively, the legacy-only (`<`) half of that
+    /// diff does not move AT ALL (121354/85976/241756 before and after). ng recovers zero legacy
+    /// lines and adds unmatched ones.
+    ///
+    /// The mechanism, on `data_types/dict_ops` (`$A => $P`, `$P` handles nothing):
+    ///
+    /// ```text
+    /// legacy java   _state_P(__e, compartment.parent_compartment);
+    /// ng, resolve   (nothing — no ancestor handles `e`, so `forward_no_parent` fires)
+    /// ng, declared  P_e();
+    /// ```
+    ///
+    /// Note what the ratchet is hiding: on `resolve`, **the `=> $^` silently VANISHES**. That is
+    /// strictly worse code than `P_e();`, and the line metric prefers it, because emitting nothing
+    /// costs one unmatched legacy line while emitting the wrong spelling costs two.
+    ///
+    /// **VOID CONDITION — flip this default to `true` and delete the Python override the moment
+    /// java/rust/c gain the dispatcher layer** (a `_state_<Name>` method) and their [`Self::forward`]
+    /// spells `_state_<parent>(__e, compartment.parent_compartment)`. At that point the same flip
+    /// removes lines from BOTH halves of the diff. Until then the universal decision is held here in
+    /// one place, documented, rather than re-derived per backend.
     fn forward_to_declared_parent(&self) -> bool {
         false
     }
@@ -186,40 +232,106 @@ pub trait Backend {
     /// The shipped compiler holds them in a `HashMap` and sorts by key for determinism, so its
     /// dispatch arms and private handler methods both come out alphabetically with the lifecycle
     /// pair (exit, then enter) first — see [`handler_sort_key`]. ng's walk is over the TREE, which
-    /// is in declaration order. Default `false` keeps declaration order (and every
-    /// not-yet-faithful target's bytes); Python opts in.
+    /// is in declaration order, so the projection has to be applied.
+    ///
+    /// **Default `true` — this is a UNIVERSAL legacy behavior, not a per-language spelling.** The
+    /// sort happens in legacy's arcanum, before any backend is consulted, so every target sees the
+    /// same order. Measured against the 4.6.1 oracle on a state declaring `$>`, `zebra`, `alpha`,
+    /// `mango`, `<$` — all four of python_3, java, rust and c emit, for BOTH
+    /// the dispatch arms and the private handler methods:
+    ///
+    /// ```text
+    /// _s_S_hdl_frame_exit  _s_S_hdl_frame_enter  _s_S_hdl_user_alpha
+    /// _s_S_hdl_user_mango  _s_S_hdl_user_zebra
+    /// ```
+    ///
+    /// i.e. exit-before-enter, then user events alphabetically — exactly [`handler_sort_key`], in
+    /// every target. (The PUBLIC interface methods stay in declaration order in all four; only the
+    /// state's handlers are keyed.) Gating this per backend would make four targets re-derive one
+    /// legacy fact four times, which is how the shipped compiler's seventeen arms drifted.
     fn orders_handlers_by_key(&self) -> bool {
-        false
+        true
     }
 
     /// Does the `\n` that terminates a system's closing `}` line belong to the SYSTEM?
     ///
-    /// The shipped compiler says yes for every target: a system's emission is already
-    /// newline-terminated, so it consumes that byte rather than letting the water that follows
-    /// re-emit it (`}` + `\n` + `# code` gives ONE blank line, not two — verified against the
-    /// 4.6.1 oracle for `}`, `}\n`, `}\n\n`, `}   \nX`, and two adjacent systems). ng's partition
-    /// puts the byte in the following native item, which is what the totality gate pins, so the
-    /// correction is applied here, at the boundary's consumer.
+    /// **Default `true` — the shipped compiler says yes for EVERY target.** A system's emission is
+    /// already newline-terminated, so it consumes that byte rather than letting the water that
+    /// follows re-emit it. ng's partition puts the byte in the following native item, which is what
+    /// the totality gate pins, so the correction is applied here, at the boundary's consumer.
     ///
-    /// Default `false` — every target that has not yet been driven to byte-faithfulness keeps its
-    /// current bytes (and its committed `.gen.rs` fixpoint). Python opts in.
+    /// This looked per-target because the four SYSTEM TAILS differ (java `}\n}\n`, c `{\n}\n\n`,
+    /// rust `…_framec::*;\n`, python `pass\n`). Those are [`Self::close_system`] SPELLINGS and are
+    /// invariant under the boundary. The boundary RULE itself was measured against the 4.6.1 oracle
+    /// by varying ONLY the newline run after `}` in one otherwise-identical source:
+    ///
+    /// | source after `}` | python | java | rust | c |
+    /// |---|---|---|---|---|
+    /// | `}\nWATER`     | 0 blank | 0 blank | 0 blank | 0 blank |
+    /// | `}\n\nWATER`   | 1 blank | 1 blank | 1 blank | 1 blank |
+    /// | `}\n\n\nWATER` | 2 blank | 2 blank | 2 blank | 2 blank |
+    /// | `}   \nWATER`  | `   \n` kept | `   \n` kept | `   \n` kept | `   \n` kept |
+    ///
+    /// One rule, four targets: the `}` line's OWN terminator is the system's; every further blank
+    /// line is the water's; and when the water does not start with the newline (trailing spaces),
+    /// nothing is consumed. (C's extra `\n` is constant across all four rows — it is part of C's
+    /// own close spelling, not the boundary.)
     fn consumes_close_brace_newline(&self) -> bool {
-        false
+        true
     }
 
-    /// Does THIS TARGET's spelling of `@@:(expr)` / `@@:return(expr)` actually RETURN?
+    /// Does a `@@:(expr)` / `@@:return(expr)` END the body — i.e. may the walk stop and drop every
+    /// statement after it?
     ///
-    /// The body walk stops at a base-nesting terminal, because everything after a `return` is
-    /// dead. That is only true if the emitted statement really returns. Java, Rust and C spell
-    /// `@@:(expr)` as a `return`, so it does. **Python does not**: the spelling is a return-SLOT
-    /// assignment (`self._context_stack[-1]._return = expr`) and the method keeps running — the
-    /// caller reads the slot back after the kernel finishes. Treating it as terminal there
-    /// SILENTLY DELETED every statement the user wrote after it, and those statements are
-    /// reachable: the generated program would have run them.
+    /// # The behavior is UNIVERSAL (`false` everywhere). The default is `true` anyway, and this is why.
     ///
-    /// (This is an ng bug the shipped compiler does not have — legacy emits the following
-    /// statements. `tests/legacy_bug_fixes.rs::ng_bug_statements_after_frame_return_still_run`
-    /// runs the emitted program and proves they execute.)
+    /// **Classification (measured, not assumed): legacy NEVER treats this construct as a body
+    /// terminal, in any target or either role.** The prior belief — "java/rust/c spell it as a real
+    /// `return`, so it is terminal; only Python differs" — is refuted on both halves.
+    ///
+    /// A HANDLER body `@@:(1); after_one(); after_two()`, against the 4.6.1 oracle:
+    ///
+    /// ```text
+    /// python  self._context_stack[-1]._return = 1              after_one()  after_two()
+    /// java    _context_stack.get(…)._return = 1;               after_one()  after_two();
+    /// rust    let __return_val = …; ctx._return = Some(…);     after_one()  after_two();
+    /// c       RetT_CTX(self)->_return = (void*)(intptr_t)(1);  after_one()  after_two();
+    /// ```
+    ///
+    /// No target spells a `return` in a handler — all four park the value on the live
+    /// `FrameContext` and keep running. And in an ACTION body, where all four DO spell a real
+    /// `return 7;`, legacy STILL emits the following `after_one()`. Neither role, no target.
+    ///
+    /// Latching it terminal SILENTLY DELETES LIVE CODE. On `linux/01_process_lifecycle`, a handler
+    /// reads `@@:("forked")` then `-> $Ready`; legacy emits the transition
+    /// (`__prepareEnter("Ready", …); __transition(…); return;`) and ng, latched, **drops the
+    /// transition entirely** — the state machine stops moving.
+    /// `tests/legacy_bug_fixes.rs::ng_bug_statements_after_frame_return_still_run` runs the emitted
+    /// program and proves the statements execute.
+    ///
+    /// # Why it is nevertheless still opt-in
+    ///
+    /// Same shape as [`Self::forward_to_declared_parent`]: the DECISION is universal, the SPELLING
+    /// of what then gets emitted is not yet. Flipping this alone moves total differing lines by
+    /// **+1525 rust, +1430 java, +1570 c**, while the legacy-only (`<`) half barely moves
+    /// (−9 / −2 / −21). ng now emits the statements legacy emits, but spells them its own way
+    /// (`ReadyComp __next = new ReadyComp(); …` vs legacy's `__prepareEnter("Ready", …)`), so each
+    /// recovered statement costs a `>` without buying back a `<`.
+    ///
+    /// About a fifth of the added lines are not even that: they are a spurious fallback return
+    /// (java `return null;`, rust `Default::default()`, c `return (t){0};`) emitted by
+    /// [`Self::close_handler`] because `terminated` is now false. **That is one bit doing two
+    /// jobs**, and legacy answers the two differently: *"may the walk stop?"* — NO; *"does the body
+    /// need a fallback return?"* — also NO (legacy's handlers are `void` and its actions get no
+    /// fallback after a `@@:(expr)`). Splitting [`BodyEnd`] into a `halt` fact and a
+    /// `needs_fallback` fact is the structurally correct fix and removes that fifth outright.
+    ///
+    /// **VOID CONDITION — flip this default to `false` and delete the Python override once java,
+    /// rust and c spell transitions/returns the legacy way** (the `__prepareEnter`/`__transition`
+    /// kernel model, handlers `void`). At that point the flip removes lines from both halves.
+    ///
+    /// (A transition / push / pop IS still a body terminal — a different construct, and legacy's own
+    /// `strip_java_unreachable` existed precisely because it *is* terminal.)
     fn return_call_terminates(&self) -> bool {
         true
     }
@@ -230,14 +342,18 @@ pub trait Backend {
     /// Frame's canonical block order is `operations:, interface:, machine:, actions:, domain:`
     /// (E113), so `operations:` comes FIRST in every well-formed source — and yet the shipped
     /// compiler emits actions first. It holds the two in separate arcanum collections and runs two
-    /// passes; source order never reaches the emitter. Verified against the 4.6.1 oracle on
-    /// `demos/23_vending_machine` (operations `stock`/`check_stock` declared first, action
-    /// `get_price` emitted first) and on a hand probe.
+    /// passes; source order never reaches the emitter.
     ///
-    /// ng's walk is over the TREE, which is in declaration order. Default `false` keeps that (and
-    /// every not-yet-faithful target's bytes); Python opts in.
+    /// **Default `true` — universal.** The two-pass emission is backend-agnostic in legacy (the
+    /// split happens in the arcanum, before any target is chosen). Measured against the 4.6.1
+    /// oracle on a system declaring `operations: op_one, op_two` FIRST and `actions: act_one,
+    /// act_two` LAST — all four of python_3, java, rust and c emit
+    /// `act_one, act_two, op_one, op_two`. Also verified on `demos/23_vending_machine`.
+    ///
+    /// ng's walk is over the TREE, which is in declaration order, so the two-phase admission
+    /// ([`action_section_in_phase`]) has to be applied.
     fn orders_actions_before_operations(&self) -> bool {
-        false
+        true
     }
 
     /// When a body has **no executable statement** (empty, or only comments — [`body_is_empty`]),
@@ -1643,7 +1759,7 @@ fn state_dispatch_hand(sym: &SystemSym, be: &dyn Backend, out: &mut Sink) {
         let nh = handler_count(sym, si);
         clear_arms(&mut arms);
         for hi in 0..nh {
-            stamp_handler(sym, si, hi, &mut arms);
+            stamp_handler(sym, be, si, hi, &mut arms);
         }
         dispatch_state(sym, be, si, &arms, out);
     }

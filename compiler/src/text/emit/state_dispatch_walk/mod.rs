@@ -38,13 +38,45 @@ pub(super) fn clear_arms(arms: &mut EventVec) {
     arms.clear();
 }
 
-/// STAMP one dispatch arm: the EVENT MESSAGE of handler `hi` of state `si`, in declaration order.
-/// Frame's own lifecycle messages (`$>`, `<$`) come through exactly as declared — the mapping from a
-/// message to a method NAME is a target spelling, not a walk decision, and lives in the backend.
-/// Out-of-range stamps nothing (total).
-pub(super) fn stamp_handler(sym: &SystemSym, si: usize, hi: usize, arms: &mut EventVec) {
+/// Which handler the `$Handler` cycle stamps at loop SLOT `hi`.
+///
+/// The cycle is a plain `0..nh` walk over `st.handlers`, so "slot" and "handler index" are the same
+/// thing — except under the shipped compiler's HANDLER-KEY order
+/// ([`super::driver::handler_sort_key`]), where they differ. This is the projection between them,
+/// and it is the SAME shape as [`super::emit_handlers::member_slot`] on purpose: one order decision,
+/// applied at two consumers, expressed once per consumer in one recognizable way.
+///
+/// It exists HERE, in the shared walk, rather than in a backend's `dispatch` spelling, because the
+/// ORDER of the arms is a legacy behavior common to every target (measured: python_3, java, rust and
+/// c all emit `<$`, `$>`, then user events alphabetically) while the SWITCH is a spelling. A backend
+/// that re-sorted the list it was handed would be re-deriving a decision the walk already made.
+fn handler_slot(sym: &SystemSym, be: &dyn Backend, si: usize, hi: usize) -> usize {
+    if !be.orders_handlers_by_key() {
+        return hi;
+    }
+    let Some(st) = sym.states.get(si) else { return hi };
+    let mut sorted: Vec<usize> = (0..st.handlers.len()).collect();
+    sorted.sort_by(|&a, &b| {
+        super::driver::handler_sort_key(&st.handlers[a].event)
+            .cmp(super::driver::handler_sort_key(&st.handlers[b].event))
+    });
+    sorted.get(hi).copied().unwrap_or(hi)
+}
+
+/// STAMP one dispatch arm: the EVENT MESSAGE of the handler at slot `hi` of state `si` — declaration
+/// order, or the shipped compiler's handler-key order via [`handler_slot`]. Frame's own lifecycle
+/// messages (`$>`, `<$`) come through exactly as declared — the mapping from a message to a method
+/// NAME is a target spelling, not a walk decision, and lives in the backend. Out-of-range stamps
+/// nothing (total).
+pub(super) fn stamp_handler(
+    sym: &SystemSym,
+    be: &dyn Backend,
+    si: usize,
+    hi: usize,
+    arms: &mut EventVec,
+) {
     let Some(st) = sym.states.get(si) else { return };
-    if let Some(h) = st.handlers.get(hi) {
+    if let Some(h) = st.handlers.get(handler_slot(sym, be, si, hi)) {
         arms.push(h.event.clone());
     }
 }

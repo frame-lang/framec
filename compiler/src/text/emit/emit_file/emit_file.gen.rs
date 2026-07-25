@@ -100,4 +100,3 @@ impl<'a> EmitFile<'a> {
     }
 
 }
-

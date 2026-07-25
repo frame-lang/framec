@@ -116,4 +116,3 @@ impl<'a> Segmenter<'a> {
     }
 
 }
-

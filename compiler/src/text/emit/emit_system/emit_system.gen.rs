@@ -142,4 +142,3 @@ impl<'a> EmitSystem<'a> {
     }
 
 }
-

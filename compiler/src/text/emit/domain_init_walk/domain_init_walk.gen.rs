@@ -83,4 +83,3 @@ impl<'a> DomainInitWalk<'a> {
     }
 
 }
-

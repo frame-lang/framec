@@ -91,4 +91,3 @@ impl<'a> BraceBalance<'a> {
     }
 
 }
-

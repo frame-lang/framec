@@ -81,4 +81,3 @@ impl<'a> StringCounter<'a> {
     }
 
 }
-

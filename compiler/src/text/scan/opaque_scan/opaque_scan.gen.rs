@@ -332,4 +332,3 @@ impl<'a> OpaqueScan<'a> {
     }
 
 }
-

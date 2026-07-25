@@ -327,6 +327,20 @@ pub fn resolve(ast: &FileAst) -> (SymbolTable, Vec<Diagnostic>) {
             params: sys.params.clone(),
         };
 
+        // `operations:` members are collected SEPARATELY and appended after the section walk, so
+        // `sym.actions` comes out in the shipped compiler's order — every `actions:` member first,
+        // then every `operations:` member — whatever order the two sections were declared in.
+        //
+        // Same universal legacy behavior as
+        // [`crate::text::emit::driver::Backend::orders_actions_before_operations`], which applies it
+        // to the TREE. `sym.actions` is the OTHER list of the same set (C's prototype block reads
+        // it), and the two must agree or one consumer contradicts the other. Measured against the
+        // 4.6.1 oracle on a system declaring `operations:` FIRST: legacy C emits the prototypes
+        // `act_one, act_two, op_one, op_two` — actions first in the symbol-table list too.
+        //
+        // Unconditional because the resolver is TARGET-BLIND (it cannot ask a `Backend`), and it can
+        // be unconditional because the behavior is target-independent.
+        let mut operations: Vec<MethodSym> = Vec::new();
         for sec in &sys.sections {
             match sec {
                 Section::Interface(d) => {
@@ -363,9 +377,16 @@ pub fn resolve(ast: &FileAst) -> (SymbolTable, Vec<Diagnostic>) {
                     }
                 }
                 Section::Actions(d) | Section::Operations(d) => {
+                    // WHICH list this section's members land in is the only difference — see the
+                    // `operations` note above. Everything else about the two is identical, which is
+                    // why they share one arm.
+                    let into = match sec {
+                        Section::Operations(_) => &mut operations,
+                        _ => &mut sym.actions,
+                    };
                     for m in &d.members {
                         match m {
-                            Decl::Member(md) => sym.actions.push(MethodSym {
+                            Decl::Member(md) => into.push(MethodSym {
                                 name: md.name.clone(),
                                 span: md.span,
                                 is_async: md.is_async,
@@ -373,7 +394,7 @@ pub fn resolve(ast: &FileAst) -> (SymbolTable, Vec<Diagnostic>) {
                                 return_text: md.type_text.clone(),
                                 default_return: md.init_text.clone(),
                             }),
-                            Decl::WithBody(b) => sym.actions.push(MethodSym {
+                            Decl::WithBody(b) => into.push(MethodSym {
                                 name: b.name.clone(),
                                 span: b.span,
                                 is_async: false,
@@ -431,6 +452,9 @@ pub fn resolve(ast: &FileAst) -> (SymbolTable, Vec<Diagnostic>) {
                 _ => {}
             }
         }
+        // … and the `operations:` members come after every `actions:` member. One append; no sort,
+        // no comparator, no second walk of the sections.
+        sym.actions.append(&mut operations);
 
         // G1 — DERIVE the public interface from handled events. In Frame an event handled in
         // the machine IS callable: a system may omit the `interface:` block entirely, or

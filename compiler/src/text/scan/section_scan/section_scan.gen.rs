@@ -93,4 +93,3 @@ impl<'a> SectionScan<'a> {
     }
 
 }
-
