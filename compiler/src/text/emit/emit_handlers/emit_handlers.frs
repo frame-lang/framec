@@ -84,8 +84,8 @@
                     self.hi = self.hi + 1;
                     -> $Handler
                 }
-                let is_async = handler_is_async(self.sym, self.sections, self.si, self.sti, self.hi);
-                let ret = handler_ret(self.sym, self.sections, self.si, self.sti, self.hi);
+                let is_async = handler_is_async(self.sym, self.sections, self.si, self.sti, self.hi, self.be);
+                let ret = handler_ret(self.sym, self.sections, self.si, self.sti, self.hi, self.be);
                 emit_handler(self.src, self.syms, self.sym, self.be, self.sections, self.si, self.sti, self.hi, is_async, ret, &mut self.out);
                 self.hi = self.hi + 1;
                 -> $Handler

@@ -20,7 +20,7 @@
 //! `.gen.rs` regen: `framec-ng -l rust --emit emit_file.frs | grep -v '^#!\[allow' >
 //! emit_file.gen.rs`.
 
-use super::driver::{render_native_item, Backend};
+use super::driver::{prev_item_is_system, render_native_item, Backend};
 use super::{emit_system, Sink};
 use crate::resolve::SymbolTable;
 use crate::text::Source;
@@ -48,7 +48,7 @@ fn emit_native_item(
     let Some(Item::Native(n)) = ast.items.get(i) else {
         return;
     };
-    render_native_item(src, syms, be, n, out);
+    render_native_item(src, syms, be, n, prev_item_is_system(ast, i), out);
 }
 
 /// Emit ONE system item at `i` — the `$Item` non-native arm. Resolves the system's symbol and drives

@@ -246,7 +246,13 @@ fn emit_return_call(
         let e = reindent::render_parts(src, &r.expr, r.expr_span, &lower);
         let multiline = src.span_is_multiline(r.expr_span);
         be.return_call(r.col.saturating_sub(base), is_async, multiline, e, out);
-        return r.depth == 0 && r.col.saturating_sub(base) == 0;
+        // Terminal only if THIS TARGET'S `@@:(expr)` actually returns — see
+        // [`Backend::return_call_terminates`]. It does not on Python, where the spelling is a
+        // return-SLOT assignment and execution continues; halting there would delete statements
+        // the generated program still runs.
+        return be.return_call_terminates()
+            && r.depth == 0
+            && r.col.saturating_sub(base) == 0;
     }
     false
 }
@@ -272,8 +278,11 @@ fn emit_self_call(
     }
 }
 
-/// `=> $^` — forward this event to the PARENT's handler, or a no-op if the parent does not handle
-/// it. (driver.rs Forward arm.)
+/// `=> $^` — forward this event up the state hierarchy, or a no-op when there is nowhere to
+/// forward to. WHICH state is the target is the backend's call
+/// ([`Backend::forward_to_declared_parent`]): the shipped compiler always takes the DECLARED
+/// parent, ng's own answer walks to the nearest ancestor that handles the event. Kept
+/// line-for-line in step with the driver.rs Forward arm (the preserved hand oracle).
 fn emit_forward(
     sym: &SystemSym,
     state: &str,
@@ -285,7 +294,12 @@ fn emit_forward(
     out: &mut Sink,
 ) {
     if let Stmt::Forward(fwd) = &stmts[i] {
-        if let Some(owner) = sym.resolve_forward(state, event) {
+        let target = if be.forward_to_declared_parent() {
+            sym.declared_parent(state)
+        } else {
+            sym.resolve_forward(state, event)
+        };
+        if let Some(owner) = target {
             let params = owner
                 .handlers
                 .iter()
@@ -294,7 +308,7 @@ fn emit_forward(
                 .unwrap_or_default();
             be.forward(fwd.col.saturating_sub(base), &owner.name, event, &params, out);
         } else {
-            be.noop(fwd.col.saturating_sub(base), out);
+            be.forward_no_parent(fwd.col.saturating_sub(base), out);
         }
     }
 }

@@ -72,14 +72,65 @@ fn is_handler_member(sections: &[Section], si: usize, sti: usize, hi: usize) -> 
     false
 }
 
-/// The `(state, handler)` node pair at `(si, sti, hi)`, or `None` when any index misses (a
+/// Which state-member the `$Handler` cycle visits at loop SLOT `hi`.
+///
+/// The cycle is a plain 0..`nh` walk over `st.members`, so "slot" and "member index" are the same
+/// thing — except on a backend that orders handlers the way the shipped compiler does
+/// ([`super::driver::handler_sort_key`]: handler-key order, not declaration order). There the two
+/// differ, and this is the projection between them.
+///
+/// It PERMUTES THE HANDLER SLOTS AMONG THEMSELVES and leaves every other member (trivia, state
+/// vars) where it is. That is what keeps the walk's structural forks honest: `is_handler_member`
+/// asks "is slot `hi` a handler?" against the unpermuted list, and stays right, because a handler
+/// slot can only map to another handler slot.
+fn member_slot(sections: &[Section], si: usize, sti: usize, hi: usize, be: &dyn Backend) -> usize {
+    if !be.orders_handlers_by_key() {
+        return hi;
+    }
+    let Some(Section::Machine(m)) = sections.get(si) else {
+        return hi;
+    };
+    let Some(MachineMember::State(st)) = m.members.get(sti) else {
+        return hi;
+    };
+    // Where the handlers sit in declaration order …
+    let slots: Vec<usize> = (0..st.members.len())
+        .filter(|&i| matches!(st.members.get(i), Some(StateMember::Handler(_))))
+        .collect();
+    // … and the same set, in the shipped compiler's key order.
+    let mut sorted = slots.clone();
+    sorted.sort_by(|&a, &b| {
+        let ka = match &st.members[a] {
+            StateMember::Handler(h) => super::driver::handler_sort_key(&h.event),
+            _ => "",
+        };
+        let kb = match &st.members[b] {
+            StateMember::Handler(h) => super::driver::handler_sort_key(&h.event),
+            _ => "",
+        };
+        ka.cmp(kb)
+    });
+    match slots.iter().position(|&s| s == hi) {
+        Some(nth) => sorted[nth],
+        None => hi,
+    }
+}
+
+/// The `(state, handler)` node pair at slot `(si, sti, hi)`, or `None` when any index misses (a
 /// non-machine section, non-state member, or non-handler state-member). The single un-Frame-able
 /// descent through the three heterogeneous slices, shared by the three per-handler leaves so they
-/// agree on what "the handler at `(si, sti, hi)`" is.
-fn handler_at(sections: &[Section], si: usize, sti: usize, hi: usize) -> Option<(&StateNode, &HandlerNode)> {
+/// agree on what "the handler at `(si, sti, hi)`" is — including WHICH handler that slot means,
+/// which is [`member_slot`]'s answer and therefore the backend's.
+fn handler_at<'a>(
+    sections: &'a [Section],
+    si: usize,
+    sti: usize,
+    hi: usize,
+    be: &dyn Backend,
+) -> Option<(&'a StateNode, &'a HandlerNode)> {
     if let Some(Section::Machine(m)) = sections.get(si) {
         if let Some(MachineMember::State(st)) = m.members.get(sti) {
-            if let Some(StateMember::Handler(h)) = st.members.get(hi) {
+            if let Some(StateMember::Handler(h)) = st.members.get(member_slot(sections, si, sti, hi, be)) {
                 return Some((st, h));
             }
         }
@@ -90,8 +141,15 @@ fn handler_at(sections: &[Section], si: usize, sti: usize, hi: usize) -> Option<
 /// The handler's `is_async` — IT says so, or the SYSTEM does (`@@[async]`). The exact disjunction
 /// `emit` computes (`sym.is_async || sym.interface.iter().any(|m| m.name == h.event && m.is_async)`),
 /// surfaced as a `$Handler` leaf.
-fn handler_is_async(sym: &SystemSym, sections: &[Section], si: usize, sti: usize, hi: usize) -> bool {
-    match handler_at(sections, si, sti, hi) {
+fn handler_is_async(
+    sym: &SystemSym,
+    sections: &[Section],
+    si: usize,
+    sti: usize,
+    hi: usize,
+    be: &dyn Backend,
+) -> bool {
+    match handler_at(sections, si, sti, hi, be) {
         Some((_, h)) => sym.is_async || sym.interface.iter().any(|m| m.name == h.event && m.is_async),
         None => false,
     }
@@ -106,8 +164,9 @@ fn handler_ret<'a>(
     si: usize,
     sti: usize,
     hi: usize,
+    be: &dyn Backend,
 ) -> Option<&'a str> {
-    let (_, h) = handler_at(sections, si, sti, hi)?;
+    let (_, h) = handler_at(sections, si, sti, hi, be)?;
     h.return_text.as_deref().or_else(|| {
         sym.interface
             .iter()
@@ -135,7 +194,7 @@ fn emit_handler(
     ret: Option<&str>,
     out: &mut Sink,
 ) {
-    if let Some((st, h)) = handler_at(sections, si, sti, hi) {
+    if let Some((st, h)) = handler_at(sections, si, sti, hi, be) {
         be.open_handler(sym, &st.name, &h.event, &h.params_text, ret, is_async, out);
         let end = emit_body(src, syms, sym, &st.name, &h.event, is_async, &h.body, be, out);
         // A body that emits NOTHING (all-`Trivia`, or empty) still owes the target a statement on

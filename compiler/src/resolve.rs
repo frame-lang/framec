@@ -123,6 +123,12 @@ pub struct MethodSym {
     /// Verbatim. Never parsed.
     pub params_text: Option<String>,
     pub return_text: Option<String>,
+    /// The interface signature's DEFAULT RETURN — `get_status(): str = "idle"` -> `"idle"`.
+    ///
+    /// The `= expr` is Frame's syntax; the expression is the user's text and passes through
+    /// verbatim. It seeds the context's return slot before the kernel runs, so an event no
+    /// state handles still answers with the declared default instead of `None`.
+    pub default_return: Option<String>,
 }
 
 #[derive(Debug)]
@@ -323,6 +329,7 @@ pub fn resolve(ast: &FileAst) -> (SymbolTable, Vec<Diagnostic>) {
                                 is_async: md.is_async,
                                 params_text: md.params_text.clone(),
                                 return_text: md.type_text.clone(),
+                                default_return: md.init_text.clone(),
                             });
                         }
                     }
@@ -355,6 +362,7 @@ pub fn resolve(ast: &FileAst) -> (SymbolTable, Vec<Diagnostic>) {
                                 is_async: md.is_async,
                                 params_text: md.params_text.clone(),
                                 return_text: md.type_text.clone(),
+                                default_return: md.init_text.clone(),
                             }),
                             Decl::WithBody(b) => sym.actions.push(MethodSym {
                                 name: b.name.clone(),
@@ -362,6 +370,7 @@ pub fn resolve(ast: &FileAst) -> (SymbolTable, Vec<Diagnostic>) {
                                 is_async: false,
                                 params_text: Some(b.params_text.clone()),
                                 return_text: b.return_text.clone(),
+                                default_return: None,
                             }),
                             Decl::Trivia(_) => {}
                         }
@@ -436,6 +445,9 @@ pub fn resolve(ast: &FileAst) -> (SymbolTable, Vec<Diagnostic>) {
                             is_async: false,
                             params_text: Some(h.params_text.clone()),
                             return_text: h.return_text.clone(),
+                            // A handler-only event was never DECLARED, so it has no
+                            // `= default` to carry.
+                            default_return: None,
                         });
                     }
                 }
@@ -620,5 +632,29 @@ impl SystemSym {
         let s = self.states.iter().find(|s| s.name == state)?;
         let parent = s.parent.as_ref()?;
         self.resolve_handler(parent, event)
+    }
+
+    /// `state`'s DECLARED parent — the state ONE level up, whether or not it handles the event.
+    ///
+    /// This is where `=> $^` goes, and one level is the only sound answer for a target whose
+    /// forward hands over a COMPARTMENT: the emitted call is
+    /// `self._state_<Parent>(__e, compartment.parent_compartment)`, and
+    /// `compartment.parent_compartment` IS the parent's compartment — it is not the
+    /// grandparent's. Climbing further in the symbol table ([`Self::resolve_forward`]) and then
+    /// passing that same one-level-up compartment would hand a state someone else's scope, so
+    /// `$.var` reads inside it would resolve in the wrong compartment.
+    ///
+    /// The climb still happens — it just happens in the GENERATED code, one dispatcher at a
+    /// time: `_state_<Parent>` runs, and if that state declares its own state-level `=> $^` it
+    /// forwards again, each hop shifting the compartment by exactly one. A parent that does NOT
+    /// declare one is the author saying the event stops there.
+    ///
+    /// KNOWN GAP (reported, not fixed here): ng does not yet emit the state-level `=> $^`
+    /// fall-through, so a 3-deep chain whose middle state declares one still stops at the
+    /// middle. That is the missing `StateMember::DefaultForward` node, not this function.
+    pub fn declared_parent(&self, state: &str) -> Option<&StateSym> {
+        let s = self.states.iter().find(|s| s.name == state)?;
+        let parent = s.parent.as_ref()?;
+        self.states.iter().find(|s| &s.name == parent)
     }
 }

@@ -37,7 +37,7 @@ use crate::resolve::{SymbolTable, SystemSym};
 use crate::text::scan::{param_scan, parse_one_param};
 use crate::text::Source;
 use crate::tree::body::{Body, EmbedCall, FrameRef, InstArg, Instantiation, ParamGroup, Stmt};
-use crate::tree::{Decl, FileAst, Item, MachineMember, Section, StateMember};
+use crate::tree::{Decl, FileAst, HandlerNode, Item, MachineMember, Section, StateMember};
 
 /// What a target language must be able to spell.
 ///
@@ -145,6 +145,68 @@ pub trait Backend {
 
     /// `=> $^` — forward the current event to the PARENT's handler.
     fn forward(&self, rel: u32, owner: &str, event: &str, params: &str, out: &mut Sink);
+
+    /// Where does `=> $^` go — the state's DECLARED parent, or the nearest ancestor that
+    /// actually handles the event?
+    ///
+    /// A target whose forward passes a COMPARTMENT must take the declared parent
+    /// ([`crate::resolve::SymbolTable::declared_parent`]): it shifts the compartment by exactly
+    /// one level, so the callee must be exactly one level up. A target whose forward calls the
+    /// handler METHOD directly can climb ([`crate::resolve::SymbolTable::resolve_forward`]).
+    /// Default `false` — no backend's bytes move until it opts in.
+    fn forward_to_declared_parent(&self) -> bool {
+        false
+    }
+
+    /// Are a state's handlers emitted in HANDLER-KEY order rather than declaration order?
+    ///
+    /// The shipped compiler holds them in a `HashMap` and sorts by key for determinism, so its
+    /// dispatch arms and private handler methods both come out alphabetically with the lifecycle
+    /// pair (exit, then enter) first — see [`handler_sort_key`]. ng's walk is over the TREE, which
+    /// is in declaration order. Default `false` keeps declaration order (and every
+    /// not-yet-faithful target's bytes); Python opts in.
+    fn orders_handlers_by_key(&self) -> bool {
+        false
+    }
+
+    /// Does the `\n` that terminates a system's closing `}` line belong to the SYSTEM?
+    ///
+    /// The shipped compiler says yes for every target: a system's emission is already
+    /// newline-terminated, so it consumes that byte rather than letting the water that follows
+    /// re-emit it (`}` + `\n` + `# code` gives ONE blank line, not two — verified against the
+    /// 4.6.1 oracle for `}`, `}\n`, `}\n\n`, `}   \nX`, and two adjacent systems). ng's partition
+    /// puts the byte in the following native item, which is what the totality gate pins, so the
+    /// correction is applied here, at the boundary's consumer.
+    ///
+    /// Default `false` — every target that has not yet been driven to byte-faithfulness keeps its
+    /// current bytes (and its committed `.gen.rs` fixpoint). Python opts in.
+    fn consumes_close_brace_newline(&self) -> bool {
+        false
+    }
+
+    /// Does THIS TARGET's spelling of `@@:(expr)` / `@@:return(expr)` actually RETURN?
+    ///
+    /// The body walk stops at a base-nesting terminal, because everything after a `return` is
+    /// dead. That is only true if the emitted statement really returns. Java, Rust and C spell
+    /// `@@:(expr)` as a `return`, so it does. **Python does not**: the spelling is a return-SLOT
+    /// assignment (`self._context_stack[-1]._return = expr`) and the method keeps running — the
+    /// caller reads the slot back after the kernel finishes. Treating it as terminal there
+    /// SILENTLY DELETED every statement the user wrote after it, and those statements are
+    /// reachable: the generated program would have run them.
+    ///
+    /// (This is an ng bug the shipped compiler does not have — legacy emits the following
+    /// statements. `tests/legacy_bug_fixes.rs::ng_bug_statements_after_frame_return_still_run`
+    /// runs the emitted program and proves they execute.)
+    fn return_call_terminates(&self) -> bool {
+        true
+    }
+
+    /// `=> $^` in a state with **no parent at all**. Legacy spells this a comment-tagged bare
+    /// `return`; ng's default is [`Self::noop`], which is what every not-yet-faithful backend
+    /// keeps.
+    fn forward_no_parent(&self, rel: u32, out: &mut Sink) {
+        self.noop(rel, out);
+    }
 
     /// A do-nothing statement, at `rel`. Emitted where a Frame construct lowers to nothing but
     /// the slot still needs a statement — e.g. `=> $^` forwarding to a parent that does not
@@ -434,6 +496,37 @@ pub fn emit(src: &Source, ast: &FileAst, syms: &SymbolTable, be: &dyn Backend) -
     super::emit_file::walk(src, ast, syms, be)
 }
 
+/// The shipped compiler's **handler ordering key** for one event message.
+///
+/// Legacy holds a state's handlers in a `HashMap<String, HandlerEntry>` and, for determinism,
+/// sorts them by that KEY before emitting either the dispatch arms or the private handler methods
+/// (`state_dispatch.rs:141` and `:348`, `sorted_handlers.sort_by_key(|(event, _)| *event)`). Two
+/// consequences, both of which ng must reproduce and neither of which is source order:
+///
+/// * user events come out **alphabetically** (`zz aa mm bb` declared → `aa bb mm zz` emitted);
+/// * the lifecycle pair comes out **exit first**, because the arcanum's exit KEY is `$<` even
+///   though its wire MESSAGE is `<$` — and `$<` < `$>` bytewise. Sorting the wire messages
+///   directly would put enter first and be wrong, which is why this mapping exists.
+///
+/// Everything sorts after the two `$`-prefixed lifecycle keys, since `$` is 0x24.
+pub(super) fn handler_sort_key(event: &str) -> &str {
+    match event {
+        "<$" => "$<",
+        e => e,
+    }
+}
+
+/// Does item `i` begin at the byte after a **system's** closing `}`?
+///
+/// A purely STRUCTURAL question over facts framec put in the tree (the kind of the previous
+/// item) — no byte of the user's text is examined to answer it. It exists because legacy
+/// assigns the `}` line's terminator to the system while ng's partition assigns it to the
+/// water; see [`super::reindent::render_water`]. Shared by the [`super::emit_file`] machine
+/// and the [`emit_file_hand`] oracle so both make the same call.
+pub(super) fn prev_item_is_system(ast: &FileAst, i: usize) -> bool {
+    i > 0 && matches!(ast.items.get(i - 1), Some(Item::System(_)))
+}
+
 /// Render ONE top-level native item — **the water** — into `out`.
 ///
 /// Native code outside a system is the USER'S code and passes through VERBATIM (the Oceans model;
@@ -445,11 +538,16 @@ pub fn emit(src: &Source, ast: &FileAst, syms: &SymbolTable, be: &dyn Backend) -
 /// Shared by the [`super::emit_file`] machine's `emit_native_item` leaf AND the preserved
 /// [`emit_file_hand`] oracle, so the two whole-file paths differ ONLY in how the item loop is
 /// sequenced (the exact SPELLING of a water item is one function, gated once).
+///
+/// `after_system` carries the ONE boundary fact emission needs: this water begins at the byte
+/// after a system's closing `}`, so its leading line terminator is that `}`'s, not the water's.
+/// See [`super::reindent::render_water`].
 pub(super) fn render_native_item(
     src: &Source,
     syms: &SymbolTable,
     be: &dyn Backend,
     n: &crate::tree::NativeItem,
+    after_system: bool,
     out: &mut Sink,
 ) {
     let bytes = src.open();
@@ -466,7 +564,13 @@ pub(super) fn render_native_item(
         instantiate: &instantiate,
         embed: &embed,
     };
-    out.native(super::reindent::render_water(src, &n.parts, n.span, &lower));
+    out.native(super::reindent::render_water(
+        src,
+        &n.parts,
+        n.span,
+        &lower,
+        after_system && be.consumes_close_brace_newline(),
+    ));
 }
 
 /// The preserved byte-for-byte **oracle** for the driver's TOP-LEVEL ITEM WALK — the original
@@ -482,9 +586,9 @@ pub(super) fn render_native_item(
 fn emit_file_hand(src: &Source, ast: &FileAst, syms: &SymbolTable, be: &dyn Backend) -> String {
     let mut out = Sink::new();
     be.file_header(&mut out);
-    for item in &ast.items {
+    for (i, item) in ast.items.iter().enumerate() {
         if let Item::Native(n) = item {
-            render_native_item(src, syms, be, n, &mut out);
+            render_native_item(src, syms, be, n, prev_item_is_system(ast, i), &mut out);
             continue;
         }
         let Item::System(sys) = item else { continue };
@@ -626,7 +730,8 @@ fn emit_body_hand(
     // of text it had just generated, to recover a fact it already knew.
     //
     // Here the tree knows the order, so the emitter stops. There is no pass; there is a
-    // `bool`.
+    // `bool`. WHAT COUNTS as a terminal is the backend's ([`Backend::return_call_terminates`]):
+    // a statement only ends the body if that target's spelling of it actually returns.
     let mut terminated = false;
 
     let reference = |r: &FrameRef| -> Atom { be.lower_ref(sym, state, r) };
@@ -744,8 +849,10 @@ fn emit_body_hand(
                 let e = super::reindent::render_parts(src, &r.expr, r.expr_span, &lower);
                 let multiline = src.span_is_multiline(r.expr_span);
                 be.return_call(rel(r.col), is_async, multiline, e, out);
-                // Terminal — but only for the BODY if it is at the base nesting.
-                terminated = r.depth == 0 && rel(r.col) == 0;
+                // Terminal — but only if this target's spelling RETURNS, and only for the BODY
+                // if it is at the base nesting.
+                terminated =
+                    be.return_call_terminates() && r.depth == 0 && rel(r.col) == 0;
             }
             Stmt::SelfCall(c) => {
                 let a = super::reindent::render_args(src, Some(&c.args), &lower);
@@ -754,7 +861,12 @@ fn emit_body_hand(
             // `=> $^` — forward this event to the PARENT's handler. The driver knows
             // which state that is, because the symbol table knows the parent chain.
             Stmt::Forward(fwd) => {
-                if let Some(owner) = sym.resolve_forward(state, event) {
+                let target = if be.forward_to_declared_parent() {
+                    sym.declared_parent(state)
+                } else {
+                    sym.resolve_forward(state, event)
+                };
+                if let Some(owner) = target {
                     let params = owner
                         .handlers
                         .iter()
@@ -767,10 +879,11 @@ fn emit_body_hand(
                     // wrong-but-tolerated on brace targets).
                     be.forward(rel(fwd.col), &owner.name, event, &params, out);
                 } else {
-                    // The parent does not handle this event: `=> $^` is a no-op (the parent
-                    // state's dispatch would run and do nothing). Emit a no-op so the enclosing
-                    // block is not left empty — a `pass` on python, nothing on brace targets.
-                    be.noop(rel(fwd.col), out);
+                    // There is nowhere to forward TO — no parent (on a backend that forwards to
+                    // the declared parent), or no ancestor handles the event (on one that
+                    // resolves). Either way `=> $^` lowers to nothing, and the enclosing block
+                    // must not be left empty: `pass` on python, nothing on brace targets.
+                    be.forward_no_parent(rel(fwd.col), out);
                 }
             }
         }
@@ -806,10 +919,23 @@ fn emit_handlers_hand(
         let Section::Machine(mach) = sec else { continue };
         for mm in &mach.members {
             let MachineMember::State(st) = mm else { continue };
-            for member in &st.members {
-                let StateMember::Handler(h) = member else {
-                    continue;
-                };
+            // Declaration order, unless the backend takes the shipped compiler's HANDLER-KEY
+            // order ([`handler_sort_key`]). The machine path asks the same question through its
+            // `member_slot` projection, so the two stay byte-identical under GATE-A.
+            let mut handlers: Vec<&HandlerNode> = st
+                .members
+                .iter()
+                .filter_map(|m| match m {
+                    StateMember::Handler(h) => Some(h),
+                    _ => None,
+                })
+                .collect();
+            if be.orders_handlers_by_key() {
+                handlers.sort_by(|a, b| {
+                    handler_sort_key(&a.event).cmp(handler_sort_key(&b.event))
+                });
+            }
+            for h in handlers {
                 let is_async = sym.is_async
                     || sym
                         .interface

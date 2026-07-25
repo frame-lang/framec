@@ -18,6 +18,12 @@ use std::any::Any;
 // is spelled — the dead code the old compiler stripped from text it had already emitted), and it
 // selects the body's terminal (`Terminated` vs `Fell`) for the wrapper.
 //
+// WHAT COUNTS AS TERMINAL is the backend's answer, not the walk's: a statement only ends the body
+// if that target's SPELLING of it actually returns. `@@:(expr)` returns on Java/Rust/C and does
+// NOT on Python (where it assigns the context's return slot and execution continues), so
+// `emit_return_call` asks `Backend::return_call_terminates` before latching. Calling it terminal
+// on a target that keeps running would DELETE LIVE CODE — the statements after it are reachable.
+//
 // framec owns the WALK (the cursor, the terminated latch, the halt); the 10-way Stmt DISPATCH is
 // a per-item function surfaced here as a `kind`-keyed branch, and each arm's leaf holds the EXACT
 // byte-for-byte spelling sequence of its `emit_body` match arm (Transition's exit->build->enter->

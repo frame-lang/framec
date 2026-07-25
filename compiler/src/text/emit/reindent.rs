@@ -109,15 +109,37 @@ pub fn render_args(src: &Source, args: Option<&ArgExpr>, lower: &Lowering) -> Op
 /// [`render_parts`] but **never trims**: this is layout the user wrote, and trimming a
 /// trailing newline butts the next item straight against it. The only interpretation is
 /// lowering `@@SystemName()` islands (spec §1103); everything else is byte-verbatim.
+///
+/// `drop_line_terminator` reproduces legacy's **item boundary rule**: the `\n` that
+/// terminates a system's closing `}` line belongs to the *system*, not to the water that
+/// follows it — a system's emission is already newline-terminated, so passing that byte
+/// through too would open every system/water boundary with a spurious blank line.
+/// It is a boundary fact (where a line *ends*), never a content fact: nothing here asks
+/// what the water *says*. The partition itself is unchanged — the byte is still inside
+/// the native item's span, which is what the totality gate pins — so the correction is
+/// applied where the boundary is consumed, in emission.
 pub fn render_water(
     src: &Source,
     parts: &[NativePart],
     span: crate::Span,
     lower: &Lowering,
+    drop_line_terminator: bool,
 ) -> NativeText {
     let bytes = src.open();
     let mut out = String::new();
+    let mut skip = drop_line_terminator;
     for p in parts {
+        // Only the FIRST part can carry the previous item's line terminator, and only if
+        // it is ordinary text (a literal or an island cannot begin at `}` + 1).
+        if skip {
+            skip = false;
+            if let NativePart::Text(t) = p {
+                if bytes.get(t.span.start) == Some(&b'\n') {
+                    reindent_text(&bytes[t.span.start + 1..t.span.end], 0, &mut out);
+                    continue;
+                }
+            }
+        }
         emit_part(bytes, p, 0, lower, &mut out);
     }
     NativeText::new(out, span)

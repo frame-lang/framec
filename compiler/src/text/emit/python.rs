@@ -276,6 +276,13 @@ impl Backend for Python {
             out.frame("        pass\n");
             return;
         }
+        // The shipped compiler emits the arms in HANDLER-KEY order, not declaration order —
+        // see [`super::driver::handler_sort_key`]. The private handler METHODS are ordered the
+        // same way (the `EmitHandlers` walk asks the same question), so the two lists agree.
+        let mut arms: Vec<&String> = arms.iter().collect();
+        arms.sort_by(|a, b| {
+            super::driver::handler_sort_key(a).cmp(super::driver::handler_sort_key(b))
+        });
         for msg in arms {
             out.frame(&format!(
                 "        if __e._message == \"{msg}\":\n\
@@ -381,16 +388,57 @@ impl Backend for Python {
         out.frame(&format!("{p}{e}\n"));
     }
 
-    /// `=> $^` — hand this event to the PARENT state's handler. Every handler has the same fixed
-    /// signature in this runtime (`(self, __e, compartment)`), so the forward is a direct call and
-    /// the event's own parameters ride along on `__e`; `params` is not needed.
-    fn forward(&self, rel: u32, owner: &str, event: &str, _params: &str, out: &mut Sink) {
+    /// `=> $^` — hand this event to the PARENT state's DISPATCHER, with the compartment shifted
+    /// up one level so `$.var` reads resolve in the parent's scope. Not the parent's handler
+    /// method: the dispatcher is what the shipped compiler calls, and it is also what makes the
+    /// parent's own state-var navigation land in the right compartment. `params` is not needed —
+    /// every handler has the same fixed signature here and the event's arguments ride on `__e`.
+    fn forward(&self, rel: u32, owner: &str, _event: &str, _params: &str, out: &mut Sink) {
         let p = self.pad(rel);
-        out.frame(&format!("{p}self.{}(__e, compartment)\n", py_handler_method(owner, event)));
+        out.frame(&format!("{p}self._state_{owner}(__e, compartment.parent_compartment)\n"));
     }
 
-    /// Python is indent-delimited: a no-op slot (e.g. `=> $^` to a non-handling parent, alone
-    /// in an `if x:` block) must be a real `pass`, or the block is a syntax error.
+    /// Python emits handlers in the shipped compiler's HANDLER-KEY order — see
+    /// [`super::driver::handler_sort_key`]. Both consumers ask: the dispatch arms
+    /// ([`Self::dispatch`]) and the private handler methods (the `EmitHandlers` walk).
+    fn orders_handlers_by_key(&self) -> bool {
+        true
+    }
+
+    /// The `\n` after a system's closing `}` is the SYSTEM's, as in the shipped compiler — see
+    /// [`super::driver::Backend::consumes_close_brace_newline`]. (This is a target-independent
+    /// boundary rule in legacy; it is opt-in here only so the not-yet-faithful targets keep their
+    /// bytes and their `.gen.rs` fixpoint.)
+    fn consumes_close_brace_newline(&self) -> bool {
+        true
+    }
+
+    /// **`@@:(expr)` DOES NOT RETURN on Python.** [`Self::return_call`] spells it as a
+    /// return-SLOT assignment; the handler runs on and the caller reads the slot back after the
+    /// kernel finishes. So it does not end the body, and the statements after it must still be
+    /// emitted — they RUN. See [`super::driver::Backend::return_call_terminates`].
+    fn return_call_terminates(&self) -> bool {
+        false
+    }
+
+    /// `=> $^` goes to the DECLARED parent, because [`Self::forward`] shifts the compartment by
+    /// exactly one level and the callee has to match. See
+    /// [`super::driver::Backend::forward_to_declared_parent`].
+    fn forward_to_declared_parent(&self) -> bool {
+        true
+    }
+
+    /// `=> $^` from a state with no parent. Legacy's exact spelling, comment and all (two spaces
+    /// before the `#`); a bare `pass` would be equivalent Python but different bytes.
+    fn forward_no_parent(&self, rel: u32, out: &mut Sink) {
+        out.frame(&format!(
+            "{}return  # Forward to parent (no parent)\n",
+            self.pad(rel)
+        ));
+    }
+
+    /// Python is indent-delimited: a no-op slot (e.g. a Frame construct that lowers to nothing,
+    /// alone in an `if x:` block) must be a real `pass`, or the block is a syntax error.
     fn noop(&self, rel: u32, out: &mut Sink) {
         out.frame(&format!("{}pass\n", self.pad(rel)));
     }
@@ -431,10 +479,22 @@ impl Backend for Python {
             .filter(|t| !t.is_empty())
             .map(|t| format!(" -> {t}"))
             .unwrap_or_default();
+        // A DECLARED DEFAULT RETURN (`get_status(): str = "idle"`) seeds the context's return
+        // slot before the kernel runs, so an event that no state handles still answers with the
+        // declared value. It is a separate assignment, not the `FrameContext` ctor's
+        // `default_return` argument, which stays `None` — that is the shipped compiler's shape.
+        let seed = sym
+            .interface
+            .iter()
+            .find(|m| m.name == event)
+            .and_then(|m| m.default_return.as_deref())
+            .map(|d| format!("        __ctx._return = {d}\n"))
+            .unwrap_or_default();
         out.frame(&format!("\n    {kw} {event}(self{sig}){ann}:\n"));
         out.frame(&format!(
             "        __e = {n}FrameEvent(\"{event}\", [{names}])\n\
              \x20       __ctx = {n}FrameContext(__e, None)\n\
+             {seed}\
              \x20       self._context_stack.append(__ctx)\n\
              \x20       try:\n\
              \x20           {aw}self.__kernel(__e)\n\
@@ -444,10 +504,23 @@ impl Backend for Python {
         ));
     }
 
-    fn open_action(&self, name: &str, params: &str, _ret: Option<&str>, out: &mut Sink) {
-        let names = param_names(params);
-        let sig = if names.is_empty() { String::new() } else { format!(", {names}") };
-        out.frame(&format!("    def {name}(self{sig}):\n"));
+    /// An action's signature carries the user's DECLARED TYPES, verbatim — `log(m: str)` becomes
+    /// `def log(self, m: str):`, and `calc(a: int): int` becomes `def calc(self, a: int) -> int:`.
+    ///
+    /// It emitted bare names before, which silently DROPPED text the user wrote. Verbatim type
+    /// passthrough is an architectural boundary, not a nicety: framec has no type system, so a
+    /// declared type is the user's target-language text and the only correct thing to do with it
+    /// is carry it. [`Self::route`] already did this for interface methods; actions were the one
+    /// place that did not, so the same `name: type` reassembly is used here.
+    fn open_action(&self, name: &str, params: &str, ret: Option<&str>, out: &mut Sink) {
+        let decl = self.param_list(params);
+        let sig = if decl.is_empty() { String::new() } else { format!(", {decl}") };
+        let ann = ret
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .map(|t| format!(" -> {t}"))
+            .unwrap_or_default();
+        out.frame(&format!("    def {name}(self{sig}){ann}:\n"));
         out.frame("        compartment = self.__compartment\n");
     }
 
@@ -616,10 +689,18 @@ impl Backend for Python {
         if event != "<$" {
             return;
         }
+        // `__prepareExit` exists to DELIVER A PAYLOAD: it stamps the exit args down the
+        // compartment chain for the `<$` handler to read. The exit itself is the kernel's job
+        // (its drain routes a synthesized `<$` after the transition is queued), so a transition
+        // that supplies no args has nothing to prepare, and the shipped compiler emits no call —
+        // even when the source state DOES declare a `<$` handler. Verified on the 4.6.1 oracle:
+        // `("bye") -> $B` emits `self.__prepareExit(["bye"])`; a bare `-> $B` from the same state
+        // emits nothing.
+        let Some(a) = args else { return };
         out.frame(&format!(
             "{}self.__prepareExit([{}])\n",
             self.pad(rel),
-            py_args(args)
+            py_args(Some(a))
         ));
     }
 
@@ -693,8 +774,15 @@ impl Backend for Python {
         }
     }
 
+    /// `@@Sys(a, b)` lowers to the FACTORY, `Sys._create(a, b)` — never `Sys(a, b)`.
+    ///
+    /// `__init__` only builds the object; it is `_create` that runs the start-state's `$>`
+    /// through the kernel. A bare `Sys(...)` therefore hands back a machine that never
+    /// entered its initial state. This is the shipped compiler's spelling for every
+    /// instantiation site — top-level water AND a system-typed domain field
+    /// (`inner: Inner = @@Inner(7)` → `self.inner = Inner._create(7)`).
     fn system_ctor_call(&self, name: &str, args: &[String]) -> Atom {
-        Atom::call(name, args.join(", "))
+        Atom::call(format!("{name}._create"), args.join(", "))
     }
 
     fn embed_call(&self, _sym: &SystemSym, ec: &EmbedCall) -> Atom {

@@ -326,6 +326,12 @@ const MIN_FRM: &str = r#"@@system Min {
 "#;
 
 /// The 4.6.1 oracle's Python emission for [`MIN_FRM`], verbatim.
+///
+/// M2 correction: this constant carried one byte the oracle does not emit — a trailing blank
+/// line. `MIN_FRM` ends `}\n`, and the shipped compiler assigns that final `\n` to the system's
+/// closing `}` line rather than passing it through as water, so its file is 151 lines ending
+/// `= 5\n`. Re-verified by regenerating (`framec compile -l python_3`) and `cmp`-ing, not by
+/// transcription.
 const MIN_PY: &str = r#"from typing import Any, Optional, List, Dict, Callable
 
 class MinFrameEvent:
@@ -477,5 +483,4 @@ class Min:
 
     def _s_A_hdl_user_val(self, __e, compartment):
         self._context_stack[-1]._return = 5
-
 "#;
