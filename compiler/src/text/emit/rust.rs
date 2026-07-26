@@ -1257,10 +1257,16 @@ fn domain_field_ty(f: &crate::resolve::FieldSym) -> String {
     }
 }
 
-/// One domain field's construction init expression (`@@Inner(..)` -> ctor, else verbatim/default).
+/// One domain field's construction init expression. A sub-system field `= @@Inner(..)` is FRAME
+/// instantiation, which is the **two-phase factory** `Inner::__create(..)` — the same lowering
+/// `@@Inner(..)` gets in native water (line 668), and what legacy emits: a domain sub-system runs
+/// its start-state `$>` at the owner's construction time, so a plain `Inner::new(..)` (which skips
+/// the enter lifecycle) is wrong. Any other init is the user's native expression, verbatim. (The
+/// scanner path — [`open_scanner`] — deliberately uses `new`: a scanner constructs WITHOUT running,
+/// RFC-0042's positioned `over()` model, and is a separate site.)
 fn domain_field_init(f: &crate::resolve::FieldSym) -> String {
     match &f.init_system {
-        Some(s) => format!("{s}::new({})", super::ctor_init_args(f.init_text.as_deref())),
+        Some(s) => format!("{s}::__create({})", super::ctor_init_args(f.init_text.as_deref())),
         None => f.init_text.clone().unwrap_or_else(|| "Default::default()".into()),
     }
 }

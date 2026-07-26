@@ -318,3 +318,63 @@ fn a_state_var_reads_out_of_the_any_box() {
     }
     assert_eq!(out.trim(), "20", "10 + 5 + 5, read back out of Box<dyn Any>");
 }
+
+/// **DIVERGENCE D2 (Rust) — a PARAMETERIZED `Sys::new(param)` builds a usable instance. Legacy's
+/// cannot.**
+///
+/// LEGACY (4.6.0.x, verified by emitting its Rust): a system WITH constructor params emits NO
+/// `pub fn new(<params>)` at all — it inlines the struct literal straight into `__create(<params>)`.
+/// So `Ctor::new(7)` is a compile error (no such method), and the ONLY way to obtain a `Ctor` is
+/// the lifecycle-running factory `__create`. A paramless system, by contrast, DOES get a `new()`
+/// (legacy emits `new()` + a delegating `__create()`), so the two constructor forms disagree — the
+/// same slip shape as the Python D2.
+///
+/// NG: `pub fn new(seed: i64)` seeds the domain field and builds the start compartment, and
+/// `__create` calls `Self::new(seed)`. So the plain constructor builds a usable instance WITHOUT
+/// running the enter lifecycle, and the factory still runs it.
+///
+/// WHY LEGACY IS WRONG: a type whose own plain constructor cannot build a usable value — only a
+/// lifecycle-running factory can — is broken by construction; composing it (a domain field of
+/// another system) or building it without a live kernel is impossible.
+///
+/// This test CALLS `Ctor::new(7)` DIRECTLY (not `@@Ctor`, which lowers to the factory) — the method
+/// legacy does not emit for a parameterized system — and reads the seeded field back, then also
+/// checks the factory path. A byte-comparison cannot settle it; only building and running does.
+#[test]
+fn plain_constructor_builds_a_usable_system_rust() {
+    let frm = r#"@@system Ctor(seed: i64) {
+    interface:
+        get(): i64
+    machine:
+        $A {
+            get(): i64 {
+                @@:(self.value)
+            }
+        }
+    domain:
+        value: i64 = seed
+}
+"#;
+    let out = run(
+        frm,
+        r#"fn main() {
+    // `new(param)` — the parameterized plain constructor legacy does NOT emit; it seeds the
+    // domain field with no lifecycle run.
+    let built = Ctor::new(7);
+    println!("{}", built.value);
+    // the factory path still constructs (and, for this lifecycle-free system, agrees).
+    let mut created = Ctor::__create(9);
+    println!("{}", created.get());
+}"#,
+        "rust_d2_plain_ctor",
+    );
+    if out == "SKIP" {
+        return;
+    }
+    assert_eq!(
+        out.lines().collect::<Vec<_>>(),
+        ["7", "9"],
+        "Ctor::new(7) must seed value=7 through the plain constructor, and Ctor::__create(9) \
+         must still work — the D2 fix: a parameterized `new` that builds a usable instance"
+    );
+}
