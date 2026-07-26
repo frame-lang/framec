@@ -1,7 +1,7 @@
 # Language pack — Rust
 
 Per-target **spellings** for the faithfulness grid. Pairs with a milestone core (`M<k>.md`) which
-holds the language-neutral behavior. Oracle: `framec 4.6.1 -l rust`. Every spelling below is quoted
+holds the language-neutral behavior. Oracle: `the local build (framec 4.6.0.x) -l rust`. Every spelling below is quoted
 from emitted bytes (`/tmp/rust_scout/out_rust/*.rs`); **the builder must re-emit and `cmp` — this
 pack is a guide, not a substitute for a freshly regenerated oracle.**
 
