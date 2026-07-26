@@ -550,6 +550,30 @@ impl Backend for Rust {
         }
     }
 
+    /// KERNEL reentrancy guard: after a `@@:self.<method>()` self interface call re-enters
+    /// dispatch, bail if it queued a transition — otherwise the remaining statements run in the
+    /// wrong state. Rust's `.last().map_or(false, …)` folds the empty-stack case (a `$>`/`<$`
+    /// lifecycle body, dispatched with no context pushed) into a safe no-op, so no separate
+    /// non-empty check is needed. Emitted at the call statement's own indent (kernel base 12 + rel).
+    fn reentrancy_guard(&self, rel: u32, _ctx: &LeafCtx, out: &mut Sink) {
+        out.frame(&format!(
+            "{}if self._context_stack.last().map_or(false, |ctx| ctx._transitioned) {{ return; }}\n",
+            self.pad_ctx(rel, false)
+        ));
+    }
+
+    /// A KERNEL statement bearing a self-call (native or Frame assignment) is NOT base-subtracted
+    /// (the shipped Rust quirk): it lands at `12 + full source column`, and its guard follows at the
+    /// same indent. A scan system keeps the base-relative basis so its byte-frozen `.gen.rs` do not
+    /// move.
+    fn selfcall_stmt_rel(&self, col: u32, base: u32, is_scan: bool) -> u32 {
+        if is_scan {
+            col.saturating_sub(base)
+        } else {
+            col
+        }
+    }
+
     fn open_action(&self, name: &str, params: &str, ret: Option<&str>, out: &mut Sink) {
         let sig = self.param_list(params);
         let sep = if sig.is_empty() { "" } else { ", " };

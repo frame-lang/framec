@@ -20,7 +20,7 @@ use super::reindent::{self, Lowering};
 use super::Sink;
 use crate::resolve::{SymbolTable, SystemSym};
 use crate::text::Source;
-use crate::tree::body::{EmbedCall, FrameRef, Instantiation, Stmt};
+use crate::tree::body::{EmbedCall, FrameRef, Instantiation, NativePart, Stmt};
 
 /// The Stmt variant at `i`, in the hand match's order: `-1` at end-of-slice (the walk's loop
 /// bound), else `0`=Trivia, `1`=Native, `2`=Transition, `3`=StackPush, `4`=StackPopBare,
@@ -50,6 +50,26 @@ pub(super) fn kind_of(s: &Stmt) -> i32 {
         Stmt::SelfCall(_) => 8,
         Stmt::Forward(_) => 9,
     }
+}
+
+/// Does this run of native parts embed a **reentrant self interface call** — a field-less
+/// `@@:self.<method>(...)` (a [`NativePart::EmbedCall`] whose `field` is empty) whose method is an
+/// INTERFACE event, not an `actions:` member?
+///
+/// Such a call re-enters dispatch and may transition, so the enclosing handler needs the
+/// reentrancy guard after it. The two exclusions match the shipped compiler exactly: a
+/// `@@:self.field.method()` (non-empty `field` — the old `ContextSelfFieldCall`) is a cross-system
+/// or scalar-field call that cannot transition, and a direct `actions:` call (`is_action_call`)
+/// is not kernel-dispatched — neither gets a guard. This is the EXPRESSION-position twin of the
+/// bare [`Stmt::SelfCall`] statement: the scanner lowers `@@:self.g()` to a standalone `SelfCall`
+/// when it is a whole statement but to an embedded field-less `EmbedCall` when it is an operand.
+pub(super) fn bears_reentrant_self_call(parts: &[NativePart], sym: &SystemSym) -> bool {
+    parts.iter().any(|p| match p {
+        NativePart::EmbedCall(ec) => {
+            ec.field.is_empty() && !sym.actions.iter().any(|a| a.name == ec.method)
+        }
+        _ => false,
+    })
 }
 
 /// The [`Lowering`] the render leaves need — the three closures that expand a Frame ref, a system
@@ -84,10 +104,21 @@ fn emit_native(
     if let Stmt::Native(n) = &stmts[i] {
         lowering!(syms, sym, state, be, lower);
         let ctx = LeafCtx::new(sym, "", state);
-        let r = n.logical_indent.saturating_sub(base);
+        // A native statement whose RHS embeds a `@@:self.<method>()` self interface call (an
+        // operand, `x = @@:self.g()`) needs the reentrancy guard after it, exactly as the bare
+        // `SelfCall` statement does. Only in the KERNEL model (the guard reads `_context_stack`).
+        let bears = !ctx.is_scan && bears_reentrant_self_call(&n.parts, sym);
+        let r = if bears {
+            be.selfcall_stmt_rel(n.logical_indent, base, ctx.is_scan)
+        } else {
+            n.logical_indent.saturating_sub(base)
+        };
         let delta = be.pad_ctx(r, ctx.is_scan).len() as i32 - n.logical_indent as i32;
         let text = reindent::render_native(src, n, delta, &lower);
         be.native_stmt(r, text, &ctx, out);
+        if bears {
+            be.reentrancy_guard(r, &ctx, out);
+        }
     }
 }
 
@@ -222,8 +253,21 @@ fn emit_assign(
 ) {
     if let Stmt::Assign(a) = &stmts[i] {
         lowering!(syms, sym, state, be, lower);
+        let ctx = LeafCtx::new(sym, "", state);
+        // A Frame assignment whose RHS embeds a `@@:self.<method>()` self interface call
+        // (`@@:self.x = @@:self.g()`) needs the reentrancy guard after it, exactly as the native and
+        // bare-`SelfCall` forms do. Only in the KERNEL model (the guard reads `_context_stack`).
+        let bears = !ctx.is_scan && bears_reentrant_self_call(&a.rhs, sym);
+        let rel = if bears {
+            be.selfcall_stmt_rel(a.col, base, ctx.is_scan)
+        } else {
+            a.col.saturating_sub(base)
+        };
         let rhs = reindent::render_parts(src, &a.rhs, a.rhs_span, &lower);
-        be.assign(sym, state, &a.lhs, rhs, a.col.saturating_sub(base), out);
+        be.assign(sym, state, &a.lhs, rhs, rel, out);
+        if bears {
+            be.reentrancy_guard(rel, &ctx, out);
+        }
     }
 }
 

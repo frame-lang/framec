@@ -485,6 +485,21 @@ pub trait Backend {
     /// Emit a native statement, already lowered and re-indented.
     fn native_stmt(&self, rel: u32, text: crate::NativeText, ctx: &LeafCtx, out: &mut Sink);
 
+    /// The re-indent basis for a statement — a native statement (`x = @@:self.g()`) or a Frame
+    /// assignment (`@@:self.x = @@:self.g()`) — that **bears a `@@:self.<method>()` self interface
+    /// call**, whose reentrancy guard follows it.
+    ///
+    /// Most targets measure it like any other statement — relative to the body base (the default).
+    /// Rust's KERNEL handler reproduces the shipped compiler's quirk: such a statement is **not**
+    /// base-subtracted, so it lands at `target base + the full source column`, and its guard sits at
+    /// the same indent. A scan system (no kernel, no self-call) keeps the base-relative basis, so
+    /// its byte-frozen `.gen.rs` are unmoved. `col` is the statement's source column; `base` the
+    /// body's shallowest.
+    fn selfcall_stmt_rel(&self, col: u32, base: u32, is_scan: bool) -> u32 {
+        let _ = is_scan;
+        col.saturating_sub(base)
+    }
+
     /// `-> $Target(args)` — build and install the next compartment, then return.
     fn transition(&self, rel: u32, sym: &SystemSym, target: &str, args: Option<&str>, out: &mut Sink);
     /// `push$ -> $Target(args)`
@@ -575,6 +590,21 @@ pub trait Backend {
     /// **`@@:self.method(<args>)`** — a reentrant interface call. framec authored it, so
     /// framec terminates it.
     fn self_call(&self, rel: u32, is_async: bool, method: &str, args: &str, out: &mut Sink);
+
+    /// The **reentrancy guard** emitted immediately AFTER a `@@:self.<method>()` self interface
+    /// call — bare (`@@:self.g()`) or in expression position (`x = @@:self.g()`).
+    ///
+    /// A self interface call re-enters dispatch and may itself transition the machine; if it did,
+    /// the calling handler must bail before its remaining statements run in the wrong state. The
+    /// shipped compiler emitted this per target at the call site (its `self_call_guard.rs`). `rel`
+    /// is the call statement's own indentation (the same basis the statement was emitted at).
+    ///
+    /// Default **no-op**: a target with no `_transitioned` guard — or one not yet on the kernel
+    /// model here (Java, C) — emits nothing and is byte-unmoved. Kernel targets that carry a
+    /// `_context_stack` (Rust, Python) spell the read-and-bail.
+    fn reentrancy_guard(&self, rel: u32, ctx: &LeafCtx, out: &mut Sink) {
+        let _ = (rel, ctx, out);
+    }
 
     /// An `actions:` / `operations:` member — a method with a NATIVE body. The
     /// signature is Frame's; the body is the user's.
@@ -1011,10 +1041,23 @@ fn emit_body_hand(
                 // move; a newline inside a string literal is never touched — the #215 rule).
                 // Without it, continuation lines kept their original source columns and python
                 // (indent-sensitive) raised IndentationError.
-                let r = rel(n.logical_indent);
+                // A native statement whose RHS embeds a `@@:self.<method>()` self interface call
+                // (`x = @@:self.g()`) gets the reentrancy guard after it — the expression-position
+                // twin of the bare `SelfCall`. Only in the KERNEL model. Kept in step with the
+                // `stmt_walk::emit_native` leaf (GATE-A parity).
+                let bears =
+                    !ctx.is_scan && super::stmt_walk::bears_reentrant_self_call(&n.parts, sym);
+                let r = if bears {
+                    be.selfcall_stmt_rel(n.logical_indent, base, ctx.is_scan)
+                } else {
+                    rel(n.logical_indent)
+                };
                 let delta = be.pad_ctx(r, ctx.is_scan).len() as i32 - n.logical_indent as i32;
                 let text = super::reindent::render_native(src, n, delta, &lower);
                 be.native_stmt(r, text, &ctx, out);
+                if bears {
+                    be.reentrancy_guard(r, &ctx, out);
+                }
             }
             // A transition orchestrates the LIFECYCLE, and the order is Frame's, uniform
             // across every target: exit the source state, build+install the target
@@ -1086,8 +1129,21 @@ fn emit_body_hand(
             // backend's spelling, unconditionally, without ever looking at what it just
             // wrote.
             Stmt::Assign(a) => {
+                // A Frame assignment whose RHS embeds a `@@:self.<method>()` self interface call
+                // gets the reentrancy guard after it. Only in the KERNEL model. Kept in step with
+                // the `stmt_walk::emit_assign` leaf (GATE-A parity).
+                let bears =
+                    !ctx.is_scan && super::stmt_walk::bears_reentrant_self_call(&a.rhs, sym);
+                let r = if bears {
+                    be.selfcall_stmt_rel(a.col, base, ctx.is_scan)
+                } else {
+                    rel(a.col)
+                };
                 let rhs = super::reindent::render_parts(src, &a.rhs, a.rhs_span, &lower);
-                be.assign(sym, state, &a.lhs, rhs, rel(a.col), out);
+                be.assign(sym, state, &a.lhs, rhs, r, out);
+                if bears {
+                    be.reentrancy_guard(r, &ctx, out);
+                }
             }
             Stmt::ReturnCall(r) => {
                 let e = super::reindent::render_parts(src, &r.expr, r.expr_span, &lower);

@@ -448,6 +448,17 @@ impl Backend for Python {
         out.frame(&format!("{p}{e}\n"));
     }
 
+    /// KERNEL reentrancy guard: after a `@@:self.<method>()` self interface call re-enters
+    /// dispatch, bail if it queued a transition. The non-empty check guards a `$>`/`<$` lifecycle
+    /// body (dispatched with no context pushed): an unconditional `[-1]` there is an `IndexError`
+    /// at construction. Emitted at the call statement's own indent; the `return` one level deeper.
+    fn reentrancy_guard(&self, rel: u32, _ctx: &LeafCtx, out: &mut Sink) {
+        let p = self.pad(rel);
+        out.frame(&format!(
+            "{p}if self._context_stack and self._context_stack[-1]._transitioned:\n{p}    return\n"
+        ));
+    }
+
     /// `=> $^` — hand this event to the PARENT state's DISPATCHER, with the compartment shifted
     /// up one level so `$.var` reads resolve in the parent's scope. Not the parent's handler
     /// method: the dispatcher is what the shipped compiler calls, and it is also what makes the
