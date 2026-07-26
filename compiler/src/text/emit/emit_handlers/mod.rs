@@ -225,7 +225,7 @@ fn emit_handler(
         if empty {
             be.noop(0, out);
         }
-        be.close_handler(ret, is_async, end.terminated(), out);
+        be.close_handler(ret, is_async, end.terminated(), &super::driver::LeafCtx::new(sym, &h.event, &st.name), out);
     }
 }
 

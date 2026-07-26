@@ -95,7 +95,7 @@ mod fsm {
 /// bounded drive loop lives here — a broken machine cannot hang.
 pub(super) fn walk(src: &Source, ast: &FileAst, syms: &SymbolTable, be: &dyn Backend) -> String {
     let mut out = Sink::new();
-    be.file_header(&mut out);
+    be.file_header_ctx(syms.systems.iter().any(|s| s.scan.is_some()), &mut out);
     let mut m = fsm::EmitFile::new(src, ast, syms, be, ast.items.len(), out);
     // A safe over-bound: `$Item` fires once per item (each advances the cursor by one) plus the
     // terminal halt at `i >= n`.

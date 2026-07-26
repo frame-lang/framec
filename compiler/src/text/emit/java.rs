@@ -10,7 +10,7 @@
 //! which does not have the target language and therefore cannot branch on it.
 
 use super::atom::{Atom, Place};
-use super::driver::{param_names, params_split, Backend, BodyRole};
+use super::driver::{param_names, params_split, Backend, BodyRole, LeafCtx};
 use super::Sink;
 use crate::resolve::{SystemSym, TypeRef};
 use crate::tree::body::{EmbedCall, FrameRef, RefKind};
@@ -233,7 +233,7 @@ impl Backend for Java {
         }
     }
 
-    fn close_handler(&self, ret: Option<&str>, is_async: bool, terminated: bool, out: &mut Sink) {
+    fn close_handler(&self, ret: Option<&str>, is_async: bool, terminated: bool, _ctx: &LeafCtx, out: &mut Sink) {
         // A value-returning method that might FALL THROUGH needs a return. One that
         // already returned must NOT get another — unreachable code is a COMPILE ERROR in
         // Java, and this is exactly what `strip_java_unreachable` existed to clean up
@@ -251,7 +251,7 @@ impl Backend for Java {
         out.frame("    }\n\n");
     }
 
-    fn return_call(&self, _role: BodyRole, rel: u32, is_async: bool, _multiline: bool, expr: NativeText, out: &mut Sink) {
+    fn return_call(&self, _role: BodyRole, rel: u32, is_async: bool, _multiline: bool, expr: NativeText, _ctx: &LeafCtx, out: &mut Sink) {
         // `_role` is ignored: Java already spells `@@:(expr)` as a real `return`, which is the
         // correct statement in a handler AND in an `actions:`/`operations:` method.
         // `multiline` is ignored: a `;`-terminated statement spans newlines freely.
@@ -309,7 +309,7 @@ impl Backend for Java {
         format!("        {}", " ".repeat(rel as usize))
     }
 
-    fn native_stmt(&self, rel: u32, text: NativeText, out: &mut Sink) {
+    fn native_stmt(&self, rel: u32, text: NativeText, _ctx: &LeafCtx, out: &mut Sink) {
         // framec terminates only what IT emits. It never adds, removes, or moves a
         // native terminator — that `;` is the user's, and it is not ours to touch. (The
         // old compiler searched its own emitted string for the last non-whitespace byte
@@ -364,7 +364,7 @@ impl Backend for Java {
         }
     }
 
-    fn terminate(&self, _rel: u32, out: &mut Sink) {
+    fn terminate(&self, _rel: u32, _ctx: &LeafCtx, out: &mut Sink) {
         out.frame("        return;\n");
     }
 

@@ -19,7 +19,7 @@
 //! type, not in sixteen authors' memories.
 
 use super::atom::{Atom, Place};
-use super::driver::{param_names, Backend, BodyRole};
+use super::driver::{param_names, Backend, BodyRole, LeafCtx};
 use super::Sink;
 use crate::resolve::SystemSym;
 use crate::tree::body::{EmbedCall, FrameRef, RefKind};
@@ -382,7 +382,7 @@ impl Backend for Python {
     /// transition drain to run after it. The value is parked on the live context, and the public
     /// wrapper reads it back after the kernel returns (`return __frame_ctx._return`). This is also
     /// what makes `@@:return` READABLE in expression position — see [`Self::lower_ref`], and R4c.
-    fn return_call(&self, role: BodyRole, rel: u32, _is_async: bool, multiline: bool, expr: NativeText, out: &mut Sink) {
+    fn return_call(&self, role: BodyRole, rel: u32, _is_async: bool, multiline: bool, expr: NativeText, _ctx: &LeafCtx, out: &mut Sink) {
         let p = self.pad(rel);
         // An `actions:` / `operations:` member is an ORDINARY METHOD. The user may call it
         // directly — `vm.check_stock("cola")` — with no dispatch in flight, so
@@ -680,7 +680,7 @@ impl Backend for Python {
     /// The one case that would leave an illegal empty block — a body with nothing to emit — is not
     /// this method's to fix: the driver reads it off the TREE (`body_is_empty`) and asks for a
     /// `noop`, which python spells `pass`.
-    fn close_handler(&self, _ret: Option<&str>, _is_async: bool, _terminated: bool, _out: &mut Sink) {}
+    fn close_handler(&self, _ret: Option<&str>, _is_async: bool, _terminated: bool, _ctx: &LeafCtx, _out: &mut Sink) {}
 
     /// **In Python the indent IS the syntax.** A `@@:return` inside an `if x:` must be
     /// indented under it, or the file is a SyntaxError. Nothing else in the compiler
@@ -689,7 +689,7 @@ impl Backend for Python {
         format!("        {}", " ".repeat(rel as usize))
     }
 
-    fn native_stmt(&self, rel: u32, text: NativeText, out: &mut Sink) {
+    fn native_stmt(&self, rel: u32, text: NativeText, _ctx: &LeafCtx, out: &mut Sink) {
         out.frame(&self.pad(rel));
         out.native(text);
         out.frame("\n");
@@ -809,7 +809,7 @@ impl Backend for Python {
         ));
     }
 
-    fn terminate(&self, rel: u32, out: &mut Sink) {
+    fn terminate(&self, rel: u32, _ctx: &LeafCtx, out: &mut Sink) {
         out.frame(&format!("{}return\n", self.pad(rel)));
     }
 

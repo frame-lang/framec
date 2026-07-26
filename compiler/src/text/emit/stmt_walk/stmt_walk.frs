@@ -93,7 +93,7 @@
                     -> $Walk
                 }
                 if k == 7 {
-                    let term = emit_return_call(self.src, self.syms, self.sym, self.role, self.state, self.be, self.base, self.is_async, self.stmts, self.i, &mut self.out);
+                    let term = emit_return_call(self.src, self.syms, self.sym, self.role, self.state, self.event, self.be, self.base, self.is_async, self.stmts, self.i, &mut self.out);
                     if term {
                         self.terminated = true;
                         -> $Done

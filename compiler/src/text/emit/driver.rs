@@ -62,6 +62,46 @@ pub enum BodyRole {
     Action,
 }
 
+/// The **statement-leaf context** — the per-body facts a spelling leaf needs but the census's
+/// "one parameter" seam never carried to it.
+///
+/// Several `Backend` leaves (`return_call`, `terminate`, `close_handler`, `native_stmt`) were
+/// handed only `rel`/`out` and so could not tell *which system / method / state* they were
+/// spelling, nor whether the enclosing system is a positioned `@@[scan]` recognizer (whose 24
+/// self-hosted `.gen.rs` ride a thin dispatch model) or an ordinary kernel-model system. Rust
+/// needs all four: a value-return builds `<Sys>FrameReturn::<Method>(expr)` (needs `sym` + the
+/// method = `event`); a body terminal is `return;` under the kernel but `return Default::default()`
+/// under a scanner (needs `is_scan`); the kernel handler body indents 12, the scanner's 8.
+///
+/// It travels as ONE struct — not four positional params bolted onto every leaf — so a new
+/// per-body fact is a new field, not a new argument on N signatures across four backends. It is a
+/// bundle of borrows + a bool, cheap to build per leaf call. `python`/`java`/`c` read nothing from
+/// it (their spellings do not vary on any of these facts), so its arrival leaves their bytes
+/// exactly where they were.
+#[derive(Clone, Copy)]
+pub struct LeafCtx<'a> {
+    /// The system being emitted — for `sym.name` (the `<Sys>` prefix) and `sym.states` (the
+    /// parent chain a state-var read climbs).
+    pub sym: &'a SystemSym,
+    /// The interface method / handler event this body belongs to — the `<Method>` in a typed
+    /// return slot. Empty for a non-handler body (an `actions:` member).
+    pub event: &'a str,
+    /// The state whose handler this is — the anchor a state-var read/write walks the compartment
+    /// chain to find. Empty for a non-handler body.
+    pub state: &'a str,
+    /// Is the enclosing system a positioned `@@[scan]` recognizer? Thin dispatch model + 8-space
+    /// body indent when true; kernel model + 12-space when false. `sym.scan.is_some()`.
+    pub is_scan: bool,
+}
+
+impl<'a> LeafCtx<'a> {
+    /// Build the context for `sym`'s `(state, event)` body. `is_scan` is derived once here so a
+    /// leaf never re-derives it.
+    pub fn new(sym: &'a SystemSym, event: &'a str, state: &'a str) -> Self {
+        LeafCtx { sym, event, state, is_scan: sym.scan.is_some() }
+    }
+}
+
 /// What a target language must be able to spell.
 ///
 /// Every method here is a **spelling**, never a decision. The decisions live in
@@ -82,6 +122,18 @@ pub trait Backend {
     /// which is precisely what the old compiler's assembler did, searching for a line that
     /// (in Go) never existed.
     fn file_header(&self, out: &mut Sink);
+
+    /// The FILE's preamble, aware of whether the file contains a positioned `@@[scan]` recognizer.
+    ///
+    /// The kernel model (an ordinary system) carries no file-level preamble at all — legacy 4.6.1
+    /// emits none — while Rust's thin `@@[scan]` model (whose 24 self-hosted `.gen.rs` are
+    /// byte-frozen) opens with `use std::collections::HashMap; use std::any::Any;`. So on Rust the
+    /// preamble is present IFF the file scans. Every other target's preamble does not vary on this,
+    /// so the default forwards to [`Self::file_header`] and their bytes are unchanged.
+    fn file_header_ctx(&self, has_scan: bool, out: &mut Sink) {
+        let _ = has_scan;
+        self.file_header(out);
+    }
 
     /// The class opening.
     fn open_system(&self, sym: &SystemSym, out: &mut Sink);
@@ -408,7 +460,7 @@ pub trait Backend {
     /// Java needs a fallback `return` on a value-returning method whose body might fall
     /// through — and must NOT emit one after a return, because unreachable code is a
     /// COMPILE ERROR there.
-    fn close_handler(&self, ret: Option<&str>, is_async: bool, terminated: bool, out: &mut Sink);
+    fn close_handler(&self, ret: Option<&str>, is_async: bool, terminated: bool, ctx: &LeafCtx, out: &mut Sink);
 
     /// The indentation prefix for a statement `rel` columns deeper than the body's base.
     ///
@@ -420,8 +472,18 @@ pub trait Backend {
     /// do with it is a SPELLING, and it lives here.
     fn pad(&self, rel: u32) -> String;
 
+    /// The indentation prefix, aware of the **body model** (`is_scan`). A kernel-model handler
+    /// body sits one `impl`-level deeper than a scanner's thin dispatch method, so its base
+    /// column differs. Default forwards to [`Self::pad`] — every target whose base does not vary
+    /// on the model (python/java/c, and Rust's own scanner path) is byte-unchanged by this
+    /// method's existence. Rust overrides it for the kernel's 12-space base.
+    fn pad_ctx(&self, rel: u32, is_scan: bool) -> String {
+        let _ = is_scan;
+        self.pad(rel)
+    }
+
     /// Emit a native statement, already lowered and re-indented.
-    fn native_stmt(&self, rel: u32, text: crate::NativeText, out: &mut Sink);
+    fn native_stmt(&self, rel: u32, text: crate::NativeText, ctx: &LeafCtx, out: &mut Sink);
 
     /// `-> $Target(args)` — build and install the next compartment, then return.
     fn transition(&self, rel: u32, sym: &SystemSym, target: &str, args: Option<&str>, out: &mut Sink);
@@ -493,7 +555,7 @@ pub trait Backend {
     fn pop_enter(&self, rel: u32, sym: &SystemSym, enter_args: Option<&str>, out: &mut Sink);
 
     /// The return that ends a transition/push/pop. Spelled per target.
-    fn terminate(&self, rel: u32, out: &mut Sink);
+    fn terminate(&self, rel: u32, ctx: &LeafCtx, out: &mut Sink);
 
     /// **`@@:return(<expr>)`** — set the return value and exit. Terminal.
     ///
@@ -508,7 +570,7 @@ pub trait Backend {
     /// one line. Indent-continuation targets (Python) must wrap the RHS in parens so
     /// the continuation lines are legal; brace/`;` targets ignore it. The decision is
     /// made where the source + span live (never by inspecting the opaque native text).
-    fn return_call(&self, role: BodyRole, rel: u32, is_async: bool, multiline: bool, expr: crate::NativeText, out: &mut Sink);
+    fn return_call(&self, role: BodyRole, rel: u32, is_async: bool, multiline: bool, expr: crate::NativeText, ctx: &LeafCtx, out: &mut Sink);
 
     /// **`@@:self.method(<args>)`** — a reentrant interface call. framec authored it, so
     /// framec terminates it.
@@ -762,7 +824,7 @@ pub(super) fn render_native_item(
 #[doc(hidden)]
 fn emit_file_hand(src: &Source, ast: &FileAst, syms: &SymbolTable, be: &dyn Backend) -> String {
     let mut out = Sink::new();
-    be.file_header(&mut out);
+    be.file_header_ctx(syms.systems.iter().any(|s| s.scan.is_some()), &mut out);
     for (i, item) in ast.items.iter().enumerate() {
         if let Item::Native(n) = item {
             render_native_item(src, syms, be, n, prev_item_is_system(ast, i), &mut out);
@@ -930,6 +992,9 @@ fn emit_body_hand(
     let base = base_column_hand(&body.stmts);
     let rel = |c: u32| c.saturating_sub(base);
 
+    // The per-body leaf context (`sym` / `event` / `state` / `is_scan`), constant across the walk.
+    let ctx = LeafCtx::new(sym, event, state);
+
     for stmt in &body.stmts {
         if terminated {
             break;
@@ -947,9 +1012,9 @@ fn emit_body_hand(
                 // Without it, continuation lines kept their original source columns and python
                 // (indent-sensitive) raised IndentationError.
                 let r = rel(n.logical_indent);
-                let delta = be.pad(r).len() as i32 - n.logical_indent as i32;
+                let delta = be.pad_ctx(r, ctx.is_scan).len() as i32 - n.logical_indent as i32;
                 let text = super::reindent::render_native(src, n, delta, &lower);
-                be.native_stmt(r, text, out);
+                be.native_stmt(r, text, &ctx, out);
             }
             // A transition orchestrates the LIFECYCLE, and the order is Frame's, uniform
             // across every target: exit the source state, build+install the target
@@ -972,7 +1037,7 @@ fn emit_body_hand(
                     if has_lifecycle(sym, target, "$>") {
                         be.lifecycle_call(r, sym, target, "$>", na.as_deref(), out);
                     }
-                    be.terminate(r, out);
+                    be.terminate(r, &ctx, out);
                     terminated = t.depth == 0 && r == 0;
                 }
             }
@@ -989,7 +1054,7 @@ fn emit_body_hand(
                     if has_lifecycle(sym, target, "$>") {
                         be.lifecycle_call(r, sym, target, "$>", na.as_deref(), out);
                     }
-                    be.terminate(r, out);
+                    be.terminate(r, &ctx, out);
                     terminated = t.depth == 0 && r == 0;
                 } else {
                     // bare `push$` — push a COPY of the current compartment; STAY (no
@@ -1014,7 +1079,7 @@ fn emit_body_hand(
                     let na = super::reindent::render_args(src, st.enter_args.as_ref(), &lower);
                     be.pop_enter(r, sym, na.as_deref(), out);
                 }
-                be.terminate(r, out);
+                be.terminate(r, &ctx, out);
                 terminated = st.depth == 0 && r == 0;
             }
             // A FRAME assignment. framec authored it, so framec terminates it — in the
@@ -1027,7 +1092,7 @@ fn emit_body_hand(
             Stmt::ReturnCall(r) => {
                 let e = super::reindent::render_parts(src, &r.expr, r.expr_span, &lower);
                 let multiline = src.span_is_multiline(r.expr_span);
-                be.return_call(role, rel(r.col), is_async, multiline, e, out);
+                be.return_call(role, rel(r.col), is_async, multiline, e, &ctx, out);
                 // Terminal — but only if this target's spelling RETURNS, and only for the BODY
                 // if it is at the base nesting.
                 terminated =
@@ -1141,7 +1206,7 @@ fn emit_handlers_hand(
                 if empty {
                     be.noop(0, out);
                 }
-                be.close_handler(ret, is_async, end.terminated(), out);
+                be.close_handler(ret, is_async, end.terminated(), &LeafCtx::new(sym, &h.event, &st.name), out);
             }
         }
     }

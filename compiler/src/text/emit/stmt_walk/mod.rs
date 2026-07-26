@@ -15,7 +15,7 @@
 //! stmt_walk.gen.rs`.
 
 use super::atom::Atom;
-use super::driver::{has_lifecycle, lower_instantiation, Backend, BodyRole};
+use super::driver::{has_lifecycle, lower_instantiation, Backend, BodyRole, LeafCtx};
 use super::reindent::{self, Lowering};
 use super::Sink;
 use crate::resolve::{SymbolTable, SystemSym};
@@ -83,10 +83,11 @@ fn emit_native(
 ) {
     if let Stmt::Native(n) = &stmts[i] {
         lowering!(syms, sym, state, be, lower);
+        let ctx = LeafCtx::new(sym, "", state);
         let r = n.logical_indent.saturating_sub(base);
-        let delta = be.pad(r).len() as i32 - n.logical_indent as i32;
+        let delta = be.pad_ctx(r, ctx.is_scan).len() as i32 - n.logical_indent as i32;
         let text = reindent::render_native(src, n, delta, &lower);
-        be.native_stmt(r, text, out);
+        be.native_stmt(r, text, &ctx, out);
     }
 }
 
@@ -123,7 +124,7 @@ fn emit_transition(
             if has_lifecycle(sym, target, "$>") {
                 be.lifecycle_call(r, sym, target, "$>", na.as_deref(), out);
             }
-            be.terminate(r, out);
+            be.terminate(r, &LeafCtx::new(sym, "", state), out);
             return t.depth == 0 && r == 0;
         }
     }
@@ -158,7 +159,7 @@ fn emit_stack_push(
             if has_lifecycle(sym, target, "$>") {
                 be.lifecycle_call(r, sym, target, "$>", na.as_deref(), out);
             }
-            be.terminate(r, out);
+            be.terminate(r, &LeafCtx::new(sym, "", state), out);
             return t.depth == 0 && r == 0;
         } else {
             be.push_bare(t.col.saturating_sub(base), out);
@@ -200,7 +201,7 @@ fn emit_stack_pop(
             let na = reindent::render_args(src, st.enter_args.as_ref(), &lower);
             be.pop_enter(r, sym, na.as_deref(), out);
         }
-        be.terminate(r, out);
+        be.terminate(r, &LeafCtx::new(sym, "", state), out);
         return st.depth == 0 && r == 0;
     }
     false
@@ -235,6 +236,7 @@ fn emit_return_call(
     sym: &SystemSym,
     role: BodyRole,
     state: &str,
+    event: &str,
     be: &dyn Backend,
     base: u32,
     is_async: bool,
@@ -246,7 +248,9 @@ fn emit_return_call(
         lowering!(syms, sym, state, be, lower);
         let e = reindent::render_parts(src, &r.expr, r.expr_span, &lower);
         let multiline = src.span_is_multiline(r.expr_span);
-        be.return_call(role, r.col.saturating_sub(base), is_async, multiline, e, out);
+        // `event` is the handler's interface method — Rust's kernel `return_call` needs it to build
+        // the typed `<Sys>FrameReturn::<Method>(expr)` slot. python/java/c ignore it.
+        be.return_call(role, r.col.saturating_sub(base), is_async, multiline, e, &LeafCtx::new(sym, event, state), out);
         // Terminal only if THIS TARGET'S `@@:(expr)` actually returns — see
         // [`Backend::return_call_terminates`]. It does not on Python, where the spelling is a
         // return-SLOT assignment and execution continues; halting there would delete statements

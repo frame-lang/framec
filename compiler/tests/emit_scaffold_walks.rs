@@ -263,7 +263,11 @@ fn the_python_target_actually_drives_all_four_walks() {
     assert!(router > 0, "RouterWalk emitted nothing on python — the gate would be vacuous");
     assert!(disp > 0, "StateDispatchWalk emitted nothing on python — the gate would be vacuous");
 
-    // And the three brace targets take the defaults, which is exactly why their bytes did not move.
+    // Rust now runs the kernel model (M1): it emits a real `_state_<S>` message dispatcher, so it
+    // DRIVES the StateDispatchWalk exactly as python does. (Its parity is gated by
+    // `state_dispatch_walk_is_byte_identical_to_the_hand_loops` above.) java and c still route
+    // `(state, event)` directly and take the no-op dispatch default — which is why their bytes did
+    // not move. The obsolete pre-kernel assertion ("rust takes the no-op default") is replaced.
     for (bname, be) in backends() {
         if bname == "python" {
             continue;
@@ -272,6 +276,10 @@ fn the_python_target_actually_drives_all_four_walks() {
             .iter()
             .map(|p| p.machine_text.len())
             .sum();
-        assert_eq!(t, 0, "{bname} must take the no-op dispatch default (its output must not move)");
+        if bname == "rust" {
+            assert!(t > 0, "rust runs the kernel model — it must drive the StateDispatchWalk with a real `_state_X` dispatcher");
+        } else {
+            assert_eq!(t, 0, "{bname} must take the no-op dispatch default (its output must not move)");
+        }
     }
 }

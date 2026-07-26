@@ -15,7 +15,7 @@
 //! child systems belongs with the coverage layer and is deferred.
 
 use super::atom::Atom;
-use super::driver::{params_split, Backend, BodyRole};
+use super::driver::{params_split, Backend, BodyRole, LeafCtx};
 use super::Sink;
 use crate::resolve::{SystemSym, TypeRef};
 use crate::tree::body::{EmbedCall, FrameRef, RefKind};
@@ -236,7 +236,7 @@ impl Backend for C {
         }
     }
 
-    fn close_handler(&self, ret: Option<&str>, _is_async: bool, terminated: bool, out: &mut Sink) {
+    fn close_handler(&self, ret: Option<&str>, _is_async: bool, terminated: bool, _ctx: &LeafCtx, out: &mut Sink) {
         if let Some(t) = ret {
             if !terminated {
                 out.frame(&format!("    return ({t}){{0}};\n"));
@@ -260,7 +260,7 @@ impl Backend for C {
         let _ = (owner, a, event);
     }
 
-    fn native_stmt(&self, rel: u32, text: NativeText, out: &mut Sink) {
+    fn native_stmt(&self, rel: u32, text: NativeText, _ctx: &LeafCtx, out: &mut Sink) {
         out.frame(&self.pad(rel));
         out.native(text);
         out.frame("\n");
@@ -325,11 +325,11 @@ impl Backend for C {
         }
     }
 
-    fn terminate(&self, rel: u32, out: &mut Sink) {
+    fn terminate(&self, rel: u32, _ctx: &LeafCtx, out: &mut Sink) {
         out.frame(&format!("{}return{};\n", self.pad(rel), void_ret()));
     }
 
-    fn return_call(&self, _role: BodyRole, rel: u32, _is_async: bool, _multiline: bool, expr: NativeText, out: &mut Sink) {
+    fn return_call(&self, _role: BodyRole, rel: u32, _is_async: bool, _multiline: bool, expr: NativeText, _ctx: &LeafCtx, out: &mut Sink) {
         // `_role` is ignored: C already spells `@@:(expr)` as a real `return`, correct in both a
         // handler and an `actions:`/`operations:` method.
         // `multiline` is ignored: a `;`-terminated statement spans newlines freely.
