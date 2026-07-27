@@ -127,6 +127,13 @@ impl Backend for Python {
         // Constructor params — state, then enter, then domain (§203). The state/enter groups seed
         // the START compartment's positional arg lists; the domain group is seeded by the
         // `DomainInitWalk` machine below.
+        //
+        // **This is the D2 intentional divergence** (intentional_divergences.txt, owner ruling
+        // 2026-07-24): the legacy oracle keeps `__init__(self)` param-free and binds header params
+        // only in `_create`, so a plain `Sys(args)` is a `TypeError` and `Sys()` leaves the domain
+        // unassigned. ng threads the params through `__init__` so BOTH entry points build a usable
+        // object (validated by `legacy_bug_fixes.rs::plain_constructor_builds_a_usable_system`). Do
+        // not "fix" this to the oracle's paramless form — that reverses a sanctioned divergence.
         let plist = self.param_list(&super::driver::ctor_params_text(&sym.params));
         let sig = if plist.is_empty() { String::new() } else { format!(", {plist}") };
         let ctor_args = param_names(&super::driver::ctor_params_text(&sym.params));
@@ -349,11 +356,25 @@ impl Backend for Python {
 
     fn domain_init(&self, sym: &SystemSym, idx: usize, out: &mut Sink) {
         let Some(f) = sym.domain.get(idx) else { return };
-        // `= @@Inner()` is FRAME's instantiation syntax -> the Python constructor. Any
-        // other init is the user's native expression, verbatim.
-        let init = match &f.init_system {
-            Some(s) => format!("{s}({})", super::ctor_init_args(f.init_text.as_deref())),
-            None => f.init_text.clone().unwrap_or_else(|| "None".into()),
+        // Precedence:
+        //  1. A field whose NAME matches a header domain param is seeded FROM THAT PARAM
+        //     (`self.inventory = inventory`) — under the D2 model the param is a `__init__` arg and
+        //     must win over the field's own block default, else the caller's value is dropped (#gap1,
+        //     23_vending_machine). See `py_field_seed_param`.
+        //  2. `= @@Inner()` is FRAME's instantiation syntax -> the `_create` FACTORY, not the bare
+        //     `Inner()` constructor. `__init__` builds the object but does not run the start state's
+        //     `$>`; the factory does, and Frame's `@@Sys(...)` always means "a fully constructed,
+        //     entered instance". The top-level call site (`lower_instantiation`) already lowers
+        //     `@@Sys(a)` to `Sys._create(a)`; a system-typed domain field is the SAME instantiation
+        //     (#gap2, 20_multi_system_composition).
+        //  3. Otherwise the user's native init expression, verbatim (or `None`).
+        let init = if let Some(p) = py_field_seed_param(sym, &f.name) {
+            p.to_string()
+        } else {
+            match &f.init_system {
+                Some(s) => format!("{s}._create({})", super::ctor_init_args(f.init_text.as_deref())),
+                None => f.init_text.clone().unwrap_or_else(|| "None".into()),
+            }
         };
         out.frame(&format!("        self.{} = {init}\n", f.name));
     }
@@ -1219,6 +1240,22 @@ fn named_arg_value(body: &str) -> Option<String> {
 /// delivers the same values one step earlier and also survives a plain `Sys()`. (Recorded as a
 /// deliberate divergence: matching it exactly needs a desugaring pass that synthesizes a handler
 /// into the tree, which every other backend would then see.)
+/// The header DOMAIN param that SEEDS the domain field named `field` — the param whose name equals
+/// the field's, if any. Under the D2 construction model (`__init__(self, <params>)`) this param is
+/// in scope at construction, so the field must be bound FROM IT (`self.<field> = <param>`), not from
+/// its own block default. Without this, a header param whose matching field carries an independent
+/// default (`inventory: dict = {}` beside header `inventory: dict = {}`) is silently dropped — the
+/// field keeps `{}` and the caller's `@@Sys(inventory=…)` value never lands (#gap1). The
+/// init-REFERENCE form (`value = initial`) needs no help: the field's init expression already IS the
+/// param name, so `DomainInitWalk` binds it. This is only the NAME-MATCH form.
+fn py_field_seed_param<'a>(sym: &'a SystemSym, field: &str) -> Option<&'a str> {
+    sym.params
+        .domain
+        .iter()
+        .find(|p| p.name == field)
+        .map(|p| p.name.as_str())
+}
+
 fn py_state_var_seeds(sym: &SystemSym, state: &str, recv: &str) -> String {
     let Some(st) = sym.states.iter().find(|s| s.name == state) else {
         return String::new();
