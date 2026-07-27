@@ -289,52 +289,66 @@ fn a_state_var_read_is_an_atom() {
     use frame_compiler::text::emit::java::state_var_read;
     use frame_compiler::text::emit::atom::Atom;
 
+    // KERNEL MODEL: a state var lives in the compartment's untyped `state_vars` map, so the exposed
+    // read helper is a PARENTHESIZED cast off `compartment.state_vars.get("n")` — an atom, and a
+    // valid lvalue root. (RFC-0056's typed-compartment field `((SComp) compartment).n` is RETIRED;
+    // the faithful legacy-4.6.x runtime is the HashMap-backed compartment.)
     let read = state_var_read("S", "n");
     assert_eq!(
         read.as_str(),
-        "((SComp) compartment).n",
-        "the cast to the concrete state compartment MUST be parenthesized"
+        "((Object) compartment.state_vars.get(\"n\"))",
+        "the untyped state-var read is a parenthesized cast off the state_vars map"
     );
 
-    // And it survives a member access — a bare `(SComp) compartment.n` would bind `.n` to
-    // `compartment` (the base `Comp`, which has no `n`). This is #213 in the typed world.
+    // And it survives a member access with its parens intact — a bare cast would misbind. This is
+    // #213: `Atom::method` on an `Atom::cast` keeps the group.
     let called = Atom::method(read, "toString", "");
-    assert_eq!(called.as_str(), "((SComp) compartment).n.toString()");
+    assert_eq!(
+        called.as_str(),
+        "((Object) compartment.state_vars.get(\"n\")).toString()"
+    );
 
     if !have_javac() {
         eprintln!("SKIPPED the toolchain half: javac not installed.");
         return;
     }
 
-    // Prove javac agrees: the parenthesized form compiles, the bare form does NOT.
-    //
-    // The probe needs a real `compartment`, because that is what the expansion refers
-    // to. (My first version declared a bare local `stateVars`, javac rightly rejected
-    // the generated expression, and my own assertion fired. The probe was wrong, not
-    // the emitter — which is exactly why the toolchain is the oracle and not me.)
+    // Prove javac agrees, using the TYPED read shape a real handler emits: `lower_ref` casts the
+    // map value to the DECLARED type (here `Integer`) before a type-specific member access
+    // (`.intValue()`). The bare form parses as `(Integer) (compartment.state_vars.get("n")
+    // .intValue())` — and `Object` has no `intValue` — so javac rejects it; the parenthesized atom
+    // form binds `.intValue()` to the cast. (In C# the same bare shape compiled clean and returned
+    // the WRONG number — #213.)
     let d = std::env::temp_dir().join("frame_java_atom");
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();
 
-    // The probe declares a REAL typed compartment: a base `Comp` and a concrete `SComp`
-    // carrying `Integer n` (the typed field). The atom read must down-cast and reach `n`.
+    // A REAL untyped compartment: a class carrying `HashMap<String,Object> state_vars`, seeded with
+    // a boxed Integer under "n" exactly as the kernel stores a state var.
     let harness = |cls: &str, expr: &str| {
         format!(
-            "public class {cls} {{\n\
-             \x20 static class Comp {{ public String state; }}\n\
-             \x20 static class SComp extends Comp {{ public Integer n; }}\n\
-             \x20 static Comp compartment = new SComp();\n\
+            "import java.util.HashMap;\n\
+             public class {cls} {{\n\
+             \x20 static class Comp {{ public HashMap<String,Object> state_vars = new HashMap<>(); }}\n\
+             \x20 static Comp compartment = new Comp();\n\
              \x20 public static void main(String[] a) {{\n\
-             \x20   ((SComp) compartment).n = 42;\n\
-             \x20   String v = {expr};\n\
+             \x20   compartment.state_vars.put(\"n\", 42);\n\
+             \x20   String v = String.valueOf({expr});\n\
              \x20   System.out.println(v);\n\
              \x20 }}\n}}\n"
         )
     };
 
-    // THE ATOM FORM — what this compiler emits. Must compile: `.toString()` binds to the
-    // parenthesized-cast's `.n`, not to `compartment`.
-    let atom_expr = Atom::method(state_var_read("S", "n"), "toString", "").to_string();
+    // THE ATOM FORM — a parenthesized cast to the declared type, then `.intValue()`. Must compile.
+    let atom_expr = Atom::method(
+        Atom::cast(
+            "Integer",
+            Atom::method(Atom::field(Atom::ident("compartment"), "state_vars"), "get", "\"n\""),
+        ),
+        "intValue",
+        "",
+    )
+    .to_string();
     std::fs::write(d.join("Ok.java"), harness("Ok", &atom_expr)).unwrap();
     let out = Command::new("javac").arg("Ok.java").current_dir(&d).output().unwrap();
     assert!(
@@ -343,9 +357,9 @@ fn a_state_var_read_is_an_atom() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    // THE BARE FORM — cast NOT parenthesized. `(SComp) compartment.n` parses as
-    // `(SComp) (compartment.n)`, and `compartment` (base `Comp`) has no `n`. javac rejects.
-    let bare_expr = "((SComp) compartment.n).toString()";
+    // THE BARE FORM — cast NOT parenthesized. `.intValue()` binds to `Object`, which has no such
+    // method. javac rejects.
+    let bare_expr = "(Integer) compartment.state_vars.get(\"n\").intValue()";
     std::fs::write(d.join("Bad.java"), harness("Bad", bare_expr)).unwrap();
     let out = Command::new("javac").arg("Bad.java").current_dir(&d).output().unwrap();
     assert!(
@@ -354,8 +368,7 @@ fn a_state_var_read_is_an_atom() {
          test proves nothing and the atom invariant is not load-bearing here."
     );
 
-    // And the atom form must give the RIGHT ANSWER, not merely compile. (In C# the bare
-    // form compiled clean AND returned the wrong number — #213.)
+    // And the atom form must give the RIGHT ANSWER, not merely compile.
     let out = Command::new("java").arg("Ok").current_dir(&d).output().unwrap();
     assert_eq!(
         String::from_utf8_lossy(&out.stdout).trim(),
@@ -505,17 +518,21 @@ fn declared_types_pass_through_verbatim() {
     let (syms, _) = resolve(&ast);
     let code = driver::emit(&src, &ast, &syms, &Java::new());
 
-    // The user's exact type text, unchanged — including a Java-invalid one. Domain fields
-    // are DECLARED with their verbatim type and ASSIGNED their init in the constructor (so
-    // a domain param would be in scope for the init).
-    assert!(code.contains("public String good;"), "String type verbatim on the field decl");
-    assert!(code.contains("this.good = null;"), "the init is assigned in the constructor");
+    // The user's exact type text, unchanged — including a Java-invalid one. KERNEL MODEL: a domain
+    // field is DECLARED with its verbatim type and its init INLINED on the declaration
+    // (`public T name = init;`), the faithful legacy-4.6.x spelling — byte-verified against the
+    // local `-l java` oracle. (Only an init that references a construction param is deferred to
+    // `__create`, where the param is in scope; a literal like `null` inlines.)
     assert!(
-        code.contains("public Rc<RefCell<Whatever>> weird;"),
+        code.contains("public String good = null;"),
+        "String type verbatim, init inlined on the field decl:\n{code}"
+    );
+    assert!(
+        code.contains("public Rc<RefCell<Whatever>> weird = null;"),
         "an arbitrary user type passes through untouched:\n{code}"
     );
     assert!(
-        code.contains("public str wrong;"),
+        code.contains("public str wrong = null;"),
         "`str` is the USER's (Java-invalid) text — framec must NOT rewrite it to String. \
          Emitting it verbatim (and letting javac reject it) is the contract:\n{code}"
     );

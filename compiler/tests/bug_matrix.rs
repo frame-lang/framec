@@ -163,16 +163,19 @@ fn b217_218() -> Status {
 }
 "#;
     let code = emit(frm, Target::Java);
-    // The args go over as ONE BLOB inside an `Object[]` literal — javac splits it, framec
-    // never does. framec only INDEXES the array positionally by declared param order.
+    // KERNEL MODEL: the args ride over as ONE BLOB inside `Arrays.asList(<blob>)` (the state_args
+    // slot of `__prepareEnter`) — javac splits it, framec never does. framec only INDEXES the list
+    // positionally by declared param order, unboxing each to its declared type.
     assert!(
-        code.contains(r#"Object[] __a = new Object[]{ "hello, world", 9, new int[]{1, 2} };"#),
-        "framec must hand the args over UNSPLIT (inside the Object[] literal):\n{code}"
+        code.contains(
+            r#"__prepareEnter("B", new java.util.ArrayList<>(java.util.Arrays.asList("hello, world", 9, new int[]{1, 2})), new java.util.ArrayList<>())"#
+        ),
+        "framec must hand the args over UNSPLIT (inside the Arrays.asList blob):\n{code}"
     );
     assert!(
-        code.contains(r#"__next.__a_msg = ((String) __a[0]);"#)
-            && code.contains(r#"__next.__a_arr = ((int[]) __a[2]);"#),
-        "framec indexes the javac-split array positionally into typed (namespaced) arg fields:\n{code}"
+        code.contains(r#"String msg = ((String) compartment.state_args.get(0));"#)
+            && code.contains(r#"int[] arr = ((int[]) compartment.state_args.get(2));"#),
+        "framec indexes the javac-split list positionally by declared param order:\n{code}"
     );
     Impossible
 }

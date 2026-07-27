@@ -178,16 +178,17 @@ fn the_same_machine_runs_on_both_targets() {
 fn the_atom_rule_is_in_the_type_not_in_the_backends() {
     use frame_compiler::text::emit::atom::Atom;
 
-    // Java: a cast. Parenthesized, by construction.
+    // Java: a cast. Parenthesized, by construction. KERNEL MODEL: the untyped compartment's map is
+    // `state_vars` (snake_case, as emitted) — not the retired RFC-0056 `stateVars`.
     let j = Atom::cast(
         "Integer",
         Atom::method(
-            Atom::field(Atom::ident("compartment"), "stateVars"),
+            Atom::field(Atom::ident("compartment"), "state_vars"),
             "get",
             "\"n\"",
         ),
     );
-    assert_eq!(j.as_str(), "((Integer) compartment.stateVars.get(\"n\"))");
+    assert_eq!(j.as_str(), "((Integer) compartment.state_vars.get(\"n\"))");
 
     // Python: a postfix chain. No parens, and none needed.
     let p = Atom::index(
@@ -200,7 +201,7 @@ fn the_atom_rule_is_in_the_type_not_in_the_backends() {
     // compiler's C# expansion (#213: compiled clean, exit 0, printed -1 instead of 84).
     assert_eq!(
         Atom::method(j, "intValue", "").as_str(),
-        "((Integer) compartment.stateVars.get(\"n\")).intValue()"
+        "((Integer) compartment.state_vars.get(\"n\")).intValue()"
     );
     assert_eq!(
         Atom::method(p, "bit_length", "").as_str(),
