@@ -15,8 +15,10 @@
 //!
 //! That cannot recur here, because the validator has no bytes to count.
 
-use crate::resolve::{Diagnostic, Severity, SymbolTable};
-use crate::tree::body::{ArgAngles, InstArg, Instantiation, NativePart, ParamGroup, RefKind, Stmt};
+use crate::resolve::{Diagnostic, Severity, SymbolTable, SystemSym};
+use crate::tree::body::{
+    ArgAngles, InstArg, Instantiation, NativePart, ParamGroup, RefKind, Stmt, TransitionStmt,
+};
 use crate::tree::{
     FileAst, Item, MachineMember, Param, ParamAngles, Section, StateMember, SystemItem,
     SystemParams,
@@ -133,6 +135,15 @@ pub fn validate(ast: &FileAst, syms: &SymbolTable) -> Vec<Diagnostic> {
                                         });
                                     }
                                 }
+                                // E419 / E417 — argument-delivery. A PLAIN transition only:
+                                // `(exit) -> $D` delivers to the SOURCE state's `<$` handler,
+                                // `-> (enter) $D` to the TARGET state's `$>` handler. Stack
+                                // push/pop delivery is a distinct construct and out of scope for
+                                // this pair (legacy validates `Statement::Transition` only —
+                                // `frame_validator/transitions.rs:167`).
+                                if matches!(stmt, Stmt::Transition(_)) {
+                                    check_arg_delivery(t, &st.name, sym, &state_names, &mut out);
+                                }
                             }
                             // A native statement carries its Frame refs as NODES. So we
                             // check them by walking the tree — never by scanning text.
@@ -231,6 +242,79 @@ fn check_unknown_context(r: &crate::tree::body::FrameRef, out: &mut Vec<Diagnost
                 r.name
             ),
         });
+    }
+}
+
+/// Does `state` DECLARE a handler for `event`? Reads the symbol table's `"$>"`(enter) /
+/// `"<$"`(exit) handler entries, keyed exactly as `resolve` records them (`resolve.rs:473`).
+///
+/// The state's **own** handlers only — never the HSM parent chain. That mirrors legacy's
+/// direct `state.exit` / `target.enter` fields (`frame_validator/transitions.rs`), which are the
+/// state's own lifecycle handlers: enter/exit args are delivered to THIS state's hook, not an
+/// inherited one. Matching the condition exactly is what keeps a valid program from being
+/// rejected (the load-bearing no-false-positive gate).
+fn state_has_handler(sym: &SystemSym, state: &str, event: &str) -> bool {
+    sym.states
+        .iter()
+        .any(|s| s.name == state && s.handlers.iter().any(|h| h.event == event))
+}
+
+/// E419 + E417 — transition argument-delivery checks. A transition may carry args to a
+/// lifecycle hook: `(exit) -> $D` hands them to the SOURCE state's `<$` exit handler (E419),
+/// `-> (enter) $D` to the TARGET state's `$>` enter handler (E417). Delivering args to a hook
+/// that does not exist is an error: nothing would receive them.
+///
+/// Mirrors legacy `frame_validator/transitions.rs:302` (E419) / `:334` (E417), the `None`-arm:
+/// the "no handler to receive them" case. (Legacy's `Some`-arm arity refinement needs structured
+/// event params, which ng carries only as verbatim `params_text` today — deferred, and a
+/// false-negative never fails the gate.)
+///
+/// The transition repr renders `(...)` for the arg text: the raw args live in a source SPAN, and
+/// this pass is byte-blind by construction (`validate` sits outside `crate::text`). Everything
+/// load-bearing — source state, target, exit-vs-enter — is on the tree, and the diagnostic
+/// carries the transition's span so the CLI prints the exact `line:col`.
+fn check_arg_delivery(
+    t: &TransitionStmt,
+    source_state: &str,
+    sym: &SystemSym,
+    state_names: &[&str],
+    out: &mut Vec<Diagnostic>,
+) {
+    // E419 — exit args, but the SOURCE state has no `<$` exit handler. Independent of whether
+    // the target exists (legacy checks the source `state`, not the target), so it fires even
+    // alongside an E402 for an unknown target — exactly as legacy does.
+    if t.exit_args.is_some() && !state_has_handler(sym, source_state, "<$") {
+        let repr = format!("(...) -> ${}", t.target.as_deref().unwrap_or(""));
+        out.push(Diagnostic {
+            code: "E419",
+            severity: Severity::Error,
+            span: t.span,
+            message: format!(
+                "Exit args provided in transition `{repr}` but source state '{source_state}' \
+                 has no `<$()` exit handler to receive them"
+            ),
+        });
+    }
+    // E417 — enter args, but the TARGET state has no `$>` enter handler. Guarded by target
+    // existence: an unknown target is E402's business (legacy only reaches E417 inside
+    // `if let Some(target) = target_state`), so checking a nonexistent state's handlers here
+    // would be both wrong and a divergence from the oracle.
+    if let Some(target) = &t.target {
+        if t.enter_args.is_some()
+            && state_names.contains(&target.as_str())
+            && !state_has_handler(sym, target, "$>")
+        {
+            let repr = format!("-> (...) ${target}");
+            out.push(Diagnostic {
+                code: "E417",
+                severity: Severity::Error,
+                span: t.span,
+                message: format!(
+                    "Enter args provided in transition `{repr}` but target state '{target}' \
+                     has no `$>()` enter handler to receive them"
+                ),
+            });
+        }
     }
 }
 
