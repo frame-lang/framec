@@ -7,25 +7,40 @@ the universal gates (regen 0-stale; suite green; systems-all-the-way-down; other
 Rust also self-hosts). Python is the **pathfinder**: its validated milestones seed each
 `docs/faithfulness/M<k>.md` core + DoD inventory for rust/java/c.
 
-## Status (2026-07-25)
+## Status (2026-07-28)
 
-| # | Milestone | python | rust | java | c |
-|---|---|---|---|---|---|
 A milestone is **✅ green ONLY when it has ZERO known gaps** (every DoD fixture byte-identical or journaled). A known gap = NOT green, no matter how "mostly done."
 
 | # | Milestone | python | rust | java | c |
 |---|---|---|---|---|---|
-| M1 | Foundation (kernel/dispatch) | ✅ done | ▶ migrating | ⬚ | ⬚ |
-| M2 | Construction & Seeding | 🟡 **2 gaps fixing** (vending param-drop, multi-sys `_create`) | ⬚ | ⬚ | ⬚ |
-| M3 | Handlers & Interface | ✅ done | ⬚ | ⬚ | ⬚ |
-| M4 | Actions & Operations | ✅ done | ⬚ | ⬚ | ⬚ |
-| M5 | Hierarchy (HSM `=> $^`) | 🟡 **1 gap fixing** (`forward_enter_first` `forward_event`) | ⬚ | ⬚ | ⬚ |
-| M6 | State Stack (push/pop) | 🔴 blocked (`_transitioned` needs shared hook) | ⬚ | ⬚ | ⬚ |
-| M7 | Persistence | 🔴 not started (37) | ⬚ | ⬚ | ⬚ |
-| M8 | Native-Text fidelity | 🔴 gaps: blank-line/pass/comment (shared) + whitespace ⚖ ruling | ⬚ | ⬚ | ⬚ |
-| ~~M9~~ | ~~`@@fsm` (regex DSL)~~ | ⏸ **PARKED** (owner: not now) | ⏸ | ⏸ | ⏸ |
+| M1 | Foundation (kernel/dispatch) | ✅ | ✅ | ✅ | ✅ |
+| M2 | Construction & Seeding | ✅ | ✅ | ⬚ | ⬚ |
+| M3 | Handlers & Interface | ✅ | ⬚ | ⬚ | ⬚ |
+| M4 | Actions & Operations | ✅ | ⬚ | ⬚ | ⬚ |
+| M5 | Hierarchy (HSM `=> $^`) | 🟡 gap-3 (cross-cutting) | ⬚ | ⬚ | ⬚ |
+| M6 | State Stack (push/pop) | ⬚ (unblocked — reentrancy hook landed) | ⬚ | ⬚ | ⬚ |
+| M7 | Persistence | ⬚ | ⬚ | ⬚ | ⬚ |
+| M8 | Native-Text fidelity | 🔴 blank-line/pass/comment + native-indent (all shared) | ⬚ | ⬚ | ⬚ |
+| ~~M9~~ | ~~`@@fsm` (regex DSL)~~ | ⏸ PARKED | ⏸ | ⏸ | ⏸ |
 
-python: **180/351** byte-identical. NOTE: M2/M3/M5 were previously mismarked ✅ despite known gaps — corrected. Only M1/M3/M4 are truly green; M2/M5 have gaps in active fix (`cleanroom-python`); M6/M8 blocked on the shared driver-refactor hooks (in flight in `cleanroom-rust`). `@@fsm` fixtures (18) parked → excluded from the in-scope denominator.
+**Landed to trunk (gated):** Rust M1 (`3932076`+`ca87e39`) + M2 (`44cdf9e`); Python M2 (`1d3e947`, on
+the pre-existing M1/M3/M4 baseline); Java M1 (`d84f320`); C M1 (`081df6d`, type-aware storage model).
+**All four backends are through M1.**
+
+### Cross-cutting milestones (not per-language columns)
+- **Validation-parity** (`validate.rs` semantic diagnostics) — ng emits 20 of legacy's 99 E-codes;
+  ~57 semantic checks missing. **E419/E417 in flight** (sliced-workflow pilot, `cleanroom-validate`).
+  Port order + DoD: `VALIDATION_PARITY.md`.
+- **gap-3 forward-on-transition** (`-> => $S`) — the scanner drops the `=>` marker for **all**
+  backends (Python M5's gap-3 root cause). ~1-day cross-cutting fix (scan→tree→driver→leaves; C
+  deeper). Fix plan: inventory workflow journal.
+
+### Known shared gaps (tracked, cross-backend)
+- **Native-statement indentation** (`stmt_walk`/base-column) — legacy indents kernel natives at
+  `source_col+12`; ng at `base+12`. Confirmed on Rust AND C. → M8 shared fix.
+- **D3 seed-location** — ng relocates `$.x` seeds to the build site vs legacy's guarded synth-`$>`;
+  intentional (ng-correct), journaled per-language (Python D3; C-D3 pending its `.fc` state-var
+  fixtures at C M2).
 
 ## Python milestone BACKFILL + VALIDATION plan
 
