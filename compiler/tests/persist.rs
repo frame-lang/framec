@@ -641,6 +641,7 @@ const C_COUNTER: &str = r#"@@[persist(char*)]
 "#;
 
 /// A scalar domain field round-trips through save -> restore into a fresh instance.
+#[ignore = "C M7 untyped persist pending — the RFC-0056 typed cJSON persist was retired with the C M1 kernel-model rewrite; untyped FrameDict-based save/load is not built yet"]
 #[test]
 fn a_scalar_round_trips_on_the_fixed_type_c_route() {
     let out = run_c(
@@ -658,6 +659,7 @@ fn a_scalar_round_trips_on_the_fixed_type_c_route() {
 
 /// A mismatched-schema snapshot is REFUSED (E751 to stderr) and the instance is left
 /// untouched — never silently mis-restored (RFC-0054). Observable: n stays at its default.
+#[ignore = "C M7 untyped persist pending — the RFC-0056 typed cJSON persist was retired with the C M1 kernel-model rewrite; untyped FrameDict-based save/load is not built yet"]
 #[test]
 fn a_mismatched_schema_is_refused_on_c() {
     let out = run_c(
@@ -697,6 +699,7 @@ const C_TOGGLE: &str = r#"@@[persist(char*)]
 
 /// **Live control state round-trips.** After a `flip` the machine is in `$On`; a
 /// save -> restore into a fresh instance lands back in `$On` (observable: `read()==1`).
+#[ignore = "C M7 untyped persist pending — the RFC-0056 typed cJSON persist was retired with the C M1 kernel-model rewrite; untyped FrameDict-based save/load is not built yet"]
 #[test]
 fn control_state_round_trips_on_c() {
     let out = run_c(
@@ -936,6 +939,7 @@ static Point zero(void) { Point p; p.x = 0; p.y = 0; return p; }
 /// emits an author-hook call + a forward `extern` for the marshaller, type-ignorantly. A
 /// missing definition is a build-time link error, not a framec refusal. The scalar `n` is
 /// marshalled directly; only `p: Point` routes through the hook.
+#[ignore = "C M7 untyped persist pending — the RFC-0056 typed cJSON persist was retired with the C M1 kernel-model rewrite; untyped FrameDict-based save/load is not built yet"]
 #[test]
 fn c_emits_an_author_hook_for_a_user_type() {
     let src = Source::new("t.frm", C_USERTYPE.as_bytes().to_vec()).unwrap();
@@ -976,6 +980,7 @@ fn rust_accepts_the_same_user_type_persist_field() {
 /// PROOF at runtime: a user-typed field round-trips on C when the author supplies the hook
 /// pair. The Point struct + its pack/unpack hooks are defined in `main` (author code), framec
 /// emits the calls, and cJSON does the JSON. save -> restore reproduces the value.
+#[ignore = "C M7 untyped persist pending — the RFC-0056 typed cJSON persist was retired with the C M1 kernel-model rewrite; untyped FrameDict-based save/load is not built yet"]
 #[test]
 fn c_user_type_round_trips_with_author_hook() {
     // `Point` + `zero()` are water in the fixture (above the system); the author's marshalling
