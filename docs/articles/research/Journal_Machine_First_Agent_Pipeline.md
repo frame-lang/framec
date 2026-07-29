@@ -720,6 +720,39 @@ and fixing it (RFC-0058's invariant-1 name, RFC-0063's title, the glossary, the 
 is fixing the architecture, not relabeling it. (Cf. D10 — terminology is instrumentation
 — here sharpened: terminology is *structure*.)
 
+**D18 — Past the conversion frontier the discovery organ stops generating and becomes a
+confirmation-and-dedup instrument, and that is a success signal, not a null result.**
+Cauldron's front-end — survey a codebase, build a machine-inventory graph of its latent
+machines, let that graph drive the conversion — was run, for the first time as an
+*explicit* organ, over ng's own residual hand-Rust (`text/scan/{machine,parts,sections}.rs`,
+`tree/`, `resolve.rs`, `validate.rs`). It surfaced **zero** un-converted machines needing a
+fresh `.frs`: the residue is overwhelmingly *engine-reified-elsewhere* (the scan/emit drivers
+are self-described materialization folds over the 37 shipped systems), *value* (the AST
+schema), and *predicate/constraint* (the validators plus the totality checker) — the three
+non-machine roles of the trichotomy (D15), correctly factored, including a textbook
+fork-and-adjudicate split. This *confirms* the campaign's NULL-conversion calls (D13/D14) with
+fresh file:line evidence instead of surfacing new work — the honest signal of a codebase
+already converted past its discovery frontier. The organ's one non-trivial yield was not a
+machine to *build* but a **duplicate to remove**: `resolve.rs` hand-rolled an iterative
+graph-reachability fixpoint (`persist_reachable`) whose engine already ships as `@@system
+Reachability` and is already consumed by `validate.rs` for W401 — one question, two
+implementations (#219). The conversion was therefore a **consume-and-delete**, not a topology
+lift: route `resolve.rs` through a new multi-source wrapper on the shipped engine, delete the
+hand loop. *Evidence:* certified under the campaign's exact discipline with the **hand path as
+its own oracle** — the retired fixpoint kept transiently under `debug_assert_eq!(engine ==
+hand)` tripped **zero** times across the whole corpus (54 suites × 2 profiles green; regen
+fixpoint 37/0-stale; no `.frs`/`.gen.rs` touched), and a deliberate **falsification** (starving
+the engine's seed) confirmed the gate had teeth — it tripped on the real persisted systems
+`Saver`/`Sys1_1`. Two lessons for the paper: (a) the golden-master + hand-as-oracle machinery
+certifies a *consume-and-delete* exactly as it certifies a lift, so the referee organ is
+validated on a unit the player organ (already proven on the E406 write, D-series) never needed
+to touch; and (b) the discovery organ's **yield-vs-conversion-depth curve** — generative on a
+fresh target, confirmatory-plus-dedup on a converted one — is itself a datum, because it tells
+a Cauldron operator when the front-end has finished its job. (Context: this whole arc is
+groundwork for *Cauldron*, the native→Frame conversion product; ng is the dogfood that
+validates its discovery/referee organs while the behavioral-freeze half awaits a
+less-converted target.)
+
 ## 3. Supporting artifacts (where the evidence lives)
 
 - The worldview: `docs/articles/Shadows_on_the_Wall.md` (with the two
