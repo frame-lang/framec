@@ -52,7 +52,7 @@ fn check(label: &str, frm: &str) -> usize {
             Target::C => &cb,
             _ => unreachable!("targets are gated to the supported four"),
         };
-        let report = driver::interface_parity_report(&ast, &syms, be);
+        let report = driver::interface_parity_report(&src, &ast, &syms, be);
         assert!(
             !report.is_empty(),
             "{label}: no systems parsed for {target:?}"
@@ -286,7 +286,7 @@ fn deterministic_fuzz_of_random_shapes_is_byte_identical() {
                 Target::C => &cb,
                 _ => unreachable!(),
             };
-            for p in driver::interface_parity_report(&ast, &syms, be) {
+            for p in driver::interface_parity_report(&src, &ast, &syms, be) {
                 assert_eq!(
                     p.machine_text, p.hand_text,
                     "FUZZ n={n} {target:?} [{}]: interface text differs\nsource:\n{frm}\n\

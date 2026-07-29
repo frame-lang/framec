@@ -50,7 +50,7 @@
     machine:
         $Interface {
             step() {
-                emit_iface_phase(self.sym, self.be, &mut self.out);
+                emit_iface_phase(self.src, self.sym, self.sections, self.be, &mut self.out);
                 -> $Dispatch
             }
         }

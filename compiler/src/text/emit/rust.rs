@@ -200,84 +200,14 @@ impl Backend for Rust {
 
     /// KERNEL state dispatcher `_state_<S>` (SCAN systems dispatch directly in `route`, so this
     /// emits nothing for them — the 24 `.gen.rs` stay byte-frozen).
+    ///
+    /// The per-state dispatcher is the rust-only `RustDispatch` `@@system` (`super::rust_dispatch`),
+    /// pilot-style — rust's `match`-over-a-typed-enum dispatcher is a different control structure
+    /// from the `if`-chain targets' shared `DispatchBody`, so it does not join that walk; it is
+    /// sequenced through the three `rust_dispatch_*` leaves below. The byte-for-byte pre-conversion
+    /// body is preserved as [`rust_dispatch_hand`] and gated in `tests/emit_scaffold_walks.rs`.
     fn dispatch(&self, sym: &SystemSym, state: &str, arms: &[String], out: &mut Sink) {
-        if sym.scan.is_some() {
-            return;
-        }
-        let n = &sym.name;
-        out.frame(&format!("\n        fn _state_{state}(&mut self, __e: &{n}FrameEvent) {{\n"));
-        out.frame("            match __e {\n");
-        let st = sym.states.iter().find(|s| s.name == state);
-        for msg in arms {
-            let ev = pascal_event(msg);
-            let method = kernel_handler_method(state, msg);
-            if msg == "$>" {
-                // Enter: deliver the `$>` ENTER params from the destination's typed ctx (climb the
-                // parent chain to the owning state, read each field, pass positionally). These are
-                // the enter handler's own params — NOT the state header params — and are stored in
-                // the unified state Context (`state_ctx_fields`).
-                let params: Vec<String> = st
-                    .map(|s| enter_handler_params(s).into_iter().map(|(nm, _)| nm).collect())
-                    .unwrap_or_default();
-                if params.is_empty() {
-                    out.frame(&format!(
-                        "                {n}FrameEvent::FrameEnter {{ .. }} => {{ self.{method}(__e); }}\n"
-                    ));
-                } else {
-                    out.frame(&format!("                {n}FrameEvent::FrameEnter {{ .. }} => {{\n"));
-                    for p in &params {
-                        out.frame(&format!("                    let {p} = {{\n"));
-                        out.frame("                        let mut __sc = &self.__compartment;\n");
-                        out.frame(&format!("                        while __sc.state != {state:?} {{\n"));
-                        out.frame("                            match __sc.parent_compartment.as_deref() {\n");
-                        out.frame("                                Some(p) => __sc = p,\n");
-                        out.frame("                                None => break,\n");
-                        out.frame("                            }\n");
-                        out.frame("                        }\n");
-                        out.frame("                        match &__sc.state_context {\n");
-                        out.frame(&format!(
-                            "                            {n}StateContext::{state}(ctx) => ctx.{p}.clone(),\n"
-                        ));
-                        out.frame("                            _ => Default::default(),\n");
-                        out.frame("                        }\n");
-                        out.frame("                    };\n");
-                    }
-                    let args = params.iter().map(String::as_str).collect::<Vec<_>>().join(", ");
-                    out.frame(&format!("                    self.{method}(__e, {args});\n"));
-                    out.frame("                }\n");
-                }
-            } else if msg == "<$" {
-                out.frame(&format!(
-                    "                {n}FrameEvent::FrameExit {{ .. }} => {{ self.{method}(__e); }}\n"
-                ));
-            } else {
-                // User event: destructure the variant's fields, pass positionally.
-                let iface = sym.interface.iter().find(|m| &m.name == msg);
-                let fields: Vec<String> = iface
-                    .map(|m| {
-                        super::driver::params_split(m.params_text.as_deref().unwrap_or(""))
-                            .into_iter()
-                            .filter(|(nm, _)| !nm.is_empty())
-                            .map(|(nm, _)| nm)
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                if fields.is_empty() {
-                    out.frame(&format!(
-                        "                {n}FrameEvent::{ev} {{ .. }} => {{ self.{method}(__e); }}\n"
-                    ));
-                } else {
-                    let pat = fields.join(", ");
-                    let pass = fields.iter().map(|f| format!("*{f}")).collect::<Vec<_>>().join(", ");
-                    out.frame(&format!(
-                        "                {n}FrameEvent::{ev} {{ {pat}, .. }} => {{ self.{method}(__e, {pass}); }}\n"
-                    ));
-                }
-            }
-        }
-        out.frame("                _ => {}\n");
-        out.frame("            }\n");
-        out.frame("        }\n");
+        super::rust_dispatch::drive(sym, state, arms, out);
     }
 
     /// One `__router` arm (KERNEL only — `router_walk::walk` is driven from `emit_kernel_open`).
@@ -355,6 +285,26 @@ impl Backend for Rust {
     fn pad(&self, rel: u32) -> String {
         // The SCAN model's base: a bare `impl` at column 0, method at 4, body at 8.
         format!("        {}", " ".repeat(rel as usize))
+    }
+
+    /// Rust nests methods two levels inside the `mod`/`impl` — `pub fn` sits at column 8 — so a
+    /// member-level comment lands there too.
+    fn member_indent(&self) -> &'static str {
+        "        "
+    }
+
+    /// Rust actions are TRAILING-separated: [`Self::close_action`] emits `}\n\n`, so a blank line
+    /// already precedes the next action, and [`Self::open_action`] opens straight with `    fn`
+    /// (no leading `\n`). A member comment before an action must therefore emit each line
+    /// newline-TERMINATED with no leading blank of its own — Model B — or the missing terminator
+    /// would run `// comment` and `fn act(...)` onto one line and comment the method out.
+    fn actions_comment(&self, lines: &[String], out: &mut Sink) {
+        let indent = self.member_indent();
+        for line in lines {
+            out.frame(indent);
+            out.frame(line);
+            out.frame("\n");
+        }
     }
 
     /// KERNEL handler bodies sit one `impl`-level deeper than a scanner's (the `mod _<sys>_framec`
@@ -772,6 +722,192 @@ impl Backend for Rust {
         }
         out.frame("        }\n\n");
     }
+}
+
+// ======================================================================================
+// RUST PER-STATE DISPATCHER LEAVES — the three fragments the `RustDispatch` `@@system`
+// (`super::rust_dispatch`) sequences. They live HERE, not in the walk module, because they
+// need rust.rs's private helpers (`pascal_event`, `kernel_handler_method`,
+// `enter_handler_params`, `super::driver::params_split`). Byte-exact against the frozen
+// [`rust_dispatch_hand`] via GATE-A (`tests/emit_scaffold_walks.rs`).
+// ======================================================================================
+
+/// The dispatcher method HEADER + the `match __e {` line — the bytes before the arms.
+pub(super) fn rust_dispatch_open(sym: &SystemSym, state: &str, out: &mut Sink) {
+    let n = &sym.name;
+    out.frame(&format!("\n        fn _state_{state}(&mut self, __e: &{n}FrameEvent) {{\n"));
+    out.frame("            match __e {\n");
+}
+
+/// One dispatch ARM — the loop body for the event message at slot `ai`. Recomputes `n`/`st`/`ev`/
+/// `method` inside (the walk carries no register): `$>` enter (parent-chain ctx-climb), `<$` exit,
+/// else a user event's variant destructure. Out of range emits nothing (total).
+pub(super) fn rust_dispatch_arm(sym: &SystemSym, state: &str, arms: &[String], ai: usize, out: &mut Sink) {
+    let Some(msg) = arms.get(ai) else { return };
+    let n = &sym.name;
+    let st = sym.states.iter().find(|s| s.name == state);
+    let ev = pascal_event(msg);
+    let method = kernel_handler_method(state, msg);
+    if msg == "$>" {
+        // Enter: deliver the `$>` ENTER params from the destination's typed ctx (climb the
+        // parent chain to the owning state, read each field, pass positionally). These are
+        // the enter handler's own params — NOT the state header params — and are stored in
+        // the unified state Context (`state_ctx_fields`).
+        let params: Vec<String> = st
+            .map(|s| enter_handler_params(s).into_iter().map(|(nm, _)| nm).collect())
+            .unwrap_or_default();
+        if params.is_empty() {
+            out.frame(&format!(
+                "                {n}FrameEvent::FrameEnter {{ .. }} => {{ self.{method}(__e); }}\n"
+            ));
+        } else {
+            out.frame(&format!("                {n}FrameEvent::FrameEnter {{ .. }} => {{\n"));
+            for p in &params {
+                out.frame(&format!("                    let {p} = {{\n"));
+                out.frame("                        let mut __sc = &self.__compartment;\n");
+                out.frame(&format!("                        while __sc.state != {state:?} {{\n"));
+                out.frame("                            match __sc.parent_compartment.as_deref() {\n");
+                out.frame("                                Some(p) => __sc = p,\n");
+                out.frame("                                None => break,\n");
+                out.frame("                            }\n");
+                out.frame("                        }\n");
+                out.frame("                        match &__sc.state_context {\n");
+                out.frame(&format!(
+                    "                            {n}StateContext::{state}(ctx) => ctx.{p}.clone(),\n"
+                ));
+                out.frame("                            _ => Default::default(),\n");
+                out.frame("                        }\n");
+                out.frame("                    };\n");
+            }
+            let args = params.iter().map(String::as_str).collect::<Vec<_>>().join(", ");
+            out.frame(&format!("                    self.{method}(__e, {args});\n"));
+            out.frame("                }\n");
+        }
+    } else if msg == "<$" {
+        out.frame(&format!(
+            "                {n}FrameEvent::FrameExit {{ .. }} => {{ self.{method}(__e); }}\n"
+        ));
+    } else {
+        // User event: destructure the variant's fields, pass positionally.
+        let iface = sym.interface.iter().find(|m| &m.name == msg);
+        let fields: Vec<String> = iface
+            .map(|m| {
+                super::driver::params_split(m.params_text.as_deref().unwrap_or(""))
+                    .into_iter()
+                    .filter(|(nm, _)| !nm.is_empty())
+                    .map(|(nm, _)| nm)
+                    .collect()
+            })
+            .unwrap_or_default();
+        if fields.is_empty() {
+            out.frame(&format!(
+                "                {n}FrameEvent::{ev} {{ .. }} => {{ self.{method}(__e); }}\n"
+            ));
+        } else {
+            let pat = fields.join(", ");
+            let pass = fields.iter().map(|f| format!("*{f}")).collect::<Vec<_>>().join(", ");
+            out.frame(&format!(
+                "                {n}FrameEvent::{ev} {{ {pat}, .. }} => {{ self.{method}(__e, {pass}); }}\n"
+            ));
+        }
+    }
+}
+
+/// CLOSE the dispatcher — the `_ => {}` default arm and the two closing braces.
+pub(super) fn rust_dispatch_close(out: &mut Sink) {
+    out.frame("                _ => {}\n");
+    out.frame("            }\n");
+    out.frame("        }\n");
+}
+
+/// The byte-for-byte **frozen oracle** for the Rust per-state dispatcher — a verbatim copy of the
+/// pre-conversion `Backend::dispatch` body (scan-guard included), before it was reified as the
+/// [`super::rust_dispatch`] `RustDispatch` `@@system`. Kept as the GATE-A differential the machine
+/// is proven against (`tests/emit_scaffold_walks.rs`, via
+/// [`super::driver::rust_dispatch_parity_report`]). It does NOT route through `be.dispatch` — it
+/// reproduces the original bytes standalone, so a spelling bug in a `rust_dispatch` leaf is visible
+/// to the gate. Doc-hidden and **not on the production path**. Do not edit it to add behavior: it
+/// exists only to reproduce the pre-conversion value exactly, so any divergence is the machine's
+/// bug, not the oracle's.
+#[doc(hidden)]
+pub(super) fn rust_dispatch_hand(sym: &SystemSym, state: &str, arms: &[String], out: &mut Sink) {
+    if sym.scan.is_some() {
+        return;
+    }
+    let n = &sym.name;
+    out.frame(&format!("\n        fn _state_{state}(&mut self, __e: &{n}FrameEvent) {{\n"));
+    out.frame("            match __e {\n");
+    let st = sym.states.iter().find(|s| s.name == state);
+    for msg in arms {
+        let ev = pascal_event(msg);
+        let method = kernel_handler_method(state, msg);
+        if msg == "$>" {
+            // Enter: deliver the `$>` ENTER params from the destination's typed ctx (climb the
+            // parent chain to the owning state, read each field, pass positionally). These are
+            // the enter handler's own params — NOT the state header params — and are stored in
+            // the unified state Context (`state_ctx_fields`).
+            let params: Vec<String> = st
+                .map(|s| enter_handler_params(s).into_iter().map(|(nm, _)| nm).collect())
+                .unwrap_or_default();
+            if params.is_empty() {
+                out.frame(&format!(
+                    "                {n}FrameEvent::FrameEnter {{ .. }} => {{ self.{method}(__e); }}\n"
+                ));
+            } else {
+                out.frame(&format!("                {n}FrameEvent::FrameEnter {{ .. }} => {{\n"));
+                for p in &params {
+                    out.frame(&format!("                    let {p} = {{\n"));
+                    out.frame("                        let mut __sc = &self.__compartment;\n");
+                    out.frame(&format!("                        while __sc.state != {state:?} {{\n"));
+                    out.frame("                            match __sc.parent_compartment.as_deref() {\n");
+                    out.frame("                                Some(p) => __sc = p,\n");
+                    out.frame("                                None => break,\n");
+                    out.frame("                            }\n");
+                    out.frame("                        }\n");
+                    out.frame("                        match &__sc.state_context {\n");
+                    out.frame(&format!(
+                        "                            {n}StateContext::{state}(ctx) => ctx.{p}.clone(),\n"
+                    ));
+                    out.frame("                            _ => Default::default(),\n");
+                    out.frame("                        }\n");
+                    out.frame("                    };\n");
+                }
+                let args = params.iter().map(String::as_str).collect::<Vec<_>>().join(", ");
+                out.frame(&format!("                    self.{method}(__e, {args});\n"));
+                out.frame("                }\n");
+            }
+        } else if msg == "<$" {
+            out.frame(&format!(
+                "                {n}FrameEvent::FrameExit {{ .. }} => {{ self.{method}(__e); }}\n"
+            ));
+        } else {
+            // User event: destructure the variant's fields, pass positionally.
+            let iface = sym.interface.iter().find(|m| &m.name == msg);
+            let fields: Vec<String> = iface
+                .map(|m| {
+                    super::driver::params_split(m.params_text.as_deref().unwrap_or(""))
+                        .into_iter()
+                        .filter(|(nm, _)| !nm.is_empty())
+                        .map(|(nm, _)| nm)
+                        .collect()
+                })
+                .unwrap_or_default();
+            if fields.is_empty() {
+                out.frame(&format!(
+                    "                {n}FrameEvent::{ev} {{ .. }} => {{ self.{method}(__e); }}\n"
+                ));
+            } else {
+                let pat = fields.join(", ");
+                let pass = fields.iter().map(|f| format!("*{f}")).collect::<Vec<_>>().join(", ");
+                out.frame(&format!(
+                    "                {n}FrameEvent::{ev} {{ {pat}, .. }} => {{ self.{method}(__e, {pass}); }}\n"
+                ));
+            }
+        }
+    }
+    out.frame("                _ => {}\n");
+    out.frame("            }\n");
+    out.frame("        }\n");
 }
 
 impl Rust {

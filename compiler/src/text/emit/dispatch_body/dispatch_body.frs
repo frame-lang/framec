@@ -1,0 +1,74 @@
+@@[target("rust")]
+
+// The SHARED per-state message-dispatcher BODY walk, for the targets whose dispatcher is an
+// `if`-chain over the event message — Python, Java, C. It is the inner half of dispatch: the shared
+// `StateDispatchWalk` decides WHICH arms a state dispatches and in WHAT ORDER; this walk SPELLS the
+// method body those arms produce, one fragment at a time, through the `Backend` seam. Rust's
+// dispatcher is a `match` over a typed event enum — a different control structure — so it does NOT
+// use this walk; it gets its own system.
+//
+// THE WALK IS IDENTICAL ACROSS PYTHON/JAVA/C: emit the method header, bind the state's params off
+// the live compartment (one per param), emit one arm per event message, then close. Only the
+// per-fragment SPELLING differs (Python `if __e._message == "m":` / untyped bind; Java
+// `if (__e._message.equals("m"))` / typed unbox; C `if (strcmp(...))` / typed cast), and that is
+// exactly what the `be.dispatch_*` leaves carry. The one target-specific tail — Python's `pass` on an
+// empty dispatcher and its `=> $^` default-forward fall-through, versus Java/C's closing brace —
+// folds entirely into `be.dispatch_close`, so this walk needs no per-language guard.
+//
+// THE HONEST MACHINE CLASS. §3 degenerate pole: a program-counter walk over data already decided
+// upstream (`arms` pre-ordered by `StateDispatchWalk`; params read from the resolved symbol table).
+// The two cursors (`pi`, `ai`) are pure program counters. The payoff is DOGFOOD UNIFORMITY, and —
+// because it is SHARED — the elimination of three copies of one walk. Differential-gated byte-for-byte
+// against each target's preserved `*_dispatch_hand`. It rides the same read-only borrowed domain as
+// the landed emit machines (`be: &dyn Backend`, `sym: &SystemSym`).
+//
+// Regen: framec-ng -l rust --emit dispatch_body.frs | grep -v '^#!\[allow' > dispatch_body.gen.rs
+
+@@system DispatchBody(be: &dyn Backend, sym: &SystemSym, state: &str, arms: EventVec, np: usize, na: usize, out: Sink) {
+    interface:
+        step()
+    machine:
+        $Header {
+            step() {
+                dispatch_open(self.be, self.sym, self.state, &mut self.out);
+                -> $Params
+            }
+        }
+        $Params {
+            step() {
+                if self.pi >= self.np {
+                    -> $Arms
+                }
+                dispatch_param(self.be, self.sym, self.state, self.pi, &mut self.out);
+                self.pi = self.pi + 1;
+                -> $Params
+            }
+        }
+        $Arms {
+            step() {
+                if self.ai >= self.na {
+                    -> $Close
+                }
+                dispatch_arm(self.be, self.sym, self.state, &self.arms, self.ai, &mut self.out);
+                self.ai = self.ai + 1;
+                -> $Arms
+            }
+        }
+        $Close {
+            step() {
+                dispatch_close(self.be, self.sym, self.state, &self.arms, self.np, &mut self.out);
+                -> $Done
+            }
+        }
+        $Done { }
+    domain:
+        be: &dyn Backend = be
+        sym: &SystemSym = sym
+        state: &str = state
+        arms: EventVec = arms
+        np: usize = np
+        na: usize = na
+        out: Sink = out
+        pi: usize = 0
+        ai: usize = 0
+}

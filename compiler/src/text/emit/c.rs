@@ -670,25 +670,44 @@ impl Backend for C {
 
     /// One state's message dispatcher — `_state_X`, the function `_router` hands an event to.
     fn dispatch(&self, sym: &SystemSym, state: &str, arms: &[String], out: &mut Sink) {
+        // The per-state dispatcher BODY is the SHARED `DispatchBody` @@system
+        // (`super::dispatch_body`), spelled through the four `dispatch_*` seam methods below. The
+        // byte-for-byte pre-conversion body is preserved as [`c_dispatch_hand`] and gated in
+        // `tests/emit_scaffold_walks.rs`.
+        super::dispatch_body::drive(self, sym, state, arms, out);
+    }
+
+    fn dispatch_open(&self, sym: &SystemSym, state: &str, out: &mut Sink) {
         let n = &sym.name;
         out.frame(&format!(
             "\nstatic void {n}_state_{state}({n}* self, {n}_FrameEvent* __e, {n}_Compartment* compartment) {{\n"
         ));
-        // Bind the state's declared params off the live compartment's positional `state_args`.
+    }
+
+    fn dispatch_param(&self, sym: &SystemSym, state: &str, pi: usize, out: &mut Sink) {
+        // Bind the state's declared param off the live compartment's positional `state_args`.
+        let n = &sym.name;
         if let Some(st) = sym.states.iter().find(|s| s.name == state) {
-            for (i, p) in st.state_params.iter().enumerate() {
+            if let Some(p) = st.state_params.get(pi) {
                 let ty = st.state_param_types.get(p).cloned().unwrap_or_else(|| "void*".into());
                 out.frame(&format!(
-                    "    {ty} {p} = ({ty})(intptr_t){n}_FrameVec_get(compartment->state_args, {i});\n"
+                    "    {ty} {p} = ({ty})(intptr_t){n}_FrameVec_get(compartment->state_args, {pi});\n"
                 ));
             }
         }
-        for msg in arms {
+    }
+
+    fn dispatch_arm(&self, sym: &SystemSym, state: &str, arms: &[String], ai: usize, out: &mut Sink) {
+        let n = &sym.name;
+        if let Some(msg) = arms.get(ai) {
             out.frame(&format!(
                 "    if (strcmp(__e->_message, \"{msg}\") == 0) {{\n        {}(self, __e, compartment);\n        return;\n    }}\n",
                 c_handler_method(n, state, msg)
             ));
         }
+    }
+
+    fn dispatch_close(&self, _sym: &SystemSym, _state: &str, _arms: &[String], _np: usize, out: &mut Sink) {
         out.frame("}\n");
     }
 
@@ -799,6 +818,12 @@ impl Backend for C {
 
     fn pad(&self, rel: u32) -> String {
         format!("    {}", " ".repeat(rel as usize))
+    }
+
+    /// C functions are file-scope — `static void …` opens at column 0 — so a member-level comment
+    /// carries no indentation.
+    fn member_indent(&self) -> &'static str {
+        ""
     }
 
     fn native_stmt(&self, rel: u32, text: NativeText, _ctx: &LeafCtx, out: &mut Sink) {
@@ -1229,6 +1254,35 @@ impl C {
             format!("{n}* self, {plist}")
         }
     }
+}
+
+/// The byte-for-byte **frozen oracle** for C's per-state dispatcher — a verbatim copy of the
+/// pre-conversion `Backend::dispatch` body, before it was reified as the shared
+/// [`super::dispatch_body`] `DispatchBody` `@@system`. Kept as the GATE-A differential the machine is
+/// proven against (`tests/emit_scaffold_walks.rs`). It does NOT route through `be.dispatch` — it
+/// reproduces the original bytes standalone, so a spelling bug in a `dispatch_*` leaf is visible to
+/// the gate. Doc-hidden and **not on the production path**.
+#[doc(hidden)]
+pub(super) fn c_dispatch_hand(sym: &SystemSym, state: &str, arms: &[String], out: &mut Sink) {
+    let n = &sym.name;
+    out.frame(&format!(
+        "\nstatic void {n}_state_{state}({n}* self, {n}_FrameEvent* __e, {n}_Compartment* compartment) {{\n"
+    ));
+    if let Some(st) = sym.states.iter().find(|s| s.name == state) {
+        for (i, p) in st.state_params.iter().enumerate() {
+            let ty = st.state_param_types.get(p).cloned().unwrap_or_else(|| "void*".into());
+            out.frame(&format!(
+                "    {ty} {p} = ({ty})(intptr_t){n}_FrameVec_get(compartment->state_args, {i});\n"
+            ));
+        }
+    }
+    for msg in arms {
+        out.frame(&format!(
+            "    if (strcmp(__e->_message, \"{msg}\") == 0) {{\n        {}(self, __e, compartment);\n        return;\n    }}\n",
+            c_handler_method(n, state, msg)
+        ));
+    }
+    out.frame("}\n");
 }
 
 /// The private function name for one `(state, event)` handler — `<Sys>_s_<state>_hdl_user_<event>`

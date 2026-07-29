@@ -23,6 +23,8 @@
 use super::driver::Backend;
 use super::Sink;
 use crate::resolve::SystemSym;
+use crate::text::Source;
+use crate::tree::Section;
 
 /// The per-method `(state, handler_owner)` router arms the walk accumulates — the exact shape
 /// `be.route` consumes. A named alias so the `@@system`'s domain declaration stays a bare
@@ -72,10 +74,19 @@ fn method_is_async(sym: &SystemSym, mi: usize) -> bool {
 /// the `$Arm` route-branch leaf. Reads the method's name / params / return type from the symbol
 /// table, threads in the stamped `arms` (borrowed, not moved) and the computed `is_async`, and lets
 /// the backend spell the per-state dispatch switch. Out of range emits nothing (total).
-fn route_method(sym: &SystemSym, be: &dyn Backend, mi: usize, arms: &ArmVec, is_async: bool, out: &mut Sink) {
+#[allow(clippy::too_many_arguments)]
+fn route_method(src: &Source, sym: &SystemSym, sections: &[Section], be: &dyn Backend, mi: usize, arms: &ArmVec, is_async: bool, out: &mut Sink) {
     let Some(m) = sym.interface.get(mi) else {
         return;
     };
+    // The standalone user COMMENTS that lead this interface method in source — the trivia between
+    // it and the previous signature (or, for the first, the `interface:` keyword). Emitted before
+    // the public wrapper, reindented to the member column, matching the shipped compiler. Interface
+    // methods are never reordered, so the source-positional gap is the emission-positional gap.
+    let lead = super::driver::interface_leading_comments(src, sections, mi);
+    if !lead.is_empty() {
+        be.member_comment(&lead, out);
+    }
     be.route(
         sym,
         &m.name,
@@ -97,8 +108,8 @@ mod fsm {
         unused_imports
     )]
     use super::{
-        clear_arms, method_is_async, route_method, stamp_arm, state_count, ArmVec, Backend, Sink,
-        SystemSym,
+        clear_arms, method_is_async, route_method, stamp_arm, state_count, ArmVec, Backend,
+        Section, Sink, Source, SystemSym,
     };
     include!("emit_interface.gen.rs");
 }
@@ -108,9 +119,9 @@ mod fsm {
 /// [`super::driver::emit_body`] does around StmtWalk), seeds an empty arm accumulator, drives to
 /// fixpoint, and writes the grown Sink back. The bounded drive loop lives here — a broken machine
 /// cannot hang.
-pub(super) fn walk(sym: &SystemSym, be: &dyn Backend, out: &mut Sink) {
+pub(super) fn walk(src: &Source, sym: &SystemSym, sections: &[Section], be: &dyn Backend, out: &mut Sink) {
     let seed = std::mem::take(out);
-    let mut m = fsm::EmitInterface::new(sym, be, sym.interface.len(), Vec::new(), seed);
+    let mut m = fsm::EmitInterface::new(src, sym, sections, be, sym.interface.len(), Vec::new(), seed);
     // A safe over-bound on the number of steps: for each of the `ni` methods, `$Method` fires once
     // (the descent) and `$Arm` fires `na + 1` times (`na` per-state stamps plus the route), then the
     // terminal `$Method` halt. `na` is the constant state count. Computing it is a cheap product (no
@@ -120,4 +131,13 @@ pub(super) fn walk(sym: &SystemSym, be: &dyn Backend, out: &mut Sink) {
         m.step();
     }
     *out = m.out;
+    // The TRAILING interface comments — the trivia AFTER the last signature, which the shipped
+    // compiler emits between the interface wrappers and the state dispatch (the next phase). The
+    // machine's `$Method` cycle only emits the comments that LEAD a method, so the trailing gap
+    // (index == method count) is drained here, once, after the routes. The hand oracle
+    // [`super::driver::emit_interface_hand`] does the same after its loop.
+    let trailing = super::driver::interface_leading_comments(src, sections, sym.interface.len());
+    if !trailing.is_empty() {
+        be.member_comment(&trailing, out);
+    }
 }

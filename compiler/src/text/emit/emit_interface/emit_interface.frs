@@ -37,7 +37,7 @@
 //
 // Regen: framec-ng -l rust --emit emit_interface.frs | grep -v '^#!\[allow' > emit_interface.gen.rs
 
-@@system EmitInterface(sym: &SystemSym, be: &dyn Backend, ni: usize, arms: ArmVec, out: Sink) {
+@@system EmitInterface(src: &Source, sym: &SystemSym, sections: &[Section], be: &dyn Backend, ni: usize, arms: ArmVec, out: Sink) {
     interface:
         step()
     machine:
@@ -56,7 +56,7 @@
             step() {
                 if self.ai >= self.na {
                     let is_async = method_is_async(self.sym, self.mi);
-                    route_method(self.sym, self.be, self.mi, &self.arms, is_async, &mut self.out);
+                    route_method(self.src, self.sym, self.sections, self.be, self.mi, &self.arms, is_async, &mut self.out);
                     self.mi = self.mi + 1;
                     -> $Method
                 }
@@ -67,7 +67,9 @@
         }
         $Done { }
     domain:
+        src: &Source = src
         sym: &SystemSym = sym
+        sections: &[Section] = sections
         be: &dyn Backend = be
         ni: usize = ni
         arms: ArmVec = arms

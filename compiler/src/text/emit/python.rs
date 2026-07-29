@@ -279,45 +279,33 @@ impl Backend for Python {
     /// resolves. A state that declares nothing needs a `pass` — in python an empty block is a
     /// SyntaxError, not a no-op.
     fn dispatch(&self, sym: &SystemSym, state: &str, arms: &[String], out: &mut Sink) {
+        // The per-state dispatcher BODY is the SHARED `DispatchBody` @@system
+        // (`super::dispatch_body`), spelled through the four `dispatch_*` seam methods below. `arms`
+        // ARRIVE in the shared `StateDispatchWalk`'s handler-KEY order; this backend consumes them in
+        // received order. The byte-for-byte pre-conversion body is preserved as [`py_dispatch_hand`]
+        // and gated in `tests/emit_scaffold_walks.rs`.
+        super::dispatch_body::drive(self, sym, state, arms, out);
+    }
+
+    fn dispatch_open(&self, sym: &SystemSym, state: &str, out: &mut Sink) {
         let kw = if py_system_async(sym) { "async def" } else { "def" };
-        let aw = if py_system_async(sym) { "await " } else { "" };
         out.frame(&format!("\n    {kw} _state_{state}(self, __e, compartment):\n"));
-        let params = sym
+    }
+
+    fn dispatch_param(&self, sym: &SystemSym, state: &str, pi: usize, out: &mut Sink) {
+        if let Some(p) = sym
             .states
             .iter()
             .find(|s| s.name == state)
-            .map(|s| s.state_params.clone())
-            .unwrap_or_default();
-        for (i, p) in params.iter().enumerate() {
-            out.frame(&format!(
-                "        {p} = self.__compartment.state_args[{i}]\n"
-            ));
+            .and_then(|s| s.state_params.get(pi))
+        {
+            out.frame(&format!("        {p} = self.__compartment.state_args[{pi}]\n"));
         }
-        // The state's DEFAULT FORWARD — `=> $^` written as a state MEMBER — is a fall-through at
-        // the very END of the dispatcher: an event that matched no arm above goes to the parent's
-        // dispatcher, one level up, with the parent's compartment. Two facts, both read from the
-        // symbol table (`StateSym::default_forward`, set by the resolver from the
-        // `StateMember::DefaultForward` node, and `declared_parent`); nothing is derived from
-        // text. `=> $^` in a ROOT state forwards nowhere and emits nothing — matching the oracle,
-        // which spells `pass` there because the block would otherwise be empty.
-        let forward_to = sym
-            .states
-            .iter()
-            .find(|s| s.name == state)
-            .filter(|s| s.default_forward)
-            .and_then(|_| sym.declared_parent(state))
-            .map(|p| p.name.clone());
-        if arms.is_empty() && params.is_empty() && forward_to.is_none() {
-            out.frame("        pass\n");
-            return;
-        }
-        // `arms` ARRIVE in the shipped compiler's handler-KEY order — the `StateDispatchWalk`
-        // machine's `handler_slot` projection put them there, the same order the `EmitHandlers`
-        // walk's `member_slot` gives the private handler METHODS, so the two lists agree by
-        // construction. This spelling does not re-sort them: the order is a decision, and the
-        // decision is not a backend's to make (it used to be made here, in one backend, for a
-        // behavior legacy applies to all four).
-        for msg in arms {
+    }
+
+    fn dispatch_arm(&self, sym: &SystemSym, state: &str, arms: &[String], ai: usize, out: &mut Sink) {
+        let aw = if py_system_async(sym) { "await " } else { "" };
+        if let Some(msg) = arms.get(ai) {
             out.frame(&format!(
                 "        if __e._message == \"{msg}\":\n\
                  \x20           {aw}self.{}(__e, compartment)\n\
@@ -325,7 +313,26 @@ impl Backend for Python {
                 py_handler_method(state, msg)
             ));
         }
+    }
+
+    fn dispatch_close(&self, sym: &SystemSym, state: &str, arms: &[String], np: usize, out: &mut Sink) {
+        // Python's dispatcher-close carries the two Python-only tails the other `if`-chain targets
+        // lack: a bare `pass` when the whole dispatcher is empty (no params, no arms, no forward),
+        // and the `=> $^` default-forward fall-through to the parent's dispatcher otherwise. `np` is
+        // the state's param count (the empty test); Java/C spell only their closing brace here.
+        let forward_to = sym
+            .states
+            .iter()
+            .find(|s| s.name == state)
+            .filter(|s| s.default_forward)
+            .and_then(|_| sym.declared_parent(state))
+            .map(|p| p.name.clone());
+        if arms.is_empty() && np == 0 && forward_to.is_none() {
+            out.frame("        pass\n");
+            return;
+        }
         if let Some(parent) = forward_to {
+            let aw = if py_system_async(sym) { "await " } else { "" };
             out.frame(&format!(
                 "        {aw}self._state_{parent}(__e, compartment.parent_compartment)\n"
             ));
@@ -1306,12 +1313,62 @@ fn py_system_async(sym: &SystemSym) -> bool {
     sym.is_async || sym.interface.iter().any(|m| m.is_async)
 }
 
+/// The byte-for-byte **frozen oracle** for the Python per-state dispatcher — a verbatim copy of the
+/// pre-conversion `Backend::dispatch` body, before it was reified as the [`super::py_dispatch`]
+/// `PyDispatch` `@@system`. Kept as the GATE-A differential the machine is proven against
+/// (`tests/emit_scaffold_walks.rs`, via [`super::driver::py_dispatch_parity_report`]). It does NOT
+/// route through `be.dispatch` — it reproduces the original bytes standalone, so a spelling bug in a
+/// `py_dispatch` leaf is visible to the gate. Doc-hidden and **not on the production path**. Do not
+/// edit it to add behavior: it exists only to reproduce the pre-conversion value exactly, so any
+/// divergence is the machine's bug, not the oracle's.
+#[doc(hidden)]
+pub(super) fn py_dispatch_hand(sym: &SystemSym, state: &str, arms: &[String], out: &mut Sink) {
+    let kw = if py_system_async(sym) { "async def" } else { "def" };
+    let aw = if py_system_async(sym) { "await " } else { "" };
+    out.frame(&format!("\n    {kw} _state_{state}(self, __e, compartment):\n"));
+    let params = sym
+        .states
+        .iter()
+        .find(|s| s.name == state)
+        .map(|s| s.state_params.clone())
+        .unwrap_or_default();
+    for (i, p) in params.iter().enumerate() {
+        out.frame(&format!(
+            "        {p} = self.__compartment.state_args[{i}]\n"
+        ));
+    }
+    let forward_to = sym
+        .states
+        .iter()
+        .find(|s| s.name == state)
+        .filter(|s| s.default_forward)
+        .and_then(|_| sym.declared_parent(state))
+        .map(|p| p.name.clone());
+    if arms.is_empty() && params.is_empty() && forward_to.is_none() {
+        out.frame("        pass\n");
+        return;
+    }
+    for msg in arms {
+        out.frame(&format!(
+            "        if __e._message == \"{msg}\":\n\
+             \x20           {aw}self.{}(__e, compartment)\n\
+             \x20           return\n",
+            py_handler_method(state, msg)
+        ));
+    }
+    if let Some(parent) = forward_to {
+        out.frame(&format!(
+            "        {aw}self._state_{parent}(__e, compartment.parent_compartment)\n"
+        ));
+    }
+}
+
 /// The private method name for one `(state, event)` handler — `_s_<state>_hdl_user_<event>` for an
 /// interface event, `_s_<state>_hdl_frame_enter` / `_hdl_frame_exit` for Frame's own lifecycle
 /// messages. framec AUTHORED this name, so framec may compose it; nothing ever reads it back out of
 /// emitted text (that is the wire-format-as-a-name mistake — the dispatcher is handed the message
 /// and composes the same name from the same rule, here, once).
-fn py_handler_method(state: &str, event: &str) -> String {
+pub(super) fn py_handler_method(state: &str, event: &str) -> String {
     match event {
         "$>" => format!("_s_{state}_hdl_frame_enter"),
         "<$" => format!("_s_{state}_hdl_frame_exit"),

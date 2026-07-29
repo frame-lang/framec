@@ -29,8 +29,8 @@ use crate::tree::Section;
 
 /// Phase `$Interface`: the router pass — one public method per interface event, dispatching to the
 /// private handlers. Calls the landed [`emit_interface::walk`] `@@system`, unchanged (NOT reinlined).
-fn emit_iface_phase(sym: &SystemSym, be: &dyn Backend, out: &mut Sink) {
-    emit_interface::walk(sym, be, out);
+fn emit_iface_phase(src: &Source, sym: &SystemSym, sections: &[Section], be: &dyn Backend, out: &mut Sink) {
+    emit_interface::walk(src, sym, sections, be, out);
 }
 
 /// Phase `$Dispatch`: the per-state message-dispatch pass — one private `_state_X`-style method per

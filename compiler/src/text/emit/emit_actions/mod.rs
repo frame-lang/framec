@@ -113,6 +113,36 @@ fn emit_action(
     be.close_action(out);
 }
 
+/// Emit the standalone user COMMENT carried by the `actions:`/`operations:` member at `(si, mi)`
+/// when it is a `Decl::Trivia` holding one (a comment BETWEEN or BEFORE bodied members).
+/// Whitespace-only trivia, a bare signature, or any out-of-phase section emits nothing. Actions
+/// are emitted in SOURCE order (never key-sorted), so a comment at its declaration slot lands
+/// before the member that follows it — reindented to the backend's member column, matching the
+/// shipped compiler.
+#[allow(clippy::too_many_arguments)]
+fn emit_action_trivia(
+    src: &Source,
+    be: &dyn Backend,
+    sections: &[Section],
+    si: usize,
+    mi: usize,
+    phase: usize,
+    nphase: usize,
+    out: &mut Sink,
+) {
+    if let Some(d) = sections
+        .get(si)
+        .and_then(|s| action_section_in_phase(s, phase, nphase))
+    {
+        if let Some(Decl::Trivia(t)) = d.members.get(mi) {
+            let lines = super::driver::comment_lines(src, t.span);
+            if !lines.is_empty() {
+                be.actions_comment(&lines, out);
+            }
+        }
+    }
+}
+
 mod fsm {
     #![allow(
         dead_code,
@@ -123,8 +153,8 @@ mod fsm {
         unused_imports
     )]
     use super::{
-        action_member_count, emit_action, is_action_section, is_withbody_member, Backend, Section,
-        Sink, Source, SymbolTable, SystemSym,
+        action_member_count, emit_action, emit_action_trivia, is_action_section,
+        is_withbody_member, Backend, Section, Sink, Source, SymbolTable, SystemSym,
     };
     include!("emit_actions.gen.rs");
 }

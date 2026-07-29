@@ -311,20 +311,41 @@ impl Backend for Java {
 
     /// One state's message dispatcher — `_state_<S>`, the method `__router` hands an event to.
     fn dispatch(&self, sym: &SystemSym, state: &str, arms: &[String], out: &mut Sink) {
+        // The per-state dispatcher BODY is the SHARED `DispatchBody` @@system
+        // (`super::dispatch_body`), spelled through the four `dispatch_*` seam methods below. The
+        // byte-for-byte pre-conversion body is preserved as [`java_dispatch_hand`] and gated in
+        // `tests/emit_scaffold_walks.rs`.
+        super::dispatch_body::drive(self, sym, state, arms, out);
+    }
+
+    fn dispatch_open(&self, sym: &SystemSym, state: &str, out: &mut Sink) {
         let n = &sym.name;
         out.frame(&format!(
             "\n    private void _state_{state}({n}FrameEvent __e, {n}Compartment compartment) {{\n"
         ));
-        // The state's own PARAMS are bound first, from the live compartment's `state_args` (this
-        // dispatcher reads `__compartment`, the live field). Unboxed to the declared type.
+    }
+
+    fn dispatch_param(&self, sym: &SystemSym, state: &str, pi: usize, out: &mut Sink) {
+        // The state's own PARAMS are bound from the live compartment's `state_args`, unboxed to the
+        // declared type.
         if let Some(st) = sym.states.iter().find(|s| s.name == state) {
-            for (i, p) in st.state_params.iter().enumerate() {
+            if let Some(p) = st.state_params.get(pi) {
                 let ty = st.state_param_types.get(p).cloned().unwrap_or_else(|| "Object".into());
-                let slot = java_unbox(&ty, Atom::method(Atom::field(Atom::ident("__compartment"), "state_args"), "get", &i.to_string()));
+                let slot = java_unbox(
+                    &ty,
+                    Atom::method(
+                        Atom::field(Atom::ident("__compartment"), "state_args"),
+                        "get",
+                        &pi.to_string(),
+                    ),
+                );
                 out.frame(&format!("        {ty} {p} = {slot};\n"));
             }
         }
-        for msg in arms {
+    }
+
+    fn dispatch_arm(&self, _sym: &SystemSym, state: &str, arms: &[String], ai: usize, out: &mut Sink) {
+        if let Some(msg) = arms.get(ai) {
             let method = kernel_handler_method(state, msg);
             out.frame(&format!(
                 "        if (__e._message.equals(\"{msg}\")) {{\n\
@@ -333,6 +354,9 @@ impl Backend for Java {
                  \x20       }}\n"
             ));
         }
+    }
+
+    fn dispatch_close(&self, _sym: &SystemSym, _state: &str, _arms: &[String], _np: usize, out: &mut Sink) {
         out.frame("    }\n");
     }
 
@@ -705,6 +729,37 @@ impl Backend for Java {
         out.frame("        }\n");
         out.frame("    }\n");
     }
+}
+
+/// The byte-for-byte **frozen oracle** for Java's per-state dispatcher — a verbatim copy of the
+/// pre-conversion `Backend::dispatch` body, before it was reified as the shared
+/// [`super::dispatch_body`] `DispatchBody` `@@system`. Kept as the GATE-A differential the machine is
+/// proven against (`tests/emit_scaffold_walks.rs`). It does NOT route through `be.dispatch` — it
+/// reproduces the original bytes standalone, so a spelling bug in a `dispatch_*` leaf is visible to
+/// the gate. Doc-hidden and **not on the production path**.
+#[doc(hidden)]
+pub(super) fn java_dispatch_hand(sym: &SystemSym, state: &str, arms: &[String], out: &mut Sink) {
+    let n = &sym.name;
+    out.frame(&format!(
+        "\n    private void _state_{state}({n}FrameEvent __e, {n}Compartment compartment) {{\n"
+    ));
+    if let Some(st) = sym.states.iter().find(|s| s.name == state) {
+        for (i, p) in st.state_params.iter().enumerate() {
+            let ty = st.state_param_types.get(p).cloned().unwrap_or_else(|| "Object".into());
+            let slot = java_unbox(&ty, Atom::method(Atom::field(Atom::ident("__compartment"), "state_args"), "get", &i.to_string()));
+            out.frame(&format!("        {ty} {p} = {slot};\n"));
+        }
+    }
+    for msg in arms {
+        let method = kernel_handler_method(state, msg);
+        out.frame(&format!(
+            "        if (__e._message.equals(\"{msg}\")) {{\n\
+             \x20           this.{method}(__e, compartment);\n\
+             \x20           return;\n\
+             \x20       }}\n"
+        ));
+    }
+    out.frame("    }\n");
 }
 
 // ======================================================================================

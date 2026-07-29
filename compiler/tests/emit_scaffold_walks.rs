@@ -283,3 +283,96 @@ fn the_python_target_actually_drives_all_four_walks() {
         }
     }
 }
+
+/// GATE-A for the shared `DispatchBody` `@@system` (the per-state dispatcher body for the `if`-chain
+/// targets, driven by the production `Backend::dispatch`): for each reified target it must emit
+/// byte-for-byte what that target's preserved frozen hand oracle does, over the same real systems and
+/// the same stamped arms. The hand side is the STANDALONE frozen body — it does not route through
+/// `be.dispatch` — so a spelling bug in a `dispatch_*` leaf is visible here (the false-gate trap the
+/// reification must avoid). Each language listed here is that language's landed milestone; a language
+/// still on its hand-written dispatcher is absent (we do not test what we have not modified).
+#[test]
+fn dispatch_body_is_byte_identical_to_the_frozen_hand() {
+    // A system with an explicit default-forward (`=> $^`) so the close leaf's forward path is
+    // exercised — the shared corpus's `$Child => $Parent` nesting alone does not set `default_forward`.
+    const FWD: &str = r#"@@system Fwd {
+    interface:
+        e()
+    machine:
+        $Parent {
+            e() { pe(); }
+        }
+        $Child => $Parent {
+            => $^
+        }
+}
+"#;
+    type ReportFn =
+        fn(&frame_compiler::tree::FileAst, &frame_compiler::resolve::SymbolTable) -> Vec<driver::DispatchBodyParity>;
+    // (language, its DispatchBody parity accessor) — one entry per reified `if`-chain target.
+    let cases: [(&str, ReportFn); 3] = [
+        ("python", driver::py_dispatch_body_parity),
+        ("java", driver::java_dispatch_body_parity),
+        ("c", driver::c_dispatch_body_parity),
+    ];
+    for (lang, report_fn) in cases {
+        let mut arms = 0usize;
+        let mut empties = 0usize;
+        let mut params = 0usize;
+        let mut forwards = 0usize;
+        for (label, frm) in CORPUS.into_iter().chain([("Fwd", FWD)]) {
+            let (_src, ast, syms) = parse(frm);
+            let report = report_fn(&ast, &syms);
+            assert!(!report.is_empty(), "{lang}/{label}: no systems resolved");
+            for p in &report {
+                assert_eq!(
+                    p.machine_text, p.hand_text,
+                    "{lang}/{label} [{}]: DispatchBody machine text != {lang}_dispatch_hand",
+                    p.label
+                );
+                arms += p.arm_count;
+                empties += p.empty_states;
+                params += p.param_states;
+                forwards += p.forward_states;
+            }
+        }
+        // Non-vacuity — one for each branch/leaf of the walk: real arms (the message if-chain), an
+        // empty dispatcher (the empty close), a state with params (the bind loop), and a
+        // default-forward state (the close leaf's forward path).
+        assert!(arms >= 10, "{lang}: corpus must stamp many dispatch arms; saw {arms}");
+        assert!(empties >= 1, "{lang}: corpus must include a state that handles nothing; saw {empties}");
+        assert!(params >= 1, "{lang}: corpus must include a state with params; saw {params}");
+        assert!(forwards >= 1, "{lang}: corpus must include a default-forward state; saw {forwards}");
+    }
+}
+
+/// GATE-A for the rust-only `RustDispatch` `@@system` (the per-state `_state_<S>` dispatcher, driven
+/// by the production `Backend::dispatch` on rust): for each real system it must emit byte-for-byte
+/// what rust's preserved frozen hand oracle (`rust_dispatch_hand`) does, over the same stamped arms.
+/// Rust's dispatcher is a `match` over a typed event enum — a different control structure from the
+/// `if`-chain targets' shared `DispatchBody` — so it gets its own system and its own parity gate.
+/// The hand side is the STANDALONE frozen body (it does not route through `be.dispatch`), so a
+/// spelling bug in a `rust_dispatch_*` leaf is visible here.
+#[test]
+fn rust_dispatch_is_byte_identical_to_the_frozen_hand() {
+    let mut arms = 0usize;
+    let mut empties = 0usize;
+    for (label, frm) in CORPUS {
+        let (_src, ast, syms) = parse(frm);
+        let report = driver::rust_dispatch_parity_report(&ast, &syms);
+        assert!(!report.is_empty(), "rust/{label}: no systems resolved");
+        for p in &report {
+            assert_eq!(
+                p.machine_text, p.hand_text,
+                "rust/{label} [{}]: RustDispatch machine text != rust_dispatch_hand",
+                p.label
+            );
+            arms += p.arm_count;
+            empties += p.empty_states;
+        }
+    }
+    // Non-vacuity: real arms stamped (the message match), and at least one state that declares
+    // nothing (the empty dispatcher — `_ => {}` with no user arms).
+    assert!(arms >= 10, "corpus must stamp many dispatch arms; saw {arms}");
+    assert!(empties >= 1, "corpus must include a state that handles nothing; saw {empties}");
+}

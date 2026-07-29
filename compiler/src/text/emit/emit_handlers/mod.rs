@@ -195,6 +195,16 @@ fn emit_handler(
     out: &mut Sink,
 ) {
     if let Some((st, h)) = handler_at(sections, si, sti, hi, be) {
+        // The standalone user COMMENTS that lead this handler in source — the trivia between it
+        // and the previous handler (or the state open). They travel WITH the handler, so on a
+        // backend that emits handlers in key order they land before this handler wherever it sorts
+        // to, reindented to the member column. `member_slot` is the handler's SOURCE slot (the same
+        // one `handler_at` resolved), which is what the leading-comment gap is measured against.
+        let slot = member_slot(sections, si, sti, hi, be);
+        let lead = super::driver::handler_leading_comments(src, sections, si, sti, slot);
+        if !lead.is_empty() {
+            be.member_comment(&lead, out);
+        }
         be.open_handler(sym, &st.name, &h.event, &h.params_text, ret, is_async, out);
         // A body that emits NOTHING (all-`Trivia`, all-comment, or empty) still owes the target a
         // statement on an indent-delimited language. The fact is read from the TREE
@@ -222,7 +232,7 @@ fn emit_handler(
         } else {
             super::driver::BodyEnd::Fell
         };
-        if empty {
+        if empty && !super::driver::handler_emits_bindings(sym, &st.name, &h.params_text) {
             be.noop(0, out);
         }
         be.close_handler(ret, is_async, end.terminated(), &super::driver::LeafCtx::new(sym, &h.event, &st.name), out);

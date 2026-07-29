@@ -23,6 +23,7 @@
 pub mod atom;
 mod base_column;
 pub mod c;
+mod dispatch_body;
 mod domain_init_walk;
 pub mod driver;
 mod emit_actions;
@@ -36,6 +37,7 @@ pub mod persist;
 pub mod python;
 mod router_walk;
 pub mod rust;
+mod rust_dispatch;
 pub mod reindent;
 mod state_dispatch_walk;
 mod stmt_walk;

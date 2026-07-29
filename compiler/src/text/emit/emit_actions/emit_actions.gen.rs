@@ -359,6 +359,7 @@ mod _emit_actions_framec {
             }
             let iswb = is_withbody_member(self.sections, self.si, self.mi, self.phase, self.nphase);
             if iswb == false {
+                emit_action_trivia(self.src, self.be, self.sections, self.si, self.mi, self.phase, self.nphase, &mut self.out);
                 self.mi = self.mi + 1;
                 let mut __compartment = self.__prepareEnter("Member");
                 self.__transition(__compartment);

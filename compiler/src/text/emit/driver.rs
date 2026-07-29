@@ -37,7 +37,7 @@ use crate::resolve::{SymbolTable, SystemSym};
 use crate::text::scan::{param_scan, parse_one_param};
 use crate::text::Source;
 use crate::tree::body::{Body, EmbedCall, FrameRef, InstArg, Instantiation, ParamGroup, Stmt};
-use crate::tree::{Decl, FileAst, HandlerNode, Item, MachineMember, Section, StateMember};
+use crate::tree::{Decl, FileAst, Item, MachineMember, Section, StateMember};
 
 /// **Which kind of method's body is being walked.**
 ///
@@ -180,6 +180,31 @@ pub trait Backend {
     /// and is byte-unchanged.
     fn dispatch(&self, sym: &SystemSym, state: &str, arms: &[String], out: &mut Sink) {
         let _ = (sym, state, arms, out);
+    }
+
+    /// SHARED `DispatchBody` seam (Python/Java/C — the `if`-chain dispatchers). Emit the dispatcher
+    /// method HEADER for `state`. Default: nothing (Rust spells its own `match` dispatcher, others
+    /// take the no-op `dispatch` default).
+    fn dispatch_open(&self, sym: &SystemSym, state: &str, out: &mut Sink) {
+        let _ = (sym, state, out);
+    }
+
+    /// SHARED `DispatchBody` seam. Bind the state PARAM at slot `pi` off the live compartment's
+    /// `state_args`. Default: nothing.
+    fn dispatch_param(&self, sym: &SystemSym, state: &str, pi: usize, out: &mut Sink) {
+        let _ = (sym, state, pi, out);
+    }
+
+    /// SHARED `DispatchBody` seam. Emit one dispatch ARM for the event message at slot `ai`. Default:
+    /// nothing.
+    fn dispatch_arm(&self, sym: &SystemSym, state: &str, arms: &[String], ai: usize, out: &mut Sink) {
+        let _ = (sym, state, arms, ai, out);
+    }
+
+    /// SHARED `DispatchBody` seam. CLOSE the dispatcher (`np` = the state's param count). Python emits
+    /// `pass`/default-forward; Java and C emit the closing brace. Default: nothing.
+    fn dispatch_close(&self, sym: &SystemSym, state: &str, arms: &[String], np: usize, out: &mut Sink) {
+        let _ = (sym, state, arms, np, out);
     }
 
     /// How this language spells a **parameter list declaration**.
@@ -437,6 +462,49 @@ pub trait Backend {
     /// MUST emit `pass`, or the empty block is a syntax error.
     fn noop(&self, rel: u32, out: &mut Sink) {
         let _ = (rel, out);
+    }
+
+    /// The indentation a top-level system MEMBER (a generated method) sits at — the column the
+    /// member-level standalone COMMENTS ([`Self::member_comment`]) re-pad to, so a comment the user
+    /// wrote between two handlers/actions/interface methods lands aligned with the method it
+    /// precedes. Default four spaces (python, java, and most brace targets nest methods one level
+    /// inside the class); rust nests two, C's functions are file-scope — those two override.
+    fn member_indent(&self) -> &'static str {
+        "    "
+    }
+
+    /// Emit the standalone user COMMENTS that sat between two system members — handlers, actions,
+    /// or interface methods — reindented to [`Self::member_indent`]. `lines` are the comment lines
+    /// (marker-and-content, leading indentation already stripped by [`comment_lines`]); an empty
+    /// slice never reaches here, because the emit walks skip whitespace-only trivia.
+    ///
+    /// The spelling follows the member-separator convention every `open_*` uses: a leading blank
+    /// line, then the comments, with NO trailing newline — the FOLLOWING member's own leading `\n`
+    /// terminates the last comment line. So a comment block is "just another member" in the run,
+    /// and the blank line that separates members ends up ABOVE the comment, exactly where the
+    /// shipped compiler placed it. A target that wanted to drop member comments would override this
+    /// to nothing; every shipped target keeps them, so the default emits.
+    fn member_comment(&self, lines: &[String], out: &mut Sink) {
+        let indent = self.member_indent();
+        out.frame("\n");
+        for (i, line) in lines.iter().enumerate() {
+            if i > 0 {
+                out.frame("\n");
+            }
+            out.frame(indent);
+            out.frame(line);
+        }
+    }
+
+    /// The `actions:` / `operations:` comment variant of [`Self::member_comment`]. Defaults to it
+    /// (Model A: leading blank line, no trailing newline — the following method's `open_action`
+    /// supplies the leading `\n` that terminates the last comment line). A target whose
+    /// `open_action` does NOT open with `\n` — rust, where actions are TRAILING-separated (each
+    /// `close_action` emits `}\n\n`, so the blank line already precedes the next action) — overrides
+    /// this to emit each comment line newline-TERMINATED with no leading blank, or the comment would
+    /// swallow the `fn` onto its own line (commenting the method out).
+    fn actions_comment(&self, lines: &[String], out: &mut Sink) {
+        self.member_comment(lines, out);
     }
 
     /// Open one `(state, handler)` method.
@@ -1215,27 +1283,39 @@ fn emit_handlers_hand(
     be: &dyn Backend,
     out: &mut Sink,
 ) {
-    for sec in sections {
+    for (si, sec) in sections.iter().enumerate() {
         let Section::Machine(mach) = sec else { continue };
-        for mm in &mach.members {
+        for (sti, mm) in mach.members.iter().enumerate() {
             let MachineMember::State(st) = mm else { continue };
-            // Declaration order, unless the backend takes the shipped compiler's HANDLER-KEY
-            // order ([`handler_sort_key`]). The machine path asks the same question through its
+            // The handler declaration SLOTS, and the same set in the backend's emission order —
+            // declaration order unless the backend takes the shipped compiler's HANDLER-KEY order
+            // ([`handler_sort_key`]). The machine path asks the same question through its
             // `member_slot` projection, so the two stay byte-identical under GATE-A.
-            let mut handlers: Vec<&HandlerNode> = st
-                .members
-                .iter()
-                .filter_map(|m| match m {
-                    StateMember::Handler(h) => Some(h),
-                    _ => None,
-                })
+            let mut order: Vec<usize> = (0..st.members.len())
+                .filter(|&i| matches!(st.members.get(i), Some(StateMember::Handler(_))))
                 .collect();
             if be.orders_handlers_by_key() {
-                handlers.sort_by(|a, b| {
-                    handler_sort_key(&a.event).cmp(handler_sort_key(&b.event))
+                order.sort_by(|&a, &b| {
+                    let ka = match &st.members[a] {
+                        StateMember::Handler(h) => handler_sort_key(&h.event),
+                        _ => "",
+                    };
+                    let kb = match &st.members[b] {
+                        StateMember::Handler(h) => handler_sort_key(&h.event),
+                        _ => "",
+                    };
+                    ka.cmp(kb)
                 });
             }
-            for h in handlers {
+            for &slot in &order {
+                let StateMember::Handler(h) = &st.members[slot] else { unreachable!() };
+                // The standalone user COMMENTS that lead this handler in source travel WITH it into
+                // key order — reindented to the member column, exactly as the `EmitHandlers`
+                // machine's `emit_handler` leaf emits them.
+                let lead = handler_leading_comments(src, sections, si, sti, slot);
+                if !lead.is_empty() {
+                    be.member_comment(&lead, out);
+                }
                 let is_async = sym.is_async
                     || sym
                         .interface
@@ -1259,7 +1339,7 @@ fn emit_handlers_hand(
                 } else {
                     BodyEnd::Fell
                 };
-                if empty {
+                if empty && !handler_emits_bindings(sym, &st.name, &h.params_text) {
                     be.noop(0, out);
                 }
                 be.close_handler(ret, is_async, end.terminated(), &LeafCtx::new(sym, &h.event, &st.name), out);
@@ -1349,8 +1429,14 @@ fn count_handlers(sections: &[Section]) -> usize {
 /// exists only to reproduce the pre-conversion sequencing exactly, so any divergence is the
 /// machine's bug, not the oracle's.
 #[doc(hidden)]
-fn emit_interface_hand(sym: &SystemSym, be: &dyn Backend, out: &mut Sink) {
-    for m in &sym.interface {
+fn emit_interface_hand(src: &Source, sym: &SystemSym, sections: &[Section], be: &dyn Backend, out: &mut Sink) {
+    for (mi, m) in sym.interface.iter().enumerate() {
+        // The standalone user COMMENTS that lead this interface method — reindented to the member
+        // column, exactly as the `EmitInterface` machine's `route_method` leaf emits them.
+        let lead = interface_leading_comments(src, sections, mi);
+        if !lead.is_empty() {
+            be.member_comment(&lead, out);
+        }
         let arms: Vec<(String, String)> = sym
             .states
             .iter()
@@ -1370,6 +1456,12 @@ fn emit_interface_hand(sym: &SystemSym, be: &dyn Backend, out: &mut Sink) {
             &arms,
             out,
         );
+    }
+    // The TRAILING interface comments (after the last signature) — drained after the routes, as
+    // the `EmitInterface` walk wrapper does.
+    let trailing = interface_leading_comments(src, sections, sym.interface.len());
+    if !trailing.is_empty() {
+        be.member_comment(&trailing, out);
     }
 }
 
@@ -1399,6 +1491,7 @@ pub struct InterfaceParity {
 /// traversal.
 #[doc(hidden)]
 pub fn interface_parity_report(
+    src: &Source,
     ast: &FileAst,
     syms: &SymbolTable,
     be: &dyn Backend,
@@ -1410,9 +1503,9 @@ pub fn interface_parity_report(
             continue;
         };
         let mut mo = super::Sink::default();
-        super::emit_interface::walk(sym, be, &mut mo);
+        super::emit_interface::walk(src, sym, &sys.sections, be, &mut mo);
         let mut ho = super::Sink::default();
-        emit_interface_hand(sym, be, &mut ho);
+        emit_interface_hand(src, sym, &sys.sections, be, &mut ho);
         report.push(InterfaceParity {
             label: sym.name.clone(),
             machine_text: mo.finish(),
@@ -1452,16 +1545,28 @@ fn emit_actions_hand(
             continue;
         };
         for m in &d.members {
-            let Decl::WithBody(b) = m else { continue };
-            be.open_action(&b.name, &b.params_text, b.return_text.as_deref(), out);
-            let empty = body_is_empty(&b.body);
-            if !empty || be.empty_body_keeps_text() {
-                emit_body(src, syms, sym, BodyRole::Action, "", "", false, &b.body, be, out);
+            match m {
+                Decl::WithBody(b) => {
+                    be.open_action(&b.name, &b.params_text, b.return_text.as_deref(), out);
+                    let empty = body_is_empty(&b.body);
+                    if !empty || be.empty_body_keeps_text() {
+                        emit_body(src, syms, sym, BodyRole::Action, "", "", false, &b.body, be, out);
+                    }
+                    if empty {
+                        be.noop(0, out);
+                    }
+                    be.close_action(out);
+                }
+                // A standalone comment between/ before actions — reindented to the member column,
+                // exactly as the `EmitActions` machine's `emit_action_trivia` leaf does.
+                Decl::Trivia(t) => {
+                    let lines = comment_lines(src, t.span);
+                    if !lines.is_empty() {
+                        be.actions_comment(&lines, out);
+                    }
+                }
+                Decl::Member(_) => {}
             }
-            if empty {
-                be.noop(0, out);
-            }
-            be.close_action(out);
         }
     }
     }
@@ -1582,7 +1687,7 @@ fn emit_system_hand(
     out: &mut Sink,
 ) {
     be.open_system(sym, out);
-    super::emit_interface::walk(sym, be, out);
+    super::emit_interface::walk(src, sym, sections, be, out);
     super::state_dispatch_walk::walk(sym, be, out);
     super::emit_handlers::walk(src, syms, sym, sections, be, out);
     super::emit_actions::walk(src, syms, sym, sections, be, out);
@@ -1938,6 +2043,185 @@ pub fn state_dispatch_parity_report(
     report
 }
 
+/// TEST-ONLY (GATE-A) — one system's dual per-state dispatcher emission for an `if`-chain backend:
+/// the shared [`super::dispatch_body`] `DispatchBody` machine (the production [`Backend::dispatch`]
+/// path) vs that backend's preserved frozen hand oracle. For `tests/emit_scaffold_walks.rs`.
+/// Doc-hidden.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct DispatchBodyParity {
+    /// The system name, for a failing assertion message.
+    pub label: String,
+    /// Text the shared `DispatchBody` machine (the production `be.dispatch` path) emits for ALL of
+    /// this system's per-state dispatchers.
+    pub machine_text: String,
+    /// Text the backend's preserved frozen hand oracle emits for the same.
+    pub hand_text: String,
+    /// Total dispatch arms stamped — proves the corpus exercised real (non-empty) dispatchers.
+    pub arm_count: usize,
+    /// States that declare NO handler — proves the empty-dispatcher close was taken.
+    pub empty_states: usize,
+    /// States that declare state parameters — proves the `state_args` binding loop was taken.
+    pub param_states: usize,
+    /// States with a default-forward parent — proves the forward tail (Python's close) was taken.
+    pub forward_states: usize,
+}
+
+/// TEST-ONLY (GATE-A). Emit **every** system's per-state dispatchers through BOTH the shared
+/// `DispatchBody` machine ([`Backend::dispatch`] on `be`, = the production path) and that backend's
+/// preserved frozen hand oracle (`hand`) — over the SAME real parsed systems, feeding BOTH sides the
+/// IDENTICAL per-state `arms` (stamped exactly as the shared [`super::state_dispatch_walk`] does), so
+/// the only variable is the SPELLING. `tests/emit_scaffold_walks.rs` asserts, for every entry,
+/// `machine_text == hand_text` byte-for-byte, per `if`-chain backend (Python / Java / C).
+///
+/// The hand side is the STANDALONE frozen body, NOT `be.dispatch` — so a spelling bug in a
+/// `dispatch_*` leaf diverges the two paths (the false-gate trap the reification must avoid).
+#[doc(hidden)]
+pub fn dispatch_body_parity_report(
+    ast: &FileAst,
+    syms: &SymbolTable,
+    be: &dyn Backend,
+    hand: fn(&SystemSym, &str, &[String], &mut Sink),
+) -> Vec<DispatchBodyParity> {
+    use super::state_dispatch_walk::{clear_arms, handler_count, stamp_handler};
+    let mut report = Vec::new();
+    for item in &ast.items {
+        let Item::System(sys) = item else { continue };
+        let Some(sym) = syms.systems.iter().find(|s| s.name == sys.name) else {
+            continue;
+        };
+        let mut mo = super::Sink::default();
+        let mut ho = super::Sink::default();
+        let mut arms: Vec<String> = Vec::new();
+        let mut arm_count = 0usize;
+        let mut empty_states = 0usize;
+        let mut param_states = 0usize;
+        let mut forward_states = 0usize;
+        for (si, st) in sym.states.iter().enumerate() {
+            let nh = handler_count(sym, si);
+            clear_arms(&mut arms);
+            for hi in 0..nh {
+                stamp_handler(sym, be, si, hi, &mut arms);
+            }
+            arm_count += arms.len();
+            if arms.is_empty() {
+                empty_states += 1;
+            }
+            if !st.state_params.is_empty() {
+                param_states += 1;
+            }
+            if st.default_forward && sym.declared_parent(&st.name).is_some() {
+                forward_states += 1;
+            }
+            // machine = production path (shared DispatchBody); hand = frozen standalone body.
+            be.dispatch(sym, &st.name, &arms, &mut mo);
+            hand(sym, &st.name, &arms, &mut ho);
+        }
+        report.push(DispatchBodyParity {
+            label: sym.name.clone(),
+            machine_text: mo.finish(),
+            hand_text: ho.finish(),
+            arm_count,
+            empty_states,
+            param_states,
+            forward_states,
+        });
+    }
+    report
+}
+
+/// GATE-A convenience: Python's `DispatchBody` parity (the backend + frozen hand are crate-internal,
+/// so the external test calls this). For `tests/emit_scaffold_walks.rs`.
+#[doc(hidden)]
+pub fn py_dispatch_body_parity(ast: &FileAst, syms: &SymbolTable) -> Vec<DispatchBodyParity> {
+    dispatch_body_parity_report(ast, syms, &super::python::Python, super::python::py_dispatch_hand)
+}
+
+/// GATE-A convenience: Java's `DispatchBody` parity. For `tests/emit_scaffold_walks.rs`.
+#[doc(hidden)]
+pub fn java_dispatch_body_parity(ast: &FileAst, syms: &SymbolTable) -> Vec<DispatchBodyParity> {
+    dispatch_body_parity_report(ast, syms, &super::java::Java::new(), super::java::java_dispatch_hand)
+}
+
+/// GATE-A convenience: C's `DispatchBody` parity. For `tests/emit_scaffold_walks.rs`.
+#[doc(hidden)]
+pub fn c_dispatch_body_parity(ast: &FileAst, syms: &SymbolTable) -> Vec<DispatchBodyParity> {
+    dispatch_body_parity_report(ast, syms, &super::c::C::new(), super::c::c_dispatch_hand)
+}
+
+/// TEST-ONLY (GATE-A) — one system's dual per-state dispatcher emission for RUST: the rust-only
+/// [`super::rust_dispatch`] `RustDispatch` machine (the production [`Backend::dispatch`] path) vs
+/// rust's preserved frozen hand oracle ([`super::rust::rust_dispatch_hand`]). Separate from
+/// [`DispatchBodyParity`] because rust's `match`-over-a-typed-enum dispatcher is NOT the shared
+/// `DispatchBody`. For `tests/emit_scaffold_walks.rs`. Doc-hidden.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct RustDispatchParity {
+    /// The system name, for a failing assertion message.
+    pub label: String,
+    /// Text the `RustDispatch` machine (the production `be.dispatch` path) emits for ALL of this
+    /// system's per-state dispatchers.
+    pub machine_text: String,
+    /// Text rust's preserved frozen hand oracle emits for the same.
+    pub hand_text: String,
+    /// Total dispatch arms stamped — proves the corpus exercised real (non-empty) dispatchers.
+    pub arm_count: usize,
+    /// States that declare NO handler — proves the empty-dispatcher close was taken.
+    pub empty_states: usize,
+}
+
+/// TEST-ONLY (GATE-A). Emit **every** system's per-state dispatchers through BOTH the rust-only
+/// `RustDispatch` machine ([`Backend::dispatch`] on `super::rust::Rust`, = the production path) and
+/// rust's preserved frozen hand oracle ([`super::rust::rust_dispatch_hand`]) — over the SAME real
+/// parsed systems, feeding BOTH sides the IDENTICAL per-state `arms` (stamped exactly as the shared
+/// [`super::state_dispatch_walk`] does), so the only variable is the SPELLING.
+/// `tests/emit_scaffold_walks.rs` asserts, for every entry, `machine_text == hand_text`
+/// byte-for-byte.
+///
+/// The hand side is the STANDALONE frozen body, NOT `be.dispatch` — so a spelling bug in a
+/// `rust_dispatch` leaf diverges the two paths (the false-gate trap the reification must avoid). A
+/// scanner system emits nothing on BOTH paths (rust's `dispatch` returns early via the driver's
+/// scan-guard, and the frozen hand keeps the same guard) — a matching empty, which is correct.
+#[doc(hidden)]
+pub fn rust_dispatch_parity_report(ast: &FileAst, syms: &SymbolTable) -> Vec<RustDispatchParity> {
+    use super::state_dispatch_walk::{clear_arms, handler_count, stamp_handler};
+    let be = super::rust::Rust;
+    let mut report = Vec::new();
+    for item in &ast.items {
+        let Item::System(sys) = item else { continue };
+        let Some(sym) = syms.systems.iter().find(|s| s.name == sys.name) else {
+            continue;
+        };
+        let mut mo = super::Sink::default();
+        let mut ho = super::Sink::default();
+        let mut arms: Vec<String> = Vec::new();
+        let mut arm_count = 0usize;
+        let mut empty_states = 0usize;
+        for (si, st) in sym.states.iter().enumerate() {
+            let nh = handler_count(sym, si);
+            clear_arms(&mut arms);
+            for hi in 0..nh {
+                stamp_handler(sym, &be, si, hi, &mut arms);
+            }
+            arm_count += arms.len();
+            if arms.is_empty() {
+                empty_states += 1;
+            }
+            // machine = production path (RustDispatch); hand = frozen standalone body.
+            be.dispatch(sym, &st.name, &arms, &mut mo);
+            super::rust::rust_dispatch_hand(sym, &st.name, &arms, &mut ho);
+        }
+        report.push(RustDispatchParity {
+            label: sym.name.clone(),
+            machine_text: mo.finish(),
+            hand_text: ho.finish(),
+            arm_count,
+            empty_states,
+        });
+    }
+    report
+}
+
 /// The preserved byte-for-byte **oracle** for the body BASE-column min-fold — the original inline
 /// `.filter_map(...).min().unwrap_or(0)` `emit_body` computed before it was reified as the
 /// [`super::base_column`] `@@system`. Kept as the differential check that machine is proven against
@@ -2246,6 +2530,181 @@ pub(super) fn body_is_empty(body: &Body) -> bool {
         ),
         _ => false,
     })
+}
+
+/// The standalone user COMMENT lines carried by a trivia span — the content the emit walks
+/// re-materialize between two system members (handlers, actions, or interface methods).
+///
+/// Each source line whose first non-whitespace byte begins a LINE COMMENT (`#` or `//`, whichever
+/// the user's native flavor uses) contributes its text from the marker to the line end, with the
+/// leading indentation stripped (the caller re-pads to the target member indent via
+/// [`Backend::member_comment`]). A blank line, or the run of indentation that trails a trivia span
+/// before the next member, contributes NOTHING: the compiler deliberately normalizes blank-line
+/// trivia, and only a comment is content worth carrying. So an EMPTY result is the discriminator —
+/// a whitespace-only trivia span the walks must skip, versus a comment-bearing one they emit.
+pub(super) fn comment_lines(src: &Source, span: crate::Span) -> Vec<String> {
+    let bytes = src.open();
+    let text = String::from_utf8_lossy(&bytes[span.start..span.end]);
+    let mut lines = Vec::new();
+    for line in text.split('\n') {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('#') || trimmed.starts_with("//") {
+            // Keep the comment verbatim from its marker onward; a trailing `\r` (CRLF source) is
+            // trimmed so the re-emitted line is LF-terminated like every other line framec authors.
+            lines.push(trimmed.trim_end_matches('\r').to_string());
+        }
+    }
+    lines
+}
+
+/// The standalone user COMMENT lines that LEAD the handler at declaration-slot `slot` of the state
+/// at `(si, sti)` — the comments carried by the trivia between it and the PREVIOUS handler (or, for
+/// the first handler, the state's opening brace).
+///
+/// The shipped compiler treats these as the handler's leading comment, so they MOVE WITH it: on a
+/// backend that emits handlers in key order ([`Backend::orders_handlers_by_key`]) a comment written
+/// before handler `X` lands before `X` wherever it sorts to, not at the source position. Measuring
+/// the gap by SOURCE slot (back to the previous handler) and emitting it as the handler's prologue
+/// reproduces that. Whitespace-only gaps yield an empty vec (nothing emitted).
+pub(super) fn handler_leading_comments(
+    src: &Source,
+    sections: &[Section],
+    si: usize,
+    sti: usize,
+    slot: usize,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    if let Some(Section::Machine(m)) = sections.get(si) {
+        if let Some(MachineMember::State(st)) = m.members.get(sti) {
+            if slot <= st.members.len() {
+                // Start just after the previous Handler member (or at the state open if none).
+                let start = st.members[..slot]
+                    .iter()
+                    .rposition(|mem| matches!(mem, StateMember::Handler(_)))
+                    .map(|p| p + 1)
+                    .unwrap_or(0);
+                for mem in &st.members[start..slot] {
+                    if let StateMember::Trivia(t) = mem {
+                        lines.extend(comment_lines(src, t.span));
+                    }
+                }
+            }
+        }
+    }
+    lines
+}
+
+/// The TRAILING line comment on the first line of a member span — the `# …` / `// …` the user wrote
+/// AFTER a signature, which a `Decl::Line` member swallows (the scanner ends the member at
+/// end-of-line, comment and all — see [`crate::text::scan::machine::decl_section`]). Found at
+/// bracket depth 0 and outside string / char literals, so a marker inside a param default or a type
+/// never trips it. `None` when the line carries no trailing comment.
+fn trailing_comment(src: &Source, span: crate::Span) -> Option<String> {
+    let bytes = src.open();
+    let end = span.end.min(bytes.len());
+    let line_end = bytes[span.start..end]
+        .iter()
+        .position(|&b| b == b'\n')
+        .map(|p| span.start + p)
+        .unwrap_or(end);
+    let line = &bytes[span.start..line_end];
+    let mut depth = 0i32;
+    let mut i = 0;
+    while i < line.len() {
+        match line[i] {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            q @ (b'"' | b'\'') => {
+                i += 1;
+                while i < line.len() && line[i] != q {
+                    if line[i] == b'\\' {
+                        i += 1;
+                    }
+                    i += 1;
+                }
+            }
+            b'#' if depth <= 0 => {
+                return Some(
+                    String::from_utf8_lossy(&line[i..])
+                        .trim_end_matches('\r')
+                        .to_string(),
+                );
+            }
+            b'/' if depth <= 0 && i + 1 < line.len() && line[i + 1] == b'/' => {
+                return Some(
+                    String::from_utf8_lossy(&line[i..])
+                        .trim_end_matches('\r')
+                        .to_string(),
+                );
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// The standalone user COMMENT lines that LEAD the `k`-th interface method — the comments the
+/// shipped compiler emits just before the method's public wrapper. Two sources feed it, in the
+/// order the user wrote them:
+///   1. the TRAILING comment on the `(k-1)`-th signature's line (`get_value()  # …`), which the
+///      member span swallowed ([`trailing_comment`]); and
+///   2. the standalone trivia between the `(k-1)`-th and the `k`-th signature ([`comment_lines`]).
+/// For `k == 0` only source 2 applies (the trivia before the first signature); for
+/// `k == number of methods` it is the TRAILING run after the last signature, which the shipped
+/// compiler emits between the interface wrappers and the state dispatch.
+///
+/// Interface methods are emitted in SOURCE order (never key-sorted), and `sym.interface[k]` is the
+/// `k`-th `Decl::Member` of the interface section, so the mapping is positional. A whitespace-only
+/// gap with no trailing comment yields an empty vec (nothing emitted).
+pub(super) fn interface_leading_comments(src: &Source, sections: &[Section], k: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    for sec in sections {
+        let Section::Interface(d) = sec else { continue };
+        // `seen` counts the signature decls passed. The `(k-1)`-th signature contributes its
+        // trailing comment; a trivia met while `seen == k` sits in the gap before the k-th
+        // signature; the k-th signature itself ends the gap.
+        let mut seen = 0usize;
+        for m in &d.members {
+            match m {
+                Decl::Member(mem) => {
+                    if seen == k {
+                        break;
+                    }
+                    if seen + 1 == k {
+                        if let Some(c) = trailing_comment(src, mem.span) {
+                            lines.push(c);
+                        }
+                    }
+                    seen += 1;
+                }
+                Decl::Trivia(t) => {
+                    if seen == k {
+                        lines.extend(comment_lines(src, t.span));
+                    }
+                }
+                Decl::WithBody(_) => {}
+            }
+        }
+        break;
+    }
+    lines
+}
+
+/// Did [`Backend::open_handler`] emit any param binding for this handler? A handler with state
+/// params or event params binds them into the body (`x = __e._parameters[0]`), so the emitted
+/// method is NOT empty even when the user's handler BODY is — and must not get an empty-body
+/// `noop`/`pass` after the binding. (Actions differ: their params live in the signature, so an
+/// empty action body still owes the target a `noop`.)
+pub(super) fn handler_emits_bindings(sym: &SystemSym, state: &str, params_text: &str) -> bool {
+    let has_state_params = sym
+        .states
+        .iter()
+        .find(|s| s.name == state)
+        .map(|s| !s.state_params.is_empty())
+        .unwrap_or(false);
+    let has_event_params = params_split(params_text).into_iter().any(|(n, _)| !n.is_empty());
+    has_state_params || has_event_params
 }
 
 /// Does `state` declare a lifecycle handler for `event` (`$>` / `<$`)?

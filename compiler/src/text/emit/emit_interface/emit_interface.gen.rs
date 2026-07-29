@@ -155,7 +155,9 @@ mod _emit_interface_framec {
         __compartment: EmitInterfaceCompartment,
         __next_compartment: Option<EmitInterfaceCompartment>,
         _context_stack: Vec<EmitInterfaceFrameContext>,
+        pub src: &'a Source,
         pub sym: &'a SystemSym,
+        pub sections: &'a [Section],
         pub be: &'a dyn Backend,
         pub ni: usize,
         pub arms: ArmVec,
@@ -167,11 +169,13 @@ mod _emit_interface_framec {
 
     #[allow(non_snake_case)]
     impl<'a> EmitInterface<'a> {
-        pub fn new(sym: &'a SystemSym, be: &'a dyn Backend, ni: usize, arms: ArmVec, out: Sink) -> Self {
+        pub fn new(src: &'a Source, sym: &'a SystemSym, sections: &'a [Section], be: &'a dyn Backend, ni: usize, arms: ArmVec, out: Sink) -> Self {
             Self {
                 _state_stack: Vec::new(),
                 _context_stack: Vec::new(),
+                src: src,
                 sym: sym,
+                sections: sections,
                 be: be,
                 ni: ni,
                 arms: arms,
@@ -184,8 +188,8 @@ mod _emit_interface_framec {
             }
         }
 
-        pub fn __create(sym: &'a SystemSym, be: &'a dyn Backend, ni: usize, arms: ArmVec, out: Sink) -> Self {
-            let mut c = Self::new(sym, be, ni, arms, out);
+        pub fn __create(src: &'a Source, sym: &'a SystemSym, sections: &'a [Section], be: &'a dyn Backend, ni: usize, arms: ArmVec, out: Sink) -> Self {
+            let mut c = Self::new(src, sym, sections, be, ni, arms, out);
             c.__compartment = c.__prepareEnter("Method");
             let __e = alloc::rc::Rc::new(EmitInterfaceFrameEvent::FrameEnter {});
             let __ctx = EmitInterfaceFrameContext::new(alloc::rc::Rc::clone(&__e), None);
@@ -320,7 +324,7 @@ mod _emit_interface_framec {
         fn _s_Arm_hdl_user_step(&mut self, __e: &EmitInterfaceFrameEvent) {
             if self.ai >= self.na {
                 let is_async = method_is_async(self.sym, self.mi);
-                route_method(self.sym, self.be, self.mi, &self.arms, is_async, &mut self.out);
+                route_method(self.src, self.sym, self.sections, self.be, self.mi, &self.arms, is_async, &mut self.out);
                 self.mi = self.mi + 1;
                 let mut __compartment = self.__prepareEnter("Method");
                 self.__transition(__compartment);

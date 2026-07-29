@@ -342,7 +342,7 @@ mod _emit_system_framec {
         }
 
         fn _s_Interface_hdl_user_step(&mut self, __e: &EmitSystemFrameEvent) {
-            emit_iface_phase(self.sym, self.be, &mut self.out);
+            emit_iface_phase(self.src, self.sym, self.sections, self.be, &mut self.out);
             let mut __compartment = self.__prepareEnter("Dispatch");
             self.__transition(__compartment);
             return;

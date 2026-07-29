@@ -1,0 +1,63 @@
+@@[target("rust")]
+
+// The RUST per-state message-dispatcher walk — the pilot-style twin of the shared `DispatchBody`.
+// Rust's `_state_<S>` dispatcher is a `match` over a typed `<Sys>FrameEvent` enum, NOT an `if`-chain
+// over a message string, so it does not (and cannot) share `DispatchBody` with Python/Java/C: the
+// per-arm spelling is a variant pattern with an enter-time parent-chain ctx-climb, not a `Backend`
+// seam any `if`-chain target could reuse. So rust gets its OWN system, driven from rust.rs's
+// `Backend::dispatch`, over rust-only leaves (`rust_dispatch_open` / `_arm` / `_close`) — NOT the
+// four `Backend` trait `dispatch_*` methods.
+//
+// THE WALK: emit the method header + `match __e {` (open), emit one arm per event message (arms),
+// then the `_ => {}` default + the two closing braces (close). The per-arm bytes — the `$>` enter
+// (climb the parent chain to the owning state, read each enter param off its typed ctx, pass
+// positionally), the `<$` exit, and a user event's variant destructure — all live in the arm leaf;
+// this walk only SEQUENCES them.
+//
+// THE HONEST MACHINE CLASS. §3 degenerate pole: a program-counter walk over data already decided
+// upstream (`arms` pre-ordered by `StateDispatchWalk`; state read from the resolved symbol table).
+// The one cursor (`ai`) is a pure program counter. Differential-gated byte-for-byte against the
+// preserved `rust_dispatch_hand`. It rides the same read-only borrowed domain as the landed emit
+// machines (`sym: &SystemSym`).
+//
+// The scan-guard (`if sym.scan.is_some() { return; }`) lives in the driver (`mod.rs`), not here: a
+// scanner system dispatches directly in `route` and emits no `_state_<S>`, so the driver returns
+// before ever building this machine.
+//
+// Regen: framec-ng -l rust --emit rust_dispatch.frs | grep -v '^#!\[allow' > rust_dispatch.gen.rs
+
+@@system RustDispatch(sym: &SystemSym, state: &str, arms: EventVec, na: usize, out: Sink) {
+    interface:
+        step()
+    machine:
+        $Header {
+            step() {
+                rust_dispatch_open(self.sym, self.state, &mut self.out);
+                -> $Arms
+            }
+        }
+        $Arms {
+            step() {
+                if self.ai >= self.na {
+                    -> $Close
+                }
+                rust_dispatch_arm(self.sym, self.state, &self.arms, self.ai, &mut self.out);
+                self.ai = self.ai + 1;
+                -> $Arms
+            }
+        }
+        $Close {
+            step() {
+                rust_dispatch_close(&mut self.out);
+                -> $Done
+            }
+        }
+        $Done { }
+    domain:
+        sym: &SystemSym = sym
+        state: &str = state
+        arms: EventVec = arms
+        na: usize = na
+        out: Sink = out
+        ai: usize = 0
+}
