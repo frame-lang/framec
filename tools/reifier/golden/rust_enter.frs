@@ -1,0 +1,74 @@
+@@[target("rust")]
+
+// Rust's `-> (enter) $Target` construction of the destination compartment, dogfooded as a plain
+// `@@system`. Total-reification doctrine (ghost-buster): `enter`'s one real machine is the 4-way
+// fork over the destination's enter-args shape — and that fork is NAMED as four explicit states, not
+// hidden inside a leaf (a branch in a leaf is a latent machine; we make it explicit so nobody has to
+// hunt for it):
+//
+//   $Enter (classify np/has_args) --np==0-------------> $Empty    (no state-params: `Args::T { }`)
+//                                 --!has_args---------> $Default  (params, entered w/o args: defaults)
+//                                 --np==1-------------> $Single   (one param: `Args::T { p: a }`)
+//                                 --else--------------> $Tuple    (>1 param: tuple-destructure + fields)
+//   each case -> $Done
+//
+// Each case-state's leaf is BRANCH-FREE: it emits that case's `let mut __next = <Sys>Comp {...}` line
+// (and, for $Tuple only, the preceding `let (pat) = (a);`). The residual string-folds inside those
+// leaves (`names.iter().map(...).join(", ")`) are visible one-liners, not latent machines — leaf
+// floor per the owner's rationale. Differential-gated byte-for-byte against the preserved
+// `rust_enter_hand`.
+//
+// Regen: framec-ng -l rust --emit rust_enter.frs | grep -v '^#!\[allow' > rust_enter.gen.rs
+
+@@system RustEnter(sym: &SystemSym, target: String, args: OptStr, p: String, np: usize, has_args: bool, out: Sink) {
+    interface:
+        step()
+    machine:
+        $Enter {
+            step() {
+                if self.np == 0 {
+                    -> $Empty
+                }
+                if self.has_args == false {
+                    -> $Default
+                }
+                if self.np == 1 {
+                    -> $Single
+                }
+                -> $Tuple
+            }
+        }
+        $Single {
+            step() {
+                enter_single(self.sym, &self.target, &self.args, &self.p, &mut self.out);
+                -> $Done
+            }
+        }
+        $Tuple {
+            step() {
+                enter_tuple(self.sym, &self.target, &self.args, &self.p, &mut self.out);
+                -> $Done
+            }
+        }
+        $Default {
+            step() {
+                enter_default(self.sym, &self.target, &self.p, &mut self.out);
+                -> $Done
+            }
+        }
+        $Empty {
+            step() {
+                enter_empty(self.sym, &self.target, &self.p, &mut self.out);
+                -> $Done
+            }
+        }
+        $Done { }
+    domain:
+        sym: &SystemSym = sym
+        target: String = target
+        args: OptStr = args
+        p: String = p
+        np: usize = np
+        has_args: bool = has_args
+        out: Sink = out
+}
