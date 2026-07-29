@@ -1,7 +1,7 @@
 @@[target("rust")]
 
 // Rust's `-> (enter) $Target` construction of the destination compartment, dogfooded as a plain
-// `@@system`. Total-reification doctrine (ghost-buster): `enter`'s one real machine is the 4-way
+// `@@system`. Total-mechanization doctrine (ghost-buster): `enter`'s one real machine is the 4-way
 // fork over the destination's enter-args shape — and that fork is NAMED as four explicit states, not
 // hidden inside a leaf (a branch in a leaf is a latent machine; we make it explicit so nobody has to
 // hunt for it):

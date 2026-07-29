@@ -1,7 +1,7 @@
-//! The framec reifier — increment 1.
+//! The framec mechanizer — increment 1.
 //!
-//! Reads a native Rust `fn` and emits its Frame `@@system` per the reification calculus
-//! (see README.md). framec, reifying itself. The ONLY fn left native is the OS boundary
+//! Reads a native Rust `fn` and emits its Frame `@@system` per the mechanization calculus
+//! (see README.md). framec, mechanizing itself. The ONLY fn left native is the OS boundary
 //! (`main`/FFI) — because it cannot be a machine, not because it is exempt.
 
 use quote::ToTokens;
@@ -12,7 +12,7 @@ use syn::{Block, Expr, FnArg, ImplItem, Item, Pat, Signature, Stmt};
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 3 {
-        eprintln!("usage: reifier <file.rs> <fn_name>");
+        eprintln!("usage: mechanizer <file.rs> <fn_name>");
         std::process::exit(2);
     }
     let (path, fn_name) = (&args[1], &args[2]);
@@ -43,7 +43,7 @@ fn main() {
     let mut out = String::new();
     out.push_str("@@[target(\"rust\")]\n\n");
     out.push_str(&format!(
-        "// Reified from `{fn_name}` ({path}) by the framec reifier (increment 1).\n"
+        "// Mechanized from `{fn_name}` ({path}) by the framec mechanizer (increment 1).\n"
     ));
     out.push_str(&format!("@@system {sys}({}out: Sink) {{\n", domain_params(sig)));
     out.push_str("    interface:\n        step()\n");

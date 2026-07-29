@@ -1,4 +1,4 @@
-# reifier — framec, reifying itself
+# mechanizer — framec, mechanizing itself
 
 The doctrine: **framec is the Smalltalk of machines.** Smalltalk made everything an
 object, no exceptions of convenience. framec makes everything a **machine**. The only
@@ -8,12 +8,12 @@ operating system. The discriminator is not the advocate's "does naming pay?" nor
 the ghost-buster's "does it branch?" — it is **"can this be a machine?"** If yes, it
 must be one.
 
-Total reification of framec's own logic is mechanical and thousands-of-sites, so it is
+Total mechanization of framec's own logic is mechanical and thousands-of-sites, so it is
 a **compiler problem, not a hand-grind**: this tool reads a native Rust `fn` and emits
 its `@@system` (`.frs`) per the calculus below. Optimization of the resulting
 fine-grained systems is deferred to the framepiler.
 
-## The reification calculus
+## The mechanization calculus
 
 | native construct | Frame form |
 |---|---|
@@ -36,8 +36,8 @@ OS-boundary fn and skips it; it never skips anything else.
 ## Golden test
 
 `compiler/src/text/emit/rust_enter/rust_enter.frs` — the hand-built control-flow
-reification of rust's `enter` (the 4-way arg-case fork as 4 explicit states). The
-reifier must reproduce that structure from `enter`'s Rust, then go deeper (the
+mechanization of rust's `enter` (the 4-way arg-case fork as 4 explicit states). The
+mechanizer must reproduce that structure from `enter`'s Rust, then go deeper (the
 `vars_expr` / `args_default_expr` folds → their own cycle-systems).
 
 ## Status
