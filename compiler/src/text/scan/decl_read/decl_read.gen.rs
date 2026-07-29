@@ -132,10 +132,10 @@ impl<'a> DeclRead<'a> {
         return Default::default();
     }
 
-
-        // `async fetch(...)` — `async` is a MODIFIER iff followed by ' '/'\t' (the recorded
-        // bug-fix state, machine.rs decl_of, finally named — ledger T10). `async(` /
-        // `asyncFoo` / bare `async` at window end remain a NAME.    fn Async_step(&mut self) {
+    // `async fetch(...)` — `async` is a MODIFIER iff followed by ' '/'\t' (the recorded
+    // bug-fix state, machine.rs decl_of, finally named — ledger T10). `async(` /
+    // `asyncFoo` / bare `async` at window end remain a NAME.
+    fn Async_step(&mut self) {
         if async_modifier_at(self.src, self.cursor) {
             self.is_async = true;
             self.cursor = indent_end(self.src, self.cursor + 5);

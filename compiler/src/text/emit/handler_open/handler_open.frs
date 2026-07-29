@@ -1,0 +1,77 @@
+@@[target("rust")]
+
+// The SHARED per-state HANDLER-OPENER walk, for the targets whose private `(state, handler)` method
+// is a header + two positional binding loops — Python, Java, C. It SPELLS the opening of one handler
+// method, one fragment at a time, through the `Backend` seam: emit the method HEADER, bind the
+// state's own params off the live compartment (`state_args`, one per param), bind the event's own
+// params off its slot (`enter_args` for `$>`, `exit_args` for `<$`, `__e._parameters` for a user
+// event, one per param), then run the language TAIL (C seeds a `$>` state's `$.x` vars into the
+// compartment; Python/Java have no tail). Rust's opener is structurally different — a scan-branch
+// plus a header-only kernel branch, with no body binding loops — so it does NOT use this walk; it
+// is a SEPARATE future milestone.
+//
+// THE WALK IS IDENTICAL ACROSS PYTHON/JAVA/C: header, state-param binds, event-param binds, tail.
+// Only the per-fragment SPELLING differs (Python untyped `x = slot[i]`; Java
+// `{ty} x = java_unbox(slot.get(i))`; C `{ty} x = ({ty})(intptr_t)FrameVec_get(slot, i)`), and that
+// is exactly what the `be.handler_*` leaves carry. The one target-specific tail — C's `$>`
+// state-var seeding versus Python/Java's nothing — folds entirely into `be.handler_seeds`, so this
+// walk needs no per-language guard.
+//
+// THE HONEST MACHINE CLASS. Degenerate pole: a program-counter walk over data already decided
+// upstream (params read from the resolved symbol table; the two cursors `si`, `ei` are pure program
+// counters). The payoff is DOGFOOD UNIFORMITY, and — because it is SHARED — the elimination of three
+// copies of one walk. Differential-gated byte-for-byte against each target's preserved
+// `*_open_handler_hand`. It rides the same read-only borrowed domain as the landed emit machines
+// (`be: &dyn Backend`, `sym: &SystemSym`). (`params` is carried OWNED, like `DispatchBody`'s `arms`.)
+//
+// Regen: framec-ng -l rust --emit handler_open.frs | grep -v '^#!\[allow' > handler_open.gen.rs
+
+@@system HandlerOpen(be: &dyn Backend, sym: &SystemSym, state: &str, event: &str, params: String, ns: usize, ne: usize, out: Sink) {
+    interface:
+        step()
+    machine:
+        $Header {
+            step() {
+                handler_open(self.be, self.sym, self.state, self.event, &self.params, &mut self.out);
+                -> $StateParams
+            }
+        }
+        $StateParams {
+            step() {
+                if self.si >= self.ns {
+                    -> $EventParams
+                }
+                handler_state_param(self.be, self.sym, self.state, self.si, &mut self.out);
+                self.si = self.si + 1;
+                -> $StateParams
+            }
+        }
+        $EventParams {
+            step() {
+                if self.ei >= self.ne {
+                    -> $Seeds
+                }
+                handler_event_param(self.be, self.sym, self.state, self.event, &self.params, self.ei, &mut self.out);
+                self.ei = self.ei + 1;
+                -> $EventParams
+            }
+        }
+        $Seeds {
+            step() {
+                handler_seeds(self.be, self.sym, self.state, self.event, &mut self.out);
+                -> $Done
+            }
+        }
+        $Done { }
+    domain:
+        be: &dyn Backend = be
+        sym: &SystemSym = sym
+        state: &str = state
+        event: &str = event
+        params: String = params
+        ns: usize = ns
+        ne: usize = ne
+        out: Sink = out
+        si: usize = 0
+        ei: usize = 0
+}

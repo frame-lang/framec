@@ -307,6 +307,24 @@ impl Backend for Rust {
         }
     }
 
+    /// Rust SCAN handlers open at `    fn` (4-space impl level; no `mod` wrapper adds depth) with no
+    /// leading `\n`, and are trailing-separated by the previous handler's close. A comment before one
+    /// must therefore emit each line newline-TERMINATED at that 4-space column with no leading blank
+    /// (Model B) — Model A would swallow the `fn` onto the last comment line, commenting the method
+    /// out. KERNEL handlers open with `\n        fn`, whose leading `\n` terminates the comment, so
+    /// they keep Model A.
+    fn handler_comment(&self, lines: &[String], is_scan: bool, out: &mut Sink) {
+        if is_scan {
+            for line in lines {
+                out.frame("    ");
+                out.frame(line);
+                out.frame("\n");
+            }
+        } else {
+            self.member_comment(lines, out);
+        }
+    }
+
     /// KERNEL handler bodies sit one `impl`-level deeper than a scanner's (the `mod _<sys>_framec`
     /// wrapper adds a level): `mod`(0) > `impl`(4) > `fn`(8) > body(12). So the kernel base is 12,
     /// the scanner's 8 (= [`Self::pad`]).

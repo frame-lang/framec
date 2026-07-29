@@ -207,6 +207,32 @@ pub trait Backend {
         let _ = (sym, state, arms, np, out);
     }
 
+    /// SHARED `HandlerOpen` seam (Python/Java/C — the header + binding-loop openers). Emit the
+    /// private `(state, event)` handler method's HEADER. Default: nothing (Rust spells its own
+    /// scan-branch/kernel opener; others take the no-op default).
+    fn handler_open(&self, sym: &SystemSym, state: &str, event: &str, params: &str, out: &mut Sink) {
+        let _ = (sym, state, event, params, out);
+    }
+
+    /// SHARED `HandlerOpen` seam. Bind the state PARAM at slot `si` off the live compartment's
+    /// `state_args`. Default: nothing.
+    fn handler_state_param(&self, sym: &SystemSym, state: &str, si: usize, out: &mut Sink) {
+        let _ = (sym, state, si, out);
+    }
+
+    /// SHARED `HandlerOpen` seam. Bind the event PARAM at slot `ei` off its source slot
+    /// (`enter_args` for `$>`, `exit_args` for `<$`, `__e._parameters` for a user event — the match
+    /// lives in the leaf). Default: nothing.
+    fn handler_event_param(&self, sym: &SystemSym, state: &str, event: &str, params: &str, ei: usize, out: &mut Sink) {
+        let _ = (sym, state, event, params, ei, out);
+    }
+
+    /// SHARED `HandlerOpen` seam. The language TAIL after the two binding loops. C seeds a `$>`
+    /// state's `$.x` vars into the compartment; Python and Java have no tail. Default: nothing.
+    fn handler_seeds(&self, sym: &SystemSym, state: &str, event: &str, out: &mut Sink) {
+        let _ = (sym, state, event, out);
+    }
+
     /// How this language spells a **parameter list declaration**.
     ///
     /// Frame writes `amount: int`. Java wants `int amount`; Go wants `amount int`; Rust
@@ -504,6 +530,18 @@ pub trait Backend {
     /// this to emit each comment line newline-TERMINATED with no leading blank, or the comment would
     /// swallow the `fn` onto its own line (commenting the method out).
     fn actions_comment(&self, lines: &[String], out: &mut Sink) {
+        self.member_comment(lines, out);
+    }
+
+    /// The handler-leading-comment variant of [`Self::member_comment`]. Defaults to it (Model A:
+    /// leading blank, no trailing newline — the following handler's `open_handler` supplies the
+    /// leading `\n`). A target whose handler opener begins WITHOUT `\n` for some handlers overrides
+    /// this to terminate each comment line itself (Model B) in that case — rust, whose SCAN handlers
+    /// open straight with `    fn` (no leading `\n`, unlike the kernel branch), where Model A would
+    /// swallow the `fn` onto the last comment line and comment the method out. `is_scan` carries that
+    /// distinction (the enclosing system is an `@@[scan]` FSM).
+    fn handler_comment(&self, lines: &[String], is_scan: bool, out: &mut Sink) {
+        let _ = is_scan;
         self.member_comment(lines, out);
     }
 
@@ -2147,6 +2185,118 @@ pub fn java_dispatch_body_parity(ast: &FileAst, syms: &SymbolTable) -> Vec<Dispa
 #[doc(hidden)]
 pub fn c_dispatch_body_parity(ast: &FileAst, syms: &SymbolTable) -> Vec<DispatchBodyParity> {
     dispatch_body_parity_report(ast, syms, &super::c::C::new(), super::c::c_dispatch_hand)
+}
+
+/// TEST-ONLY (GATE-A) — one system's dual handler-opener emission for a header + binding-loop
+/// backend: the shared [`super::handler_open`] `HandlerOpen` machine (the production
+/// [`Backend::open_handler`] path) vs that backend's preserved frozen hand oracle. For
+/// `tests/emit_scaffold_walks.rs`. Doc-hidden.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct HandlerOpenParity {
+    /// The system name, for a failing assertion message.
+    pub label: String,
+    /// Text the shared `HandlerOpen` machine (the production `be.open_handler` path) emits for ALL of
+    /// this system's private `(state, handler)` method openers.
+    pub machine_text: String,
+    /// Text the backend's preserved frozen hand oracle emits for the same.
+    pub hand_text: String,
+    /// Total handlers opened — proves the corpus actually walked handlers.
+    pub handler_count: usize,
+    /// Handlers whose STATE declares params — proves the `state_args` binding loop was taken.
+    pub state_param_handlers: usize,
+    /// Handlers with non-empty EVENT params — proves the event-param binding loop was taken.
+    pub event_param_handlers: usize,
+    /// Lifecycle (`$>` / `<$`) handlers — proves the enter/exit-arg slot arms were taken.
+    pub lifecycle_handlers: usize,
+}
+
+/// TEST-ONLY (GATE-A). Emit **every** system's private `(state, handler)` method openers through
+/// BOTH the shared `HandlerOpen` machine ([`Backend::open_handler`] on `be`, = the production path)
+/// and that backend's preserved frozen hand oracle (`hand`) — over the SAME real parsed systems,
+/// feeding BOTH sides the IDENTICAL `(state, event, params)` for each handler, so the only variable
+/// is the SPELLING. `tests/emit_scaffold_walks.rs` asserts, for every entry,
+/// `machine_text == hand_text` byte-for-byte, per header + binding-loop backend (Python / Java / C).
+///
+/// The hand side is the STANDALONE frozen body, NOT `be.open_handler` — so a spelling bug in a
+/// `handler_*` leaf diverges the two paths (the false-gate trap the reification must avoid). Both
+/// sides receive `is_async` (the hand consumes it verbatim; the machine recomputes the class-level
+/// async from `sym` in Python's header leaf, provably the same bit — see [`Backend::handler_open`]).
+#[doc(hidden)]
+pub fn handler_open_parity_report(
+    ast: &FileAst,
+    syms: &SymbolTable,
+    be: &dyn Backend,
+    hand: fn(&SystemSym, &str, &str, &str, bool, &mut Sink),
+) -> Vec<HandlerOpenParity> {
+    let mut report = Vec::new();
+    for item in &ast.items {
+        let Item::System(sys) = item else { continue };
+        let Some(sym) = syms.systems.iter().find(|s| s.name == sys.name) else {
+            continue;
+        };
+        let mut mo = super::Sink::default();
+        let mut ho = super::Sink::default();
+        let mut handler_count = 0usize;
+        let mut state_param_handlers = 0usize;
+        let mut event_param_handlers = 0usize;
+        let mut lifecycle_handlers = 0usize;
+        for st in &sym.states {
+            for h in &st.handlers {
+                // The `(is_async, ret)` the production handler walk computes for this handler — fed
+                // IDENTICALLY to both sides so the only variable is the spelling.
+                let is_async = sym.is_async
+                    || sym.interface.iter().any(|m| m.name == h.event && m.is_async);
+                let ret = h.return_text.as_deref().or_else(|| {
+                    sym.interface
+                        .iter()
+                        .find(|m| m.name == h.event)
+                        .and_then(|m| m.return_text.as_deref())
+                });
+                // machine = production path (shared HandlerOpen); hand = frozen standalone body.
+                be.open_handler(sym, &st.name, &h.event, &h.params_text, ret, is_async, &mut mo);
+                hand(sym, &st.name, &h.event, &h.params_text, is_async, &mut ho);
+                handler_count += 1;
+                if !st.state_params.is_empty() {
+                    state_param_handlers += 1;
+                }
+                if params_split(&h.params_text).into_iter().any(|(nm, _)| !nm.is_empty()) {
+                    event_param_handlers += 1;
+                }
+                if h.event == "$>" || h.event == "<$" {
+                    lifecycle_handlers += 1;
+                }
+            }
+        }
+        report.push(HandlerOpenParity {
+            label: sym.name.clone(),
+            machine_text: mo.finish(),
+            hand_text: ho.finish(),
+            handler_count,
+            state_param_handlers,
+            event_param_handlers,
+            lifecycle_handlers,
+        });
+    }
+    report
+}
+
+/// GATE-A convenience: Python's `HandlerOpen` parity. For `tests/emit_scaffold_walks.rs`.
+#[doc(hidden)]
+pub fn py_handler_open_parity(ast: &FileAst, syms: &SymbolTable) -> Vec<HandlerOpenParity> {
+    handler_open_parity_report(ast, syms, &super::python::Python, super::python::py_open_handler_hand)
+}
+
+/// GATE-A convenience: Java's `HandlerOpen` parity. For `tests/emit_scaffold_walks.rs`.
+#[doc(hidden)]
+pub fn java_handler_open_parity(ast: &FileAst, syms: &SymbolTable) -> Vec<HandlerOpenParity> {
+    handler_open_parity_report(ast, syms, &super::java::Java::new(), super::java::java_open_handler_hand)
+}
+
+/// GATE-A convenience: C's `HandlerOpen` parity. For `tests/emit_scaffold_walks.rs`.
+#[doc(hidden)]
+pub fn c_handler_open_parity(ast: &FileAst, syms: &SymbolTable) -> Vec<HandlerOpenParity> {
+    handler_open_parity_report(ast, syms, &super::c::C::new(), super::c::c_open_handler_hand)
 }
 
 /// TEST-ONLY (GATE-A) — one system's dual per-state dispatcher emission for RUST: the rust-only

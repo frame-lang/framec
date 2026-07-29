@@ -746,6 +746,11 @@ impl Backend for C {
 
     /// One private `(state, handler)` method. Signature is FIXED: `(self, __e, compartment)`;
     /// the handler is `void` (a value return parks the slot, it does not `return`).
+    /// The handler-method opener is the SHARED `HandlerOpen` @@system (`super::handler_open`), spelled
+    /// through the four `handler_*` seam methods below (the C tail — `$>` state-var seeding — is
+    /// [`Self::handler_seeds`]). `_ret`/`_is_async` are unused (the handler is `void`). The
+    /// byte-for-byte pre-conversion body is preserved as [`c_open_handler_hand`] and gated in
+    /// `tests/emit_scaffold_walks.rs`.
     fn open_handler(
         &self,
         sym: &SystemSym,
@@ -756,36 +761,52 @@ impl Backend for C {
         _is_async: bool,
         out: &mut Sink,
     ) {
+        super::handler_open::drive(self, sym, state, event, params, out);
+    }
+
+    fn handler_open(&self, sym: &SystemSym, state: &str, event: &str, _params: &str, out: &mut Sink) {
         let n = &sym.name;
         out.frame(&format!(
             "\nstatic void {}({n}* self, {n}_FrameEvent* __e, {n}_Compartment* compartment) {{\n",
             c_handler_method(n, state, event)
         ));
-        // Bind the state's own params (off `state_args`), then the event's (off `__e->_parameters`
-        // for a user event, or `enter_args`/`exit_args` for a lifecycle message).
+    }
+
+    fn handler_state_param(&self, sym: &SystemSym, state: &str, si: usize, out: &mut Sink) {
+        // Bind the state's declared param off the (parameter) compartment's positional `state_args`.
+        let n = &sym.name;
         if let Some(st) = sym.states.iter().find(|s| s.name == state) {
-            for (i, p) in st.state_params.iter().enumerate() {
+            if let Some(p) = st.state_params.get(si) {
                 let ty = st.state_param_types.get(p).cloned().unwrap_or_else(|| "void*".into());
                 out.frame(&format!(
-                    "    {ty} {p} = ({ty})(intptr_t){n}_FrameVec_get(compartment->state_args, {i});\n"
+                    "    {ty} {p} = ({ty})(intptr_t){n}_FrameVec_get(compartment->state_args, {si});\n"
                 ));
             }
         }
+    }
+
+    fn handler_event_param(&self, sym: &SystemSym, _state: &str, event: &str, params: &str, ei: usize, out: &mut Sink) {
+        // The event's own param — off `__e->_parameters` for a user event, `enter_args`/`exit_args`
+        // for a lifecycle message.
+        let n = &sym.name;
         let slot = match event {
             "$>" => "compartment->enter_args".to_string(),
             "<$" => "compartment->exit_args".to_string(),
             _ => "__e->_parameters".to_string(),
         };
-        for (i, (name, ty)) in params_split(params)
+        if let Some((name, ty)) = params_split(params)
             .into_iter()
             .filter(|(nm, _)| !nm.is_empty())
-            .enumerate()
+            .nth(ei)
         {
             let ty = ty.unwrap_or_else(|| "void*".into());
             out.frame(&format!(
-                "    {ty} {name} = ({ty})(intptr_t){n}_FrameVec_get({slot}, {i});\n"
+                "    {ty} {name} = ({ty})(intptr_t){n}_FrameVec_get({slot}, {ei});\n"
             ));
         }
+    }
+
+    fn handler_seeds(&self, sym: &SystemSym, state: &str, event: &str, out: &mut Sink) {
         // Prepend the state-var seeds to a USER `$>` handler (after its enter-arg binding), so the
         // vars exist before the user's own `$>` body runs — the oracle's shape.
         if event == "$>" {
@@ -1283,6 +1304,49 @@ pub(super) fn c_dispatch_hand(sym: &SystemSym, state: &str, arms: &[String], out
         ));
     }
     out.frame("}\n");
+}
+
+/// The byte-for-byte **frozen oracle** for C's handler-opener — a verbatim copy of the
+/// pre-conversion `Backend::open_handler` body, before it was reified as the shared
+/// [`super::handler_open`] `HandlerOpen` `@@system`. Kept as the GATE-A differential the machine is
+/// proven against (`tests/emit_scaffold_walks.rs`). It does NOT route through `be.open_handler` — it
+/// reproduces the original bytes standalone (including the `$>` seed tail), so a spelling bug in a
+/// `handler_*` leaf is visible to the gate. Doc-hidden and **not on the production path**.
+#[doc(hidden)]
+pub(super) fn c_open_handler_hand(sym: &SystemSym, state: &str, event: &str, params: &str, _is_async: bool, out: &mut Sink) {
+    let n = &sym.name;
+    out.frame(&format!(
+        "\nstatic void {}({n}* self, {n}_FrameEvent* __e, {n}_Compartment* compartment) {{\n",
+        c_handler_method(n, state, event)
+    ));
+    if let Some(st) = sym.states.iter().find(|s| s.name == state) {
+        for (i, p) in st.state_params.iter().enumerate() {
+            let ty = st.state_param_types.get(p).cloned().unwrap_or_else(|| "void*".into());
+            out.frame(&format!(
+                "    {ty} {p} = ({ty})(intptr_t){n}_FrameVec_get(compartment->state_args, {i});\n"
+            ));
+        }
+    }
+    let slot = match event {
+        "$>" => "compartment->enter_args".to_string(),
+        "<$" => "compartment->exit_args".to_string(),
+        _ => "__e->_parameters".to_string(),
+    };
+    for (i, (name, ty)) in params_split(params)
+        .into_iter()
+        .filter(|(nm, _)| !nm.is_empty())
+        .enumerate()
+    {
+        let ty = ty.unwrap_or_else(|| "void*".into());
+        out.frame(&format!(
+            "    {ty} {name} = ({ty})(intptr_t){n}_FrameVec_get({slot}, {i});\n"
+        ));
+    }
+    if event == "$>" {
+        // `C` is a ZST and `emit_seeds_in_enter` reads no instance state, so a local receiver
+        // reproduces the original `self.emit_seeds_in_enter(...)` bytes exactly.
+        C::new().emit_seeds_in_enter(sym, state, out);
+    }
 }
 
 /// The private function name for one `(state, event)` handler — `<Sys>_s_<state>_hdl_user_<event>`

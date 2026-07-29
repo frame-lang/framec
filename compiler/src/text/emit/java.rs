@@ -400,6 +400,10 @@ impl Backend for Java {
         out.frame("    }\n");
     }
 
+    /// The handler-method opener is the SHARED `HandlerOpen` @@system (`super::handler_open`), spelled
+    /// through the four `handler_*` seam methods below. `_ret`/`_is_async` are unused (the handler is
+    /// VOID and parks its value in the context slot). The byte-for-byte pre-conversion body is
+    /// preserved as [`java_open_handler_hand`] and gated in `tests/emit_scaffold_walks.rs`.
     fn open_handler(
         &self,
         sym: &SystemSym,
@@ -410,33 +414,43 @@ impl Backend for Java {
         _is_async: bool,
         out: &mut Sink,
     ) {
+        super::handler_open::drive(self, sym, state, event, params, out);
+    }
+
+    fn handler_open(&self, sym: &SystemSym, state: &str, event: &str, _params: &str, out: &mut Sink) {
         let n = &sym.name;
         let method = kernel_handler_method(state, event);
         out.frame(&format!(
             "\n    private void {method}({n}FrameEvent __e, {n}Compartment compartment) {{\n"
         ));
-        // The state's own params, bound from the (parameter) compartment's `state_args`.
+    }
+
+    fn handler_state_param(&self, sym: &SystemSym, state: &str, si: usize, out: &mut Sink) {
+        // The state's own param, bound from the (parameter) compartment's `state_args`, unboxed.
         if let Some(st) = sym.states.iter().find(|s| s.name == state) {
-            for (i, p) in st.state_params.iter().enumerate() {
+            if let Some(p) = st.state_params.get(si) {
                 let ty = st.state_param_types.get(p).cloned().unwrap_or_else(|| "Object".into());
-                let slot = java_unbox(&ty, Atom::method(Atom::field(Atom::ident("compartment"), "state_args"), "get", &i.to_string()));
+                let slot = java_unbox(&ty, Atom::method(Atom::field(Atom::ident("compartment"), "state_args"), "get", &si.to_string()));
                 out.frame(&format!("        {ty} {p} = {slot};\n"));
             }
         }
-        // The event's own params. Lifecycle events read enter_args/exit_args off the compartment;
-        // a user event reads `__e._parameters`. Each is unboxed to its declared type.
+    }
+
+    fn handler_event_param(&self, _sym: &SystemSym, _state: &str, event: &str, params: &str, ei: usize, out: &mut Sink) {
+        // Lifecycle events read enter_args/exit_args off the compartment; a user event reads
+        // `__e._parameters`. Each is unboxed to its declared type.
         let recv = match event {
             "$>" => "compartment.enter_args",
             "<$" => "compartment.exit_args",
             _ => "__e._parameters",
         };
-        for (i, (name, ty)) in params_split(params)
+        if let Some((name, ty)) = params_split(params)
             .into_iter()
             .filter(|(nm, _)| !nm.is_empty())
-            .enumerate()
+            .nth(ei)
         {
             let ty = ty.unwrap_or_else(|| "Object".into());
-            let slot = java_unbox(&ty, Atom::method(Atom::ident(recv), "get", &i.to_string()));
+            let slot = java_unbox(&ty, Atom::method(Atom::ident(recv), "get", &ei.to_string()));
             out.frame(&format!("        {ty} {name} = {slot};\n"));
         }
     }
@@ -760,6 +774,42 @@ pub(super) fn java_dispatch_hand(sym: &SystemSym, state: &str, arms: &[String], 
         ));
     }
     out.frame("    }\n");
+}
+
+/// The byte-for-byte **frozen oracle** for Java's handler-opener — a verbatim copy of the
+/// pre-conversion `Backend::open_handler` body, before it was reified as the shared
+/// [`super::handler_open`] `HandlerOpen` `@@system`. Kept as the GATE-A differential the machine is
+/// proven against (`tests/emit_scaffold_walks.rs`). It does NOT route through `be.open_handler` — it
+/// reproduces the original bytes standalone, so a spelling bug in a `handler_*` leaf is visible to
+/// the gate. Doc-hidden and **not on the production path**.
+#[doc(hidden)]
+pub(super) fn java_open_handler_hand(sym: &SystemSym, state: &str, event: &str, params: &str, _is_async: bool, out: &mut Sink) {
+    let n = &sym.name;
+    let method = kernel_handler_method(state, event);
+    out.frame(&format!(
+        "\n    private void {method}({n}FrameEvent __e, {n}Compartment compartment) {{\n"
+    ));
+    if let Some(st) = sym.states.iter().find(|s| s.name == state) {
+        for (i, p) in st.state_params.iter().enumerate() {
+            let ty = st.state_param_types.get(p).cloned().unwrap_or_else(|| "Object".into());
+            let slot = java_unbox(&ty, Atom::method(Atom::field(Atom::ident("compartment"), "state_args"), "get", &i.to_string()));
+            out.frame(&format!("        {ty} {p} = {slot};\n"));
+        }
+    }
+    let recv = match event {
+        "$>" => "compartment.enter_args",
+        "<$" => "compartment.exit_args",
+        _ => "__e._parameters",
+    };
+    for (i, (name, ty)) in params_split(params)
+        .into_iter()
+        .filter(|(nm, _)| !nm.is_empty())
+        .enumerate()
+    {
+        let ty = ty.unwrap_or_else(|| "Object".into());
+        let slot = java_unbox(&ty, Atom::method(Atom::ident(recv), "get", &i.to_string()));
+        out.frame(&format!("        {ty} {name} = {slot};\n"));
+    }
 }
 
 // ======================================================================================

@@ -203,7 +203,7 @@ fn emit_handler(
         let slot = member_slot(sections, si, sti, hi, be);
         let lead = super::driver::handler_leading_comments(src, sections, si, sti, slot);
         if !lead.is_empty() {
-            be.member_comment(&lead, out);
+            be.handler_comment(&lead, sym.scan.is_some(), out);
         }
         be.open_handler(sym, &st.name, &h.event, &h.params_text, ret, is_async, out);
         // A body that emits NOTHING (all-`Trivia`, all-comment, or empty) still owes the target a

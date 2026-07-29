@@ -670,6 +670,11 @@ impl Backend for Python {
     /// Bindings are emitted in one fixed order — the state's own params, then the event's — so a
     /// body that names either resolves. The leading blank line separates this method from the
     /// previous one.
+    /// The handler-method HEADER is the SHARED `HandlerOpen` @@system (`super::handler_open`), spelled
+    /// through the four `handler_*` seam methods below. `_ret`/`_is_async` are unused here: the
+    /// handler is `async def` iff the whole class is (`py_system_async`, recomputed in the header
+    /// leaf), and it has no return type in its signature. The byte-for-byte pre-conversion body is
+    /// preserved as [`py_open_handler_hand`] and gated in `tests/emit_scaffold_walks.rs`.
     fn open_handler(
         &self,
         sym: &SystemSym,
@@ -677,37 +682,46 @@ impl Backend for Python {
         event: &str,
         params: &str,
         _ret: Option<&str>,
-        is_async: bool,
+        _is_async: bool,
         out: &mut Sink,
     ) {
-        let is_async = is_async || py_system_async(sym);
-        let kw = if is_async { "async def" } else { "def" };
+        super::handler_open::drive(self, sym, state, event, params, out);
+    }
+
+    fn handler_open(&self, sym: &SystemSym, state: &str, event: &str, _params: &str, out: &mut Sink) {
+        // The handler is `async def` iff the class is (see `py_system_async`) — the per-handler
+        // `is_async` the pre-conversion body OR-ed in is redundant, since a handler whose event is
+        // async makes some interface method async, which already sets `py_system_async`.
+        let kw = if py_system_async(sym) { "async def" } else { "def" };
         out.frame(&format!(
             "\n    {kw} {}(self, __e, compartment):\n",
             py_handler_method(state, event)
         ));
-        for (i, p) in sym
+    }
+
+    fn handler_state_param(&self, sym: &SystemSym, state: &str, si: usize, out: &mut Sink) {
+        if let Some(p) = sym
             .states
             .iter()
             .find(|s| s.name == state)
-            .map(|s| s.state_params.clone())
-            .unwrap_or_default()
-            .iter()
-            .enumerate()
+            .and_then(|s| s.state_params.get(si))
         {
-            out.frame(&format!("        {p} = compartment.state_args[{i}]\n"));
+            out.frame(&format!("        {p} = compartment.state_args[{si}]\n"));
         }
+    }
+
+    fn handler_event_param(&self, _sym: &SystemSym, _state: &str, event: &str, params: &str, ei: usize, out: &mut Sink) {
         let slot = match event {
             "$>" => "compartment.enter_args",
             "<$" => "compartment.exit_args",
             _ => "__e._parameters",
         };
-        for (i, (name, _ty)) in super::driver::params_split(params)
+        if let Some((name, _ty)) = super::driver::params_split(params)
             .into_iter()
             .filter(|(n, _)| !n.is_empty())
-            .enumerate()
+            .nth(ei)
         {
-            out.frame(&format!("        {name} = {slot}[{i}]\n"));
+            out.frame(&format!("        {name} = {slot}[{ei}]\n"));
         }
     }
 
@@ -1360,6 +1374,47 @@ pub(super) fn py_dispatch_hand(sym: &SystemSym, state: &str, arms: &[String], ou
         out.frame(&format!(
             "        {aw}self._state_{parent}(__e, compartment.parent_compartment)\n"
         ));
+    }
+}
+
+/// The byte-for-byte **frozen oracle** for the Python handler-opener — a verbatim copy of the
+/// pre-conversion `Backend::open_handler` body, before it was reified as the shared
+/// [`super::handler_open`] `HandlerOpen` `@@system`. Kept as the GATE-A differential the machine is
+/// proven against (`tests/emit_scaffold_walks.rs`, via [`super::driver::handler_open_parity_report`]).
+/// It does NOT route through `be.open_handler` — it reproduces the original bytes standalone, so a
+/// spelling bug in a `handler_*` leaf is visible to the gate. Doc-hidden and **not on the production
+/// path**. Do not edit it to add behavior: it exists only to reproduce the pre-conversion value
+/// exactly, so any divergence is the machine's bug, not the oracle's.
+#[doc(hidden)]
+pub(super) fn py_open_handler_hand(sym: &SystemSym, state: &str, event: &str, params: &str, is_async: bool, out: &mut Sink) {
+    let is_async = is_async || py_system_async(sym);
+    let kw = if is_async { "async def" } else { "def" };
+    out.frame(&format!(
+        "\n    {kw} {}(self, __e, compartment):\n",
+        py_handler_method(state, event)
+    ));
+    for (i, p) in sym
+        .states
+        .iter()
+        .find(|s| s.name == state)
+        .map(|s| s.state_params.clone())
+        .unwrap_or_default()
+        .iter()
+        .enumerate()
+    {
+        out.frame(&format!("        {p} = compartment.state_args[{i}]\n"));
+    }
+    let slot = match event {
+        "$>" => "compartment.enter_args",
+        "<$" => "compartment.exit_args",
+        _ => "__e._parameters",
+    };
+    for (i, (name, _ty)) in super::driver::params_split(params)
+        .into_iter()
+        .filter(|(n, _)| !n.is_empty())
+        .enumerate()
+    {
+        out.frame(&format!("        {name} = {slot}[{i}]\n"));
     }
 }
 

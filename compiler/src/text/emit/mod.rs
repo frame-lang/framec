@@ -31,6 +31,7 @@ mod emit_file;
 mod emit_handlers;
 mod emit_interface;
 mod emit_system;
+mod handler_open;
 mod hsm_chain_walk;
 pub mod java;
 pub mod persist;

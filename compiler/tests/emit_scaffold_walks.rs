@@ -376,3 +376,52 @@ fn rust_dispatch_is_byte_identical_to_the_frozen_hand() {
     assert!(arms >= 10, "corpus must stamp many dispatch arms; saw {arms}");
     assert!(empties >= 1, "corpus must include a state that handles nothing; saw {empties}");
 }
+
+/// GATE-A for the shared `HandlerOpen` `@@system` (the per-state handler-METHOD opener for the
+/// header + binding-loop targets, driven by the production `Backend::open_handler`): for each
+/// reified target it must emit byte-for-byte what that target's preserved frozen hand oracle does,
+/// over the same real systems and the same `(state, event, params)` per handler. The hand side is
+/// the STANDALONE frozen body — it does not route through `be.open_handler` — so a spelling bug in a
+/// `handler_*` leaf is visible here (the false-gate trap the reification must avoid). Rust is absent:
+/// its opener is a scan-branch + header-only kernel branch with no binding loops, a separate future
+/// milestone (we do not test what we have not modified).
+#[test]
+fn handler_open_is_byte_identical_to_the_frozen_hand() {
+    type ReportFn =
+        fn(&frame_compiler::tree::FileAst, &frame_compiler::resolve::SymbolTable) -> Vec<driver::HandlerOpenParity>;
+    // (language, its HandlerOpen parity accessor) — one entry per reified header + binding-loop target.
+    let cases: [(&str, ReportFn); 3] = [
+        ("python", driver::py_handler_open_parity),
+        ("java", driver::java_handler_open_parity),
+        ("c", driver::c_handler_open_parity),
+    ];
+    for (lang, report_fn) in cases {
+        let mut handlers = 0usize;
+        let mut state_params = 0usize;
+        let mut event_params = 0usize;
+        let mut lifecycles = 0usize;
+        for (label, frm) in CORPUS {
+            let (_src, ast, syms) = parse(frm);
+            let report = report_fn(&ast, &syms);
+            assert!(!report.is_empty(), "{lang}/{label}: no systems resolved");
+            for p in &report {
+                assert_eq!(
+                    p.machine_text, p.hand_text,
+                    "{lang}/{label} [{}]: HandlerOpen machine text != {lang}_open_handler_hand",
+                    p.label
+                );
+                handlers += p.handler_count;
+                state_params += p.state_param_handlers;
+                event_params += p.event_param_handlers;
+                lifecycles += p.lifecycle_handlers;
+            }
+        }
+        // Non-vacuity — one for each branch/loop of the walk: real handlers opened (the header), a
+        // handler in a state WITH params (the state-arg bind loop), a handler with event params (the
+        // event-arg bind loop), and a lifecycle handler (`$>`/`<$`, the enter/exit-arg slot arms).
+        assert!(handlers >= 5, "{lang}: corpus must open many handlers; saw {handlers}");
+        assert!(state_params >= 1, "{lang}: corpus must include a handler in a state with params; saw {state_params}");
+        assert!(event_params >= 1, "{lang}: corpus must include a handler with event params; saw {event_params}");
+        assert!(lifecycles >= 1, "{lang}: corpus must include a lifecycle ($>/<$) handler; saw {lifecycles}");
+    }
+}
