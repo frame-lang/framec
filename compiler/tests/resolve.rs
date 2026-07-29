@@ -274,6 +274,129 @@ fn persist_reachability_closes_over_embedded_subsystems() {
     );
 }
 
+/// **persist-reachability UNIONS multiple independent `@@[persist]` roots** — the multi-source case
+/// #219 exists for, and the one a single-root fixture leaves unexercised through the real
+/// `resolve.rs` seed-build (`systems.iter().map(persist.is_some())`). Two unrelated persisted systems
+/// P and Q each embed a distinct sub-system (`Kid1`/`Kid2`); BOTH subtrees must be persist-reachable
+/// and an unrelated `Lonely` must not. A seed that honoured only the first persist bit (a regression
+/// witnessed transiently while this landed) turns `Q`/`Kid2` dark — this fires on exactly that.
+#[test]
+fn persist_reachability_unions_multiple_persist_roots() {
+    let src = r#"@@[persist(str)]
+@@[save(freeze)]
+@@[load(thaw)]
+@@system P {
+    interface:
+        go()
+    machine:
+        $S { go() { } }
+    domain:
+        child: Kid1 = @@Kid1()
+}
+
+@@[persist(str)]
+@@[save(freeze)]
+@@[load(thaw)]
+@@system Q {
+    interface:
+        go()
+    machine:
+        $S { go() { } }
+    domain:
+        child: Kid2 = @@Kid2()
+}
+
+@@system Kid1 {
+    interface:
+        go()
+    machine:
+        $S { go() { } }
+    domain:
+        n: int = 0
+}
+
+@@system Kid2 {
+    interface:
+        go()
+    machine:
+        $S { go() { } }
+    domain:
+        n: int = 0
+}
+
+@@system Lonely {
+    interface:
+        go()
+    machine:
+        $S { go() { } }
+    domain:
+        n: int = 0
+}"#;
+    let ast = tree(src, Target::Rust);
+    let (syms, diags) = resolve(&ast);
+    assert!(
+        diags.iter().all(|d| d.severity != Severity::Error),
+        "fixture must resolve without errors: {diags:#?}"
+    );
+    let pr = |name: &str| -> bool {
+        syms.systems
+            .iter()
+            .find(|s| s.name == name)
+            .unwrap_or_else(|| panic!("system `{name}` not found"))
+            .persist_reachable
+    };
+    assert!(pr("P") && pr("Kid1"), "the FIRST persist root and its embed");
+    assert!(
+        pr("Q") && pr("Kid2"),
+        "the SECOND independent persist root and its embed — the multi-source seed union"
+    );
+    assert!(!pr("Lonely"), "an unrelated system stays dark under multiple roots");
+}
+
+/// **An edge to an UNDECLARED system name is inert.** A field with `= @@Nope()` gives
+/// `field_system → Some("Nope")`, but `Nope` is no declared system, so `index.get` misses and the
+/// edge is DROPPED (the `resolve.rs` None-branch — distinct from the `!Lonely` engine-path negative,
+/// which pins a declared-but-unembedded node). A real embedded `Child` still propagates past the
+/// inert bogus edge, and resolve does not panic — locking down the "dropped non-system edge is
+/// behaviour-preserving" comment so a future `field_system` change can't silently break it.
+#[test]
+fn persist_edge_to_undeclared_system_is_inert() {
+    let src = r#"@@[persist(str)]
+@@[save(freeze)]
+@@[load(thaw)]
+@@system Parent {
+    interface:
+        go()
+    machine:
+        $S { go() { } }
+    domain:
+        bogus: Nope = @@Nope()
+        child: Child = @@Child()
+}
+
+@@system Child {
+    interface:
+        go()
+    machine:
+        $S { go() { } }
+    domain:
+        n: int = 0
+}"#;
+    let ast = tree(src, Target::Rust);
+    // An undeclared `@@Nope()` may be diagnosed at validate; persist-reachability must be unaffected.
+    let (syms, _diags) = resolve(&ast);
+    let pr = |name: &str| -> Option<bool> {
+        syms.systems.iter().find(|s| s.name == name).map(|s| s.persist_reachable)
+    };
+    assert_eq!(pr("Parent"), Some(true), "the persisted root");
+    assert_eq!(
+        pr("Child"),
+        Some(true),
+        "a real embedded sub-system still propagates past the inert bogus edge"
+    );
+    assert_eq!(pr("Nope"), None, "the undeclared name is no system — its edge was dropped");
+}
+
 /// E730 — `@@system public S` is redundant (systems are public by default) and rejected. The
 /// real name still resolves to `S`, not the modifier keyword.
 #[test]
