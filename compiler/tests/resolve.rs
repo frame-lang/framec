@@ -199,6 +199,81 @@ fn the_three_attribute_persist_form_is_accepted() {
     assert_eq!(p.load, "thaw");
 }
 
+/// **persist-reachability is a TRANSITIVE closure over embedded sub-systems.** The standing heir
+/// of the migration-time `debug_assert` that guarded routing this closure onto the shipped
+/// `@@system Reachability` (#219 single-source): a `@@[persist]` `Parent` embeds `Child`, which
+/// embeds `Grand`, so all three ride inside the snapshot and MUST be persist-reachable (a
+/// Rust/serde backend derives on exactly this set — `emit/rust.rs`); an unrelated `Lonely` must
+/// NOT be. This pins both the multi-hop propagation the deleted hand fixpoint existed for AND the
+/// negative (a declared-but-unembedded system stays off), which no prior fixture exercised.
+#[test]
+fn persist_reachability_closes_over_embedded_subsystems() {
+    let src = r#"@@[persist(str)]
+@@[save(freeze)]
+@@[load(thaw)]
+@@system Parent {
+    interface:
+        go()
+    machine:
+        $A { go() { } }
+    domain:
+        child: Child = @@Child()
+}
+
+@@system Child {
+    interface:
+        go()
+    machine:
+        $A { go() { } }
+    domain:
+        grand: Grand = @@Grand()
+}
+
+@@system Grand {
+    interface:
+        go()
+    machine:
+        $A { go() { } }
+    domain:
+        n: int = 0
+}
+
+@@system Lonely {
+    interface:
+        go()
+    machine:
+        $A { go() { } }
+    domain:
+        n: int = 0
+}"#;
+    let ast = tree(src, Target::Rust);
+    let (syms, diags) = resolve(&ast);
+    assert!(
+        diags.iter().all(|d| d.severity != Severity::Error),
+        "fixture must resolve without errors: {diags:#?}"
+    );
+    let pr = |name: &str| -> bool {
+        syms.systems
+            .iter()
+            .find(|s| s.name == name)
+            .unwrap_or_else(|| panic!("system `{name}` not found"))
+            .persist_reachable
+    };
+    assert!(pr("Parent"), "the directly-persisted system is persist-reachable");
+    assert!(
+        pr("Child"),
+        "a sub-system embedded by a persisted system is transitively persist-reachable"
+    );
+    assert!(
+        pr("Grand"),
+        "persist-reachability is a CLOSURE — two hops deep is still reachable"
+    );
+    assert!(
+        !pr("Lonely"),
+        "a system embedded by no persisted system is NOT persist-reachable (the negative)"
+    );
+}
+
 /// E730 — `@@system public S` is redundant (systems are public by default) and rejected. The
 /// real name still resolves to `S`, not the modifier keyword.
 #[test]

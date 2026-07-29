@@ -506,31 +506,39 @@ pub fn resolve(ast: &FileAst) -> (SymbolTable, Vec<Diagnostic>) {
             _ => None,
         }
     };
-    let mut reachable: std::collections::HashSet<String> = systems
-        .iter()
-        .filter(|s| s.persist.is_some())
-        .map(|s| s.name.clone())
-        .collect();
-    loop {
-        let mut added = false;
-        for s in &systems {
-            if !reachable.contains(&s.name) {
-                continue;
-            }
+    // Index every system so the persist closure is an integer edge list — the exact shape the
+    // shipped `Reachability` @@system consumes (the same graph walker `validate.rs` drives for
+    // W401) — instead of a second, hand-rolled name-keyed fixpoint. One engine, everyone asks it
+    // (#219): the transitive closure has a single trusted implementation.
+    let seed: Vec<bool> = systems.iter().map(|s| s.persist.is_some()).collect();
+    let (from, to): (Vec<i32>, Vec<i32>) = {
+        let index: std::collections::HashMap<&str, usize> = systems
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (s.name.as_str(), i))
+            .collect();
+        let mut from = Vec::new();
+        let mut to = Vec::new();
+        for (i, s) in systems.iter().enumerate() {
             for f in &s.domain {
                 if let Some(sub) = field_system(f) {
-                    if reachable.insert(sub) {
-                        added = true;
+                    // An edge to a name that is not itself a declared system is inert — the hand
+                    // fixpoint added such names to its set but nothing ever propagated from them
+                    // and no system's bit was set by them — so dropping it preserves every
+                    // system's reachability exactly.
+                    if let Some(&j) = index.get(sub.as_str()) {
+                        from.push(i as i32);
+                        to.push(j as i32);
                     }
                 }
             }
         }
-        if !added {
-            break;
-        }
-    }
-    for s in &mut systems {
-        s.persist_reachable = reachable.contains(&s.name);
+        (from, to)
+    };
+    let visited =
+        crate::text::scan::reachability::reachable_from_seed(&from, &to, systems.len(), seed);
+    for (i, s) in systems.iter_mut().enumerate() {
+        s.persist_reachable = visited[i];
     }
 
     (SymbolTable { systems }, diags)
