@@ -1,0 +1,88 @@
+@@[target("rust")]
+
+// The RUST per-system TYPED-COMPARTMENT emitter — the `<Sys>Vars` / `<Sys>Args` enums and the
+// `<Sys>Comp` struct that give every rust system a typed, per-state compartment (RFC-0056: the
+// host serializer marshals the vars/args natively; framec writes no `downcast`, no `Box<dyn Any>`).
+// A rust-only concern — no other backend spells this shape — so, like `RustDispatch`, it gets its
+// OWN system, driven from rust.rs's free `emit_compartment_types`, over rust-only leaves
+// (`ct_vars_open` / `ct_vars_variant` / `ct_args_open` / `ct_args_variant` / `ct_close` / `ct_comp`)
+// — NOT any `Backend` trait seam.
+//
+// THE WALK: three fixed sections, two of them a per-state loop.
+//   1. open the `<Sys>Vars` enum, emit one variant per state (its `$.` state vars), close it;
+//   2. open the `<Sys>Args` enum, emit one variant per state (its `(param)` args), close it;
+//   3. emit the `<Sys>Comp { state, vars, args }` struct (fixed fields), self-terminated.
+// The per-variant bytes — a state's field list, the `state_var_ty` mapping, the serde `derive`
+// recomputed from `sym.persist_reachable` — all live in the leaves; this walk only SEQUENCES them.
+//
+// THE HONEST MACHINE CLASS. §3 degenerate pole: a program-counter walk over data already decided
+// upstream (`sym.states` from the resolved symbol table). Two cursors (`vi`, `ai`) are pure program
+// counters over the same state list. Differential-gated byte-for-byte against the preserved
+// `rust_compartment_types_hand`. It rides the same read-only borrowed domain as the landed emit
+// machines (`sym: &SystemSym`).
+//
+// Regen: framec-ng -l rust --emit rust_compartment_types.frs | grep -v '^#!\[allow' >
+// rust_compartment_types.gen.rs
+
+@@system RustCompartmentTypes(sym: &SystemSym, ns: usize, out: Sink) {
+    interface:
+        step()
+    machine:
+        $VarsOpen {
+            step() {
+                ct_vars_open(self.sym, &mut self.out);
+                -> $VarsLoop
+            }
+        }
+        $VarsLoop {
+            step() {
+                if self.vi >= self.ns {
+                    -> $VarsClose
+                }
+                ct_vars_variant(self.sym, self.vi, &mut self.out);
+                self.vi = self.vi + 1;
+                -> $VarsLoop
+            }
+        }
+        $VarsClose {
+            step() {
+                ct_close(&mut self.out);
+                -> $ArgsOpen
+            }
+        }
+        $ArgsOpen {
+            step() {
+                ct_args_open(self.sym, &mut self.out);
+                -> $ArgsLoop
+            }
+        }
+        $ArgsLoop {
+            step() {
+                if self.ai >= self.ns {
+                    -> $ArgsClose
+                }
+                ct_args_variant(self.sym, self.ai, &mut self.out);
+                self.ai = self.ai + 1;
+                -> $ArgsLoop
+            }
+        }
+        $ArgsClose {
+            step() {
+                ct_close(&mut self.out);
+                -> $Comp
+            }
+        }
+        $Comp {
+            step() {
+                ct_comp(self.sym, &mut self.out);
+                -> $Done
+            }
+        }
+        $Done { }
+    domain:
+        sym: &SystemSym = sym
+        ns: usize = ns
+        out: Sink = out
+        vi: usize = 0
+        ai: usize = 0
+}

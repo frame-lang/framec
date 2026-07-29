@@ -425,3 +425,26 @@ fn handler_open_is_byte_identical_to_the_frozen_hand() {
         assert!(lifecycles >= 1, "{lang}: corpus must include a lifecycle ($>/<$) handler; saw {lifecycles}");
     }
 }
+
+/// GATE-A for the reified rust typed-compartment-types emitter (`RustCompartmentTypes`): the machine
+/// (the production `emit_compartment_types`, which now drives the @@system) must emit byte-for-byte
+/// what the preserved frozen `rust_compartment_types_hand` oracle does, over the same real systems.
+#[test]
+fn rust_compartment_types_is_byte_identical_to_the_frozen_hand() {
+    let mut states = 0usize;
+    for (label, frm) in CORPUS {
+        let (_src, ast, syms) = parse(frm);
+        let report = driver::rust_compartment_types_parity_report(&ast, &syms);
+        assert!(!report.is_empty(), "{label}: no systems resolved");
+        for p in &report {
+            assert_eq!(
+                p.machine_text, p.hand_text,
+                "{label} [{}]: RustCompartmentTypes machine text != rust_compartment_types_hand",
+                p.label
+            );
+            states += p.state_count;
+        }
+    }
+    // Non-vacuity: the corpus must span states so the Vars/Args variant loops actually ran.
+    assert!(states >= 8, "corpus must span many states; saw {states}");
+}

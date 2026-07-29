@@ -2372,6 +2372,55 @@ pub fn rust_dispatch_parity_report(ast: &FileAst, syms: &SymbolTable) -> Vec<Rus
     report
 }
 
+/// TEST-ONLY (GATE-A) — one system's typed compartment-types emission: the reified
+/// [`super::rust_compartment_types`] `RustCompartmentTypes` machine (the production
+/// [`super::rust::emit_compartment_types`] path, which now drives the @@system) vs the preserved
+/// frozen hand oracle ([`super::rust::rust_compartment_types_hand`]). For
+/// `tests/emit_scaffold_walks.rs`. Doc-hidden.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct RustCompartmentTypesParity {
+    /// The system name, for a failing assertion message.
+    pub label: String,
+    /// Text the `RustCompartmentTypes` machine (the production `emit_compartment_types`) emits.
+    pub machine_text: String,
+    /// Text rust's preserved frozen hand oracle emits for the same.
+    pub hand_text: String,
+    /// How many states the system has — proves the `Vars`/`Args` variant loops ran.
+    pub state_count: usize,
+}
+
+/// TEST-ONLY (GATE-A). Emit **every** system's typed compartment types (`Vars`/`Args` enums + `Comp`
+/// struct) through BOTH the reified `RustCompartmentTypes` machine (the production
+/// [`super::rust::emit_compartment_types`], which now drives the @@system) and the preserved frozen
+/// hand oracle ([`super::rust::rust_compartment_types_hand`]). `tests/emit_scaffold_walks.rs` asserts
+/// `machine_text == hand_text` byte-for-byte. The hand side is the STANDALONE frozen body, so a
+/// spelling bug in a `ct_*` leaf diverges the two paths.
+#[doc(hidden)]
+pub fn rust_compartment_types_parity_report(
+    ast: &FileAst,
+    syms: &SymbolTable,
+) -> Vec<RustCompartmentTypesParity> {
+    let mut report = Vec::new();
+    for item in &ast.items {
+        let Item::System(sys) = item else { continue };
+        let Some(sym) = syms.systems.iter().find(|s| s.name == sys.name) else {
+            continue;
+        };
+        let mut mo = super::Sink::default();
+        let mut ho = super::Sink::default();
+        super::rust::emit_compartment_types(sym, &mut mo);
+        super::rust::rust_compartment_types_hand(sym, &mut ho);
+        report.push(RustCompartmentTypesParity {
+            label: sym.name.clone(),
+            machine_text: mo.finish(),
+            hand_text: ho.finish(),
+            state_count: sym.states.len(),
+        });
+    }
+    report
+}
+
 /// The preserved byte-for-byte **oracle** for the body BASE-column min-fold — the original inline
 /// `.filter_map(...).min().unwrap_or(0)` `emit_body` computed before it was reified as the
 /// [`super::base_column`] `@@system`. Kept as the differential check that machine is proven against

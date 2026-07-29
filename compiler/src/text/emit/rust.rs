@@ -995,7 +995,114 @@ fn typed_read(sym: &SystemSym, state: &str, kind: &str, container: &str, field: 
 /// get an empty one), so a compartment is constructible in any state and the stack is
 /// homogeneously typed. This is the erasure-free compartment (RFC-0056): the host serializer
 /// marshals the vars/args natively; framec writes no `downcast`, no `Box<dyn Any>`.
-fn emit_compartment_types(sym: &SystemSym, out: &mut Sink) {
+///
+/// A free fn (not a `Backend` method), and a one-line driver into the
+/// [`super::rust_compartment_types`] `RustCompartmentTypes` `@@system`. The byte-for-byte ORACLE it
+/// replaced is the preserved [`rust_compartment_types_hand`], gated in `tests/emit_scaffold_walks.rs`
+/// (GATE-A, via [`super::driver::rust_compartment_types_parity_report`]). `pub(super)` so the parity
+/// report can drive the machine path directly.
+pub(super) fn emit_compartment_types(sym: &SystemSym, out: &mut Sink) {
+    super::rust_compartment_types::drive(sym, out);
+}
+
+// ======================================================================================
+// RUST TYPED-COMPARTMENT LEAVES — the six fragments the `RustCompartmentTypes` `@@system`
+// (`super::rust_compartment_types`) sequences. They live HERE, not in the walk module, because
+// they need rust.rs's private helpers (`state_var_ty`) and `sym.persist_reachable` /
+// `state_param_types`. The serde `derive` is recomputed inside each opener/`ct_comp` from
+// `sym.persist_reachable` (an ordinary system stays serde-free; a persist-reachable one derives
+// serde). Byte-exact against the frozen [`rust_compartment_types_hand`] via GATE-A
+// (`tests/emit_scaffold_walks.rs`).
+// ======================================================================================
+
+/// Open the `<Sys>Vars` enum: the serde `derive` + `enum {name}Vars {`.
+pub(super) fn ct_vars_open(sym: &SystemSym, out: &mut Sink) {
+    let name = &sym.name;
+    // serde on the compartment when the system's value can land in a snapshot — its own
+    // `@@[persist]` OR embedded as a sub-system field of one (persist_reachable). An ordinary
+    // system stays serde-free.
+    let derive = if sym.persist_reachable {
+        "#[derive(Clone, serde::Serialize, serde::Deserialize)]\n"
+    } else {
+        "#[derive(Clone)]\n"
+    };
+    out.frame(derive);
+    out.frame(&format!("enum {name}Vars {{\n"));
+}
+
+/// One `<Sys>Vars` variant — state `vi`'s `$.` state vars as `{v.name}: {state_var_ty(v)}`.
+pub(super) fn ct_vars_variant(sym: &SystemSym, vi: usize, out: &mut Sink) {
+    let st = &sym.states[vi];
+    let fields = st
+        .state_vars
+        .iter()
+        .map(|v| format!("{}: {}", v.name, state_var_ty(v)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    out.frame(&format!("    {} {{ {fields} }},\n", st.name));
+}
+
+/// Open the `<Sys>Args` enum: the serde `derive` + `enum {name}Args {`.
+pub(super) fn ct_args_open(sym: &SystemSym, out: &mut Sink) {
+    let name = &sym.name;
+    let derive = if sym.persist_reachable {
+        "#[derive(Clone, serde::Serialize, serde::Deserialize)]\n"
+    } else {
+        "#[derive(Clone)]\n"
+    };
+    out.frame(derive);
+    out.frame(&format!("enum {name}Args {{\n"));
+}
+
+/// One `<Sys>Args` variant — state `ai`'s `(param)` args as `{p}: {ty}` (`ty` from
+/// `state_param_types`, else `()`).
+pub(super) fn ct_args_variant(sym: &SystemSym, ai: usize, out: &mut Sink) {
+    let st = &sym.states[ai];
+    let fields = st
+        .state_params
+        .iter()
+        .map(|p| {
+            let ty = st.state_param_types.get(p).map(String::as_str).unwrap_or("()");
+            format!("{p}: {ty}")
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    out.frame(&format!("    {} {{ {fields} }},\n", st.name));
+}
+
+/// Close an enum — the `}` line shared by the `<Sys>Vars` and `<Sys>Args` closers.
+pub(super) fn ct_close(out: &mut Sink) {
+    out.frame("}\n");
+}
+
+/// The `<Sys>Comp` struct — the serde `derive` + the fixed `{ state, vars, args }` fields,
+/// self-terminated with the trailing blank line.
+pub(super) fn ct_comp(sym: &SystemSym, out: &mut Sink) {
+    let name = &sym.name;
+    let derive = if sym.persist_reachable {
+        "#[derive(Clone, serde::Serialize, serde::Deserialize)]\n"
+    } else {
+        "#[derive(Clone)]\n"
+    };
+    out.frame(derive);
+    out.frame(&format!("struct {name}Comp {{\n"));
+    out.frame("    state: String,\n");
+    out.frame(&format!("    vars: {name}Vars,\n"));
+    out.frame(&format!("    args: {name}Args,\n"));
+    out.frame("}\n\n");
+}
+
+/// The byte-for-byte **frozen oracle** for the Rust typed-compartment emitter — a verbatim copy of
+/// the pre-conversion `emit_compartment_types` body, before it was reified as the
+/// [`super::rust_compartment_types`] `RustCompartmentTypes` `@@system`. Kept as the GATE-A
+/// differential the machine is proven against (`tests/emit_scaffold_walks.rs`, via
+/// [`super::driver::rust_compartment_types_parity_report`]). It does NOT route through the machine —
+/// it reproduces the original bytes standalone, so a spelling bug in a `ct_*` leaf is visible to the
+/// gate. Doc-hidden and **not on the production path**. Do not edit it to add behavior: it exists
+/// only to reproduce the pre-conversion value exactly, so any divergence is the machine's bug, not
+/// the oracle's.
+#[doc(hidden)]
+pub(super) fn rust_compartment_types_hand(sym: &SystemSym, out: &mut Sink) {
     let name = &sym.name;
     // serde on the compartment when the system's value can land in a snapshot — its own
     // `@@[persist]` OR embedded as a sub-system field of one (persist_reachable). An ordinary

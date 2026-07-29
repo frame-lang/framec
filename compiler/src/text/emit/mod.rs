@@ -38,6 +38,7 @@ pub mod persist;
 pub mod python;
 mod router_walk;
 pub mod rust;
+mod rust_compartment_types;
 mod rust_dispatch;
 pub mod reindent;
 mod state_dispatch_walk;
