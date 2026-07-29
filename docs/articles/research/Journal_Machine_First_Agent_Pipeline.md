@@ -374,6 +374,37 @@ a named state plus a checkable law bound at a **constraint** seam, the very
 vocabulary the article had just gained. The tool caught up to the theory in
 the same day the theory was written.
 
+**2026-07-28 — the pipeline's own runtime became a machine, and survived its
+own worst failure.** For weeks the agents that build the compiler kept dying —
+not on the work, but on the substrate: API/stream reaps that killed a loop
+mid-run and left 14-hour zombies the harness still reported as "running," and a
+resume path that reloaded a 1.6 MB transcript on its first call and died again.
+The diagnosis was machine-first in the article's exact sense: the interaction
+loop is a latent state machine, its deaths are transitions no one had named, and
+the cure is to reify it. A phase-grain pilot proved the shape — one E-code port
+(E419/E417) sliced into analyze→implement→verify, each a bounded checkpointed
+call, completed in 26 minutes with **zero deaths and zero retries** where the
+monolithic form had died repeatedly over hours; its telemetry located the reap
+hot-spot precisely (the verify slice, 81% of wall-clock, inside a long corpus
+tool call). That drove the design finer — to per-tool-use — and to two composed
+Frame `@@system`s: **AgentLoop** (inner: one cell's per-tool-use loop, resume the
+same tool from a tiny checkpoint) and **TaskOrchestrator** (outer: one task as a
+growing tree of cells held as *data*, relaunch fresh on a reap), together named
+**ATOM** — the Agent Task Orchestrator Machine, atomicity being the literal
+guarantee. It grounds in RFC-0058 §7.3's Heron sketch, which had *predicted* it
+(the open thread "a supervised Frame-machine runtime, the stall protocol reified
+as machine states"). The build proved it end to end: `AgentLoop.fpy` compiles and
+round-trips its persisted state; the native host turned out to be a
+*deferred-effect driver* (a pattern **forced** by framec's E700 quiescence guard —
+a machine may not checkpoint inside its own dispatch, so the host records intent
+in handlers and performs effects at rest, between dispatches); and the
+load-bearing test passed with a real `kill -9` mid-tool — resume from a 642-byte
+checkpoint, the same tool re-invoked, the loop finished at `$Done`. Three RFCs
+carry the architecture (0061 the harness; 0062 live control, async managed-tool
+spawn, and the reflective *inception* architecture; 0063 heterogeneous controllers
+and a baked-in separate-verifier organ). The machine that rebuilds the compiler
+as `@@system`s is now itself an `@@system`: machine-first, all the way up.
+
 ## 2. Discovery register (the paper-worthy claims, each with evidence)
 
 **D1 — A worldview document alone is sufficient agent training.** Blind
@@ -647,6 +678,48 @@ mislabel — the same "is the agent grounded in what already shipped?" probe PM-
 turned into a standing audit, here applied to a claim about the codebase rather
 than about the paper.
 
+**D16 — The controller organ can be a MANAGED LLM subprocess on ambient auth, and
+that unifies "LLM turn" with "tool call."** The nondeterministic controller (RFC-0058
+invariant 1) was realized not through an API SDK (which needs a key) but through the
+ambient `claude` CLI in headless mode — carrying its own credentials (keychain /
+`~/.claude.json`), no `ANTHROPIC_API_KEY`. *Evidence:* a decision-core `ControllerLLM`
+drove `AgentLoop` end-to-end to `$Done` — the model chose `/bin/sh -c "ls -1 *.py | wc
+-l"`, the machine ran it, the model finished — 2 turns, ~$0.05, timestamped + archived
+journal; a whole-agent-cell returned `COUNT=10` and a `--resume <session_id>` follow-up
+recalled it from session memory. The deeper claim: once the controller is a managed
+child process, an *LLM turn and a tool call are the same kind of thing* (a killable
+subprocess behind an envelope — RFC-0062 §3.2's controller seam and effector seam), so
+reap-survival, checkpointing, and the watchdog apply to the model itself for free.
+**The correction that makes it honest:** an adversarial five-lens review caught two
+overstatements of the first draft — (a) the whole-agent-cell's reap-survival was *not*
+wired (the `session_id` lived in memory, so a real reap destroyed the very handle it
+claimed to survive; genuine LLM-level reap-survival needs `--session-id` pre-assignment
+persisted to the checkpoint *before* spawn); and (b) "the same way the main loop spawns
+subagents" was wrong — `claude -p` is the *headless harness as an isolated subprocess*,
+and the reason to use it is **process isolation for reap-survival** (only an
+out-of-process child can be `SIGKILL`ed without killing the host), not subagent
+fidelity. The capability is real; the *durable* version and the security floor (the
+controller executes model-chosen `argv`; "read-only" was only a prompt string) are
+deferred, gated work — captured normatively in RFC-0062 §3.8.
+
+**D17 — Naming the organ is load-bearing, and importing a word already in service
+corrupts the model.** The decider organ was mis-named twice before it was named right,
+and each correction surfaced a real modeling error through the name. First it was the
+*effector* — but an effector is the *acting* organ, and the decider does not act; the
+actual effector is the tool executor. Then it was the *oracle* — but "oracle" was
+already load-bearing in this exact project in two senses (the faithfulness *reference*
+compiler ng is matched against, and the *test oracle* = the pass/fail judge, which is
+the RFC-0063 verifier), so a third sense corrupted both. It landed as **controller**
+(control theory: the component that computes the action from the observed state), which
+collides with nothing and freed the three organs to be named precisely — **Sensor**
+(perceive) · **Controller** (decide, `decide(state) → Action`; the LLM realization is a
+`ControllerLLM`) · **Effector** (act = the tool executor). The lesson: in a
+machine-first codebase the vocabulary *is* the model; a name that means the wrong organ,
+or a word already spent elsewhere, is a latent category error, not a cosmetic defect,
+and fixing it (RFC-0058's invariant-1 name, RFC-0063's title, the glossary, the code)
+is fixing the architecture, not relabeling it. (Cf. D10 — terminology is instrumentation
+— here sharpened: terminology is *structure*.)
+
 ## 3. Supporting artifacts (where the evidence lives)
 
 - The worldview: `docs/articles/Shadows_on_the_Wall.md` (with the two
@@ -859,7 +932,7 @@ own tooling, not only the code it converts.
 The global analysis tier (boundary preprocessing, port joining) gated on
 the completed local benchmark; the explain renderer as a deterministic
 projection with a linting side effect; hosting the agent tree on a
-supervised Frame-machine runtime (agents as effectors, the stall protocol
+supervised Frame-machine runtime (agents as controllers, the stall protocol
 reified as machine states); a wider-than-two-lane parallel build (the
 two-lane trial having landed — D11) and the PM-6 solo re-verification it
 still owes; the fsm-designer

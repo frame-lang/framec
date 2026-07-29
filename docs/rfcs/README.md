@@ -78,6 +78,9 @@ numbers are not re-used.
 | [0058](rfc-0058.md) | The Agent Architecture — domain-focused agent family, finder→designer pipeline | Draft (living) | number retired 2026-07-17 with an unpublished draft in the same subject area; revived 2026-07-18; supersedes in part [0059](rfc-0059.md) § 9 |
 | [0059](rfc-0059.md) | Discovery: the latent machine — findings, evidence, and process adoption | Draft (Discovery) | canonical companion: [*Shadows on the Wall*](../articles/Shadows_on_the_Wall.md); first of the discovery genre |
 | [0060](rfc-0060.md) | Scan-time diagnostics for ambiguous & malformed native regions — `W417` ambiguous-param-angle | Draft | builds on [0056](rfc-0056.md), [0056.1](rfc-0056-1.md), [0057](rfc-0057.md), [0039](rfc-0039.md); detection vs. resolution at the native boundary |
+| [0061](rfc-0061.md) | The Agent Harness — two-level per-tool-use machine for reap-surviving agent execution | Draft | builds on [0058](rfc-0058.md) §7.3; promoted from the harness design note; base for [0062](rfc-0062.md) |
+| [0062](rfc-0062.md) | Live control, async tool execution, and reflective (inception) agent architectures | Draft (exploratory) | builds on [0058](rfc-0058.md), [0061](rfc-0061.md); layered atop 0061 (built first) |
+| [0063](rfc-0063.md) | Heterogeneous controllers and the baked-in verifier | Draft (exploratory) | builds on [0058](rfc-0058.md), [0061](rfc-0061.md), [0062](rfc-0062.md); the machine-level form of "builder cannot self-certify" |
 
 ## Other documents in this directory
 

@@ -74,6 +74,19 @@ attach to. framec's own parser is organized this way — one `SystemBackbone`
 system whose flat self-looping states cover the entire token-level outer grammar.
 See [RFC-0039](rfcs/rfc-0039.md#terminology).
 
+### baked-in verifier
+
+A `$Verify` [state](#state) placed as a final step before a cell's `$Done`
+terminal, whose [controller](#heterogeneous-controller) is a *separate* verifier model
+that independently judges the worker's candidate result against the goal /
+definition-of-done (optionally reading the [internal journal](#internal-journal) as
+evidence); its verdict routes the machine to `$Done` (pass) or `$Recover` (fail, the
+critique carried forward as the next worker turn's hint). "Baked-in" because the
+check is a first-class state in the machine graph — a checkable law, *every path to
+`$Done` passes through `$Verify`* — not an optional external pass. The machine-level
+form of the rule that a builder cannot self-certify: a separately-configured organ
+must gate. Specified in [RFC-0063](rfcs/rfc-0063.md).
+
 ### casing
 
 The public class framec emits for an [async system](#async-system) — the one
@@ -127,6 +140,19 @@ then run the [start state](#start-state)'s `$Start(...)` body and its
 [`$>` enter handler](#-enter-handler). The user-facing entry point for
 construction is the [factory](#factory). Contrast [no-initialization](#no-initialization).
 See [RFC-0015](rfcs/rfc-0015.md).
+
+### controller
+
+The organ of an agent [machine](#machine) that **decides the next action** given the
+observed state — `controller.decide(state) → Action` — the single site to which
+RFC-0058 invariant 1 confines nondeterminism (orchestration stays deterministic). It
+is *pluggable*: a scripted `MockController`, or a model. When a model fills the role
+it is a **`ControllerLLM`**, realized (RFC-0062 §3.8) as a managed `claude` CLI child
+on ambient auth. The controller only *chooses*; the chosen action is carried out by
+the [effector](#effector). It is a distinct sense of the word from the faithfulness
+*oracle* (the reference compiler ng is matched against) and from a *test oracle* (a
+pass/fail judge — see [baked-in verifier](#baked-in-verifier)). See also
+[heterogeneous controller](#heterogeneous-controller).
 
 ### conversion set
 
@@ -205,6 +231,15 @@ the chain returns or reaches an [asynchrony seam](#asynchrony-seam). The
 overlay of a process's drive traces — one per entry event — is its drive
 hierarchy, the spine of an architecture map. Defined in
 [RFC-0058 § 5](rfcs/rfc-0058.md).
+
+### effector
+
+The organ of an agent [machine](#machine) that **carries out** the action the
+[controller](#controller) chose — the acting organ that changes the world. In
+`AgentLoop` the effector is the **tool executor** at `$ExecTool`, which runs the
+controller-proposed tool as a checkpointed subprocess and posts back
+`tool_result | tool_error | timeout` across the *effector seam* (RFC-0062 §3.2). The
+controller *decides*; the effector *acts*.
 
 ### enter-args
 
@@ -325,6 +360,20 @@ and error states are the most-glossed states in practice. Defined in
 [*Shadows on the Wall* §§ 5–6](articles/Shadows_on_the_Wall.md); process rules
 in [RFC-0059](rfcs/rfc-0059.md).
 
+### heterogeneous controller
+
+A **[controller](#controller)** — the nondeterministic decider at a [machine](#machine)'s
+boundary, reached across a task/result-envelope seam (RFC-0058 §7.3) — whose
+bound configuration (model, system-prompt, and supplied context) differs from
+[state](#state) to state, so that one machine hosts several specialized models, one
+per role: a goal-specialized worker at `$Work`, an independent verifier at `$Verify`
+(see [baked-in verifier](#baked-in-verifier)), optionally a planner or critic.
+Because nondeterminism is confined to the controller (RFC-0058 invariant 1), the
+routing machine is agnostic to how many models it hosts — the models are *values*
+bound at states, not machines, in the [*Shadows*](articles/Shadows_on_the_Wall.md)
+trichotomy. Adding or swapping a model is a controller-config change with zero change
+to the machine. Specified in [RFC-0063](rfcs/rfc-0063.md).
+
 ### hierarchical state machine (HSM)
 
 A [state machine](#machine) in which a [state](#state) may declare a parent
@@ -332,12 +381,38 @@ state and [forward](#forward) (`=> $^`) unhandled events up the chain. Frame
 supports a parent chain up to three levels deep. See
 [language reference § Hierarchical State Machines](frame_language.md#hierarchical-state-machines).
 
+### inception architecture
+
+A reflective agent-hosting design in which the hosted LLM is given bounded,
+read-only self-knowledge of the [machine](#machine) driving it — its current
+[state](#state), [HSM](#hierarchical-state-machine-hsm) parent, attempt count,
+and reachable transitions — plus a `read_journal` tool that lets it read the
+[internal journal](#internal-journal) as durable memory. The LLM's working
+memory becomes the structured journal it queries selectively rather than the
+raw transcript. Named for the model reasoning *about the machine it is inside*.
+Constrained by a hard invariant: self-knowledge is read-only over the control
+plane — every terminal, escalation, and gate trigger MUST be a function of
+machine-observed facts, never of LLM self-report. Specified in
+[RFC-0062](rfcs/rfc-0062.md).
+
 ### interface
 
 A [system](#system)'s public API, declared in the `interface:` block: the named
 methods callers may invoke. Each interface call is [dispatched](#dispatch) to
 the current [state](#state). See
 [language reference § Interface Section](frame_language.md#interface-section).
+
+### internal journal
+
+The productionized `$>`/`<$` enter/exit [trace](#drive-trace) of a hosted
+[machine](#machine), made structured, typed, offset-addressed, and durable, and
+augmented with an inbound channel for control events and tool completions. One
+append-only, host-owned log serving three roles at once: observers *tail* it,
+async tools and controls *append* into it, and the hosted LLM *reads* ranges of
+it as durable memory. Heavy payloads (tool stdout, model completions) live
+out-of-line behind a `payload_ref`. All inbound events funnel through a single
+serialization point, so the machine stays single-threaded and replay stays
+deterministic. Specified in [RFC-0062](rfcs/rfc-0062.md).
 
 ### kernel
 
