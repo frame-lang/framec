@@ -753,6 +753,53 @@ groundwork for *Cauldron*, the native→Frame conversion product; ng is the dogf
 validates its discovery/referee organs while the behavioral-freeze half awaits a
 less-converted target.)
 
+**D19 — The conversion engine builds what discovery finds: a native function was
+*mechanically* lifted to a Frame `@@system` that COMPILES and BEHAVES byte-identically to the
+code it replaced.** Where D18's front-end organ (discovery) surveyed ng and found no machines
+left to build, this is its counterpart organ — the **conversion engine** ("the mechanizer,"
+Cauldron's third organ, `frame-cauldron/mechanizer/`) — run end-to-end for the first time. A
+`syn`-based Rust→Frame tool read `compiler/src/text/emit/rust.rs::pop_enter` (a `for st in
+&sym.states { if has_lifecycle {..} }` loop) and emitted its `@@system` per a fixed
+**reification calculus** (fn→system; a straight run→a state chain; `if`/`match`→fork states;
+`for`/`while`→a cycle with the cursor promoted to a domain register; a terminal op→a state's
+native leaf). The result — `PopEnter`, a 6-state cycle — was wired as a composed module, the
+`Backend::pop_enter` call site swapped to drive it, and a GATE-A differential asserted its
+output **byte-identical** to the preserved frozen hand oracle on a system with one plain and
+two lifecycle states (non-vacuous; suite 483/0; regen fixpoint 42/0-stale). Unlike D18's
+consume-and-delete (which *reused* a shipped engine), this is a genuine **topology lift** —
+native control-flow decomposed into an explicit state graph — done by *tool*, not by hand. The
+player organ is thus validated on a lift, closing the loop D18's discovery organ opened:
+discovery names the latent machines; the mechanizer materializes them. *Two design records set
+the target for the remaining lifts:* (a) a value-producing flow inside a handler becomes its
+**own nested COMPOSED `@@system`**, invoked by a branch-free drive-call and composed through
+**shared-state side effects** (writing `out`/a domain register the parent's next state reads),
+NOT flat fork-states and NOT a value-return — Frame systems are *effectful*, not functions; and
+(b) because framec is **type-ignorant** (the Oceans boundary), a type-agnostic binding
+extraction inherently needs a destructure-branch, which is *itself* a value-flow to hoist — so
+the "everything is a machine" recursion bottoms out only at branch-free leaves and the OS
+boundary, not at "values." This sharpens D15's trichotomy: a *value-producing branch* is not a
+leave-latent value, it is an un-hoisted machine.
+
+**D20 — "Compile it in anger" is a discovery instrument the static survey cannot replace:
+driving one mechanized unit through the real toolchain surfaced three latent root-cause defects
+that no review had named.** D18's static discovery pass found ng past its conversion frontier —
+zero un-converted machines. Yet the instant a *single* mechanized system was compiled and run
+for the first time, three genuine root-cause bugs surfaced, none visible to any amount of
+reading: (i) the mechanizer excluded the output sink `out` from its domain-access rewrite set,
+so `out.frame(..)` emitted an undefined local (rustc E0425) — a *converter* bug; (ii) ng's own
+Rust codegen threaded the system lifetime `'a` through a *top-level* `&T` domain field but not
+through a reference *nested in a generic* (`Option<&str>` → E0106), a latent *codegen* defect no
+shipped system had ever tripped because none had a nested-ref domain; (iii) a leaf function's
+visibility was too narrow for the reified system's module. Each was fixed at the **root** (not
+worked around); the ng lifetime fix was proven byte-safe by the **42/0 regen fixpoint** — every
+existing `.gen.rs` re-emitted identically, so the fix was invisible to all 42 prior systems and
+visible only to the new one. The lesson compounds the journal's recurring "compile a probe over
+argue in abstract": a codebase can read as *finished* to static discovery and still hide
+codegen/tooling defects that only the first real compile-and-run of a *new construct* reveals.
+The mechanizer is therefore doubly useful — not only a converter but a **fuzzer of the
+compiler's own codegen**, because each fresh mechanized function exercises type/lifetime/
+visibility corners the existing corpus never reached.
+
 ## 3. Supporting artifacts (where the evidence lives)
 
 - The worldview: `docs/articles/Shadows_on_the_Wall.md` (with the two
