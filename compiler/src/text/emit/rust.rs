@@ -424,29 +424,34 @@ impl Backend for Rust {
     }
 
     fn push(&self, rel: u32, sym: &SystemSym, target: &str, args: Option<&str>, out: &mut Sink) {
-        let p = self.pad(rel);
+        // KERNEL statement: kernel base (pad_ctx), and the struct fields are `_state_stack` and
+        // `__compartment` (NOT `self.stack`/`self.compartment`, which don't exist -> E0609).
+        let p = self.pad_ctx(rel, false);
         // Build the target compartment FIRST, then swap it in and push the displaced one.
         // Building `__next` first means the swap needs no empty-state placeholder — the
         // typed compartment has no `""` state to construct.
         self.enter(&p, sym, target, args, out);
         out.frame(&format!(
-            "{p}self.stack.push(std::mem::replace(&mut self.compartment, __next));\n"
+            "{p}self._state_stack.push(std::mem::replace(&mut self.__compartment, __next));\n"
         ));
     }
 
     fn pop(&self, rel: u32, out: &mut Sink) {
-        let p = self.pad(rel);
-        out.frame(&format!("{p}self.compartment = self.stack.pop().unwrap();\n"));
+        let p = self.pad_ctx(rel, false);
+        out.frame(&format!("{p}self.__compartment = self._state_stack.pop().unwrap();\n"));
     }
 
     fn push_bare(&self, rel: u32, out: &mut Sink) {
         // Push a CLONE of the current compartment; stay. The typed `<Sys>Comp` derives Clone.
-        out.frame(&format!("{}self.stack.push(self.compartment.clone());\n", self.pad(rel)));
+        out.frame(&format!(
+            "{}self._state_stack.push(self.__compartment.clone());\n",
+            self.pad_ctx(rel, false)
+        ));
     }
 
     fn pop_bare(&self, rel: u32, out: &mut Sink) {
         // Pop and drop the top; stay.
-        out.frame(&format!("{}self.stack.pop();\n", self.pad(rel)));
+        out.frame(&format!("{}self._state_stack.pop();\n", self.pad_ctx(rel, false)));
     }
 
     fn lifecycle_call(&self, rel: u32, sym: &SystemSym, state: &str, event: &str, args: Option<&str>, out: &mut Sink) {
