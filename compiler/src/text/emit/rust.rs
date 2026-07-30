@@ -824,22 +824,36 @@ pub(super) fn rust_dispatch_arm(sym: &SystemSym, state: &str, arms: &[String], a
     } else {
         // User event: destructure the variant's fields, pass positionally.
         let iface = sym.interface.iter().find(|m| &m.name == msg);
-        let fields: Vec<String> = iface
+        let params: Vec<(String, Option<String>)> = iface
             .map(|m| {
                 super::driver::params_split(m.params_text.as_deref().unwrap_or(""))
                     .into_iter()
                     .filter(|(nm, _)| !nm.is_empty())
-                    .map(|(nm, _)| nm)
                     .collect()
             })
             .unwrap_or_default();
-        if fields.is_empty() {
+        if params.is_empty() {
             out.frame(&format!(
                 "                {n}FrameEvent::{ev} {{ .. }} => {{ self.{method}(__e); }}\n"
             ));
         } else {
-            let pat = fields.join(", ");
-            let pass = fields.iter().map(|f| format!("*{f}")).collect::<Vec<_>>().join(", ");
+            let pat = params.iter().map(|(nm, _)| nm.as_str()).collect::<Vec<_>>().join(", ");
+            // #186: framec is type-ignorant and cannot assume a param is `Copy`, so a destructured
+            // event field is CLONED by default — moving it out with `*name` from the shared
+            // `&FrameEvent` is E0507 for any non-Copy payload (String/Vec/map/Rc/user struct). Only
+            // the built-in Copy scalars keep the cheap `*name` deref (where `.clone()` would draw
+            // clippy's clone_on_copy).
+            let pass = params
+                .iter()
+                .map(|(nm, ty)| {
+                    if ty.as_deref().map(is_rust_copy_scalar).unwrap_or(false) {
+                        format!("*{nm}")
+                    } else {
+                        format!("{nm}.clone()")
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
             // A param handler's arm is MULTI-LINE (matching legacy and the `$>` case above): the
             // destructure + positional call sit on their own lines. Only the paramless arm above
             // stays single-line.
@@ -1461,6 +1475,31 @@ impl Rust {
         out.frame("        self.compartment.state == \"Accept\"\n");
         out.frame("    }\n\n");
     }
+}
+
+/// The built-in Rust scalar types that are `Copy` — a destructured event field of one of these is
+/// forwarded by `*name` deref; everything else (String/Vec/map/Rc/user struct — all unknown to a
+/// type-ignorant compiler) is `.clone()`d, because moving out of the shared `&FrameEvent` is E0507
+/// for any non-Copy payload (#186).
+fn is_rust_copy_scalar(t: &str) -> bool {
+    matches!(
+        t.trim(),
+        "i8" | "i16"
+            | "i32"
+            | "i64"
+            | "i128"
+            | "isize"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "u128"
+            | "usize"
+            | "f32"
+            | "f64"
+            | "bool"
+            | "char"
+    )
 }
 
 pub(super) fn rust_ident(event: &str) -> String {
