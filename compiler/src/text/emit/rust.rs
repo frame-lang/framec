@@ -336,11 +336,18 @@ impl Backend for Rust {
         }
     }
 
-    fn forward(&self, rel: u32, owner: &str, event: &str, params: &str, out: &mut Sink) {
-        // `=> $^` — run the parent's handler for this event.
+    fn forward_to_declared_parent(&self) -> bool {
+        // Rust has the `_state_<Name>` dispatcher layer (like java), so `=> $^` forwards to the
+        // DECLARED parent unconditionally — matching legacy's `self._state_<parent>(__e)` — rather
+        // than climbing (resolve_forward) to an ancestor that HANDLES the event, which drops the
+        // call entirely when the immediate parent is handler-less (e.g. an empty `$P {}`).
+        true
+    }
+
+    fn forward(&self, rel: u32, owner: &str, _event: &str, _params: &str, out: &mut Sink) {
+        // `=> $^` — dispatch this event to the declared parent's state handler via the router.
         let p = self.pad(rel);
-        out.frame(&format!("{p}self.{owner}_{}({});
-", rust_ident(event), param_names(params)));
+        out.frame(&format!("{p}self._state_{owner}(__e);\n"));
     }
 
     fn native_stmt(&self, rel: u32, text: NativeText, ctx: &LeafCtx, out: &mut Sink) {
