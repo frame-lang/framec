@@ -819,7 +819,7 @@ impl Backend for C {
         out.frame("}\n");
     }
 
-    fn open_action(&self, name: &str, params: &str, ret: Option<&str>, out: &mut Sink) {
+    fn open_action(&self, name: &str, params: &str, ret: Option<&str>, _is_operation: bool, out: &mut Sink) {
         // Actions carry the CURRENT system as a leading `self` pointer; the driver hands actions
         // no `sym`, so the name is stashed here from `open_system` order — but the untyped model
         // records it on the sink-free path via the shared driver. C spells the free-function form.

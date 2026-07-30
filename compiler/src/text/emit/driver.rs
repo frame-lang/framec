@@ -714,7 +714,7 @@ pub trait Backend {
 
     /// An `actions:` / `operations:` member — a method with a NATIVE body. The
     /// signature is Frame's; the body is the user's.
-    fn open_action(&self, name: &str, params: &str, ret: Option<&str>, out: &mut Sink);
+    fn open_action(&self, name: &str, params: &str, ret: Option<&str>, is_operation: bool, out: &mut Sink);
     fn close_action(&self, out: &mut Sink);
 
     /// How this target declares a handler's **return type**.
@@ -1069,7 +1069,15 @@ pub(super) fn emit_body(
     // The body's BASE column — the shallowest statement, everything else measured relative to it —
     // reified as the `BaseColumn` min-fold `@@system` (`base_column.frs`). The byte-for-byte oracle
     // it replaced is preserved as [`base_column_hand`], gated per body in `tests/base_column.rs`.
-    let base = super::base_column::compute(&body.stmts);
+    // A MULTI-LINE action/operation body is NOT dedented — legacy keeps each statement at
+    // `source_col + 12` (base 0 => rel == the absolute source column => `pad_ctx` = 12 + col).
+    // A single-line INLINE body (`op() { x + y }`) is normalized by legacy to depth 1, NOT its
+    // large on-signature column, so it keeps the min-fold dedent. Handlers/scan dedent as before.
+    let base = if role == BodyRole::Action && sym.scan.is_none() && src.span_is_multiline(body.span) {
+        0
+    } else {
+        super::base_column::compute(&body.stmts)
+    };
     let seed = std::mem::take(out);
     let (grown, terminated) = super::stmt_walk::walk(
         src, syms, sym, role, &body.stmts, state, event, is_async, base, be, seed,
@@ -1125,7 +1133,13 @@ fn emit_body_hand(
     // having to know what an `if` is. The oracle reads it from the preserved [`base_column_hand`]
     // fold (the same one the `BaseColumn` machine is gated against), so this hand walk stays a
     // single-source byte-for-byte reference for both conversions at once.
-    let base = base_column_hand(&body.stmts);
+    // Mirror the production emit_body: MULTI-LINE action/operation bodies keep their absolute source
+    // column (`base 0`); inline single-line bodies and everything else dedent by the min-fold.
+    let base = if role == BodyRole::Action && sym.scan.is_none() && src.span_is_multiline(body.span) {
+        0
+    } else {
+        base_column_hand(&body.stmts)
+    };
     let rel = |c: u32| c.saturating_sub(base);
 
     // The per-body leaf context (`sym` / `event` / `state` / `is_scan`), constant across the walk.
@@ -1585,7 +1599,8 @@ fn emit_actions_hand(
         for m in &d.members {
             match m {
                 Decl::WithBody(b) => {
-                    be.open_action(&b.name, &b.params_text, b.return_text.as_deref(), out);
+                    let is_operation = matches!(sec, Section::Operations(_));
+                    be.open_action(&b.name, &b.params_text, b.return_text.as_deref(), is_operation, out);
                     let empty = body_is_empty(&b.body);
                     if !empty || be.empty_body_keeps_text() {
                         emit_body(src, syms, sym, BodyRole::Action, "", "", false, &b.body, be, out);

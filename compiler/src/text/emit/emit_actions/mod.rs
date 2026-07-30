@@ -91,7 +91,10 @@ fn emit_action(
     let Some(Decl::WithBody(b)) = d.members.get(mi) else {
         return;
     };
-    be.open_action(&b.name, &b.params_text, b.return_text.as_deref(), out);
+    // `operations:` members are `pub`, `actions:` are private — categorical by section. The phase
+    // walk collapses both to the same inner DeclSection, so read the original Section here.
+    let is_operation = matches!(sections.get(si), Some(Section::Operations(_)));
+    be.open_action(&b.name, &b.params_text, b.return_text.as_deref(), is_operation, out);
     // A body with NO executable statement (empty, or only comments) still owes an
     // indent-delimited target a statement — `def f(self):` with nothing under it is a
     // SyntaxError, and `def f(self):` followed only by a comment is an IndentationError. The

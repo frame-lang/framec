@@ -461,7 +461,7 @@ impl Backend for Java {
         out.frame("    }\n");
     }
 
-    fn open_action(&self, name: &str, params: &str, ret: Option<&str>, out: &mut Sink) {
+    fn open_action(&self, name: &str, params: &str, ret: Option<&str>, _is_operation: bool, out: &mut Sink) {
         // An action is a PLAIN method — no compartment preamble, no dispatch. Leading `\n` is the
         // separator before it.
         out.frame(&format!(
