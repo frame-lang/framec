@@ -271,6 +271,9 @@ pub struct BodyDecl {
     pub params_text: String,
     /// Its declared return type, verbatim (the user's text).
     pub return_text: Option<String>,
+    /// A `static` operation — no `self`/`this` receiver (frame_language.md: "Static operations
+    /// have no self/this access"). The `static` modifier is consumed here, before the signature.
+    pub is_static: bool,
     pub signature_node: FrameSpan,
     pub body: body::Body,
     /// The member's closing `}`.

@@ -642,7 +642,7 @@ impl Backend for Python {
     /// it would raise if the system were not yet constructed). The leading `\n` is the separator
     /// BEFORE the method, matching [`Self::open_handler`], so the blank line belongs to the member
     /// that follows rather than trailing off the last one.
-    fn open_action(&self, name: &str, params: &str, ret: Option<&str>, _is_operation: bool, out: &mut Sink) {
+    fn open_action(&self, name: &str, params: &str, ret: Option<&str>, _is_operation: bool, _is_static: bool, out: &mut Sink) {
         let decl = self.param_list(params);
         let sig = if decl.is_empty() { String::new() } else { format!(", {decl}") };
         let ann = ret

@@ -546,16 +546,22 @@ impl Backend for Rust {
         }
     }
 
-    fn open_action(&self, name: &str, params: &str, ret: Option<&str>, is_operation: bool, out: &mut Sink) {
+    fn open_action(&self, name: &str, params: &str, ret: Option<&str>, is_operation: bool, is_static: bool, out: &mut Sink) {
         let sig = self.param_list(params);
-        let sep = if sig.is_empty() { "" } else { ", " };
         // KERNEL member: a LEADING blank separates each action/operation, the signature sits at the
         // impl member column (8), and `operations:` are `pub` while `actions:` are private
         // (categorical by section, NOT keyed on return type — a void operation is still `pub`, a
         // value-returning action is still private).
         let vis = if is_operation { "pub " } else { "" };
+        // A `static` operation has NO `self` receiver (frame_language: "no self/this access").
+        let receiver = if is_static {
+            sig
+        } else {
+            let sep = if sig.is_empty() { "" } else { ", " };
+            format!("&mut self{sep}{sig}")
+        };
         out.frame(&format!(
-            "\n        {vis}fn {name}(&mut self{sep}{sig}){} {{\n",
+            "\n        {vis}fn {name}({receiver}){} {{\n",
             self.return_type(ret)
         ));
     }

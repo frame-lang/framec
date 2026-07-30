@@ -648,6 +648,27 @@ pub(crate) fn to_end_of_line(bytes: &[u8], mut i: usize, limit: usize) -> usize 
     i
 }
 
+/// Consume a leading `static ` operation modifier: returns the offset of the real signature and
+/// whether it was present. `static` must be a whole word (followed by whitespace) — `staticfoo`
+/// is an ordinary name, not a modifier.
+fn skip_static_modifier(bytes: &[u8], from: usize, limit: usize) -> (usize, bool) {
+    let mut i = from;
+    while i < limit && (bytes[i] == b' ' || bytes[i] == b'\t') {
+        i += 1;
+    }
+    if starts(bytes, i, b"static", limit) {
+        let after = i + 6;
+        if after < limit && (bytes[after] == b' ' || bytes[after] == b'\t') {
+            let mut j = after;
+            while j < limit && (bytes[j] == b' ' || bytes[j] == b'\t') {
+                j += 1;
+            }
+            return (j, true);
+        }
+    }
+    (from, false)
+}
+
 fn starts(bytes: &[u8], i: usize, pat: &[u8], limit: usize) -> bool {
     i + pat.len() <= limit && &bytes[i..i + pat.len()] == pat
 }
@@ -804,16 +825,20 @@ pub fn decl_section(target: Target, bytes: &[u8], span: Span, kw: Span, with_bod
                 )));
                 cursor = eol;
             }
-            // `actions:` / `operations:` members have a NATIVE body in braces.
+            // `actions:` / `operations:` members have a NATIVE body in braces. A leading `static`
+            // modifier (operations only) is consumed FIRST so the signature reader sees the REAL
+            // `name(params): ret` — otherwise it takes `static` as the name and drops the rest.
             DeclExtent::Body { open, end, .. } => {
                 let close = end.saturating_sub(1);
-                let shape = super::decl_read::read(bytes, start, open, target);
-                let sig = super::decl_read::member_decl_of(bytes, &shape, open, start);
+                let (sig_start, is_static) = skip_static_modifier(bytes, start, open);
+                let shape = super::decl_read::read(bytes, sig_start, open, target);
+                let sig = super::decl_read::member_decl_of(bytes, &shape, open, sig_start);
                 members.push(Decl::WithBody(BodyDecl {
                     span: Span::new(start, end),
                     name: sig.name,
                     params_text: sig.params_text.unwrap_or_default(),
                     return_text: sig.type_text,
+                    is_static,
                     signature_node: FrameSpan {
                         span: Span::new(start, open + 1),
                         kind: "Signature",

@@ -714,7 +714,7 @@ pub trait Backend {
 
     /// An `actions:` / `operations:` member — a method with a NATIVE body. The
     /// signature is Frame's; the body is the user's.
-    fn open_action(&self, name: &str, params: &str, ret: Option<&str>, is_operation: bool, out: &mut Sink);
+    fn open_action(&self, name: &str, params: &str, ret: Option<&str>, is_operation: bool, is_static: bool, out: &mut Sink);
     fn close_action(&self, out: &mut Sink);
 
     /// How this target declares a handler's **return type**.
@@ -1600,7 +1600,7 @@ fn emit_actions_hand(
             match m {
                 Decl::WithBody(b) => {
                     let is_operation = matches!(sec, Section::Operations(_));
-                    be.open_action(&b.name, &b.params_text, b.return_text.as_deref(), is_operation, out);
+                    be.open_action(&b.name, &b.params_text, b.return_text.as_deref(), is_operation, b.is_static, out);
                     let empty = body_is_empty(&b.body);
                     if !empty || be.empty_body_keeps_text() {
                         emit_body(src, syms, sym, BodyRole::Action, "", "", false, &b.body, be, out);
