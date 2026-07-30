@@ -828,9 +828,14 @@ pub(super) fn rust_dispatch_arm(sym: &SystemSym, state: &str, arms: &[String], a
         } else {
             let pat = fields.join(", ");
             let pass = fields.iter().map(|f| format!("*{f}")).collect::<Vec<_>>().join(", ");
+            // A param handler's arm is MULTI-LINE (matching legacy and the `$>` case above): the
+            // destructure + positional call sit on their own lines. Only the paramless arm above
+            // stays single-line.
             out.frame(&format!(
-                "                {n}FrameEvent::{ev} {{ {pat}, .. }} => {{ self.{method}(__e, {pass}); }}\n"
+                "                {n}FrameEvent::{ev} {{ {pat}, .. }} => {{\n"
             ));
+            out.frame(&format!("                    self.{method}(__e, {pass});\n"));
+            out.frame("                }\n");
         }
     }
 }
