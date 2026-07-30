@@ -346,7 +346,9 @@ impl Backend for Rust {
 
     fn forward(&self, rel: u32, owner: &str, _event: &str, _params: &str, out: &mut Sink) {
         // `=> $^` — dispatch this event to the declared parent's state handler via the router.
-        let p = self.pad(rel);
+        // This lives in a KERNEL handler body, so it indents at the kernel base (12), like every
+        // other kernel statement (transition/lifecycle) — `pad_ctx`, not the scanner's `pad` (8).
+        let p = self.pad_ctx(rel, false);
         out.frame(&format!("{p}self._state_{owner}(__e);\n"));
     }
 
