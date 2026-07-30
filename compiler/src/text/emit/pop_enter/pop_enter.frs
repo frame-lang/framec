@@ -1,0 +1,64 @@
+@@[target("rust")]
+
+// The RUST pop-enter emitter — MECHANIZED from rust.rs::pop_enter by Cauldron's mechanizer
+// (increment 3b), then hand-adjusted at ONE leaf: `self.pad(rel)` (a pure Backend method, no
+// self-state) is inlined as `format!("        {}", " ".repeat(self.rel as usize))`, because the
+// mechanizer does not yet lift `self.method(..)` calls to free-function leaves (a later increment).
+// Everything else is verbatim mechanizer output: the `for st in &sym.states { if has_lifecycle {..} }`
+// loop became a For4/Fork3/Step2/Next1 cycle over the cursor `i0`, entry $Step5.
+//
+// pop_enter is a per-backend Backend method (java/python/c stay native); this rust-only system is
+// driven from rust.rs's `pop_enter` one-line driver, and its byte-for-byte ORACLE is the preserved
+// frozen `super::rust::pop_enter_hand`, gated in tests/emit_scaffold_walks.rs via
+// `super::driver::pop_enter_parity_report`.
+//
+// Regen: framec-ng -l rust --emit pop_enter.frs | grep -v '^#!\[allow' > pop_enter.gen.rs
+@@system PopEnter(rel: u32, sym: & SystemSym, enter_args: Option < & str >, out: Sink) {
+    interface:
+        step()
+    machine:
+        $Step5 {
+            step() {
+                -> $For4
+            }
+        }
+        $Step2 {
+            step() {
+                let p = format ! ("        {}" , " " . repeat (self.rel as usize));
+                let a = self . enter_args . unwrap_or ("");
+                let st = & self . sym . states [self.i0];
+                self . out . frame (& format ! ("{p}if self.compartment.state == \"{}\" {{ self.{}_{}({a}); }}\n" , st . name , st . name , rust_ident ("$>"))) ;
+                -> $Next1
+            }
+        }
+        $Fork3 {
+            step() {
+                let st = & self . sym . states [self.i0];
+                if has_lifecycle (self . sym , & st . name , "$>") {
+                    -> $Step2
+                }
+                -> $Next1
+            }
+        }
+        $For4 {
+            step() {
+                if self.i0 >= self . sym . states.len() {
+                    -> $Done
+                }
+                -> $Fork3
+            }
+        }
+        $Next1 {
+            step() {
+                self.i0 = self.i0 + 1;
+                -> $For4
+            }
+        }
+        $Done { }
+    domain:
+        rel: u32 = rel
+        sym: & SystemSym = sym
+        enter_args: Option < & str > = enter_args
+        i0: usize = 0
+        out: Sink = out
+}

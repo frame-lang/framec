@@ -452,16 +452,11 @@ impl Backend for Rust {
     }
 
     fn pop_enter(&self, rel: u32, sym: &SystemSym, enter_args: Option<&str>, out: &mut Sink) {
-        let p = self.pad(rel);
-        let a = enter_args.unwrap_or("");
-        for st in &sym.states {
-            if super::driver::has_lifecycle(sym, &st.name, "$>") {
-                out.frame(&format!(
-                    "{p}if self.compartment.state == \"{}\" {{ self.{}_{}({a}); }}\n",
-                    st.name, st.name, rust_ident("$>")
-                ));
-            }
-        }
+        // CONSUMED (inc4): the pop-enter walk is now the Cauldron-mechanized `PopEnter` @@system —
+        // the first mechanized system driven in anger. The live differential is the emit snapshot
+        // suite (which captured the original walk's output); a dedicated frozen-oracle GATE-A parity
+        // report (as the other reified systems have) is the remaining follow-up.
+        super::pop_enter::drive(rel, sym, enter_args, out);
     }
 
     fn terminate(&self, rel: u32, ctx: &LeafCtx, out: &mut Sink) {
@@ -1442,7 +1437,7 @@ impl Rust {
     }
 }
 
-fn rust_ident(event: &str) -> String {
+pub(super) fn rust_ident(event: &str) -> String {
     match event {
         "$>" => "__enter".to_string(),
         "<$" => "__exit".to_string(),
@@ -1900,15 +1895,56 @@ fn is_borrowed_field(f: &crate::resolve::FieldSym) -> bool {
 }
 
 /// Thread the system lifetime `'a` through a borrowed type: `&T` -> `&'a T`, `&dyn Tr` ->
-/// `&'a dyn Tr`. A non-borrowed type is returned UNCHANGED, so this is the identity on every
-/// owned domain field and every scalar ctor param — which is what keeps a borrow-free system
-/// byte-identical. framec inserts the lifetime token right after the `&`; it never otherwise
-/// reads or rewrites the user's type text.
+/// `&'a dyn Tr`, and references nested in a generic (`Option<&str>` -> `Option<&'a str>`,
+/// `Vec<&T>` -> `Vec<&'a T>`). A non-borrowed type is returned UNCHANGED, so this is the identity
+/// on every owned domain field and every scalar ctor param — which keeps a borrow-free system
+/// byte-identical.
+///
+/// framec inserts the lifetime token right after each `&`, but ONLY at PAREN depth 0: a reference
+/// inside a fn-arg list (`&dyn Fn(&X) -> Atom`) elides to its own higher-ranked lifetime and must
+/// be left alone, so `Fn(&X)`'s inner `&` is skipped. An already-annotated `&'x` is left as-is.
+/// It never otherwise reads or rewrites the user's type text (type-ignorant). This is identical to
+/// the old top-level-only threading for every case except a ref genuinely nested in a generic —
+/// which never compiled before (a struct field cannot elide a lifetime), so nothing existing moves.
 fn thread_lt(ty: &str) -> String {
-    match ty.trim_start().strip_prefix('&') {
-        Some(rest) => format!("&'a {}", rest.trim_start()),
-        None => ty.to_string(),
+    let chars: Vec<char> = ty.chars().collect();
+    let mut out = String::new();
+    let mut paren: i32 = 0;
+    let mut i = 0;
+    while i < chars.len() {
+        match chars[i] {
+            '(' => {
+                paren += 1;
+                out.push('(');
+                i += 1;
+            }
+            ')' => {
+                paren -= 1;
+                out.push(')');
+                i += 1;
+            }
+            '&' if paren == 0 => {
+                // Peek past whitespace: an already-lifetimed `&'x` is left untouched.
+                let mut j = i + 1;
+                while j < chars.len() && chars[j].is_whitespace() {
+                    j += 1;
+                }
+                if j < chars.len() && chars[j] == '\'' {
+                    out.push('&');
+                    i += 1;
+                } else {
+                    // Insert `'a` and collapse the whitespace after `&` (matches the old trim_start).
+                    out.push_str("&'a ");
+                    i = j;
+                }
+            }
+            c => {
+                out.push(c);
+                i += 1;
+            }
+        }
     }
+    out
 }
 
 /// Constructor params in Frame's `name: type` form, CONSTRUCTOR order (state, enter, domain),

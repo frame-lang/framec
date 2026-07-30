@@ -36,6 +36,7 @@ mod hsm_chain_walk;
 pub mod java;
 pub mod persist;
 pub mod python;
+mod pop_enter;
 mod router_walk;
 pub mod rust;
 mod rust_compartment_types;
