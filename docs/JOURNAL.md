@@ -1637,3 +1637,46 @@ mechanized `PopEnter` and the preserved frozen hand oracle produce byte-identica
 snapshot suite never exercises pop-enter, so this test *is* its behavioral gate). Suite 483/0,
 fixpoint 42/0. The lesson is the one the journal keeps arriving at from new directions: compile a
 probe over argue in abstract. This time the probe wrote itself.
+
+## 2026-07-30 — Compile it, don't just diff it: 46% of "faithful" Rust was broken
+
+The faithfulness harness byte-compares ng's output to the 4.6.0.33 oracle. It has one blind spot
+that matters more than all the others: it never *compiles* the output. Its result-gate for Rust is
+literally `<run-skip:rust>`. So a fixture that ng emits five cosmetic lines away from the oracle and
+a fixture that ng emits into code that does not build both read as the same kind of "fail." The
+count doesn't distinguish a whitespace nit from a program that won't run.
+
+So I compiled the whole corpus. `rustc` over all 350 emitted programs: **160 did not compile.**
+Nearly half. And the failures were not noise — they were genuine correctness bugs the byte-diff had
+no way to rank, because to a diff they are just more differing bytes:
+
+- **`static <name>()` operations parse-mangled to `fn static(&mut self)`** — the reader took the
+  `static` modifier as the method name and dropped the real name, params, and return, so
+  `Sys::factorial(5)` in user code called a method that did not exist.
+- **#186, move-vs-clone (E0507 ×75)** — the router forwarded a destructured event field with
+  `*name`, moving a non-Copy payload out of the shared `&FrameEvent`. Legacy fixed this a while
+  ago; the cleanroom never had it. Fixing it — clone by default, `*name` only for the built-in Copy
+  scalars — made **48 fixtures compile**.
+- **stack fields (E0609 ×32)** — every `push$`/`pop$` emitter named `self.stack` / `self.compartment`,
+  fields that do not exist (the struct has `_state_stack` / `__compartment`). Plus the scanner
+  indent instead of the kernel indent. **+20 compile**, and the fixtures went byte-clean too.
+- **state-param reads (E0425)** — the current frontier: ng doesn't hoist `let initial = { climb →
+  read ctx.initial }` for a handler that references a state param, so the native body's bare
+  `initial` is unbound.
+
+Compile rate went 54% → 73% in a handful of root-cause fixes, none of which moved the byte-count
+much (each flips only the fixtures where it was the *sole* blocker — the failures are stacked). The
+byte-metric and the compile-metric measure different things, and only one of them tells you whether
+the machine runs.
+
+**The part that matters for java, python, and c** (all still at M1, far behind): ng emits every
+target from *one* driver over one AST. These bugs are not Rust-specific accidents — they are the
+driver's decisions, wearing Rust spellings. A move-vs-clone choice, a wrong field name, a dropped
+`static`, a missing param hoist, dispatch-arm formatting, member visibility — each is a per-language
+*spelling* of a decision the shared code makes for all four. So a bug found in Rust is a strong
+prior that the same bug is sitting in the other three, and the byte-differential will hide it there
+exactly as it hid it here. The move is not to grind byte-formatting language by language. It is to
+**compile-first** — point `javac` / `python3 -c` / `gcc` at the corpus the way `compile_sweep.py`
+points `rustc` — establish each language's correctness floor, and walk the Rust bug catalog as the
+checklist before touching a single whitespace diff. Faithfulness to a broken oracle is worthless;
+faithfulness to one that compiles is the floor we build byte-identity on top of.
