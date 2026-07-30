@@ -1597,3 +1597,43 @@ today is the fuzz that will hold it honest: state-var fidelity now exercised (wa
 fidelity added (the fuzz had never once pushed a compartment and checked it survived a mid-stack
 snapshot — 12/12 green on the cleanroom now), and the multi-system value made real. The corpus that
 proves nested persist works has to be a corpus that could have caught it broken. Now it is.
+
+## 2026-07-29 — The first machine we did not write by hand, and the bugs only it could find
+
+Every `@@system` in this compiler was, until today, written by a person. `PopEnter` was not. A
+tool — the mechanizer, the conversion engine we are building over in Cauldron — read
+`rust.rs::pop_enter` (a plain `for st in &sym.states { if has_lifecycle {..} }` loop) and emitted
+its state machine: the loop became a `$For4`→`$Fork3`→`$Step2`→`$Next1` cycle over a promoted
+cursor, entry `$Step5`. We wired it, pointed `Backend::pop_enter` at it, and it ran.
+
+That it *works* is not the interesting part. The interesting part is what broke on the way there,
+because it says something about how much a static read can miss. The discovery survey had recently
+concluded this codebase was past its conversion frontier — nothing left to find. And yet the moment
+one mechanized system met `rustc` for real, three genuine root-cause bugs fell out that no amount
+of reading had surfaced: the mechanizer had quietly left the output sink `out` out of its
+domain-rewrite set, so it emitted an undefined local; a leaf's visibility was a notch too narrow;
+and — the good one — ng's own Rust codegen threaded the system lifetime `'a` through a *top-level*
+`&T` but not through a reference *nested in a generic*, so `enter_args: Option<&str>` came out
+without its lifetime and would not compile. That last one is a codegen defect that had sat latent
+since borrowed domains landed, invisible because **no hand-written system had ever had a nested-ref
+domain to trip it.** The mechanizer wrote one on its first try.
+
+So the tool is doing two jobs at once. It converts, and it *fuzzes the compiler that will compile
+its output* — every fresh mechanized function reaches into type, lifetime, and visibility corners
+the existing corpus never touched. The fix was the honest one each time (root cause, not a patch):
+`thread_lt` now threads `'a` at paren depth 0 — catching generic-nested refs, skipping `Fn(&X)`
+arg positions that correctly elide — and the 42/0 regen fixpoint proved it byte-identical for every
+system that already existed. The defect was real; the fix was invisible to all 42 and visible only
+to the one that needed it.
+
+It is worth correcting the record while we are here: an earlier note in these files called the Rust
+runtime emit broken and non-compiling. That is no longer true. `ng -l rust --emit` produces the
+full Frame runtime — `FrameEvent`, `__kernel`, `__transition`, the context stack — and
+`rust_acceptance.rs` is 8/8, emitted Rust compiling *and running* on real `rustc`. The point stands
+that we should name these things precisely; the fact underneath it moved.
+
+The proof is a differential, not a vibe: on a system with one plain and two lifecycle states, the
+mechanized `PopEnter` and the preserved frozen hand oracle produce byte-identical output (the
+snapshot suite never exercises pop-enter, so this test *is* its behavioral gate). Suite 483/0,
+fixpoint 42/0. The lesson is the one the journal keeps arriving at from new directions: compile a
+probe over argue in abstract. This time the probe wrote itself.
