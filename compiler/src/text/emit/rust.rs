@@ -1327,12 +1327,31 @@ fn state_ctx_fields(st: &crate::resolve::StateSym) -> Vec<(String, String, Strin
 }
 
 /// Read a state var / enter param / state arg out of the current compartment's Context by
-/// climbing the parent chain to the OWNING state — the KERNEL-model state-var READ (legacy). Not
-/// `.clone()`d (legacy relies on the field being `Copy`; a non-`Copy` state var is a latent legacy
-/// bug this reproduces faithfully). Parenthesized, so it is an atom.
+/// climbing the parent chain to the OWNING state — the KERNEL-model state-var READ (legacy).
+/// The match binds `ctx` by-ref (the scrutinee is `&...state_context`), so a NON-Copy field must
+/// be `.clone()`d — moving it out of the shared borrow is E0507. Legacy clones exactly the non-Copy
+/// fields and leaves the built-in Copy scalars bare (byte-faithful), so this branches on the #186
+/// Copy set. Parenthesized, so it is an atom.
 fn kernel_state_read(sym: &SystemSym, state: &str, field: &str) -> String {
+    let is_copy = sym
+        .states
+        .iter()
+        .find(|s| s.name == state)
+        .and_then(|st| {
+            state_ctx_fields(st)
+                .into_iter()
+                .find(|(n, _, _)| n == field)
+                .map(|(_, ty, _)| ty)
+        })
+        .map(|ty| is_rust_copy_scalar(&ty))
+        .unwrap_or(false); // unknown type -> clone (safe: compiles for Copy and non-Copy alike)
+    let read = if is_copy {
+        format!("ctx.{field}")
+    } else {
+        format!("ctx.{field}.clone()")
+    };
     format!(
-        "{{ let mut __sv_comp = &self.__compartment; while __sv_comp.state != {state:?} {{ __sv_comp = __sv_comp.parent_compartment.as_ref().expect(\"invariant: state-var target found in ancestor chain\"); }} match &__sv_comp.state_context {{ {sys}StateContext::{state}(ctx) => ctx.{field}, _ => unreachable!() }} }}",
+        "{{ let mut __sv_comp = &self.__compartment; while __sv_comp.state != {state:?} {{ __sv_comp = __sv_comp.parent_compartment.as_ref().expect(\"invariant: state-var target found in ancestor chain\"); }} match &__sv_comp.state_context {{ {sys}StateContext::{state}(ctx) => {read}, _ => unreachable!() }} }}",
         sys = sym.name
     )
 }
