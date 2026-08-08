@@ -1026,6 +1026,103 @@ finally be written down.
 
 ---
 
+## Coda: The Third Role, and What It Is Not
+
+*Correctness is a relation, not a substance*
+
+This paper split every artifact in two: a **machine** — a process moving through
+states over time — and a **value** — data at rest, such as a type, a schema, or a
+specification. That split seems to leave something out. When we call a program
+right or wrong, we hold it up to a standard it is supposed to meet — call that
+its *law*. It is tempting to make that law a third basic kind of thing, standing
+beside machine and value. The impulse is sound: something real is missing from
+machine and value alone. But treating the law as a third *kind of thing* is a
+mistake, in four ways — and fixing each sharpens this paper's own thesis rather
+than adding to it.
+
+**One word doing two jobs.** The natural name for that law is "predicate" — but
+the word gets used for two different things. One is a test at a single instant:
+a yes/no question you can ask about the machine right now — *is the connection
+open?* The other is a rule about an entire run from beginning to end — *the
+connection is never used before it is opened.* These are not the same object,
+and not even the same kind of object. The single-instant test is a
+**calculation**: a pure function of what it is handed, holding no memory. The
+whole-run rule cannot be a mere function — to judge a whole run it must watch the
+run as it unfolds and remember what it has seen, which is to say it is a
+**machine**. So the one word hid this paper's own two categories all along: the
+instant-test is a value, the whole-run rule is a machine.
+
+**A relation, not a new kind of thing.** A machine cannot be wrong on its own
+terms: whatever it does is simply what it does. "Wrong" means something only once
+you measure the machine against a standard it does not itself contain — which is
+exactly why bugs are possible at all. But that standard is not a third kind of
+thing. It is itself a **value**: the set of runs we are willing to accept. So
+correctness is a comparison between two values — the runs the machine produces,
+and the runs the standard allows — holding when the first all sit inside the
+second. What is irreducible here is not a third object but the *act of
+comparing*. Push the reduction all the way and even the machine becomes a value
+(a machine just *is* the set of runs it can produce) — the tell that machine,
+value, and law are **roles** a thing can play, not three separate substances. The
+third shadow is not a new thing on the wall. It is the *measuring* of one thing
+against another.
+
+**An old idea, not new territory.** Under plainer names, the three roles are
+three classical ways of saying what a program *means*: the program as a timeless
+mapping from inputs to outputs (a value); as something that runs step by step (a
+machine); as described by what must be true of it (a law). This paper already
+lives between the first two. The third is not a new continent — it is a corner of
+the same map, long drawn.
+
+**Do not borrow more "ought" than you need.** It is tempting to dress this up as
+the old gap between what *is* and what *ought* to be. That claims too much. A
+specification is a standard we *chose*: given this goal, the machine ought to
+meet it — an obligation that is simply part of having set the goal, not a moral
+law. (Whether the goal is the *right* goal to have is a real and harder question
+— but a different one, and it should not be smuggled in beside plain conformance
+to a standard.)
+
+**What survives is a small, exact vocabulary — for one kind of guarantee.** Strip
+the overclaim and a precise toolkit remains, and it divides along the very
+machine/value line this paper already drew:
+
+- A **predicate** is a yes/no test **calculated** by a pure function: it computes
+  only from what it is handed, reads and changes nothing outside itself, keeps no
+  memory, and always answers true or false. It is a value.
+- An **invariant** is a yes/no verdict **computed** by a machine: it watches
+  inputs over time, remembers, and reports whether it still holds. It is a
+  machine — and it can be used anywhere a predicate can, because at its face it
+  too is just a yes/no.
+
+The division of labor is the paper's own thesis turned on itself: **memory lives
+in the machine, calculation lives in the pure function.** A test that must weigh
+the past ("the balance has only ever gone down") does not make the pure function
+remember — the machine remembers, and hands the pure function what it needs. A
+machine holds such a verdict to account in a few ways the field already knows:
+prove it can never break, block any step that would break it, watch it as it
+runs, or arrange things so the forbidden state cannot even be written down.
+
+And here the vocabulary meets its wall. It reaches guarantees of one shape —
+*nothing bad ever happens* — and no further. It cannot state the other shape —
+*something good eventually happens*, that a request always, in the end, gets an
+answer — for that has no single bad moment to catch and no single step to block.
+Stopping there is not a weakness. An account of what a machine *does*, rather than
+what it must eventually get around to doing, was always going to end at that line.
+
+> **Where the three terms land.**
+>
+> - **Computation** is a process — a machine moving through states over time.
+>   Unchanged.
+> - **Value** is data at rest — a type, a space, a specification. Unchanged, and
+>   quietly enlarged: the standard a machine is judged against is itself a value,
+>   so a specification is not a third kind of thing.
+> - **Predicate** is *not* a third kind of thing. The single-instant test is a
+>   value — a pure function, *calculated*; the whole-run rule is a machine — an
+>   *invariant*, *computed*; and the "third role" the law seemed to be turns out
+>   to be a *relation*: the measuring of a machine against a standard, not an
+>   object in its own right.
+
+---
+
 ## References
 
 [1] A. M. Turing, "On Computable Numbers, with an Application to the
