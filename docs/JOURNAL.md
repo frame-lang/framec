@@ -881,7 +881,7 @@ And there are **two body emitters**: handler bodies go through `needs_statement_
 (the forward-pass text oracle), action bodies go through a *different*, text-based path
 that terminates nothing. One terminates; one does not.
 
-That is #229. It is RFC-0057 §4.2, verbatim. It is the **missing node** — the same node the
+That is #229. It is the **missing node** — the same node the
 rebuilt compiler added today as `Stmt::Assign`. The old compiler cannot fix it without
 adding that node to its scanner FSM.
 

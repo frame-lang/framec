@@ -1,4 +1,4 @@
-//! The Frame compiler — rebuild (RFC-0057).
+//! The Frame compiler — rebuild.
 //!
 //! # The wall
 //!

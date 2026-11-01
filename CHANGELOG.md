@@ -6,6 +6,47 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Changed
+
+- **Lua: brace-form conditionals are no longer rewritten (#232).** A Lua
+  handler body written as `if COND { … } else { … }` used to be converted to
+  `if … then … else … end` by a text post-pass over the user's native code.
+  `if COND { }` is not Frame, and the post-pass is removed: Lua handler bodies
+  now pass through verbatim, like every other target's. **Write native Lua
+  control flow** (`if … then … end`, `while … do … end`). Sources that still
+  use the brace form will now fail `luac`. Erlang's `case … of … end` lowering
+  is unchanged.
+
+### Added
+
+- **`@@system` can borrow its input (#209).** A header param typed with an
+  `@@fsm` alphabet type (`text: bytes`) is the system's borrowed input source:
+  the caller's buffer is held by reference through a generated `<Sys>Input`
+  adapter (`get(i)` / `len()`) instead of being copied on every probe. On all
+  16 code-generating targets. Graphviz and the deprecated Erlang target reject
+  it with **E620**.
+- **`framec/tools/compliance.sh`** compiles every corpus fixture with the
+  target's own compiler at syntax-check level. The snapshot suite only
+  compares text.
+
+### Fixed
+
+- **`push$ -> $S(args)` dropped its args (#211)** on every backend, so a
+  state reading its param crashed (Python: `IndexError`) while `-> $S(args)`
+  worked.
+- **C#: a `$.x` read followed by a member access bound to the wrong
+  expression (#213),** silently selecting the wrong overload. The cast is now
+  parenthesized.
+- **C: casts and derefs in Frame-ref expansions were not atoms (#220),** so a
+  following `[]`, `.` or `->` applied to the wrong operand.
+- **A UTF-8 BOM hid the whole `@@system` (#214):** no class was generated.
+- **`@@` inside a string interpolation lost its sigil (#216):**
+  `f"{@@:self.x}"` emitted `f"{:self.x}"`.
+- **A state arg containing a comma was miscounted (#217):**
+  `-> $S("a, b", 1)` was rejected with E405.
+- **C#: an interpolated `$.x` emitted a char-literal key (#221)**
+  (`state_vars['x']`), which does not compile.
+
 ## [4.6.1] - 2026-06-20
 
 ### Deprecated
