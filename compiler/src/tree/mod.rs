@@ -509,7 +509,7 @@ impl Node for Item {
             Item::Native(_) => true,
             // A pragma line. Will gain interior structure when attributes are parsed.
             Item::Pragma(_) => true,
-            // The @@efsm compiler is a separate construct, out of scope for this
+            // The @@fsm compiler is a separate construct, out of scope for this
             // rebuild (see REUSE.md). Its interior is not ours to decompose.
             Item::Efsm(_) => true,
             Item::System(_) => false,

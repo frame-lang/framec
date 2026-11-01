@@ -123,7 +123,7 @@ impl NativeText {
     /// The **sink**. Consumes `self` — this is the last thing that ever happens to
     /// a piece of native text.
     ///
-    /// This is RFC-0056 P6 ("emission is one-way") expressed as a *move*. A pass
+    /// This is the emission-is-one-way rule expressed as a *move*. A pass
     /// that wanted to re-read emitted output would have to hold a value it has
     /// already given away. That is not a policy violation; it is a borrow-check
     /// error, and it is reported by rustc rather than by a reviewer who is tired.

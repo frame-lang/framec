@@ -13,7 +13,7 @@ grew two copies of its `$.x` expander, and they silently drifted four ways. Disc
 
 > **Tests cross. Code does not.**
 
-**Tests and fixtures cross freely.** The corpus *is* the specification (RFC-0056 P13). The rebuilt
+**Tests and fixtures cross freely.** The corpus *is* the specification. The rebuilt
 compiler earns its existence by passing it. Reading it is the point.
 
 **Code does not cross by default.** The default is: **write it fresh.** A file may be transplanted
@@ -49,7 +49,7 @@ not change — not because the structure survived.
 
 ## What is explicitly NOT in scope for the rebuild
 
-- **The `@@efsm` compiler** (`framec/src/frame_c/compiler/fsm_*`, `codegen/fsm_*.rs`, ~40k LOC).
+- **The `@@fsm` compiler** (`framec/src/frame_c/compiler/fsm_*`, `codegen/fsm_*.rs`, ~40k LOC).
   It is a separate construct with its own front end, its own AST, and its own 17 backends, and it
   **never opens a source byte**. Measured coupling to the system side: three imports. It is not being
   rebuilt, it is not being touched, and it is not being transplanted. It will be re-attached at the

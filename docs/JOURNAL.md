@@ -77,7 +77,7 @@ truncated a Lua handler body, that spliced a `;` inside a comment.
 > **The performance limitation produced the correctness bugs.** Not metaphorically —
 > causally, through a chain we can name.
 
-Fixing it (RFC-0056 P9, issue #209) on all sixteen targets:
+Fixing it (issue #209) on all sixteen targets:
 
 ```
                               before          after

@@ -2,7 +2,7 @@
 //!
 //! # Emission is one-way, and it is a borrow-check error to make it otherwise
 //!
-//! RFC-0056 P6 says: once a node is rendered to text, no pass may run over that text.
+//! The rule: once a node is rendered to text, no pass may run over that text.
 //! In the old compiler that was a *policy*, and the policy lost — the assembler
 //! grepped its own output for the `package` clause, `normalize_indentation`
 //! post-processed emitted code (and silently changed the value of string literals),
