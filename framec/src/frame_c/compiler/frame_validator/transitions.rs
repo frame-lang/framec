@@ -5,7 +5,7 @@
 //! parameter shape (E406/E419), transition target legality
 //! (E402), and `=> $^` forward-target legality (E403).
 
-use super::{arity_error, count_args, required_event_params, FrameValidator, ValidationError};
+use super::{arity_error, required_event_params, FrameValidator, ValidationError};
 use crate::frame_c::compiler::frame_ast::*;
 use std::collections::{HashMap, HashSet};
 
@@ -294,7 +294,7 @@ impl FrameValidator {
         let target_state = state_map.get(&transition.target).copied();
 
         if let Some(ref exit_args_str) = transition.exit_args {
-            let provided = count_args(exit_args_str);
+            let provided = self.count_args(exit_args_str);
             let transition_repr = format!("({}) -> ${}", exit_args_str, transition.target);
             match state.exit.as_ref() {
                 None => self.errors.push(
@@ -326,7 +326,7 @@ impl FrameValidator {
 
         if let Some(ref enter_args_str) = transition.enter_args {
             if let Some(target) = target_state {
-                let provided = count_args(enter_args_str);
+                let provided = self.count_args(enter_args_str);
                 let transition_repr = format!("-> ({}) ${}", enter_args_str, transition.target);
                 match target.enter.as_ref() {
                     None => self.errors.push(
@@ -359,7 +359,7 @@ impl FrameValidator {
 
         if let Some(ref state_args_str) = transition.state_args {
             if let Some(target) = target_state {
-                let provided = count_args(state_args_str);
+                let provided = self.count_args(state_args_str);
                 let transition_repr = format!("-> ${}({})", transition.target, state_args_str);
                 let total = target.params.len();
                 if total == 0 {

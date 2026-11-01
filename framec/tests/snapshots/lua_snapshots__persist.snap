@@ -229,7 +229,7 @@ function Counter:snapshot()
             local h = { __frame_type__ = mt.__name }
             for k, v in pairs(o) do h[k] = _frame_encode(v) end
             return h
-    end
+        end
         local r = {}
         for k, v in pairs(o) do r[k] = _frame_encode(v) end
         return r
@@ -259,7 +259,7 @@ function Counter:restore(json_str)
             local obj = {}
             for k, v in pairs(o) do if k ~= "__frame_type__" then obj[k] = _frame_revive(v) end end
             return setmetatable(obj, mt)
-    end
+        end
         local r = {}
         for k, v in pairs(o) do r[k] = _frame_revive(v) end
         return r
@@ -288,7 +288,7 @@ function Counter:restore(json_str)
 end
 
 function Counter.register_persist_type(mt)
-    if Counter.__persistUserTypes == nil then Counter.__persistUserTypes = thenend end
+    if Counter.__persistUserTypes == nil then Counter.__persistUserTypes = {} end
     Counter.__persistUserTypes[mt.__name] = mt
 end
 

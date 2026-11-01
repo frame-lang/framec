@@ -90,8 +90,7 @@
 //!   borrow-checker workarounds).
 //! - **`codegen_utils.rs`** — shared utilities ([`HandlerContext`],
 //!   type-string mappers, expression-to-string helpers).
-//! - **`block_transform.rs`** — post-pass block-level rewriters
-//!   (async-await injection, etc.).
+//! - **`block_transform.rs`** — Erlang `{ }` → `case … of … end` lowering.
 //! - **`output_block_*.gen.rs`** — Frame-defined output-block parsers
 //!   (generated; do not edit by hand).
 //!

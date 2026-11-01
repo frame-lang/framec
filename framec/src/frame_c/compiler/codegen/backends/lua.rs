@@ -631,11 +631,23 @@ impl LanguageBackend for LuaBackend {
             | CodegenNode::FrameInitBlock { code, span: _ }
             | CodegenNode::FactoryOnlyBlock { code, span: _ }
             | CodegenNode::BareCtorBlock { code, span: _ } => {
-                // Transform if/else { } to Lua if/then/end before emitting
-                let code = crate::frame_c::compiler::codegen::block_transform::transform_blocks(
-                    code,
-                    crate::frame_c::compiler::codegen::block_transform::BlockTransformMode::Lua,
-                );
+                // NOTE: this used to run `block_transform::transform_blocks` over the
+                // user's NATIVE code, rewriting `if x { }` into Lua's `if x then end`.
+                //
+                // It is gone (#232), for three reasons:
+                //
+                //  1. **`if COND { }` is not Frame.** Frame's language reference defines
+                //     no conditional; `if`/`while` are native. The construct existed only
+                //     in fixtures, and on ~15 of 16 targets it was emitted VERBATIM and
+                //     did not compile. The fixtures are migrated.
+                //  2. It was a **post-emission text pass over the USER'S code** — framec
+                //     rewriting the user's native source, which is the boundary framec
+                //     does not cross. Verbatim passthrough means verbatim.
+                //  3. It served exactly one live call site (this one) after Erlang was
+                //     removed. 251 lines and two generated FSMs to prop up a construct
+                //     that does not exist.
+                //
+                // A Lua user writes Lua. `if x then … end`.
                 let lines: Vec<&str> = code.lines().collect();
                 if lines.is_empty() {
                     return String::new();
