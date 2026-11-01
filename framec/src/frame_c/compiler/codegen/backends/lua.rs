@@ -55,10 +55,25 @@ impl LanguageBackend for LuaBackend {
                 methods,
                 base_classes: _,
                 is_abstract: _,
+                input,
                 ..
             } => {
+                ctx.input = input.clone();
+                // #209: a system declaring an alphabet-typed header
+                // param BORROWS its input. The adapter holds the caller's buffer
+                // by reference — zero copy.
+                let mut input_adapter_src = String::new();
+                if let Some(spec) = input {
+                    input_adapter_src =
+                        crate::frame_c::compiler::codegen::codegen_utils::input_adapter(
+                            TargetLanguage::Lua,
+                            name,
+                            &spec.elem,
+                        );
+                }
                 ctx.is_framework_helper = *is_framework_helper;
                 let mut result = String::new();
+                result.push_str(&input_adapter_src);
                 result.push_str(&format!("{}local {} = {{}}\n", ctx.get_indent(), name));
                 result.push_str(&format!(
                     "{}{}.__index = {}\n",
@@ -248,13 +263,34 @@ impl LanguageBackend for LuaBackend {
                 ctx.pop_indent();
 
                 // Emit `function Counter.new()` — bare
-                let mut result = format!("{}function {}.new()\n", ctx.get_indent(), class_name);
+                // #209: a borrowing system takes its buffer at construction.
+                // The adapter holds it BY REFERENCE — zero copy.
+                let (in_sig, in_store) = match &ctx.input {
+                    Some(spec) => (
+                        spec.field.clone(),
+                        format!(
+                            "{}    self.{f} = {a}.new({f})\n",
+                            ctx.get_indent(),
+                            f = spec.field,
+                            a = spec.adapter
+                        ),
+                    ),
+                    None => (String::new(), String::new()),
+                };
+                let mut result = format!(
+                    "{}function {}.new({})\n",
+                    ctx.get_indent(),
+                    class_name,
+                    in_sig
+                );
                 ctx.push_indent();
                 result.push_str(&format!(
                     "{}local self = setmetatable({{}}, {})\n",
                     ctx.get_indent(),
                     class_name
                 ));
+                // #209: store the borrowed buffer AFTER `self` exists.
+                result.push_str(&in_store);
                 ctx.pop_indent();
                 for line in &framework_lines {
                     result.push_str(line);

@@ -49,6 +49,7 @@ impl LanguageBackend for ErlangBackend {
                 derives: _,
                 visibility: _,
                 is_framework_helper: _,
+                input: _,
             } => {
                 // Erlang: module functions — no class wrapper
                 let mut result = String::new();

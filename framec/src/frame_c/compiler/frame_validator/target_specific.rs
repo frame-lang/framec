@@ -48,6 +48,10 @@ impl FrameValidator {
         target: crate::frame_c::visitors::TargetLanguage,
         system_names: &std::collections::HashSet<String>,
     ) {
+        // E620 (#209): the borrowed input source is not yet ported
+        // to every backend. Surface the gap as a hard error rather than silently
+        // emitting code that references a field the backend never generated.
+        self.validate_input_source_supported(system, target);
         // E605: Static targets require explicit type on domain fields
         self.validate_domain_types(system, target);
         // E606: Static targets require explicit type on interface params
@@ -308,5 +312,73 @@ pub fn typescript_global_collision_rename(name: &str) -> Option<String> {
         Some(format!("{}Sys", name))
     } else {
         None
+    }
+}
+
+impl FrameValidator {
+    /// E620 (#209): a system may declare a **borrowed input source**
+    /// — a header param typed with an alphabet type (`bytes` / `char` / `token`),
+    /// the same rule `@@fsm` uses — so it can scan a buffer it does not own.
+    ///
+    /// The capability is currently implemented on **Rust** (a real generic +
+    /// trait, so the borrow checker sees the lifetime) and **Python** (an adapter
+    /// holding the caller's buffer by reference).
+    ///
+    /// On the remaining backends the adapter table exists but the constructor is
+    /// not yet wired. Emitting there would produce code referencing a field the
+    /// backend never generated — a silent miscompile. So: a hard error, naming the
+    /// gap. **Surface the parity gap; never work around it.**
+    pub(super) fn validate_input_source_supported(
+        &mut self,
+        system: &SystemAst,
+        target: crate::frame_c::visitors::TargetLanguage,
+    ) {
+        use crate::frame_c::visitors::TargetLanguage as T;
+        // Every code-generating target now supports the borrowed input source.
+        // EXHAUSTIVE on purpose: adding a backend forces a decision
+        // here rather than letting it silently skip the port — which is exactly how
+        // the `__create` threading bug got dropped in four backends in a row.
+        let unsupported: Option<&str> = match target {
+            T::Rust
+            | T::Python3
+            | T::TypeScript
+            | T::JavaScript
+            | T::Java
+            | T::CSharp
+            | T::Swift
+            | T::Dart
+            | T::Ruby
+            | T::Php
+            | T::Lua
+            | T::GDScript
+            | T::Go
+            | T::Kotlin
+            | T::Cpp
+            | T::C => None,
+            T::Graphviz => Some("it emits a diagram, not a runtime, so there is nothing to borrow"),
+            T::Erlang => Some("the deprecated Erlang target has no input adapter"),
+        };
+        let Some(why) = unsupported else {
+            return;
+        };
+        for p in &system.params {
+            if p.kind == ParamKind::Input {
+                self.errors.push(ValidationError::new(
+                    "E620",
+                    format!(
+                        "system '{}' declares a borrowed input source ('{}: {}'), which the \
+                         {:?} target does not support: {} (#209). Remove the input param, \
+                         or use a code-generating target.",
+                        system.name,
+                        p.name,
+                        crate::frame_c::compiler::codegen::codegen_utils::type_to_string(
+                            &p.param_type
+                        ),
+                        target,
+                        why
+                    ),
+                ));
+            }
+        }
     }
 }

@@ -62,10 +62,25 @@ impl LanguageBackend for RubyBackend {
                 methods,
                 base_classes,
                 is_abstract: _,
+                input,
                 ..
             } => {
+                ctx.input = input.clone();
+                // #209: a system declaring an alphabet-typed header
+                // param BORROWS its input. The adapter holds the caller's buffer
+                // by reference — zero copy.
+                let mut input_adapter_src = String::new();
+                if let Some(spec) = input {
+                    input_adapter_src =
+                        crate::frame_c::compiler::codegen::codegen_utils::input_adapter(
+                            TargetLanguage::Ruby,
+                            name,
+                            &spec.elem,
+                        );
+                }
                 ctx.is_framework_helper = *is_framework_helper;
                 let mut result = String::new();
+                result.push_str(&input_adapter_src);
 
                 let extends = if base_classes.is_empty() {
                     String::new()
@@ -278,7 +293,22 @@ impl LanguageBackend for RubyBackend {
                 ctx.pop_indent();
 
                 // Emit bare `def initialize`
-                let mut result = format!("{}def initialize\n", ctx.get_indent());
+                // #209: a borrowing system takes its buffer at construction.
+                // The adapter holds it BY REFERENCE — zero copy.
+                let (in_sig, in_store) = match &ctx.input {
+                    Some(spec) => (
+                        format!("({})", spec.field),
+                        format!(
+                            "{}    @{f} = {a}.new({f})\n",
+                            ctx.get_indent(),
+                            f = spec.field,
+                            a = spec.adapter
+                        ),
+                    ),
+                    None => (String::new(), String::new()),
+                };
+                let mut result = format!("{}def initialize{}\n", ctx.get_indent(), in_sig);
+                result.push_str(&in_store);
                 for line in &framework_lines {
                     result.push_str(line);
                 }
@@ -301,6 +331,18 @@ impl LanguageBackend for RubyBackend {
                 // Emit `def self._create(<params>)`
                 result.push('\n');
                 let create_params = self.emit_params(params);
+                // #209: the factory takes the buffer too, so it can hand it to
+                // the bare constructor. Untyped here (dynamic target).
+                let create_params = match &ctx.input {
+                    Some(spec) if create_params.is_empty() => spec.field.clone(),
+                    Some(spec) => format!("{}, {}", spec.field, create_params),
+                    None => create_params,
+                };
+                let in_pass = ctx
+                    .input
+                    .as_ref()
+                    .map(|s| s.field.clone())
+                    .unwrap_or_default();
                 let cp_part = if create_params.is_empty() {
                     String::new()
                 } else {
@@ -312,7 +354,17 @@ impl LanguageBackend for RubyBackend {
                     cp_part
                 ));
                 ctx.push_indent();
-                result.push_str(&format!("{}c = new\n", ctx.get_indent()));
+                // #209: bare `new` stays bare when there is no borrowed input —
+                // Ruby's idiom, and the byte-diff gate caught the regression.
+                result.push_str(&format!(
+                    "{}c = new{}\n",
+                    ctx.get_indent(),
+                    if in_pass.is_empty() {
+                        String::new()
+                    } else {
+                        format!("({})", in_pass)
+                    }
+                ));
                 let arg_pass: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
                 result.push_str(&format!(
                     "{}c._frame_init({})\n",
@@ -850,6 +902,7 @@ mod tests {
             derives: vec![],
             visibility: Visibility::Public,
             is_framework_helper: false,
+            input: None,
         };
 
         let result = backend.emit(&node, &mut ctx);

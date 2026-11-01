@@ -47,10 +47,25 @@ impl LanguageBackend for GoBackend {
                 name,
                 fields,
                 methods,
+                input,
                 ..
             } => {
+                ctx.input = input.clone();
+                // #209: a system declaring an alphabet-typed header
+                // param BORROWS its input. The adapter holds the caller's buffer
+                // by reference — zero copy.
+                let mut input_adapter_src = String::new();
+                if let Some(spec) = input {
+                    input_adapter_src =
+                        crate::frame_c::compiler::codegen::codegen_utils::input_adapter(
+                            TargetLanguage::Go,
+                            name,
+                            &spec.elem,
+                        );
+                }
                 // Go: emit struct definition + separate method definitions
                 let mut result = String::new();
+                result.push_str(&input_adapter_src);
 
                 // Struct definition
                 result.push_str(&format!("{}type {} struct {{\n", ctx.get_indent(), name));
@@ -213,15 +228,31 @@ impl LanguageBackend for GoBackend {
                 }
                 ctx.pop_indent();
 
-                // Emit `func NewCounter() *Counter` — bare framework
+                // Emit `func NewCounter() *Counter` — bare framework.
+                // #209: a borrowing system takes its buffer at construction.
+                let (in_sig, in_store) = match &ctx.input {
+                    Some(spec) => (
+                        format!("{} []byte", spec.field),
+                        format!(
+                            "{}    s.{f} = {a}{{b: {f}}}\n",
+                            ctx.get_indent(),
+                            f = spec.field,
+                            a = spec.adapter
+                        ),
+                    ),
+                    None => (String::new(), String::new()),
+                };
                 let mut result = format!(
-                    "{}func New{}() *{} {{\n",
+                    "{}func New{}({}) *{} {{\n",
                     ctx.get_indent(),
                     class_name,
+                    in_sig,
                     class_name
                 );
                 ctx.push_indent();
                 result.push_str(&format!("{}s := &{}{{}}\n", ctx.get_indent(), class_name));
+                // #209: store the borrowed buffer AFTER `s` exists.
+                result.push_str(&in_store);
                 for line in &framework_lines {
                     result.push_str(line);
                 }
@@ -236,6 +267,11 @@ impl LanguageBackend for GoBackend {
                 // local `c`).
                 result.push('\n');
                 let create_params = self.emit_params(params);
+                let create_params = match &ctx.input {
+                    Some(spec) if create_params.is_empty() => format!("{} []byte", spec.field),
+                    Some(spec) => format!("{} []byte, {}", spec.field, create_params),
+                    None => create_params,
+                };
                 result.push_str(&format!(
                     "{}func Create{}({}) *{} {{\n",
                     ctx.get_indent(),
@@ -244,7 +280,18 @@ impl LanguageBackend for GoBackend {
                     class_name
                 ));
                 ctx.push_indent();
-                result.push_str(&format!("{}c := New{}()\n", ctx.get_indent(), class_name));
+                // #209: the factory hands the buffer to the bare constructor.
+                let in_pass = ctx
+                    .input
+                    .as_ref()
+                    .map(|sp| sp.field.clone())
+                    .unwrap_or_default();
+                result.push_str(&format!(
+                    "{}c := New{}({})\n",
+                    ctx.get_indent(),
+                    class_name,
+                    in_pass
+                ));
                 for line in &frame_init_lines {
                     let rewritten = rewrite_go_member_refs_for_factory(line);
                     result.push_str(&rewritten);

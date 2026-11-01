@@ -487,7 +487,10 @@ pub(crate) fn generate_constructor(system: &SystemAst, syntax: &ClassSyntax) -> 
                         CodegenNode::Ident(p.name.clone()),
                     ));
                 }
-                crate::frame_c::compiler::frame_ast::ParamKind::Domain => {}
+                // #209: the input source is not a value param — it is the
+                // borrowed buffer, emitted as the generic `I`. Skip it here.
+                crate::frame_c::compiler::frame_ast::ParamKind::Input => {}
+                ParamKind::Domain => {}
             }
         }
     }
@@ -714,7 +717,10 @@ pub(crate) fn generate_constructor(system: &SystemAst, syntax: &ClassSyntax) -> 
                             crate::frame_c::compiler::frame_ast::ParamKind::EnterArg => {
                                 enter_args_vec.push(p.name.clone());
                             }
-                            crate::frame_c::compiler::frame_ast::ParamKind::Domain => {}
+                            // #209: the input source is not a value param — it is the
+                            // borrowed buffer, emitted as the generic `I`. Skip it here.
+                            crate::frame_c::compiler::frame_ast::ParamKind::Input => {}
+                            ParamKind::Domain => {}
                         }
                     }
                     let state_args_lit = format!("[{}]", state_args_vec.join(", "));
@@ -755,7 +761,10 @@ pub(crate) fn generate_constructor(system: &SystemAst, syntax: &ClassSyntax) -> 
                             crate::frame_c::compiler::frame_ast::ParamKind::EnterArg => {
                                 enter_args_vec.push(p.name.clone());
                             }
-                            crate::frame_c::compiler::frame_ast::ParamKind::Domain => {}
+                            // #209: the input source is not a value param — it is the
+                            // borrowed buffer, emitted as the generic `I`. Skip it here.
+                            crate::frame_c::compiler::frame_ast::ParamKind::Input => {}
+                            ParamKind::Domain => {}
                         }
                     }
                     let state_args_lit = format!("[{}]", state_args_vec.join(", "));
@@ -842,7 +851,10 @@ pub(crate) fn generate_constructor(system: &SystemAst, syntax: &ClassSyntax) -> 
                             crate::frame_c::compiler::frame_ast::ParamKind::EnterArg => {
                                 enter_args_vec.push(p.name.clone());
                             }
-                            crate::frame_c::compiler::frame_ast::ParamKind::Domain => {}
+                            // #209: the input source is not a value param — it is the
+                            // borrowed buffer, emitted as the generic `I`. Skip it here.
+                            crate::frame_c::compiler::frame_ast::ParamKind::Input => {}
+                            ParamKind::Domain => {}
                         }
                     }
                     let state_args_lit = format!("[{}]", state_args_vec.join(", "));
@@ -1594,6 +1606,12 @@ self._context_stack.pop_back()"#,
     let params: Vec<Param> = system
         .params
         .iter()
+        // #209: the borrowed input is NOT a constructor value param.
+        // It is the buffer, and its target spelling is per-backend (`byte[]`,
+        // `[UInt8]`, `List<int>`, a Rust generic `I`, ...), so each backend
+        // prepends it itself. Leaving it here emits `__create(bytes text)` — the
+        // raw Frame type, which no target has.
+        .filter(|p| p.kind != crate::frame_c::compiler::frame_ast::ParamKind::Input)
         .map(|p| {
             let type_str = type_to_string(&p.param_type);
             let mut param = Param::new(&p.name).with_type(&type_str);
