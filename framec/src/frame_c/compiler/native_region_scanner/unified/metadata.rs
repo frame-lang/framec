@@ -289,19 +289,29 @@ pub(super) fn extract_segment_metadata(kind: FrameSegmentKind, text: &str) -> Se
             // suffix is transition grammar, so it is parsed by the same
             // dogfooded `TransitionMetaScannerFsm` the Transition kind uses
             // (#154 — no separate hand-rolled `$Target` walk).
-            let transition_target = text.find("->").and_then(|arrow_pos| {
+            //
+            // #211: KEEP the whole thing. This used to destructure
+            // `Transition { target_state, .. }` and return only the name — so the
+            // args it had just parsed were discarded here, in the front end, before
+            // any backend could see them. `push$ -> $S(7)` then emitted
+            // `__prepareEnter("S", [], [])` and crashed at runtime, while the
+            // identical `-> $S(7)` worked. A fact the parser found, thrown away.
+            let transition = text.find("->").and_then(|arrow_pos| {
                 match crate::frame_c::compiler::transition_meta_scanner::parse_transition_meta(
                     text[arrow_pos..].trim(),
                 ) {
-                    SegmentMetadata::Transition { target_state, .. }
-                        if !target_state.is_empty() =>
-                    {
-                        Some(target_state)
+                    meta @ SegmentMetadata::Transition { .. } => {
+                        if let SegmentMetadata::Transition { target_state, .. } = &meta {
+                            if target_state.is_empty() {
+                                return None;
+                            }
+                        }
+                        Some(Box::new(meta))
                     }
                     _ => None,
                 }
             });
-            SegmentMetadata::StackPush { transition_target }
+            SegmentMetadata::StackPush { transition }
         }
 
         // --- Others ---
@@ -363,17 +373,49 @@ mod tests {
     /// #154 — `push$ -> $State` target parses via the transition-grammar FSM.
     #[test]
     fn stack_push_target_via_transition_fsm() {
-        assert_eq!(
-            extract_segment_metadata(FrameSegmentKind::StackPush, "push$ -> $Working"),
+        // The node carries the WHOLE transition now (#211), not just its name.
+        match extract_segment_metadata(FrameSegmentKind::StackPush, "push$ -> $Working") {
             SegmentMetadata::StackPush {
-                transition_target: Some("Working".into())
-            }
-        );
+                transition: Some(t),
+            } => match *t {
+                SegmentMetadata::Transition { target_state, .. } => {
+                    assert_eq!(target_state, "Working")
+                }
+                other => panic!("expected a Transition, got {other:?}"),
+            },
+            other => panic!("expected StackPush with a transition, got {other:?}"),
+        }
         assert_eq!(
             extract_segment_metadata(FrameSegmentKind::StackPush, "push$"),
-            SegmentMetadata::StackPush {
-                transition_target: None
-            }
+            SegmentMetadata::StackPush { transition: None }
         );
+    }
+
+    /// #211: `push$ -> $S(7)` used to KEEP ONLY THE NAME — the args the scanner had
+    /// just parsed were thrown away here, in the front end, so codegen emitted
+    /// `prepareEnter("S", [], [])` and the program crashed at runtime with an
+    /// IndexError, while the identical `-> $S(7)` worked.
+    #[test]
+    fn stack_push_keeps_its_state_args() {
+        match extract_segment_metadata(FrameSegmentKind::StackPush, "push$ -> $S(7)") {
+            SegmentMetadata::StackPush {
+                transition: Some(t),
+            } => match *t {
+                SegmentMetadata::Transition {
+                    target_state,
+                    state_args,
+                    ..
+                } => {
+                    assert_eq!(target_state, "S");
+                    assert_eq!(
+                        state_args.as_deref(),
+                        Some("7"),
+                        "the state args must survive the front end"
+                    );
+                }
+                other => panic!("expected a Transition, got {other:?}"),
+            },
+            other => panic!("expected StackPush with a transition, got {other:?}"),
+        }
     }
 }
